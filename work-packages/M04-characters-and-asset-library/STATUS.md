@@ -150,3 +150,4 @@ Core Reviewer (Minu) should review the branch/PR against the M04 acceptance crit
 - `pnpm exec vitest run apps/api/src/modules/character/character.service.test.ts apps/api/src/modules/asset/asset.validation.test.ts` — **PASSED** — 2 files / 13 tests.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm typecheck` — **PASSED**.
 - `git diff --check` — **PASSED**.
+- PR #10 CI initially failed only at `pnpm format:check` because the new validation test needed Prettier formatting; formatted and revalidated locally.

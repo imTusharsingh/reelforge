@@ -262,3 +262,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: focused Vitest run passed (2 files / 13 tests); typecheck passed with the documented local `DATABASE_URL`; `git diff --check` passed.
 - No production behavior, schema, contract, or provider integration changes were made.
 - PR #10 remains open and requires Minu review; no approval, integration, or merge is claimed.
+
+## 2026-11-06 - M04 CI formatting fix
+- CI failure cause: `pnpm format:check` rejected the newly added `asset.validation.test.ts`; lint and install had passed.
+- Fix: applied repository Prettier formatting to the test file.
+- Verification: `pnpm format:check` passed; focused tests passed (2 files / 13 tests); typecheck passed with local `DATABASE_URL`.

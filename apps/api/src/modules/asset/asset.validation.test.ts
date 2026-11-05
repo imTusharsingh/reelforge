@@ -10,8 +10,8 @@ describe("asset upload validation", () => {
     ["wrong MIME", png, "image/jpeg", "image.jpg", 100],
     ["oversized body", png, "image/png", "image.png", 7],
   ])("rejects %s with an actionable error", (_caseName, body, mediaType, filename, maxBytes) => {
-    expect(() => validateUploadPayload({ body, declaredMediaType: mediaType, filename }, maxBytes)).toThrow(
-      BadRequestException,
-    );
+    expect(() =>
+      validateUploadPayload({ body, declaredMediaType: mediaType, filename }, maxBytes),
+    ).toThrow(BadRequestException);
   });
 });
