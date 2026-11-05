@@ -151,3 +151,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: Checks used the pinned versions from temporary paths because the default shell PATH does not include them. CI has not run on this follow-up head yet.
 - Next exact action: Review diff, commit, and push only `chore/m00-closeout`; request Minu's re-review. Do not merge.
 - Related status/ADR: PR #3; M00 `STATUS.md`; ADR-012 and ADR-013.
+
+## 2026-11-05 - M01 identity and workspace implementation handoff
+- Actor/session: Codex Module Implementation Agent.
+- Work package: M01 Identity & Workspace; branch `work/m01-identity-and-workspace`, based on `main` at `a60c2a276f958ea78927cc06001148a258bef02e`.
+- Changes made: Added first-party scrypt password credentials, hashed expiring/revocable sessions, auth event persistence, authentication guard, workspace membership context, workspace create/list/archive, default workspace selection, and owner authorization.
+- Schema: Added only a new migration and additive Prisma fields/models; prior migrations were not edited.
+- Verification: Required commands were not run because Node.js and pnpm are unavailable in PATH. No passing result is claimed. Cross-workspace denial tests remain outstanding.
+- Decisions/approvals: No approval or integration is claimed. Invitations, social OAuth, billing, and channel permissions remain out of scope.
+- Next action: Provision the pinned toolchain, update the lockfile for the API workspace dependency, add/run denial tests and all required checks, then open a PR for Minu review. Only the owner merges after written approval.
