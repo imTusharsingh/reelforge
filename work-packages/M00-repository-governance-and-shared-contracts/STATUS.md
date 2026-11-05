@@ -115,7 +115,7 @@ Core Reviewer required changes 1–5 were implemented on `work/m00-monorepo-foun
 - **Known environment limit:** Node.js/pnpm/Corepack and `gh` are absent from PATH in this checkout; required package checks and GitHub PR creation may not be available.
 
 ## Next exact action
-Complete this closeout chore, push its branch, and request Minu review; the repository owner merges only after written Minu approval. Phase 1 starts with M01 after closeout.
+Open the pushed closeout branch as a PR and request Minu review. Only the owner merges after Minu's written approval. After closeout, Phase 1 starts with M01 per Minu's plan.
 
 ## Handoff notes
 Product M00 is integrated by the owner through PR #2. This branch contains only the closeout and hygiene scope; the closeout chore PR awaits Minu's review.
@@ -140,3 +140,5 @@ Product M00 is integrated by the owner through PR #2. This branch contains only 
 - `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm format:check`: **not run successfully**; each command exited 127 because `pnpm` is not installed or available in PATH. Node.js is also unavailable. CI remains unchanged because local `pnpm format:check` did not pass.
 - Generated Prisma client files under `packages/database/src/generated` were present as untracked workspace files before this branch and were left untouched.
 - No schema, migration, product code, or shared contract changes were made.
+- Branch push: `git push -u origin chore/m00-closeout` **passed**; branch is published at the current head.
+- PR creation: **not completed**. The environment has no `gh` CLI, and the browser is signed out of GitHub; the available GitHub UI returned a sign-in/404 page for this private repository.
