@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M01–M02 integrated; M03 next).
+- **Overall phase:** Phase 1 in progress (M01–M03 integrated; M04 next).
 - **Current release:** v1.
-- **Current integrated commit:** `216de538c86915f6f590ba7401b7d4cfc4e8f05c` (`git rev-parse origin/main`; owner merge of M02 PR #6).
+- **Current integrated commit:** `408bae0af76b9a901cbf4066dec2af2e0f6e2526` (`git rev-parse origin/main`; owner merge of M03 PR #8).
 - **Active implementation sessions:** none.
-- **Active work packages:** none (M02 integrated; M03 not yet assigned on a branch).
+- **Active work packages:** none (M03 integrated; M04 not yet assigned on a branch).
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M02 at `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merged via PR #6 at `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
+- **Latest core review:** Minu approved M03 at `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merged via PR #8 at `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
 
 ## Frozen architecture summary
 
@@ -30,10 +30,10 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M01–M02 integrated; M03 next**
+**Phase 1 in progress - M01–M03 integrated; M04 next**
 
 Next exact action:
-1. Start M03 (Genres, Formats & Content Series) when Minu assigns it.
+1. Assign and start M04 (Characters & Asset Library) after this closeout is merged.
 
 ## Module status index
 
@@ -42,7 +42,7 @@ Next exact action:
 | M00 - Repository Governance & Shared Contracts | INTEGRATED | `main` (PR #2) | `626187aae7ffb6f8eba0bdbcff237f191ad0b904` | none |
 | M01 - Identity & Workspace | INTEGRATED | `main` (PR #4) | `519b3ab2bd6a81a516c66d21036051edb9c54894` | none |
 | M02 - Channel & Brand Management | INTEGRATED | `main` (PR #6) | `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` | none |
-| M03 - Genres, Formats & Content Series | NOT_STARTED | none | none | none recorded |
+| M03 - Genres, Formats & Content Series | INTEGRATED | `main` (PR #8) | `51fedc64fc655650ca345030d62934f8b16be1bc` | none |
 | M04 - Characters & Asset Library | NOT_STARTED | none | none | none recorded |
 | M05 - Configuration & Prompt Engine | NOT_STARTED | none | none | none recorded |
 | M06 - Idea & Topic Registry | NOT_STARTED | none | none | none recorded |
@@ -59,8 +59,9 @@ Next exact action:
 | M17 - Notifications & Reporting | NOT_STARTED | none | none | none recorded |
 | M18 - Usage, Budget & Billing Foundation | NOT_STARTED | none | none | none recorded |
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
+| M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M03–M19 remain `NOT_STARTED`. M03 starts when Minu assigns it.
+M04–M20 remain `NOT_STARTED`. M04 starts when Minu assigns it.
 
 
 ## Open decisions
@@ -73,6 +74,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-05: M00 integrated by the owner via PR #2 at merge commit `8fdcab55bd121a695c76108f59dc3377a4c50940`, from Minu-approved head `626187aae7ffb6f8eba0bdbcff237f191ad0b904`.
 - 2026-11-05/06: M01 integrated via PR #4. Minu approved head `519b3ab2bd6a81a516c66d21036051edb9c54894` (review 5789945311); owner merge `4944f5d74200c65cbcca99405cf680245946201a`.
 - 2026-11-05/06: M02 integrated via PR #6. Minu approved head `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merge `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
+- 2026-11-06: M03 integrated via PR #8. Minu approved head `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merge `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
 
 ## How a new session resumes
 
