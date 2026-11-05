@@ -8,6 +8,7 @@ import { CharacterService } from "./character.service.js";
 import { characterSnapshotChecksum } from "./character.validation.js";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
+const otherWorkspaceId = "22222222-2222-4222-8222-222222222222";
 const starterAssetId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const channelId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const seriesId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -335,6 +336,19 @@ describe("CharacterService", () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("denies cross-workspace character reads and publishes", async () => {
+    const db = new FakeCharacterDb();
+    const foreignCharacter = seedCharacter(db, { workspaceId: otherWorkspaceId });
+    const characters = service(db, new FakeAssets());
+
+    await expect(characters.get(context(), foreignCharacter.id as string)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(
+      characters.publish(context(), foreignCharacter.id as string),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("returns the immutable reference package for the active version", async () => {
     const db = new FakeCharacterDb();
     const assets = new FakeAssets();
@@ -362,6 +376,26 @@ describe("CharacterService", () => {
     const assignment = (await characters.assign(context(), groupId, { channelId })) as Row;
     expect(assignment.channelId).toBe(channelId);
     expect(assignment.seriesId).toBeNull();
+  });
+
+  it("denies cross-workspace group reads and mutations", async () => {
+    const db = new FakeCharacterDb();
+    const foreignGroup = await db.characterGroup.create({
+      data: { workspaceId: otherWorkspaceId, name: "Foreign group" },
+    });
+    const characters = service(db, new FakeAssets());
+    const foreignGroupId = foreignGroup.id as string;
+
+    await expect(characters.getGroup(context(), foreignGroupId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(
+      characters.updateGroup(context(), foreignGroupId, { name: "Tampered" }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      characters.assign(context(), foreignGroupId, { channelId }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(db.groups.get(foreignGroupId)?.name).toBe("Foreign group");
   });
 
   it("rejects a pinned version that belongs to another character", async () => {

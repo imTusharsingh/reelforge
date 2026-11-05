@@ -143,3 +143,10 @@ Core Reviewer (Minu) should review the branch/PR against the M04 acceptance crit
 
 ## Reviewer decision
 - Pending.
+
+## Follow-up review evidence (2026-11-06)
+- Added explicit cross-workspace denial coverage for character reads/publish and group reads/update/assignment; foreign rows are not returned or mutated.
+- Added direct upload-validation coverage for empty bodies, mismatched MIME/content, and oversized bodies.
+- `pnpm exec vitest run apps/api/src/modules/character/character.service.test.ts apps/api/src/modules/asset/asset.validation.test.ts` — **PASSED** — 2 files / 13 tests.
+- `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm typecheck` — **PASSED**.
+- `git diff --check` — **PASSED**.

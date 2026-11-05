@@ -255,3 +255,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decision/approval: No approval or integration is claimed. State is `IMPLEMENTED_PENDING_REVIEW`; Minu/Core Reviewer must review, and only the repository owner merges after written approval.
 - Known gaps: S3-compatible storage is not implemented and `STORAGE_DRIVER=s3` fails loudly; legacy assets are backfilled but remain non-referenceable; M03 `characterGroupRefs` are not auto-synced; no download URL or asset archive endpoint.
 - Pull request: https://github.com/imTusharsingh/reelforge/pull/10 opened for review; GitHub Actions `quality` check passed (runs `42102173141`, `42102234899`). Not merged and not marked approved.
+
+## 2026-11-06 - M04 review follow-up tests
+- Actor/session: Module Implementation Agent; branch `work/m04-characters-and-asset-library`.
+- Reviewer feedback addressed: added explicit cross-workspace denial tests for character reads/publish and character-group reads/update/assignment, plus direct upload validation tests for empty, wrong-MIME, and oversized payloads.
+- Verification: focused Vitest run passed (2 files / 13 tests); typecheck passed with the documented local `DATABASE_URL`; `git diff --check` passed.
+- No production behavior, schema, contract, or provider integration changes were made.
+- PR #10 remains open and requires Minu review; no approval, integration, or merge is claimed.
