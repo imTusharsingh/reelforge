@@ -72,3 +72,11 @@ docs/
 `NOT_STARTED` -> `READY` -> `IN_PROGRESS` -> `IMPLEMENTED_PENDING_REVIEW` -> `REVIEW_CHANGES_REQUESTED` or `APPROVED` -> `INTEGRATED`.
 
 `BLOCKED` may be used from any non-terminal state, but the blocker and exact decision needed must be written down. `DONE` is not allowed until the Core Architect/Reviewer has approved the acceptance criteria and integration checks.
+
+## Local development
+
+The exact Node.js and pnpm versions are pinned in `.node-version` and the root `package.json`. Install dependencies with `pnpm install --frozen-lockfile`. If Corepack is available, it reads the exact pnpm pin from the root `package.json`.
+
+Run `pnpm lint` and `pnpm test` directly. Set `DATABASE_URL` to a syntactically valid local PostgreSQL URL for Prisma generation, then run `pnpm typecheck` and `pnpm build`; these generation/build commands do not connect to the database. Use a disposable local PostgreSQL database for `pnpm db:validate` and `pnpm db:migrate:deploy`. CI provides an ephemeral PostgreSQL service and does not call AI or social providers.
+
+See `CONTRIBUTING.md`, `docs/CONTRACT_VERSIONING.md`, and `packages/database/README.md` for engineering, contract, and migration rules. `AGENTS.md` contains repository-level AI editor instructions.

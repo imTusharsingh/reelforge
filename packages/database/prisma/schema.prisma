@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+enum PublishStatus {
+  DRAFT
+  SCHEDULED
+  PREFLIGHT
+  UPLOADING
+  REMOTE_PROCESSING
+  PUBLISHED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  CANCELED
+  RECONCILIATION_REQUIRED
+}
+
+enum WorkflowState {
+  CREATED
+  QUEUED
+  RUNNING
+  WAITING_APPROVAL
+  SUCCEEDED
+  PAUSED
+  RETRY_WAIT
+  FAILED
+  CANCELED
+}
+
+model User {
+  id          String               @id @default(uuid()) @db.Uuid
+  email       String               @unique
+  displayName String?              @map("display_name")
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships WorkspaceMembership[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id           String               @id @default(uuid()) @db.Uuid
+  name         String
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships  WorkspaceMembership[]
+  channels     Channel[]
+  assets       Asset[]
+  workflowRuns WorkflowRun[]
+  outboxEvents OutboxEvent[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMembership {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_memberships")
+}
+
+model Channel {
+  id          String         @id @default(uuid()) @db.Uuid
+  workspaceId String         @map("workspace_id") @db.Uuid
+  name        String
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  series      ContentSeries[]
+  videos      Video[]
+  posts       Post[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId])
+  @@map("channels")
+}
+
+model ContentSeries {
+  id          String      @id @default(uuid()) @db.Uuid
+  workspaceId String      @map("workspace_id") @db.Uuid
+  channelId   String      @map("channel_id") @db.Uuid
+  name        String
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel     Channel    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  videos      Video[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId])
+  @@map("content_series")
+}
+
+model Asset {
+  id          String     @id @default(uuid()) @db.Uuid
+  workspaceId String     @map("workspace_id") @db.Uuid
+  objectKey   String     @map("object_key")
+  mediaType   String     @map("media_type")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, objectKey])
+  @@index([workspaceId])
+  @@map("assets")
+}
+
+model Video {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  channelId   String        @map("channel_id") @db.Uuid
+  seriesId    String?       @map("series_id") @db.Uuid
+  // TODO(M10 composition): adopt the M10-owned video production status contract.
+  status      String
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel     Channel      @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  series      ContentSeries? @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Restrict)
+  posts       Post[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, createdAt])
+  @@map("videos")
+}
+
+model Post {
+  id          String     @id @default(uuid()) @db.Uuid
+  workspaceId String     @map("workspace_id") @db.Uuid
+  channelId   String     @map("channel_id") @db.Uuid
+  videoId     String     @map("video_id") @db.Uuid
+  platform    String
+  status      PublishStatus
+  remotePostId String?   @map("remote_post_id")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel     Channel   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  video       Video     @relation(fields: [workspaceId, videoId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, createdAt])
+  @@map("posts")
+}
+
+model WorkflowRun {
+  id             String     @id @default(uuid()) @db.Uuid
+  workspaceId    String     @map("workspace_id") @db.Uuid
+  correlationId  String     @map("correlation_id") @db.Uuid
+  idempotencyKey String     @map("idempotency_key")
+  state          WorkflowState
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, id])
+  @@index([workspaceId, state, createdAt])
+  @@map("workflow_runs")
+}
+
+model OutboxEvent {
+  id             String     @id @default(uuid()) @db.Uuid
+  workspaceId    String     @map("workspace_id") @db.Uuid
+  eventType      String     @map("event_type")
+  eventVersion   Int        @map("event_version")
+  correlationId  String     @map("correlation_id") @db.Uuid
+  channelId      String?    @map("channel_id") @db.Uuid
+  causationId    String?    @map("causation_id") @db.Uuid
+  aggregateType  String     @map("aggregate_type")
+  aggregateId    String     @map("aggregate_id") @db.Uuid
+  idempotencyKey String     @map("idempotency_key")
+  payload        Json
+  occurredAt     DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  publishedAt    DateTime?  @map("published_at") @db.Timestamptz(6)
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, publishedAt, occurredAt])
+  @@map("outbox_events")
+}

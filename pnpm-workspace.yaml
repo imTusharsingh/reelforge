@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+engineStrict: true
+saveExact: true
+strictPeerDependencies: true
+allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  next: true
+  prisma: true
+  sharp: true
+  msgpackr-extract: true
