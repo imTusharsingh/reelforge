@@ -217,3 +217,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Changes made: This docs-only closeout updates the project handover, M02 status, and approved channel snapshot decision record on `chore/m02-closeout`. Application code and schema are unchanged.
 - Decision/approval: M02 product work is integrated. This closeout chore itself is not approved; it awaits Minu's review. Bots must not merge.
 - Next exact action: Assign and start M03 (Genres, Formats & Content Series).
+
+## 2026-11-06 - M03 genres, formats and content series implementation handoff
+- Actor/session: Codex Module Implementation Agent; branch `work/m03-genres-formats-and-content-series`, based on M02 closeout `a032fe1c40566f20b46b721d6fe012f69e7c3dad`.
+- Work package: M03 - Genres, Formats & Content Series.
+- Changes made: Added authenticated workspace-scoped genre template listing, custom genre CRUD, clone-from-template, and channel-scoped content-series CRUD. Added structured genre policy fields, opaque series references, additive Prisma schema/migration, deterministic starter catalog, and cross-workspace boundary tests.
+- Verification: `pnpm db:generate`, `pnpm typecheck`, `pnpm lint`, `pnpm test` (6 files / 18 tests), `pnpm format:check`, and `pnpm db:validate` passed. `pnpm db:migrate:deploy` was not run because local PostgreSQL credentials were unavailable.
+- Contract/schema: Additive `GenreTemplate`/`Genre` models and `ContentSeries` fields requested; no contracts package edits.
+- Decision/approval: No approval or integration is claimed. Minu/Core Reviewer must review; only the repository owner merges after written approval.
