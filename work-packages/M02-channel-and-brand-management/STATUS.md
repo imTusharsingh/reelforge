@@ -6,6 +6,8 @@
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
+- **Review PR:** https://github.com/imTusharsingh/reelforge/pull/6
+- **Implementation head:** `41fdcc49817eeb144e01d7daa9467735bd13bd29`
 
 ## Current objective
 Manage multiple independently configured channels within a workspace.
