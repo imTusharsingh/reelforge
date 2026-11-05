@@ -8,13 +8,13 @@ import { WorkspaceRepository } from "./workspace.repository.js";
   imports: [IdentityModule],
   controllers: [WorkspaceController],
   providers: [
-    WorkspaceService,
     {
       provide: WorkspaceRepository,
       useFactory: (db: ConstructorParameters<typeof WorkspaceRepository>[0]): WorkspaceRepository =>
         new WorkspaceRepository(db),
       inject: ["DATABASE"],
     },
+    WorkspaceService,
   ],
   exports: [WorkspaceService, WorkspaceRepository],
 })

@@ -15,7 +15,7 @@ M01 owns first-party authentication, user lifecycle, workspace CRUD/archive/defa
 
 ## Task checklist
 - [x] M01-T01: T01 Implement first-party password authentication and user lifecycle.
-- [x] M01-T02: T02 Implement workspace create/read/archive and default workspace selection.
+- [x] M01-T02: T02 Implement workspace create/read/update/archive and default workspace selection.
 - [x] M01-T03: T03 Implement membership lookup and owner/editor/viewer role enforcement; invitations deferred.
 - [x] M01-T04: T04 Implement authentication guard and verified workspace context propagation.
 - [x] M01-T05: T05 Add workspace-scoped repository helpers and access-denial tests.
@@ -38,12 +38,13 @@ M01 owns first-party authentication, user lifecycle, workspace CRUD/archive/defa
 - `corepack pnpm db:validate`: passed; schema valid.
 - `corepack pnpm db:migrate:deploy` using `.env.example` at `127.0.0.1:5432`: not passed; existing server rejected the placeholder credentials (`P1000`).
 - `corepack pnpm db:migrate:deploy` using disposable PostgreSQL 18.6 at `127.0.0.1:55432`: passed; all 3 migrations applied, then container stopped.
+- Clean-tree typecheck: removed `packages/database/dist`; frozen install and typecheck passed, with API generating Prisma before compiling.
 
 ## Contract/schema proposals
 - Additive schema change pending Core review: password credentials, hashed sessions with revocation/expiry, structured auth events, workspace archive timestamp, and user default workspace relation.
 
 ## Blockers / risks / unknowns
-- No known verification blocker remains. The first migration attempt against the pre-existing local port failed authentication; the required migration check passed against disposable PostgreSQL.
+- No known verification blocker remains. The required clean-tree typecheck and migration checks passed.
 
 ## Next exact action
 Review the pushed head on PR #4. Do not merge; only the repository owner merges after Minu's written approval.

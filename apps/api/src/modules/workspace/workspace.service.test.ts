@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ForbiddenException } from "@nestjs/common";
 import { WorkspaceService } from "./workspace.service.js";
+import { WorkspaceRepository } from "./workspace.repository.js";
 import type { Database } from "../identity/identity.types.js";
 
 function fakeDatabase(): Database {
@@ -37,6 +38,7 @@ function fakeDatabase(): Database {
         return { count: 1 };
       },
       findMany: async () => [...workspaces.values()],
+      findFirst: async ({ where }: { where: { id: string } }) => workspaces.get(where.id) ?? null,
       create: async () => ({ id: "w3", name: "Three" }),
     },
     user: { update: async () => ({}) },
@@ -45,12 +47,14 @@ function fakeDatabase(): Database {
 
 describe("WorkspaceService tenant boundary", () => {
   it("denies reading a workspace outside the authenticated user's membership", async () => {
-    const service = new WorkspaceService(fakeDatabase());
+    const db = fakeDatabase();
+    const service = new WorkspaceService(db, new WorkspaceRepository(db));
     await expect(service.context("u1", "w2")).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("denies a viewer from mutating a workspace even when the id is supplied directly", async () => {
-    const service = new WorkspaceService(fakeDatabase());
+    const db = fakeDatabase();
+    const service = new WorkspaceService(db, new WorkspaceRepository(db));
     await expect(
       service.update({ userId: "u1", workspaceId: "w1", role: "VIEWER" }, "tampered"),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -58,7 +62,7 @@ describe("WorkspaceService tenant boundary", () => {
 
   it("updates only the verified workspace context", async () => {
     const db = fakeDatabase();
-    const service = new WorkspaceService(db);
+    const service = new WorkspaceService(db, new WorkspaceRepository(db));
     await expect(
       service.update({ userId: "u1", workspaceId: "w1", role: "OWNER" }, "Renamed"),
     ).resolves.toEqual({ id: "w1", name: "Renamed" });

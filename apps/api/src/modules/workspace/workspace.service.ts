@@ -1,9 +1,13 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import { WorkspaceRepository } from "./workspace.repository.js";
 
 @Injectable()
 export class WorkspaceService {
-  public constructor(@Inject("DATABASE") private readonly db: Database) {}
+  public constructor(
+    @Inject("DATABASE") private readonly db: Database,
+    private readonly repository: WorkspaceRepository,
+  ) {}
 
   public async context(userId: string, workspaceId: string): Promise<WorkspaceContext> {
     const membership = await this.db.workspaceMembership.findUnique({
@@ -12,7 +16,10 @@ export class WorkspaceService {
     });
     if (!membership || membership.workspace.archivedAt)
       throw new ForbiddenException("Workspace access denied");
-    return { workspaceId, userId, role: membership.role };
+    const context = { workspaceId, userId, role: membership.role };
+    const workspace = await this.repository.findById(context, workspaceId);
+    if (!workspace || workspace.archivedAt) throw new ForbiddenException("Workspace access denied");
+    return context;
   }
 
   public async create(userId: string, name: string): Promise<{ id: string; name: string }> {

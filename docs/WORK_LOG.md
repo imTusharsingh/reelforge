@@ -169,3 +169,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: npm package download through Corepack and GitHub branch push only; no provider calls or spend. Disposable PostgreSQL container was stopped after migration verification.
 - Decision/approval: No approval or integration is claimed. PR #4 remains for Minu review; only the repository owner merges after written approval.
 - Next action: Commit and push this review-fix head to `work/m01-identity-and-workspace`, then report the new SHA to the requester.
+
+## 2026-11-06 - M01 clean typecheck re-review fix
+- Actor/session: Codex Module Implementation Agent; addressing Minu's re-review on PR #4.
+- Changes made: Made `@reelforge/database` expose source types for clean API typechecking; made the API typecheck script generate Prisma before compiling; wired `WorkspaceRepository.findById` into workspace context verification; and corrected STATUS T02 to explicitly include update.
+- Clean verification: Removed `packages/database/dist`; `corepack pnpm install --frozen-lockfile` and `corepack pnpm typecheck` passed with Node `v24.22.2` and pnpm `12.16.1`.
+- Full verification: `corepack pnpm lint`, `corepack pnpm format:check`, `corepack pnpm typecheck`, `corepack pnpm test` (4 files / 12 tests), `corepack pnpm build`, `corepack pnpm db:validate`, and disposable PostgreSQL 18.6 `corepack pnpm db:migrate:deploy` all passed.
+- Decision/approval: No approval or integration is claimed. Only the assigned branch will be pushed; owner-only merge rules remain in force.
