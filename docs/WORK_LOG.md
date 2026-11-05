@@ -205,3 +205,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Reviewer feedback addressed: added Nest `@Injectable()`/`@Inject("DATABASE")` wiring; restricted snapshot payloads to channel configuration fields; snapshot selection now applies the selected configuration and pointer in one transaction; added workspace-scoped ordered snapshot discovery.
 - Verification: API typecheck, lint, and full test suite passed. PR CI quality migration job passed at https://github.com/imTusharsingh/reelforge/actions/runs/42088286321/job/127459211782. Local migration deployment remains unverified due to PostgreSQL P1000 credentials failure.
 - No approval or integration is claimed; Minu should re-review the new head.
+
+## 2026-11-06 - M02 nullable channel configuration fix
+- Reviewer feedback addressed: persisted `null` values for optional channel identity and policy fields are now treated as absent during configuration snapshot validation. Added a regression test for a name-only channel row before PATCH snapshot creation.
+- Verification: API typecheck, lint, full test suite (5 files / 16 tests), and `git diff --check` passed.
+- No approval or integration is claimed; Minu should re-review the updated head.

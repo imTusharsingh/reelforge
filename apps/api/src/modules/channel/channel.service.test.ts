@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ForbiddenException } from "@nestjs/common";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
-import { ChannelService } from "./channel.service.js";
+import { ChannelService, configurationFromRow } from "./channel.service.js";
 
 const context = (
   workspaceId: string,
@@ -26,6 +26,25 @@ function database(channel: {
 }
 
 describe("ChannelService tenant and autonomy boundaries", () => {
+  it("accepts nullable optional fields from a persisted minimal channel", () => {
+    expect(
+      configurationFromRow({
+        name: "Minimal channel",
+        handle: null,
+        description: null,
+        niche: null,
+        language: null,
+        audience: null,
+        timezone: "UTC",
+        goals: null,
+        schedule: null,
+        automationDefaults: null,
+        approvalPolicy: null,
+        publishingDestinations: null,
+      }),
+    ).toEqual({ name: "Minimal channel", timezone: "UTC" });
+  });
+
   it("denies a cross-workspace channel lookup", async () => {
     const service = new ChannelService(database({ id: "c1", workspaceId: "w1", status: "ACTIVE" }));
     await expect(service.get(context("w2"), "c1")).rejects.toThrow("Channel not found");

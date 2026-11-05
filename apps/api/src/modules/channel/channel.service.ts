@@ -19,7 +19,7 @@ const jsonKeys = [
 ] as const;
 
 function clean(value: unknown, field: string): string | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === null) return undefined;
   if (typeof value !== "string" || value.trim() === "")
     throw new BadRequestException(`${field} must be a non-empty string`);
   return value.trim();
@@ -44,7 +44,7 @@ function validateInput(body: unknown, partial: boolean): ChannelInput | ChannelP
   }
   if (!partial && !result.name) throw new BadRequestException("name must be provided");
   for (const key of jsonKeys) {
-    if (input[key] !== undefined) result[key] = input[key] as JsonValue;
+    if (input[key] !== undefined && input[key] !== null) result[key] = input[key] as JsonValue;
   }
   return result as ChannelInput | ChannelPatch;
 }
@@ -71,7 +71,7 @@ function updateData(input: ChannelPatch): Record<string, string | JsonValue> {
   return data;
 }
 
-function configurationFromRow(row: Record<string, unknown>): ChannelInput {
+export function configurationFromRow(row: Record<string, unknown>): ChannelInput {
   return validateInput(
     {
       name: row.name,
