@@ -114,6 +114,7 @@ All commands were run from the repository root unless noted. `DATABASE_URL` poin
 | `prisma migrate diff --from-config-datasource --to-schema ...` | M04 changes are absent from the diff; only pre-existing M02/M03 drift remains (channel active-snapshot FK name, genre ID DB defaults). Not introduced by M04. |
 | Real database smoke flow via temporary Vitest test | **PASSED** — created a workspace, selected `starter-nova`, wrote real PNG bytes, published v1, recorded `CHARACTER_VERSION` usage, resolved the reference package, uploaded asset v2, and resolved v1/v2 by root ID. Temporary test was removed after running. |
 | `git diff --check` | **PASSED** — no whitespace errors. |
+| GitHub Actions `quality` on PR #10 | **PASSED** — both check runs completed successfully (`42102173141` / `42102234899`). |
 
 ## Contract/schema changes requested
 - Additive Prisma schema and one new migration, as listed above. No `packages/contracts` change is proposed; T07 is exposed as a versioned HTTP API under `/api/v1`.
@@ -134,6 +135,7 @@ All commands were run from the repository root unless noted. `DATABASE_URL` poin
 Core Reviewer (Minu) should review the branch/PR against the M04 acceptance criteria, especially storage honesty, workspace scoping, immutable versioning, and the starter-asset rights approach. If changes are requested, address them on `work/m04-characters-and-asset-library`; do not merge.
 
 ## Handoff notes
+- Pull request: https://github.com/imTusharsingh/reelforge/pull/10 (open, not merged; CI `quality` passed).
 - Branch is based on M03 closeout `fba08da1dfc12a8a68bdd29610fd24469b514d58`.
 - Do not mark APPROVED/INTEGRATED/DONE; only the reviewer/owner can do that.
 - To reproduce database verification, run a disposable PostgreSQL instance and export `DATABASE_URL`, then run `pnpm db:migrate:deploy`.

@@ -254,3 +254,4 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Contract/schema: Additive schema/migration only; no `packages/contracts` change. The storage port stays module-local until M10 owns `packages/media`. Starter artwork is embedded project-authored placeholder media, not downloaded or provider-generated.
 - Decision/approval: No approval or integration is claimed. State is `IMPLEMENTED_PENDING_REVIEW`; Minu/Core Reviewer must review, and only the repository owner merges after written approval.
 - Known gaps: S3-compatible storage is not implemented and `STORAGE_DRIVER=s3` fails loudly; legacy assets are backfilled but remain non-referenceable; M03 `characterGroupRefs` are not auto-synced; no download URL or asset archive endpoint.
+- Pull request: https://github.com/imTusharsingh/reelforge/pull/10 opened for review; GitHub Actions `quality` check passed (runs `42102173141`, `42102234899`). Not merged and not marked approved.
