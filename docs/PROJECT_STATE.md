@@ -2,20 +2,20 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-05  
+**Last updated:** 2026-11-06
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M01 integrated; M02 next).
+- **Overall phase:** Phase 1 in progress (M01–M02 integrated; M03 next).
 - **Current release:** v1.
-- **Current integrated commit:** `4944f5d74200c65cbcca99405cf680245946201a` (`git rev-parse origin/main`; owner merge of M01 PR #4).
+- **Current integrated commit:** `216de538c86915f6f590ba7401b7d4cfc4e8f05c` (`git rev-parse origin/main`; owner merge of M02 PR #6).
 - **Active implementation sessions:** none.
-- **Active work packages:** none (M01 integrated; M02 not yet assigned on a branch).
+- **Active work packages:** none (M02 integrated; M03 not yet assigned on a branch).
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M01 at `519b3ab2bd6a81a516c66d21036051edb9c54894`; owner merged via PR #4 at `4944f5d74200c65cbcca99405cf680245946201a`.
+- **Latest core review:** Minu approved M02 at `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merged via PR #6 at `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
 
 ## Frozen architecture summary
 
@@ -30,10 +30,10 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M01 integrated; M02 next**
+**Phase 1 in progress - M01–M02 integrated; M03 next**
 
 Next exact action:
-1. Start M02 (Channel & Brand Management) when Minu assigns it.
+1. Start M03 (Genres, Formats & Content Series) when Minu assigns it.
 
 ## Module status index
 
@@ -41,7 +41,7 @@ Next exact action:
 |---|---|---|---|---|
 | M00 - Repository Governance & Shared Contracts | INTEGRATED | `main` (PR #2) | `626187aae7ffb6f8eba0bdbcff237f191ad0b904` | none |
 | M01 - Identity & Workspace | INTEGRATED | `main` (PR #4) | `519b3ab2bd6a81a516c66d21036051edb9c54894` | none |
-| M02 - Channel & Brand Management | NOT_STARTED | none | none | none recorded |
+| M02 - Channel & Brand Management | INTEGRATED | `main` (PR #6) | `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` | none |
 | M03 - Genres, Formats & Content Series | NOT_STARTED | none | none | none recorded |
 | M04 - Characters & Asset Library | NOT_STARTED | none | none | none recorded |
 | M05 - Configuration & Prompt Engine | NOT_STARTED | none | none | none recorded |
@@ -60,7 +60,7 @@ Next exact action:
 | M18 - Usage, Budget & Billing Foundation | NOT_STARTED | none | none | none recorded |
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 
-M02–M19 remain `NOT_STARTED`. M02 starts when Minu assigns it.
+M03–M19 remain `NOT_STARTED`. M03 starts when Minu assigns it.
 
 
 ## Open decisions
@@ -72,6 +72,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-05: Initial project pack and v1 baseline created.
 - 2026-11-05: M00 integrated by the owner via PR #2 at merge commit `8fdcab55bd121a695c76108f59dc3377a4c50940`, from Minu-approved head `626187aae7ffb6f8eba0bdbcff237f191ad0b904`.
 - 2026-11-05/06: M01 integrated via PR #4. Minu approved head `519b3ab2bd6a81a516c66d21036051edb9c54894` (review 5789945311); owner merge `4944f5d74200c65cbcca99405cf680245946201a`.
+- 2026-11-05/06: M02 integrated via PR #6. Minu approved head `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merge `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
 
 ## How a new session resumes
 
