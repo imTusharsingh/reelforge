@@ -13,9 +13,9 @@
 - **Current release:** v1.
 - **Current integrated commit:** `8fdcab55bd121a695c76108f59dc3377a4c50940` (owner merge of M00 PR #2).
 - **Active implementation sessions:** none.
-- **Active work packages:** M00 closeout chore (`chore/m00-closeout`), pushed; PR creation and Minu review pending.
+- **Active work packages:** M00 closeout chore PR #3 (`chore/m00-closeout`), open and awaiting Minu's review.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** M00 approved by Minu at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`; product work merged by the owner via PR #2. The closeout chore awaits PR creation and Minu review.
+- **Latest core review:** M00 approved by Minu at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`; product work merged by the owner via PR #2. Closeout chore PR #3 is open and awaits Minu's review.
 
 ## Frozen architecture summary
 
@@ -33,7 +33,7 @@
 **Phase 0 - Governance and repository foundation: complete**
 
 Next exact actions:
-1. Open the pushed M00 closeout branch as a PR, obtain Minu's written review, then the repository owner merges it.
+1. Complete review fixes on M00 closeout PR #3, obtain Minu's written approval, then the repository owner merges it.
 2. Start Phase 1 with M01 (Identity & Workspace), following Minu's Phase 1 plan.
 
 ## Module status index

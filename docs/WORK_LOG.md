@@ -137,3 +137,17 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: PR cannot be opened or reviewer requested until GitHub authentication/tool access is available.
 - Next exact action: Create PR titled `chore: M00 closeout and repo hygiene` from `chore/m00-closeout` to `main`, request Minu's review, and do not merge.
 - Related status/ADR: `docs/PROJECT_STATE.md`; M00 `STATUS.md`; ADR-013.
+
+
+## 2026-11-05 - M00 closeout PR #3 review fixes
+- Actor/session: Codex Module Implementation Agent; addressing Minu's review on PR #3.
+- Work package: M00 closeout and repository hygiene; product M00 remains integrated via PR #2.
+- Branch and starting head: `chore/m00-closeout`, `0497106c4e572cfd2b0124930cb6b7566e638ee6`.
+- Changes made: Formatted the workspace with Prettier, corrected M00 product/chore status wording, updated the project snapshot to show PR #3 open awaiting review, clarified that `.env.example` must be exported, and added `pnpm format:check` to CI after lint. No runtime behavior, schema, migration, or shared contract changes.
+- Files/areas changed: Root README and package/config files, app entry files/configs, `packages/contracts/src/api.ts` and its test, `.env.example`, `.github/workflows/ci.yml`, `docs/PROJECT_STATE.md`, and M00 `STATUS.md`.
+- Commands actually run and results (Node `24.22.2`, pnpm `12.16.1`, placeholder `DATABASE_URL` exported): `pnpm install --frozen-lockfile` **passed** (12 workspace projects; lockfile current); `pnpm exec prettier --write .` **passed**; `pnpm format:check` **passed** (all matched files use Prettier style); `pnpm lint` **passed**; `pnpm typecheck` **passed** across workspaces, including Prisma Client generation; `pnpm test` **passed** (3 files, 9 tests); `pnpm build` **passed** with `NEXT_TELEMETRY_DISABLED=1`; `git diff --check` **passed** after the review fixes.
+- External calls: Package registry access for pinned tooling/dependencies only; no provider calls or spend.
+- Decisions/approvals: Minu's review items addressed. This chore remains `IMPLEMENTED_PENDING_REVIEW`; no approval or merge is claimed. Only the owner merges after Minu's written approval.
+- Defects/risks/blockers: Checks used the pinned versions from temporary paths because the default shell PATH does not include them. CI has not run on this follow-up head yet.
+- Next exact action: Review diff, commit, and push only `chore/m00-closeout`; request Minu's re-review. Do not merge.
+- Related status/ADR: PR #3; M00 `STATUS.md`; ADR-012 and ADR-013.

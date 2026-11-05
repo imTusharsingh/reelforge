@@ -2,9 +2,10 @@
 
 ## Closeout chore scope (2026-11-05)
 
-This branch closes M00 after owner merge of PR #2, records the approved dependency pins and owner-only merge process, adds a placeholder `.env.example`, and corrects Prettier's generated-client ignore path and format check. Product M00 will be recorded as integrated; this closeout chore remains pending Minu review until its own PR is reviewed.
+This branch closes M00 after owner merge of PR #2, records the approved dependency pins and owner-only merge process, adds a placeholder `.env.example`, and corrects Prettier's generated-client ignore path. The format check remained failing until the follow-up formatting fixes requested in PR #3 review. Product M00 is integrated; this closeout chore remains pending Minu review until its own PR is reviewed.
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
+- **Closeout chore PR #3:** IMPLEMENTED_PENDING_REVIEW
 - **M00 product state:** INTEGRATED via PR #2; this closeout chore is pending its own review.
 - **Assigned session/editor:** Codex implementation session
 - **Branch/worktree:** `chore/m00-closeout` (based on integrated `main`)
@@ -112,10 +113,10 @@ Core Reviewer required changes 1–5 were implemented on `work/m00-monorepo-foun
 - **Requested tasks:** Record the verified M00 PR #2 integration in project state and status, append the closeout work log and ADRs, add a placeholder-only `.env.example`, correct Prettier ignores, and enable `format:check` in CI only if it passes locally.
 - **Dependencies:** Owner-merged M00 PR #2 on `main`; no product module changes.
 - **Branch/base:** `chore/m00-closeout` from `main` at `8fdcab55bd121a695c76108f59dc3377a4c50940`.
-- **Known environment limit:** Node.js/pnpm/Corepack and `gh` are absent from PATH in this checkout; required package checks and GitHub PR creation may not be available.
+- **Initial environment note:** Node.js/pnpm/Corepack and `gh` were absent from the default PATH when this closeout branch was prepared. Node 24.22.2 and pnpm 12.16.1 have since been provisioned in temporary paths for review verification; `gh` remains unavailable.
 
 ## Next exact action
-Open the pushed closeout branch as a PR and request Minu review. Only the owner merges after Minu's written approval. After closeout, Phase 1 starts with M01 per Minu's plan.
+Address Minu's PR #3 review, push the updated `chore/m00-closeout` branch, and request re-review. Only the owner merges after Minu's written approval. After closeout, Phase 1 starts with M01 per Minu's plan.
 
 ## Handoff notes
 Product M00 is integrated by the owner through PR #2. This branch contains only the closeout and hygiene scope; the closeout chore PR awaits Minu's review.
@@ -134,7 +135,7 @@ Product M00 is integrated by the owner through PR #2. This branch contains only 
 ## M00 closeout chore evidence (2026-11-05)
 - Product M00 approval: Minu approved at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`.
 - Product M00 integration: owner merged PR #2 to `main`; verified merge commit `8fdcab55bd121a695c76108f59dc3377a4c50940`.
-- This branch's work: project state/status closeout, append-only ADR-012 and ADR-013, local-only `.env.example`, and Prettier ignore correction. Chore state remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's review.
+- This branch's work: project state/status closeout, append-only ADR-012 and ADR-013, local-only `.env.example`, and Prettier ignore correction. Product M00 state is `INTEGRATED`; chore PR #3 remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's review.
 - `git diff --check`: **passed**.
 - `git check-ignore .env`: **passed**; `.env` is ignored. `.env.example` is explicitly allowed by the existing `!.env.example` rule.
 - `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm format:check`: **not run successfully**; each command exited 127 because `pnpm` is not installed or available in PATH. Node.js is also unavailable. CI remains unchanged because local `pnpm format:check` did not pass.
@@ -142,3 +143,9 @@ Product M00 is integrated by the owner through PR #2. This branch contains only 
 - No schema, migration, product code, or shared contract changes were made.
 - Branch push: `git push -u origin chore/m00-closeout` **passed**; branch is published at the current head.
 - PR creation: **not completed**. The environment has no `gh` CLI, and the browser is signed out of GitHub; the available GitHub UI returned a sign-in/404 page for this private repository.
+
+## PR #3 review follow-up (2026-11-05)
+- Minu's requested workspace formatting was applied with `pnpm exec prettier --write .`; `pnpm format:check` now passes, so CI runs it after lint.
+- Updated `.env.example` usage guidance and the project/M00 status wording. Product M00 remains `INTEGRATED`; closeout chore PR #3 remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's re-review.
+- With Node 24.22.2, pnpm 12.16.1, and placeholder `DATABASE_URL`: frozen install, lint, typecheck, tests (3 files / 9 tests), build, and format check all passed. CI on the follow-up head remains pending.
+- Next exact action: push the review fixes to `chore/m00-closeout` and request Minu's re-review; only the owner merges after written approval.
