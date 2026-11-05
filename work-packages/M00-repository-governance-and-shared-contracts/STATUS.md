@@ -110,3 +110,10 @@ PR #2 is open and remains unmerged. Review fixes are committed on the assigned b
 
 ## Reviewer decision
 - Changes requested on PR #2; changes 1–5 implemented and awaiting re-review. No approval or integration is claimed.
+
+## CI follow-up (2026-11-05)
+- Updated the workflow runner to `ubuntu-24.04` and GitHub Actions to `actions/checkout@v7`, `pnpm/action-setup@v6`, and `actions/setup-node@v7` to remove the Node 20 deprecation warning and future runner migration notice. Versions were checked against their official release pages before the workflow change.
+- Local `pnpm exec prettier --check .github/workflows/ci.yml` and `git diff --check`: **passed** before commit `b944dd6bb168ac261534a0baf460078d85f897b2`.
+- GitHub Actions push run [42022606398](https://github.com/imTusharsingh/reelforge/actions/runs/42022606398): **passed** on `b944dd6`; quality job completed in 1m 32s, 3 test files / 9 tests.
+- GitHub Actions pull request run [42022612235](https://github.com/imTusharsingh/reelforge/actions/runs/42022612235): **passed** on `b944dd6`; quality job completed in 1m 21s, 3 test files / 9 tests.
+- No provider credentials or external provider calls were used. PR #2 remains open and unmerged.

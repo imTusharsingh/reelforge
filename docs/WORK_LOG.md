@@ -95,3 +95,15 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: New migration intentionally aborts if existing outbox rows are not one of the known post events with a valid `postId`, avoiding fabricated aggregate IDs. Optional populated-row backfill probe remains unverified.
 - Next exact action: Push the review fixes to the same branch and request Minu's re-review of PR #2; do not merge.
 - Related status/ADR: PR #2; M00 `STATUS.md`; `docs/PIPELINES.md` sections 5–7.
+
+## 2026-11-05 - M00 PR check follow-up
+- Actor/session: Codex implementation session; follow-up requested for PR #2 CI checks.
+- Work package: M00 - Repository Governance & Shared Contracts.
+- Branch and commit: `work/m00-monorepo-foundation`; workflow fix `b944dd6bb168ac261534a0baf460078d85f897b2`.
+- Starting state: PR #2 was open; previous GitHub Actions checks passed with Node 20 deprecation warnings and an `ubuntu-latest` migration notice.
+- Changes made: Pinned runner to `ubuntu-24.04`; updated checkout, pnpm setup, and setup-node actions to v7, v6, and v7 respectively. No source, schema, or migration changes.
+- Commands/results: `pnpm exec prettier --check .github/workflows/ci.yml` passed; `git diff --check` passed. GitHub push run [42022606398](https://github.com/imTusharsingh/reelforge/actions/runs/42022606398) passed (3 test files / 9 tests); pull request run [42022612235](https://github.com/imTusharsingh/reelforge/actions/runs/42022612235) passed (3 test files / 9 tests).
+- External calls: None to AI/social providers. CI used its ephemeral local Postgres service.
+- Decisions/approvals: No approval or integration decision claimed.
+- Defects/risks/blockers: None observed in these checks.
+- Next exact action: Request Minu's review of PR #2; do not merge.
