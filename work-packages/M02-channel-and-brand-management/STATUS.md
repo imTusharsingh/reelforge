@@ -7,7 +7,7 @@
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 - **Review PR:** https://github.com/imTusharsingh/reelforge/pull/6
-- **Implementation head:** `41fdcc49817eeb144e01d7daa9467735bd13bd29`
+- **Implementation head:** pending fix commit
 
 ## Current objective
 Manage multiple independently configured channels within a workspace.
@@ -38,6 +38,7 @@ M02 owns the channel aggregate: CRUD/lifecycle, identity and brand profile, chan
 - `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public pnpm build` - PASS.
 - `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public pnpm db:validate` - PASS.
 - `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public pnpm db:migrate:deploy` - NOT PASS: local PostgreSQL returned Prisma P1000 authentication failure for `postgres`; migration was not deployed.
+- PR CI quality migration job - PASS: [CI run](https://github.com/imTusharsingh/reelforge/actions/runs/42088286321/job/127459211782). Local deployment remains unverified because the local server rejected credentials.
 
 ## Contract/schema proposals
 - Additive schema requested: Channel identity/policy JSON fields, `ChannelStatus`, and `ChannelConfigSnapshot`; migration is present on this branch and requires Core review before integration.
@@ -47,6 +48,7 @@ M02 owns the channel aggregate: CRUD/lifecycle, identity and brand profile, chan
 - No web UI was added because the baseline has no `apps/web/src` feature structure; API CRUD/overview is the exercised surface.
 - The migration deployment could not be verified against local PostgreSQL because credentials were rejected.
 - Destination values are configuration references/intents only; OAuth and provider calls remain outside M02.
+- Review follow-ups addressed: `ChannelService` now uses Nest DI, snapshots contain only configuration fields, snapshot selection applies configuration transactionally, and ordered snapshot listing is available at `GET /workspaces/:workspaceId/channels/:channelId/snapshots`.
 
 ## Next exact action
 Core Reviewer should inspect the additive migration and API boundary, rerun database deployment with valid disposable PostgreSQL credentials, then review the branch before owner merge.

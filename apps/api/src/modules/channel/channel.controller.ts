@@ -39,6 +39,13 @@ export class ChannelController {
   ): Promise<unknown> {
     return this.channels.create(await this.context(request, workspaceId), body);
   }
+  @Get(":channelId/snapshots") public async snapshots(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("channelId") channelId: string,
+  ): Promise<unknown> {
+    return this.channels.listSnapshots(await this.context(request, workspaceId), channelId);
+  }
   @Get(":channelId") public async get(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,

@@ -200,3 +200,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Contract/schema: Additive Channel fields, ChannelStatus, and ChannelConfigSnapshot are present in the M02 migration; no contracts package change was needed.
 - Decisions/approval: No approval or integration is claimed. OAuth/social linking, provider calls, genres, characters, workflow jobs, analytics, and billing remain out of scope.
 - Next action: Push this branch and open PR `M02: channel and brand management` for Minu's review; only the repository owner merges after written approval.
+
+## 2026-11-06 - M02 review fixes
+- Reviewer feedback addressed: added Nest `@Injectable()`/`@Inject("DATABASE")` wiring; restricted snapshot payloads to channel configuration fields; snapshot selection now applies the selected configuration and pointer in one transaction; added workspace-scoped ordered snapshot discovery.
+- Verification: API typecheck, lint, and full test suite passed. PR CI quality migration job passed at https://github.com/imTusharsingh/reelforge/actions/runs/42088286321/job/127459211782. Local migration deployment remains unverified due to PostgreSQL P1000 credentials failure.
+- No approval or integration is claimed; Minu should re-review the new head.

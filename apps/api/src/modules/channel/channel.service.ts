@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { ChannelRepository } from "./channel.repository.js";
 import type { ChannelInput, ChannelPatch, ChannelStatus, JsonValue } from "./channel.types.js";
@@ -65,9 +71,30 @@ function updateData(input: ChannelPatch): Record<string, string | JsonValue> {
   return data;
 }
 
+function configurationFromRow(row: Record<string, unknown>): ChannelInput {
+  return validateInput(
+    {
+      name: row.name,
+      handle: row.handle,
+      description: row.description,
+      niche: row.niche,
+      language: row.language,
+      audience: row.audience,
+      timezone: row.timezone,
+      goals: row.goals,
+      schedule: row.schedule,
+      automationDefaults: row.automationDefaults,
+      approvalPolicy: row.approvalPolicy,
+      publishingDestinations: row.publishingDestinations,
+    },
+    false,
+  ) as ChannelInput;
+}
+
+@Injectable()
 export class ChannelService {
   private readonly repository: ChannelRepository;
-  public constructor(private readonly db: Database) {
+  public constructor(@Inject("DATABASE") private readonly db: Database) {
     this.repository = new ChannelRepository(db);
   }
 
@@ -122,7 +149,7 @@ export class ChannelService {
           workspaceId: context.workspaceId,
           channelId: id,
           version: (latest?.version ?? 0) + 1,
-          config: { ...channel },
+          config: configurationFromRow(channel as unknown as Record<string, unknown>),
         },
       });
       return tx.channel.update({
@@ -156,10 +183,22 @@ export class ChannelService {
       where: { workspaceId: context.workspaceId, channelId: id, id: snapshotId },
     });
     if (!snapshot) throw new NotFoundException("Channel configuration snapshot not found");
-    return this.db.channel.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-      data: { activeSnapshotId: snapshot.id },
-      include: { activeSnapshot: true },
+    const config = validateInput(snapshot.config, false) as ChannelInput;
+    return this.db.$transaction(async (tx) =>
+      tx.channel.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+        data: { ...updateData(config), activeSnapshotId: snapshot.id },
+        include: { activeSnapshot: true },
+      }),
+    );
+  }
+
+  public async listSnapshots(context: WorkspaceContext, id: string): Promise<unknown> {
+    await this.get(context, id);
+    return this.db.channelConfigSnapshot.findMany({
+      where: { workspaceId: context.workspaceId, channelId: id },
+      select: { id: true, channelId: true, version: true, createdAt: true, config: true },
+      orderBy: { version: "desc" },
     });
   }
 
