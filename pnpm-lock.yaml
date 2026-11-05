@@ -205,6 +205,9 @@ importers:
       '@nestjs/platform-express':
         specifier: 12.3.3
         version: 12.3.3(@nestjs/common@12.3.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.3.3)
+      '@reelforge/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       express:
         specifier: 5.3.0
         version: 5.3.0
