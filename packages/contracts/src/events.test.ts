@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRegisteredEvent } from "./events.js";
+import { eventRegistry, parseRegisteredEvent } from "./events.js";
 
 const validEvent = {
   eventId: "d92c8b44-2cf3-4e87-a4fc-9488f4bc6be1",
@@ -24,6 +24,26 @@ describe("registered event contracts", () => {
   });
 
   it("rejects an unknown event type", () => {
-    expect(() => parseRegisteredEvent({ ...validEvent, eventType: "Unknown" })).toThrow("Unregistered event type");
+    expect(() => parseRegisteredEvent({ ...validEvent, eventType: "Unknown" })).toThrow(
+      "Unregistered event version: Unknown@1",
+    );
+  });
+
+  it("rejects an unregistered version of a known event", () => {
+    expect(() => parseRegisteredEvent({ ...validEvent, eventVersion: 2 })).toThrow(
+      "Unregistered event version: PostPublished@2",
+    );
+  });
+
+  it("exposes producer, consumers, and bounded retry/dead-letter metadata per version", () => {
+    const entry = eventRegistry["PostPublished@1"];
+
+    expect(entry.producerModule).toBe("M13-publishing-calendar-and-delivery");
+    expect(entry.consumers).toContain("M14-analytics-collection-and-metric-store");
+    expect(entry.retryPolicy).toMatchObject({
+      maxAttempts: 5,
+      strategy: "exponential",
+      deadLetterQueue: "reelforge.events.dead-letter",
+    });
   });
 });

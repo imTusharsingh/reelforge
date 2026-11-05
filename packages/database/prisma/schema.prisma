@@ -13,6 +13,31 @@ enum WorkspaceRole {
   VIEWER
 }
 
+enum PublishStatus {
+  DRAFT
+  SCHEDULED
+  PREFLIGHT
+  UPLOADING
+  REMOTE_PROCESSING
+  PUBLISHED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  CANCELED
+  RECONCILIATION_REQUIRED
+}
+
+enum WorkflowState {
+  CREATED
+  QUEUED
+  RUNNING
+  WAITING_APPROVAL
+  SUCCEEDED
+  PAUSED
+  RETRY_WAIT
+  FAILED
+  CANCELED
+}
+
 model User {
   id          String               @id @default(uuid()) @db.Uuid
   email       String               @unique
@@ -102,6 +127,7 @@ model Video {
   workspaceId String        @map("workspace_id") @db.Uuid
   channelId   String        @map("channel_id") @db.Uuid
   seriesId    String?       @map("series_id") @db.Uuid
+  // TODO(M10 composition): adopt the M10-owned video production status contract.
   status      String
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -120,7 +146,7 @@ model Post {
   channelId   String     @map("channel_id") @db.Uuid
   videoId     String     @map("video_id") @db.Uuid
   platform    String
-  status      String
+  status      PublishStatus
   remotePostId String?   @map("remote_post_id")
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -137,7 +163,7 @@ model WorkflowRun {
   workspaceId    String     @map("workspace_id") @db.Uuid
   correlationId  String     @map("correlation_id") @db.Uuid
   idempotencyKey String     @map("idempotency_key")
-  state          String
+  state          WorkflowState
   createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -154,6 +180,10 @@ model OutboxEvent {
   eventType      String     @map("event_type")
   eventVersion   Int        @map("event_version")
   correlationId  String     @map("correlation_id") @db.Uuid
+  channelId      String?    @map("channel_id") @db.Uuid
+  causationId    String?    @map("causation_id") @db.Uuid
+  aggregateType  String     @map("aggregate_type")
+  aggregateId    String     @map("aggregate_id") @db.Uuid
   idempotencyKey String     @map("idempotency_key")
   payload        Json
   occurredAt     DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(6)
