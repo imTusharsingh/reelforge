@@ -245,3 +245,25 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: None for this documentation update.
 - Next exact action: After this closeout is merged, Minu assigns M04 (Characters & Asset Library). Do not start M04 in this chore.
 - Related status/ADR: `docs/PROJECT_STATE.md`; M03 `STATUS.md`; PR #8. No new ADR required.
+
+## 2026-11-06 - M04 characters and asset library implementation handoff
+- Actor/session: Module Implementation Agent; branch `work/m04-characters-and-asset-library`, based on M03 closeout `fba08da1dfc12a8a68bdd29610fd24469b514d58`.
+- Work package: M04 - Characters & Asset Library.
+- Changes made: Added additive Prisma models/fields and one migration for asset versioning/rights/usage references, character templates, characters, immutable character versions, groups, pinned group membership, and channel/series assignments. Added authenticated workspace-scoped asset upload/version/reference APIs with a real local filesystem storage adapter, runtime media-type/size/content validation, SHA-256 checksums, and honest failure when storage fails. Added starter character catalog with project-authored CC0-1.0 PNG bytes, character profile/version/publish APIs, group membership/assignment APIs, and immutable character/group reference-package APIs. Character publish records exact asset versions as usage references.
+- Verification: `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (11 files / 42 tests), `pnpm build`, `pnpm db:validate`, and `pnpm db:migrate:deploy` passed. `pnpm install --frozen-lockfile` failed only because this environment has Node 24.16.0 while the repo pins 24.22.2; the same command with `--config.engine-strict=false` passed and reported the lockfile up to date. A temporary real-database smoke test created a starter character, published it, resolved its reference package, and uploaded asset v2; it passed and was removed. `git diff --check` passed.
+- Contract/schema: Additive schema/migration only; no `packages/contracts` change. The storage port stays module-local until M10 owns `packages/media`. Starter artwork is embedded project-authored placeholder media, not downloaded or provider-generated.
+- Decision/approval: No approval or integration is claimed. State is `IMPLEMENTED_PENDING_REVIEW`; Minu/Core Reviewer must review, and only the repository owner merges after written approval.
+- Known gaps: S3-compatible storage is not implemented and `STORAGE_DRIVER=s3` fails loudly; legacy assets are backfilled but remain non-referenceable; M03 `characterGroupRefs` are not auto-synced; no download URL or asset archive endpoint.
+- Pull request: https://github.com/imTusharsingh/reelforge/pull/10 opened for review; GitHub Actions `quality` check passed (runs `42102173141`, `42102234899`). Not merged and not marked approved.
+
+## 2026-11-06 - M04 review follow-up tests
+- Actor/session: Module Implementation Agent; branch `work/m04-characters-and-asset-library`.
+- Reviewer feedback addressed: added explicit cross-workspace denial tests for character reads/publish and character-group reads/update/assignment, plus direct upload validation tests for empty, wrong-MIME, and oversized payloads.
+- Verification: focused Vitest run passed (2 files / 13 tests); typecheck passed with the documented local `DATABASE_URL`; `git diff --check` passed.
+- No production behavior, schema, contract, or provider integration changes were made.
+- PR #10 remains open and requires Minu review; no approval, integration, or merge is claimed.
+
+## 2026-11-06 - M04 CI formatting fix
+- CI failure cause: `pnpm format:check` rejected the newly added `asset.validation.test.ts`; lint and install had passed.
+- Fix: applied repository Prettier formatting to the test file.
+- Verification: `pnpm format:check` passed; focused tests passed (2 files / 13 tests); typecheck passed with local `DATABASE_URL`.

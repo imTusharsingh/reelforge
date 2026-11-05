@@ -44,6 +44,30 @@ enum ChannelStatus {
   ARCHIVED
 }
 
+enum AssetOwnership {
+  USER_UPLOADED
+  STARTER_LIBRARY
+  SYSTEM_GENERATED
+}
+
+enum AssetStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+enum CharacterStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CharacterVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
 model User {
   id          String               @id @default(uuid()) @db.Uuid
   email       String               @unique
@@ -70,6 +94,12 @@ model Workspace {
   channels     Channel[]
   genres       Genre[]
   assets       Asset[]
+  characters   Character[]
+  characterVersions CharacterVersion[]
+  characterGroups CharacterGroup[]
+  characterGroupMembers CharacterGroupMember[]
+  characterGroupAssignments CharacterGroupAssignment[]
+  assetUsageReferences AssetUsageReference[]
   workflowRuns WorkflowRun[]
   outboxEvents OutboxEvent[]
   defaultForUsers User[]            @relation("UserDefaultWorkspace")
@@ -146,6 +176,7 @@ model Channel {
   series      ContentSeries[]
   videos      Video[]
   posts       Post[]
+  characterGroupAssignments CharacterGroupAssignment[]
   snapshots   ChannelConfigSnapshot[]
   activeSnapshot ChannelConfigSnapshot? @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
@@ -186,6 +217,7 @@ model ContentSeries {
   channel     Channel    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
   genre       Genre      @relation(fields: [workspaceId, genreId], references: [workspaceId, id], onDelete: Restrict)
   videos      Video[]
+  characterGroupAssignments CharacterGroupAssignment[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId])
@@ -234,16 +266,35 @@ model Genre {
 }
 
 model Asset {
-  id          String     @id @default(uuid()) @db.Uuid
-  workspaceId String     @map("workspace_id") @db.Uuid
-  objectKey   String     @map("object_key")
-  mediaType   String     @map("media_type")
-  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @map("workspace_id") @db.Uuid
+  objectKey        String         @map("object_key")
+  mediaType        String         @map("media_type")
+  filename         String?
+  byteSize         Int?           @map("byte_size")
+  checksumSha256   String?        @map("checksum_sha256")
+  version          Int            @default(1)
+  rootAssetId      String         @map("root_asset_id") @db.Uuid
+  supersedesAssetId String?       @map("supersedes_asset_id") @db.Uuid
+  ownership        AssetOwnership @default(USER_UPLOADED)
+  status           AssetStatus    @default(PENDING)
+  licenseType      String?        @map("license_type")
+  licenseTerms     String?        @map("license_terms")
+  rightsHolder     String?        @map("rights_holder")
+  rightsAttestedAt DateTime?      @map("rights_attested_at") @db.Timestamptz(6)
+  createdByUserId  String?        @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  supersedes       Asset?         @relation("AssetVersionChain", fields: [workspaceId, supersedesAssetId], references: [workspaceId, id], onDelete: Restrict)
+  versions         Asset[]        @relation("AssetVersionChain")
+  usageReferences  AssetUsageReference[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, objectKey])
+  @@unique([workspaceId, rootAssetId, version])
   @@index([workspaceId])
+  @@index([workspaceId, rootAssetId])
   @@map("assets")
 }
 
@@ -318,4 +369,143 @@ model OutboxEvent {
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, publishedAt, occurredAt])
   @@map("outbox_events")
+}
+
+model AssetUsageReference {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  assetId      String    @map("asset_id") @db.Uuid
+  assetVersion Int       @map("asset_version")
+  usedByType   String    @map("used_by_type")
+  usedById     String    @map("used_by_id") @db.Uuid
+  context      Json?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset        Asset     @relation(fields: [workspaceId, assetId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, assetId, assetVersion, usedByType, usedById])
+  @@index([workspaceId, usedByType, usedById])
+  @@map("asset_usage_references")
+}
+
+model CharacterTemplate {
+  id               String   @id @default(uuid()) @db.Uuid
+  key              String   @unique
+  name             String
+  description      String
+  personality      Json
+  voicePreference  Json     @map("voice_preference")
+  visualInvariants Json     @map("visual_invariants")
+  variationRules   Json     @map("variation_rules")
+  starterAssetKey  String?  @map("starter_asset_key")
+  rightsHolder     String   @map("rights_holder")
+  licenseType      String   @map("license_type")
+  licenseTerms     String   @map("license_terms")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  characters       Character[]
+
+  @@map("character_templates")
+}
+
+model Character {
+  id               String          @id @default(uuid()) @db.Uuid
+  workspaceId      String          @map("workspace_id") @db.Uuid
+  templateId       String?         @map("template_id") @db.Uuid
+  name             String
+  description      String?
+  personality      Json
+  voicePreference  Json            @map("voice_preference")
+  visualInvariants Json            @map("visual_invariants")
+  variationRules   Json            @map("variation_rules")
+  referenceAssets  Json            @default("[]") @map("reference_assets")
+  status           CharacterStatus @default(DRAFT)
+  activeVersionId  String?         @map("active_version_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template         CharacterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  versions         CharacterVersion[]
+  activeVersion    CharacterVersion? @relation("CharacterActiveVersion", fields: [workspaceId, activeVersionId], references: [workspaceId, id])
+  groupMemberships CharacterGroupMember[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, activeVersionId])
+  @@index([workspaceId])
+  @@map("characters")
+}
+
+model CharacterVersion {
+  id               String                 @id @default(uuid()) @db.Uuid
+  workspaceId      String                 @map("workspace_id") @db.Uuid
+  characterId      String                 @map("character_id") @db.Uuid
+  version          Int
+  status           CharacterVersionStatus @default(DRAFT)
+  profile          Json
+  referenceAssets  Json                   @map("reference_assets")
+  checksumSha256   String                 @map("checksum_sha256")
+  createdByUserId  String?                @map("created_by_user_id") @db.Uuid
+  publishedAt      DateTime?              @map("published_at") @db.Timestamptz(6)
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  character        Character              @relation(fields: [workspaceId, characterId], references: [workspaceId, id], onDelete: Cascade)
+  activeFor        Character?             @relation("CharacterActiveVersion")
+  groupMemberships CharacterGroupMember[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, characterId, id])
+  @@unique([workspaceId, characterId, version])
+  @@index([workspaceId, characterId, createdAt])
+  @@map("character_versions")
+}
+
+model CharacterGroup {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members     CharacterGroupMember[]
+  assignments CharacterGroupAssignment[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId])
+  @@map("character_groups")
+}
+
+model CharacterGroupMember {
+  id                 String           @id @default(uuid()) @db.Uuid
+  workspaceId        String           @map("workspace_id") @db.Uuid
+  groupId            String           @map("group_id") @db.Uuid
+  characterId        String           @map("character_id") @db.Uuid
+  characterVersionId String           @map("character_version_id") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  group              CharacterGroup   @relation(fields: [workspaceId, groupId], references: [workspaceId, id], onDelete: Cascade)
+  character          Character        @relation(fields: [workspaceId, characterId], references: [workspaceId, id], onDelete: Cascade)
+  characterVersion   CharacterVersion @relation(fields: [workspaceId, characterId, characterVersionId], references: [workspaceId, characterId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, groupId, characterId])
+  @@index([workspaceId, characterVersionId])
+  @@map("character_group_members")
+}
+
+model CharacterGroupAssignment {
+  id          String          @id @default(uuid()) @db.Uuid
+  workspaceId String          @map("workspace_id") @db.Uuid
+  groupId     String          @map("group_id") @db.Uuid
+  channelId   String?         @map("channel_id") @db.Uuid
+  seriesId    String?         @map("series_id") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  group       CharacterGroup  @relation(fields: [workspaceId, groupId], references: [workspaceId, id], onDelete: Cascade)
+  channel     Channel?        @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  series      ContentSeries?  @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, groupId, channelId])
+  @@unique([workspaceId, groupId, seriesId])
+  @@index([workspaceId, channelId])
+  @@index([workspaceId, seriesId])
+  @@map("character_group_assignments")
 }
