@@ -1,0 +1,30 @@
+{
+  "name": "reelforge",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": { "node": "24.22.2", "pnpm": "12.16.1" },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 --if-present build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @reelforge/database db:generate",
+    "db:validate": "pnpm --filter @reelforge/database db:validate",
+    "db:migrate:dev": "pnpm --filter @reelforge/database db:migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @reelforge/database db:migrate:deploy"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/express": "5.0.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

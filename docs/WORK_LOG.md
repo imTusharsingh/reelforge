@@ -35,3 +35,33 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: actual AI vendors/models, production hosting/KMS, email sender, and data-retention periods remain pending decisions.
 - Next exact action: establish Git repository and implement M00 only.
 - Related status/ADR: `docs/PROJECT_STATE.md`, `docs/DECISION_LOG.md`.
+
+## 2026-11-05 - M00 implementation started
+- Actor/session: Codex implementation session; ownership ruling from Minu, Core Reviewer.
+- Work package: M00 - Repository Governance & Shared Contracts.
+- Branch and commit: `work/m00-monorepo-foundation`, based on `773c1792dc9369172e8431944d979754dc9a1b30`.
+- Starting state: Planning pack only; clean `main` checkout.
+- Changes made: Started exact-pinned pnpm workspace, strict TypeScript/tooling, app/package bootstraps, shared API/event contracts, tenant-scoped Prisma baseline and migration policy, local Postgres CI, and repo governance guidance.
+- Files/areas changed: Root configs/docs, `.github/workflows/ci.yml`, `apps/{web,api,worker}`, `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}`, M00 status.
+- Commands actually run and results: Initial repository inspection only. Package install and quality/migration checks pending.
+- External calls: NONE to AI or social providers. Documentation/version research only.
+- Tests/evidence: No checks reported as passing yet.
+- Decisions/approvals: Minu authorized M00 edits to Core-owned files, 2026-11-05.
+- Defects/risks/blockers: Default shell PATH lacks Node/pnpm; npm registry DNS lookup failed. Need registry access to generate lockfile and run package checks.
+- Next exact action: Finish version records/docs, generate lockfile if package access is available, run checks, review diff, push branch, and open PR without merging.
+- Related status/ADR: M00 `STATUS.md`; ADR-002.
+
+## 2026-11-05 - M00 implementation verified
+- Actor/session: Codex implementation session; ownership ruling from Minu, Core Reviewer.
+- Work package: M00 - Repository Governance & Shared Contracts.
+- Branch and commit: `work/m00-monorepo-foundation`; implementation commit pending.
+- Starting state: M00 implementation in progress; version pins and lockfile generated.
+- Changes made: Completed pnpm workspace/apps/packages, strict TS/tooling, API and event contracts, Prisma baseline/migration policy, CI workflow, root governance docs/templates, and M00 status.
+- Files/areas changed: Root configs and README; `.github/workflows/ci.yml`; `apps/{web,api,worker}`; `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}`; contract versioning and work log; M00 status.
+- Commands actually run and results: `pnpm install --frozen-lockfile` passed initially (all 12 projects; lockfile up to date). `pnpm lint` passed. `pnpm typecheck` passed across 12 projects, including Prisma Client generation. `pnpm test` passed (2 files, 4 tests). Full `pnpm build` passed with Node 24.22.2, pnpm 12.16.1, telemetry disabled, and local `DATABASE_URL` outside the sandbox. `pnpm db:validate` passed. `pnpm db:migrate:deploy` passed against ephemeral Postgres 18.6; initial migration applied. `git diff --check` passed after final STATUS whitespace fix.
+- External calls: NONE to AI or social providers; Postgres container was local. Package registry accessed only for dependencies and lockfile.
+- Tests/evidence: M00 STATUS contains exact command outcomes and caveats. CI workflow itself was not run locally.
+- Decisions/approvals: Minu authorized M00 edits to Core-owned files, 2026-11-05. No approval/integration decision claimed.
+- Defects/risks/blockers: Sandbox Next build could not spawn TypeScript config check; elevated full build passed. Sandboxed reinstall hit read-only pnpm store lock after the initial successful install. Git author identity and GitHub PR path need resolution before handoff.
+- Next exact action: Commit reviewed changes, push branch, open PR to `main`, and request Minu review without merging.
+- Related status/ADR: M00 `STATUS.md`; ADR-002.
