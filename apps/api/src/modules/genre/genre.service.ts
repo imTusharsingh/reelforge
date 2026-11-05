@@ -31,15 +31,25 @@ function text(value: unknown, field: string): string {
     throw new BadRequestException(`${field} must be a non-empty string`);
   return value.trim();
 }
+function jsonArray(value: unknown, field: string): JsonValue[] {
+  if (!Array.isArray(value)) throw new BadRequestException(`${field} must be an array`);
+  return value as JsonValue[];
+}
+function jsonObject(value: unknown, field: string): { [key: string]: JsonValue } {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new BadRequestException(`${field} must be a non-null object`);
+  return value as { [key: string]: JsonValue };
+}
 function genreInput(body: unknown, partial = false): GenreInput | Partial<GenreInput> {
   const input = object(body, "Genre");
   const result: Record<string, unknown> = {};
   for (const field of required) {
     if (input[field] !== undefined || !partial)
-      result[field] =
-        field === "name" || field === "audience" || field === "tone" || field === "language"
-          ? text(input[field], field)
-          : input[field];
+      if (field === "name" || field === "audience" || field === "tone" || field === "language")
+        result[field] = text(input[field], field);
+      else if (field === "topicsAllowed" || field === "topicsBlocked")
+        result[field] = jsonArray(input[field], field);
+      else result[field] = jsonObject(input[field], field);
   }
   if (!partial && required.some((f) => result[f] === undefined))
     throw new BadRequestException("All genre fields are required");
@@ -52,8 +62,8 @@ function seriesInput(body: unknown): SeriesInput {
     genreId: text(input.genreId, "genreId"),
     format: text(input.format, "format"),
     frequency: text(input.frequency, "frequency"),
-    characterGroupRefs: (input.characterGroupRefs ?? []) as JsonValue,
-    promptRefs: (input.promptRefs ?? []) as JsonValue,
+    characterGroupRefs: jsonArray(input.characterGroupRefs ?? [], "characterGroupRefs"),
+    promptRefs: jsonArray(input.promptRefs ?? [], "promptRefs"),
   };
 }
 
@@ -73,10 +83,8 @@ export class GenreService {
       orderBy: { createdAt: "asc" },
     });
   }
-  public async get(context: WorkspaceContext, id: string): Promise<unknown> {
-    const row = await this.db.genre.findFirst({ where: { workspaceId: context.workspaceId, id } });
-    if (!row) throw new NotFoundException("Genre not found");
-    return row;
+  public get(context: WorkspaceContext, id: string): Promise<unknown> {
+    return this.genre(context, id);
   }
   public async create(context: WorkspaceContext, body: unknown): Promise<unknown> {
     this.canMutate(context);
@@ -130,9 +138,10 @@ export class GenreService {
     body: unknown,
   ): Promise<unknown> {
     this.canMutate(context);
-    await this.channel(context, channelId);
+    const channel = await this.channel(context, channelId);
     const input = seriesInput(body);
-    await this.get(context, input.genreId);
+    const genre = await this.genre(context, input.genreId);
+    this.assertCompatible(channel, genre);
     return this.db.contentSeries.create({
       data: { workspaceId: context.workspaceId, channelId, ...input } as never,
     });
@@ -144,22 +153,41 @@ export class GenreService {
     body: unknown,
   ): Promise<unknown> {
     this.canMutate(context);
-    await this.channel(context, channelId);
+    const channel = await this.channel(context, channelId);
     const input = seriesInput(body);
     const existing = await this.db.contentSeries.findFirst({
       where: { workspaceId: context.workspaceId, channelId, id },
     });
     if (!existing) throw new NotFoundException("Series not found");
-    await this.get(context, input.genreId);
+    const genre = await this.genre(context, input.genreId);
+    this.assertCompatible(channel, genre);
     return this.db.contentSeries.update({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
       data: { ...input, channelId } as never,
     });
   }
-  private async channel(context: WorkspaceContext, channelId: string): Promise<void> {
+  private async genre(context: WorkspaceContext, id: string): Promise<{ language: string }> {
+    const row = await this.db.genre.findFirst({ where: { workspaceId: context.workspaceId, id } });
+    if (!row) throw new NotFoundException("Genre not found");
+    return row;
+  }
+  private async channel(
+    context: WorkspaceContext,
+    channelId: string,
+  ): Promise<{ language: string | null }> {
     const row = await this.db.channel.findFirst({
       where: { workspaceId: context.workspaceId, id: channelId },
     });
     if (!row) throw new NotFoundException("Channel not found in workspace");
+    return row;
+  }
+  private assertCompatible(
+    channel: { language: string | null },
+    genre: { language: string },
+  ): void {
+    if (channel.language !== null && channel.language !== genre.language)
+      throw new BadRequestException(
+        `Channel language ${channel.language} is incompatible with genre language ${genre.language}`,
+      );
   }
 }

@@ -15,8 +15,11 @@ export class GenreController {
   ): ReturnType<WorkspaceService["context"]> {
     return this.workspaces.context(request.principal.userId, workspaceId);
   }
-  @Get("genre-templates") templates(): Promise<unknown> {
-    return this.genres.templates();
+  @Get("genre-templates") templates(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then(() => this.genres.templates());
   }
   @Get("genres") list(
     @Req() r: AuthenticatedRequest,
