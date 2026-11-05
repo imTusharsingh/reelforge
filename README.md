@@ -1,4 +1,5 @@
 # ReelForge - AI Shorts Channel Controller
+
 Repository name: reelforge. Product: ReelForge. The pack below is the planning baseline; Minu (project manager) acts as Core Architect/Reviewer.
 
 This repository pack is the platform-independent source of truth for planning and coordinating multiple AI coding-editor sessions.

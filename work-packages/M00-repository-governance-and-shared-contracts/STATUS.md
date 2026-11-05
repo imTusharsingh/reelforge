@@ -1,22 +1,29 @@
 # M00 Status - Repository Governance & Shared Contracts
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+## Closeout chore scope (2026-11-05)
+
+This branch closes M00 after owner merge of PR #2, records the approved dependency pins and owner-only merge process, adds a placeholder `.env.example`, and corrects Prettier's generated-client ignore path. The format check remained failing until the follow-up formatting fixes requested in PR #3 review. Product M00 is integrated; this closeout chore remains pending Minu review until its own PR is reviewed.
+
+- **State:** INTEGRATED
+- **Closeout chore PR #3:** IMPLEMENTED_PENDING_REVIEW
+- **M00 product state:** INTEGRATED via PR #2; this closeout chore is pending its own review.
 - **Assigned session/editor:** Codex implementation session
-- **Branch/worktree:** `work/m00-monorepo-foundation`
+- **Branch/worktree:** `chore/m00-closeout` (based on integrated `main`)
 - **Last updated:** 2026-11-05
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `626187aae7ffb6f8eba0bdbcff237f191ad0b904` (Minu approval)
+- **Integrated commit:** `8fdcab55bd121a695c76108f59dc3377a4c50940` (owner merge of PR #2)
 
 ## Current objective
-Establish repository rules, engineering quality gates, shared contracts, initial schema, CI, and bot coordination.
+Close the documentation and repository-hygiene items for already-integrated M00; no product implementation is in scope.
 
-## Session scope summary (2026-11-05)
+## Original M00 implementation session scope summary (2026-11-05)
 - **Requested tasks:** M00-T01 through M00-T07: monorepo/tooling, minimal app/package bootstraps, shared contracts/events, Prisma baseline/migration policy, offline CI, governance templates/instructions, and contract versioning policy.
 - **Dependencies:** None listed; M00 is the first block. No application code exists in the inspected planning pack.
 - **Likely files:** Root workspace/tooling/CI configuration; `apps/{web,api,worker}/`; `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}/`; root contributor/editor instructions; this status file and `docs/WORK_LOG.md`.
 - **Repository state:** Initial commit `773c1792dc9369172e8431944d979754dc9a1b30` from `main`; assigned branch `work/m00-monorepo-foundation`.
 - **Ownership:** Resolved by Core Reviewer; this M00 session is authorized to edit its shared files.
-- **Unknowns:** None blocking implementation. PR #2 is open; Core review fixes are committed on the same branch and await re-review.
+- **Unknowns at original implementation handoff:** PR #2 review and merge were pending at that time; see the later dated integration record below.
 
 ## Task checklist
 - [x] M00-T01: Initialize pnpm monorepo, strict TypeScript, formatting, lint, test framework, and build scripts.
@@ -102,14 +109,21 @@ Core Reviewer required changes 1–5 were implemented on `work/m00-monorepo-foun
 - The sandbox blocks Next.js spawning TypeScript for `--showConfig`; the full build passed outside the sandbox. A sandboxed frozen-lockfile reinstall also hit a read-only store lock, while the initial install passed with registry access.
 - Initial lockfile resolution exposed incompatible TypeScript 7.0.2; the pin was corrected to 6.0.3, within typescript-eslint's documented peer range `>=4.8.4 <6.1.0`. Full install then reported a blocked `msgpackr-extract` build script; its approval is now explicit in pnpm config. Prisma v7's documented Node range excludes Node 26, so Node was pinned to compatible LTS 24.22.2.
 
+## Closeout chore scope summary (2026-11-05)
+- **Requested tasks:** Record the verified M00 PR #2 integration in project state and status, append the closeout work log and ADRs, add a placeholder-only `.env.example`, correct Prettier ignores, and enable `format:check` in CI only if it passes locally.
+- **Dependencies:** Owner-merged M00 PR #2 on `main`; no product module changes.
+- **Branch/base:** `chore/m00-closeout` from `main` at `8fdcab55bd121a695c76108f59dc3377a4c50940`.
+- **Initial environment note:** Node.js/pnpm/Corepack and `gh` were absent from the default PATH when this closeout branch was prepared. Node 24.22.2 and pnpm 12.16.1 have since been provisioned in temporary paths for review verification; `gh` remains unavailable.
+
 ## Next exact action
-Request Core re-review on PR #2 after the review-fix commits are pushed; do not merge.
+Address Minu's PR #3 review, push the updated `chore/m00-closeout` branch, and request re-review. Only the owner merges after Minu's written approval. After closeout, Phase 1 starts with M01 per Minu's plan.
 
 ## Handoff notes
-PR #2 is open and remains unmerged. Review fixes are committed on the assigned branch; implementation commit `366980256610cb320ed21af822c10139f062dea1` contains the requested code and migration changes.
+Product M00 is integrated by the owner through PR #2. This branch contains only the closeout and hygiene scope; the closeout chore PR awaits Minu's review.
 
 ## Reviewer decision
-- Changes requested on PR #2; changes 1–5 implemented and awaiting re-review. No approval or integration is claimed.
+- Product M00: **APPROVED** by Minu at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`; **INTEGRATED** by owner via PR #2 at `8fdcab55bd121a695c76108f59dc3377a4c50940`.
+- Closeout chore PR: **IMPLEMENTED_PENDING_REVIEW**; no approval is claimed.
 
 ## CI follow-up (2026-11-05)
 - Updated the workflow runner to `ubuntu-24.04` and GitHub Actions to `actions/checkout@v7`, `pnpm/action-setup@v6`, and `actions/setup-node@v7` to remove the Node 20 deprecation warning and future runner migration notice. Versions were checked against their official release pages before the workflow change.
@@ -117,3 +131,21 @@ PR #2 is open and remains unmerged. Review fixes are committed on the assigned b
 - GitHub Actions push run [42022606398](https://github.com/imTusharsingh/reelforge/actions/runs/42022606398): **passed** on `b944dd6`; quality job completed in 1m 32s, 3 test files / 9 tests.
 - GitHub Actions pull request run [42022612235](https://github.com/imTusharsingh/reelforge/actions/runs/42022612235): **passed** on `b944dd6`; quality job completed in 1m 21s, 3 test files / 9 tests.
 - No provider credentials or external provider calls were used. PR #2 remains open and unmerged.
+
+## M00 closeout chore evidence (2026-11-05)
+- Product M00 approval: Minu approved at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`.
+- Product M00 integration: owner merged PR #2 to `main`; verified merge commit `8fdcab55bd121a695c76108f59dc3377a4c50940`.
+- This branch's work: project state/status closeout, append-only ADR-012 and ADR-013, local-only `.env.example`, and Prettier ignore correction. Product M00 state is `INTEGRATED`; chore PR #3 remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's review.
+- `git diff --check`: **passed**.
+- `git check-ignore .env`: **passed**; `.env` is ignored. `.env.example` is explicitly allowed by the existing `!.env.example` rule.
+- `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm format:check`: **not run successfully**; each command exited 127 because `pnpm` is not installed or available in PATH. Node.js is also unavailable. CI remains unchanged because local `pnpm format:check` did not pass.
+- Generated Prisma client files under `packages/database/src/generated` were present as untracked workspace files before this branch and were left untouched.
+- No schema, migration, product code, or shared contract changes were made.
+- Branch push: `git push -u origin chore/m00-closeout` **passed**; branch is published at the current head.
+- PR creation: **not completed**. The environment has no `gh` CLI, and the browser is signed out of GitHub; the available GitHub UI returned a sign-in/404 page for this private repository.
+
+## PR #3 review follow-up (2026-11-05)
+- Minu's requested workspace formatting was applied with `pnpm exec prettier --write .`; `pnpm format:check` now passes, so CI runs it after lint.
+- Updated `.env.example` usage guidance and the project/M00 status wording. Product M00 remains `INTEGRATED`; closeout chore PR #3 remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's re-review.
+- With Node 24.22.2, pnpm 12.16.1, and placeholder `DATABASE_URL`: frozen install, lint, typecheck, tests (3 files / 9 tests), build, and format check all passed. CI on the follow-up head remains pending.
+- Next exact action: push the review fixes to `chore/m00-closeout` and request Minu's re-review; only the owner merges after written approval.
