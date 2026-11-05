@@ -113,6 +113,12 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
 - **Reason:** This is the identity design delivered in M01 and accepted by Minu's written approval of PR #4 at `519b3ab2bd6a81a516c66d21036051edb9c54894`. No earlier ADR recorded the choice.
 - **Consequence:** Later modules use the M01 principal, hashed session, and workspace membership boundary. Adopting a commercial identity provider requires a later ADR.
 
+## ADR-015 - Channel configuration snapshots and destination intents
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of M02 integration).
+- **Decision:** Channel configuration is persisted in immutable `ChannelConfigSnapshot` versions selected by the channel's `activeSnapshotId` pointer. Publishing destinations in M02 are stored as configuration references/intents only; OAuth credentials and live platform linking remain owned by M12.
+- **Consequence:** Downstream modules can select and inspect durable channel configuration without coupling M02 to social-provider credentials or live platform APIs.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:
