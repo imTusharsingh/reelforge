@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 0 complete; Phase 1 ready to start.
+- **Overall phase:** Phase 1 in progress (M01 integrated; M02 next).
 - **Current release:** v1.
-- **Current integrated commit:** `8fdcab55bd121a695c76108f59dc3377a4c50940` (owner merge of M00 PR #2).
+- **Current integrated commit:** `4944f5d74200c65cbcca99405cf680245946201a` (`git rev-parse origin/main`; owner merge of M01 PR #4).
 - **Active implementation sessions:** none.
-- **Active work packages:** M00 closeout chore PR #3 (`chore/m00-closeout`), open and awaiting Minu's review.
+- **Active work packages:** none (M01 integrated; M02 not yet assigned on a branch).
 - **Blocked work packages:** none recorded.
-- **Latest core review:** M00 approved by Minu at `626187aae7ffb6f8eba0bdbcff237f191ad0b904`; product work merged by the owner via PR #2. Closeout chore PR #3 is open and awaits Minu's review.
+- **Latest core review:** Minu approved M01 at `519b3ab2bd6a81a516c66d21036051edb9c54894`; owner merged via PR #4 at `4944f5d74200c65cbcca99405cf680245946201a`.
 
 ## Frozen architecture summary
 
@@ -30,18 +30,17 @@
 
 ## Current milestone
 
-**Phase 0 - Governance and repository foundation: complete**
+**Phase 1 in progress - M01 integrated; M02 next**
 
-Next exact actions:
-1. Complete review fixes on M00 closeout PR #3, obtain Minu's written approval, then the repository owner merges it.
-2. Start Phase 1 with M01 (Identity & Workspace), following Minu's Phase 1 plan.
+Next exact action:
+1. Start M02 (Channel & Brand Management) when Minu assigns it.
 
 ## Module status index
 
 | Module | State | Branch | Approved commit | Blocker |
 |---|---|---|---|---|
 | M00 - Repository Governance & Shared Contracts | INTEGRATED | `main` (PR #2) | `626187aae7ffb6f8eba0bdbcff237f191ad0b904` | none |
-| M01 - Identity & Workspace | NOT_STARTED | none | none | none recorded |
+| M01 - Identity & Workspace | INTEGRATED | `main` (PR #4) | `519b3ab2bd6a81a516c66d21036051edb9c54894` | none |
 | M02 - Channel & Brand Management | NOT_STARTED | none | none | none recorded |
 | M03 - Genres, Formats & Content Series | NOT_STARTED | none | none | none recorded |
 | M04 - Characters & Asset Library | NOT_STARTED | none | none | none recorded |
@@ -61,7 +60,7 @@ Next exact actions:
 | M18 - Usage, Budget & Billing Foundation | NOT_STARTED | none | none | none recorded |
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 
-M01-M05 remain `NOT_STARTED` and are ready after M00; Phase 1 starts with M01 when assigned by Minu. Later modules retain their existing status.
+M02–M19 remain `NOT_STARTED`. M02 starts when Minu assigns it.
 
 
 ## Open decisions
@@ -72,6 +71,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 
 - 2026-11-05: Initial project pack and v1 baseline created.
 - 2026-11-05: M00 integrated by the owner via PR #2 at merge commit `8fdcab55bd121a695c76108f59dc3377a4c50940`, from Minu-approved head `626187aae7ffb6f8eba0bdbcff237f191ad0b904`.
+- 2026-11-05/06: M01 integrated via PR #4. Minu approved head `519b3ab2bd6a81a516c66d21036051edb9c54894` (review 5789945311); owner merge `4944f5d74200c65cbcca99405cf680245946201a`.
 
 ## How a new session resumes
 

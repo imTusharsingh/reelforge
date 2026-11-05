@@ -106,6 +106,13 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
   3. Coding bots and implementer sessions never push to `main` and never merge PRs.
 - **Consequence:** Task prompts and reviews must restate these rules; Minu refuses to approve work that violates them. If the repository becomes public or moves to a plan or organization that supports enforced protection, Minu will add real branch rules.
 
+## ADR-014 - First-party email/password credentials and hashed server sessions
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of M01 integration).
+- **Decision:** v1 authentication is first-party email and password. Passwords are stored as scrypt hashes. Login and registration set an HTTP-only `reelforge_session` cookie. The server stores only a hash of the session token; sessions expire and are revocable on logout. Authentication outcomes are persisted as auth events. Commercial identity providers (Clerk, Auth0, and Cognito) are not adopted for v1.
+- **Reason:** This is the identity design delivered in M01 and accepted by Minu's written approval of PR #4 at `519b3ab2bd6a81a516c66d21036051edb9c54894`. No earlier ADR recorded the choice.
+- **Consequence:** Later modules use the M01 principal, hashed session, and workspace membership boundary. Adopting a commercial identity provider requires a later ADR.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:

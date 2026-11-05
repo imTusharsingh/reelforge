@@ -176,3 +176,18 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Clean verification: Removed `packages/database/dist`; `corepack pnpm install --frozen-lockfile` and `corepack pnpm typecheck` passed with Node `v24.22.2` and pnpm `12.16.1`.
 - Full verification: `corepack pnpm lint`, `corepack pnpm format:check`, `corepack pnpm typecheck`, `corepack pnpm test` (4 files / 12 tests), `corepack pnpm build`, `corepack pnpm db:validate`, and disposable PostgreSQL 18.6 `corepack pnpm db:migrate:deploy` all passed.
 - Decision/approval: No approval or integration is claimed. Only the assigned branch will be pushed; owner-only merge rules remain in force.
+
+## 2026-11-05 18:34 UTC - REVIEW - M01 integrated via PR #4
+- Actor/session: Minu (Core Architect/Reviewer) + repository owner merge. Docs closeout recorded on `chore/m01-closeout`.
+- Work package: M01 - Identity & Workspace. This entry records integration only; it does not change application code.
+- Branch and commit: Approved head `519b3ab2bd6a81a516c66d21036051edb9c54894` on PR #4 (https://github.com/imTusharsingh/reelforge/pull/4). Owner merge on `main`: `4944f5d74200c65cbcca99405cf680245946201a`. Closeout branch: `chore/m01-closeout`, based on that main tip. The closeout commit is the commit that adds this entry.
+- Starting state: `origin/main` is the PR #4 merge. PR #3 is already merged, so it is not active work. Status docs on that tip still described Phase 1 as not started and M01 as pending review.
+- Changes made: Set the handover snapshot to Phase 1 in progress with M01 INTEGRATED and M02 next. Set M01 status to INTEGRATED with the approved head, review 5789945311, and the owner merge. Appended ADR-014 for the delivered first-party email/password and hashed server-session design. No application code, schema, lockfile, CI, or dependency edits.
+- Files/areas changed: `docs/PROJECT_STATE.md`, `docs/WORK_LOG.md`, `docs/DECISION_LOG.md`, `work-packages/M01-identity-and-workspace/STATUS.md`.
+- Commands actually run and results: `git fetch origin main` updated `origin/main` to `4944f5d74200c65cbcca99405cf680245946201a`. `git rev-parse origin/main` printed that SHA. `gh pr view 4` reported state MERGED, headRefOid `519b3ab2bd6a81a516c66d21036051edb9c54894`, mergeCommit `4944f5d74200c65cbcca99405cf680245946201a`. `gh pr view 3` reported state MERGED. Review 5789945311 is a written COMMENT approval by `imTusharsingh` on the approved head (submitted 2026-11-05T18:28:20Z). `git diff --check` passed on this docs diff. Package lint, typecheck, test, and build were not re-run; this change does not touch application code, and `docs/` plus `work-packages/` are listed in `.prettierignore`.
+- External calls: GitHub read of PR #3, PR #4, and PR #4 reviews. No AI or social provider calls.
+- Tests/evidence: Product gate results stay in M01 `STATUS.md` and in review 5789945311. This chore did not re-run them. The merge commit's only parent is `a60c2a276f958ea78927cc06001148a258bef02e`; the approved head remains on `origin/work/m01-identity-and-workspace`.
+- Decisions/approvals: Product M01 approval is Minu's written approval on PR #4 at `519b3ab2bd6a81a516c66d21036051edb9c54894`, merged by the owner. ADR-014 records that delivered auth choice. This closeout chore itself is not approved; it awaits Minu's review. Bots must not merge.
+- Defects/risks/blockers: None for this documentation update.
+- Next exact action: Assign and start M02 (Channel & Brand Management).
+- Related status/ADR: `docs/PROJECT_STATE.md`; M01 `STATUS.md`; ADR-014; PR #4.

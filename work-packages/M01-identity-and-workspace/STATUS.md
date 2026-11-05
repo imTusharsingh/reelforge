@@ -1,11 +1,11 @@
 # M01 Status - Identity & Workspace
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Codex implementation session
-- **Branch/worktree:** `work/m01-identity-and-workspace`
-- **Last updated:** 2026-11-06
+- **Branch/worktree:** `main` (PR #4)
+- **Last updated:** 2026-11-05
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `519b3ab2bd6a81a516c66d21036051edb9c54894`
 
 ## Current objective
 Authenticate users and enforce workspace-scoped access for all user-owned data.
@@ -47,10 +47,13 @@ M01 owns first-party authentication, user lifecycle, workspace CRUD/archive/defa
 - No known verification blocker remains. The required clean-tree typecheck and migration checks passed.
 
 ## Next exact action
-Review the pushed head on PR #4. Do not merge; only the repository owner merges after Minu's written approval.
+Phase 1 continues with M02 (Channel & Brand Management) when Minu assigns it. No further M01 implementation in this chore.
 
 ## Handoff notes
-No implementation session has started.
+Implementation evidence remains in the sections above. Integration is recorded in the note below.
+
+## Integration note
+Minu approved M01 at `519b3ab2bd6a81a516c66d21036051edb9c54894` (written COMMENT approval, review 5789945311). The repository owner merged PR #4 at `4944f5d74200c65cbcca99405cf680245946201a`. This chore records that integration only. The checklist and command evidence above are unchanged. The scope summary's "IdP remains unchosen" line is the pre-approval implementation note; ADR-014 records the first-party choice that landed. The schema proposal above is the change included in that merge, not a new proposal.
 
 ## Reviewer decision
-- Pending.
+- APPROVED by Minu (written COMMENT approval / review 5789945311) at `519b3ab2bd6a81a516c66d21036051edb9c54894`; merged by owner via PR #4 at `4944f5d74200c65cbcca99405cf680245946201a`.
