@@ -16,7 +16,7 @@ Establish repository rules, engineering quality gates, shared contracts, initial
 - **Likely files:** Root workspace/tooling/CI configuration; `apps/{web,api,worker}/`; `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}/`; root contributor/editor instructions; this status file and `docs/WORK_LOG.md`.
 - **Repository state:** Initial commit `773c1792dc9369172e8431944d979754dc9a1b30` from `main`; assigned branch `work/m00-monorepo-foundation`.
 - **Ownership:** Resolved by Core Reviewer; this M00 session is authorized to edit its shared files.
-- **Unknowns:** None blocking implementation. GitHub CLI and an authenticated GitHub PR creation tool are unavailable in this session; the branch is pushed and the PR creation link is ready.
+- **Unknowns:** None blocking implementation. PR #2 is open; Core review fixes are committed on the same branch and await re-review.
 
 ## Task checklist
 - [x] M00-T01: Initialize pnpm monorepo, strict TypeScript, formatting, lint, test framework, and build scripts.
@@ -32,7 +32,7 @@ Establish repository rules, engineering quality gates, shared contracts, initial
 - Root: `.gitignore`, `.node-version`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `eslint.config.js`, `.prettierrc.json`, `.prettierignore`, `vitest.config.ts`, `AGENTS.md`, `CONTRIBUTING.md`, `README.md`.
 - CI/templates: `.github/workflows/ci.yml`, `templates/WORK_PACKAGE_TEMPLATE.md`, `templates/STATUS_TEMPLATE.md`.
 - Apps: `apps/web/**`, `apps/api/**`, `apps/worker/**`.
-- Packages: `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}/**`.
+- Packages: `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}/**`, including the new `PublishStatus` and `WorkflowState` contracts and review migration.
 - Docs/handoff: `docs/CONTRACT_VERSIONING.md`, `docs/WORK_LOG.md`, this M00 `STATUS.md`.
 
 ## Proposed pinned versions (for reviewer approval)
@@ -70,6 +70,30 @@ Verified 2026-11-05 from project release pages and npm package listings. All man
 - `git diff --check`: **passed** before final documentation update; rerun before commit.
 - GitHub Actions workflow itself: **not run locally**; configured to execute these checks and a Postgres service on GitHub Actions.
 
+## Core review changes (PR #2)
+
+Core Reviewer required changes 1–5 were implemented on `work/m00-monorepo-foundation` in review-fix commit `366980256610cb320ed21af822c10139f062dea1`:
+
+1. Added Zod publish/workflow state enums and matching Prisma enums; `Video.status` remains a string with an M10 ownership TODO.
+2. Added OutboxEvent channel, causation, and aggregate identity columns in new migration `20261105120000_review_publish_states_and_outbox_envelope`; the original baseline migration is unchanged. Known publish events backfill aggregate identity from `payload.postId`; unrecognized or incomplete rows stop the migration rather than receiving fabricated values.
+3. Added per-event schema, producer, consumers, bounded retry and dead-letter policy; `parseRegisteredEvent` resolves the registry by event type and version. Added an unregistered-version test.
+4. This status and the work log now reference PR #2 and the review-fix commit.
+5. Worker startup logs that no handlers are registered and exits successfully without adding a handler.
+
+## Review verification (2026-11-05)
+- `pnpm install --frozen-lockfile` (Node 24.22.2 / pnpm 12.16.1): **passed**, 12 workspace projects, lockfile current.
+- `pnpm lint`: **passed**. The first run caught an unused schema variable; it was corrected before this passing run.
+- `pnpm typecheck` with local placeholder `DATABASE_URL`: **passed** across all 12 workspace projects; Prisma Client 7.10.1 generated.
+- `pnpm test`: **passed**, 3 files / 9 tests.
+- `pnpm build` with local placeholder `DATABASE_URL` and `NEXT_TELEMETRY_DISABLED=1`: **passed** for all workspace packages, executed outside the sandbox for Next.js process spawning.
+- `pnpm db:validate`: **passed**, schema valid.
+- `pnpm db:migrate:deploy`: **passed** against an ephemeral Postgres 18.6 container; baseline and new review migration both applied.
+- `pnpm --filter @reelforge/database exec prisma migrate status`: **passed**, database schema up to date.
+- Temporary database inspection verified exact enum values and required aggregate columns; worker `pnpm --filter @reelforge/worker start` **passed**, logging zero handlers and exiting cleanly.
+- `git diff --exit-code 734c345 -- packages/database/prisma/migrations/20261105000000_foundation_baseline/migration.sql`: **passed**, confirming the original migration was not modified. `git diff --check`: **passed**.
+- Populated legacy-row migration probe: **not run**; automatic approval review timed out on the optional fixture command. The migration was applied successfully to a fresh disposable database; its known-event backfill path remains unexercised locally.
+- CI itself was not run locally.
+
 ## Contract/schema proposals
 - For Core review: first versioned event payloads (`PostPublished`, `PublishFailed`), API error/pagination schemas, and the foundation Prisma table set described below. All use the frozen workspace tenant boundary and event-envelope fields from the canonical pipeline.
 - Foundation Prisma models: `User`, `Workspace`, `WorkspaceMembership`, `Channel`, `ContentSeries`, `Asset`, `Video`, `Post`, `WorkflowRun`, and `OutboxEvent`. These are intentionally baseline records; module-specific states/configuration remain out of this schema.
@@ -79,10 +103,10 @@ Verified 2026-11-05 from project release pages and npm package listings. All man
 - Initial lockfile resolution exposed incompatible TypeScript 7.0.2; the pin was corrected to 6.0.3, within typescript-eslint's documented peer range `>=4.8.4 <6.1.0`. Full install then reported a blocked `msgpackr-extract` build script; its approval is now explicit in pnpm config. Prisma v7's documented Node range excludes Node 26, so Node was pinned to compatible LTS 24.22.2.
 
 ## Next exact action
-Open the PR from the pushed branch using the handoff link, then request Core review without merging.
+Request Core re-review on PR #2 after the review-fix commits are pushed; do not merge.
 
 ## Handoff notes
-Ownership question resolved by the Core Reviewer; implementation and local verification are complete. Commit `41e654f` is pushed; PR creation awaits an authenticated GitHub UI/tool.
+PR #2 is open and remains unmerged. Review fixes are committed on the assigned branch; implementation commit `366980256610cb320ed21af822c10139f062dea1` contains the requested code and migration changes.
 
 ## Reviewer decision
-- Pending.
+- Changes requested on PR #2; changes 1–5 implemented and awaiting re-review. No approval or integration is claimed.

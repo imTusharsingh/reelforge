@@ -80,3 +80,18 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: This session has no `gh` CLI or authenticated GitHub PR creation tool; browser access to the private repo is signed out. GitHub printed a ready PR creation URL.
 - Next exact action: Open the PR from `https://github.com/imTusharsingh/reelforge/pull/new/work/m00-monorepo-foundation` and request Minu review; do not merge.
 - Related status/ADR: M00 `STATUS.md`; ADR-002.
+
+## 2026-11-05 - M00 Core review fixes for PR #2
+- Actor/session: Codex implementation session; Core Reviewer review by Minu.
+- Work package: M00 - Repository Governance & Shared Contracts.
+- Branch and commit: `work/m00-monorepo-foundation`; review-fix implementation commit `366980256610cb320ed21af822c10139f062dea1` (PR #2).
+- Starting state: PR #2 open at head `734c345`; Core Reviewer requested changes 1–5. Existing baseline migration was present and was not edited.
+- Changes made: Added canonical publish/workflow Zod and Prisma enums; new additive migration for status types and missing outbox envelope fields with a safe known-event aggregate backfill; registry metadata and event type+version lookup; unknown-version test; worker clean no-handler startup log/exit.
+- Files/areas changed: `packages/contracts/src/{events,states}.ts` and tests/index; `packages/database/prisma/schema.prisma`; new `packages/database/prisma/migrations/20261105120000_review_publish_states_and_outbox_envelope/migration.sql`; `apps/worker/src/main.ts`; M00 status and this log.
+- Commands actually run and results: `pnpm install --frozen-lockfile` passed (12 workspaces). `pnpm lint` final run passed (an initial run identified and prompted correction of an unused variable). `pnpm typecheck` passed across all workspaces. `pnpm test` passed (3 files, 9 tests). Full `pnpm build` passed with local `DATABASE_URL` and telemetry disabled outside the sandbox. `pnpm db:validate` passed. `pnpm db:migrate:deploy` applied both migrations to fresh ephemeral Postgres 18.6. `prisma migrate status` reported schema up to date. Database inspection confirmed enums/outbox columns. Worker start exited code 0 and logged no handlers. `git diff --check` passed and comparison confirmed the original baseline migration is unchanged.
+- External calls: NONE to AI/social providers. Local disposable Postgres only; dependency install used the pinned lockfile.
+- Tests/evidence: Contract tests cover canonical state vocabularies, registered event parsing/metadata, and rejection of an unregistered event version. CI was not run locally. Populated legacy-row migration probe was not run because the optional fixture command's automatic approval review timed out; the fresh migration chain passed.
+- Decisions/approvals: Core Reviewer required changes 1–5 on PR #2; no approval or integration decision claimed.
+- Defects/risks/blockers: New migration intentionally aborts if existing outbox rows are not one of the known post events with a valid `postId`, avoiding fabricated aggregate IDs. Optional populated-row backfill probe remains unverified.
+- Next exact action: Push the review fixes to the same branch and request Minu's re-review of PR #2; do not merge.
+- Related status/ADR: PR #2; M00 `STATUS.md`; `docs/PIPELINES.md` sections 5–7.
