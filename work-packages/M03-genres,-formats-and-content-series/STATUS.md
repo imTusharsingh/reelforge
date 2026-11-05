@@ -1,9 +1,9 @@
 # M03 Status - Genres, Formats & Content Series
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
-- **Last updated:** 2026-11-05
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Module implementation session
+- **Branch/worktree:** `work/m03-genres-formats-and-content-series`
+- **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -11,31 +11,52 @@
 Provide configurable genre templates and recurring content series without hardcoded niche logic.
 
 ## Task checklist
-- [ ] M03-T01: T01 Define genre template data model and starter catalog.
-- [ ] M03-T02: T02 Implement custom genre CRUD and clone-from-template.
-- [ ] M03-T03: T03 Define genre fields: audience, tone, topics allowed/blocked, language, structure, duration preference, safety profile.
-- [ ] M03-T04: T04 Implement content series CRUD under a channel.
-- [ ] M03-T05: T05 Define series-level format, frequency, character group, and prompt references.
-- [ ] M03-T06: T06 Add validation for incompatible channel/genre/series settings.
+- [x] M03-T01: Genre template model and deterministic starter catalog.
+- [x] M03-T02: Workspace-scoped custom genre CRUD and clone-from-template.
+- [x] M03-T03: Structured genre policy fields.
+- [x] M03-T04: Channel-scoped content-series list/create/update.
+- [x] M03-T05: Series format, frequency, character-group refs, and prompt refs.
+- [x] M03-T06: Workspace/channel/genre validation with actionable errors.
 
 
 ## Files changed
-- None yet.
+- `apps/api/src/modules/genre/**`: authenticated templates, genre, and series API.
+- `apps/api/src/app.module.ts`: module registration.
+- `packages/database/prisma/schema.prisma`: additive GenreTemplate, Genre, and ContentSeries fields.
+- `packages/database/prisma/migrations/20261106110000_genres_and_series/migration.sql`: additive schema and starter catalog migration.
+- `apps/api/src/modules/genre/genre.service.test.ts`: cross-workspace boundary tests.
 
 ## Commands and evidence
-- None run.
+- `DATABASE_URL='postgresql://reelforge:reelforge@localhost:5432/reelforge' pnpm db:generate`: passed.
+- Same `pnpm typecheck`: passed for all packages.
+- `pnpm lint`: passed.
+- `pnpm test`: passed, 7 files / 23 tests after review fixes.
+- `pnpm format:check`: passed.
+- `DATABASE_URL='postgresql://reelforge:reelforge@localhost:5432/reelforge' pnpm build`: passed. An initial build without `DATABASE_URL` failed during Prisma generation because the checked-in Prisma config requires that variable.
+- Same `pnpm db:validate`: passed.
+- `pnpm db:migrate:deploy`: not run; local PostgreSQL credentials were not available. PR #8 checks are green at https://github.com/imTusharsingh/reelforge/pull/8/checks; Core Review should confirm its migration job before merge.
 
 ## Contract/schema proposals
-- None.
+- Additive schema change requested: `GenreTemplate`, workspace-scoped `Genre`, and required ContentSeries genre/format/frequency/reference fields. No contracts package change.
 
 ## Blockers / risks / unknowns
-- None recorded. Do not infer this means no risks exist; update after inspection.
+- Migration deployment against a live local PostgreSQL instance remains unverified. The migration now fails fast with a clear error if legacy `content_series` rows need an approved genre/format/frequency backfill.
+- Series character and prompt references are intentionally opaque JSON IDs/keys; M04/M05 own their entities and semantics.
+- API tests use local database seams only; no live provider calls.
+
+## Scope summary before implementation
+
+- Implement M03 genre templates/catalog, workspace-scoped custom genre CRUD and cloning, and channel-scoped content-series CRUD.
+- Extend the existing `ContentSeries` model additively with genre, format, frequency, character-group references, and prompt references.
+- Reuse M01 authentication/workspace context and M02 channel composite scoping; add runtime validation and cross-workspace/channel tests.
+- Likely files: `apps/api/src/modules/genre/**`, `apps/api/src/app.module.ts`, Prisma schema plus a new M03 migration, and module status/work log.
+- No conflicts found: `main` is at M02 closeout `a032fe1c40566f20b46b721d6fe012f69e7c3dad`; no existing genre/series API module is present. Shared schema edits are additive and explicitly authorized by the assigned brief.
 
 ## Next exact action
-Read the work package and repository state, then report any conflict with existing code before implementation.
+Core Reviewer should inspect the additive migration, run migration deployment in ephemeral PostgreSQL, and review API authorization/validation before owner merge.
 
 ## Handoff notes
-No implementation session has started.
+Review fixes are in code commit `3fec770a3470c24cf459dea141e085e85f855d7e` on PR #8. The branch remains `IMPLEMENTED_PENDING_REVIEW`; no approval or integration is claimed.
 
 ## Reviewer decision
 - Pending.

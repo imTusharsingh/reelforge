@@ -68,6 +68,7 @@ model Workspace {
   archivedAt   DateTime?            @map("archived_at") @db.Timestamptz(6)
   memberships  WorkspaceMembership[]
   channels     Channel[]
+  genres       Genre[]
   assets       Asset[]
   workflowRuns WorkflowRun[]
   outboxEvents OutboxEvent[]
@@ -175,14 +176,61 @@ model ContentSeries {
   workspaceId String      @map("workspace_id") @db.Uuid
   channelId   String      @map("channel_id") @db.Uuid
   name        String
+  genreId     String      @map("genre_id") @db.Uuid
+  format      String
+  frequency   String
+  characterGroupRefs Json @map("character_group_refs")
+  promptRefs  Json        @map("prompt_refs")
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
   channel     Channel    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  genre       Genre      @relation(fields: [workspaceId, genreId], references: [workspaceId, id], onDelete: Restrict)
   videos      Video[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId])
+  @@index([workspaceId, genreId])
   @@map("content_series")
+}
+
+model GenreTemplate {
+  id                 String   @id @default(uuid()) @db.Uuid
+  key                String   @unique
+  name               String
+  audience           String
+  tone               String
+  topicsAllowed      Json     @map("topics_allowed")
+  topicsBlocked      Json     @map("topics_blocked")
+  language           String
+  structure          Json
+  durationPreference Json     @map("duration_preference")
+  safetyProfile      Json     @map("safety_profile")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  genres             Genre[]
+  @@map("genre_templates")
+}
+
+model Genre {
+  id                 String         @id @default(uuid()) @db.Uuid
+  workspaceId        String         @map("workspace_id") @db.Uuid
+  templateId         String?        @map("template_id") @db.Uuid
+  name               String
+  audience           String
+  tone               String
+  topicsAllowed      Json           @map("topics_allowed")
+  topicsBlocked      Json           @map("topics_blocked")
+  language           String
+  structure          Json
+  durationPreference Json           @map("duration_preference")
+  safetyProfile      Json           @map("safety_profile")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template           GenreTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  series             ContentSeries[]
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+  @@map("genres")
 }
 
 model Asset {
