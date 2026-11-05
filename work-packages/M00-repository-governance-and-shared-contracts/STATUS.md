@@ -16,7 +16,7 @@ Establish repository rules, engineering quality gates, shared contracts, initial
 - **Likely files:** Root workspace/tooling/CI configuration; `apps/{web,api,worker}/`; `packages/{contracts,database,config-engine,ai-providers,social-providers,media,observability,shared}/`; root contributor/editor instructions; this status file and `docs/WORK_LOG.md`.
 - **Repository state:** Initial commit `773c1792dc9369172e8431944d979754dc9a1b30` from `main`; assigned branch `work/m00-monorepo-foundation`.
 - **Ownership:** Resolved by Core Reviewer; this M00 session is authorized to edit its shared files.
-- **Unknowns:** None blocking implementation. GitHub CLI is unavailable locally; PR creation still needs a GitHub-capable path.
+- **Unknowns:** None blocking implementation. GitHub CLI and an authenticated GitHub PR creation tool are unavailable in this session; the branch is pushed and the PR creation link is ready.
 
 ## Task checklist
 - [x] M00-T01: Initialize pnpm monorepo, strict TypeScript, formatting, lint, test framework, and build scripts.
@@ -79,10 +79,10 @@ Verified 2026-11-05 from project release pages and npm package listings. All man
 - Initial lockfile resolution exposed incompatible TypeScript 7.0.2; the pin was corrected to 6.0.3, within typescript-eslint's documented peer range `>=4.8.4 <6.1.0`. Full install then reported a blocked `msgpackr-extract` build script; its approval is now explicit in pnpm config. Prisma v7's documented Node range excludes Node 26, so Node was pinned to compatible LTS 24.22.2.
 
 ## Next exact action
-Rerun final diff/scope checks, commit and push `work/m00-monorepo-foundation`, then open the PR for Core review without merging.
+Open the PR from the pushed branch using the handoff link, then request Core review without merging.
 
 ## Handoff notes
-Ownership question resolved by the Core Reviewer; implementation and local verification are complete on the assigned branch. Awaiting PR review.
+Ownership question resolved by the Core Reviewer; implementation and local verification are complete. Commit `41e654f` is pushed; PR creation awaits an authenticated GitHub UI/tool.
 
 ## Reviewer decision
 - Pending.
