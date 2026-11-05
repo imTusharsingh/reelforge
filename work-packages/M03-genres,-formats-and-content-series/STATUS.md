@@ -3,7 +3,7 @@
 - **State:** IMPLEMENTED_PENDING_REVIEW
 - **Assigned session/editor:** Module implementation session
 - **Branch/worktree:** `work/m03-genres-formats-and-content-series`
-- **Last updated:** 2026-11-05
+- **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -30,16 +30,17 @@ Provide configurable genre templates and recurring content series without hardco
 - `DATABASE_URL='postgresql://reelforge:reelforge@localhost:5432/reelforge' pnpm db:generate`: passed.
 - Same `pnpm typecheck`: passed for all packages.
 - `pnpm lint`: passed.
-- `pnpm test`: passed, 6 files / 18 tests.
+- `pnpm test`: passed, 7 files / 23 tests after review fixes.
 - `pnpm format:check`: passed.
+- `DATABASE_URL='postgresql://reelforge:reelforge@localhost:5432/reelforge' pnpm build`: passed. An initial build without `DATABASE_URL` failed during Prisma generation because the checked-in Prisma config requires that variable.
 - Same `pnpm db:validate`: passed.
-- `pnpm db:migrate:deploy`: not run; local PostgreSQL credentials were not available. Migration SQL should be exercised by CI/Core review.
+- `pnpm db:migrate:deploy`: not run; local PostgreSQL credentials were not available. PR #8 checks are green at https://github.com/imTusharsingh/reelforge/pull/8/checks; Core Review should confirm its migration job before merge.
 
 ## Contract/schema proposals
 - Additive schema change requested: `GenreTemplate`, workspace-scoped `Genre`, and required ContentSeries genre/format/frequency/reference fields. No contracts package change.
 
 ## Blockers / risks / unknowns
-- Migration deployment against a live local PostgreSQL instance remains unverified.
+- Migration deployment against a live local PostgreSQL instance remains unverified. The migration now fails fast with a clear error if legacy `content_series` rows need an approved genre/format/frequency backfill.
 - Series character and prompt references are intentionally opaque JSON IDs/keys; M04/M05 own their entities and semantics.
 - API tests use local database seams only; no live provider calls.
 
@@ -55,7 +56,7 @@ Provide configurable genre templates and recurring content series without hardco
 Core Reviewer should inspect the additive migration, run migration deployment in ephemeral PostgreSQL, and review API authorization/validation before owner merge.
 
 ## Handoff notes
-No implementation session has started.
+Review fixes are in code commit `3fec770a3470c24cf459dea141e085e85f855d7e` on PR #8. The branch remains `IMPLEMENTED_PENDING_REVIEW`; no approval or integration is claimed.
 
 ## Reviewer decision
 - Pending.
