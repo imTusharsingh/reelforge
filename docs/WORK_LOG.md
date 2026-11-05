@@ -160,3 +160,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: Required commands were not run because Node.js and pnpm are unavailable in PATH. No passing result is claimed. Cross-workspace denial tests remain outstanding.
 - Decisions/approvals: No approval or integration is claimed. Invitations, social OAuth, billing, and channel permissions remain out of scope.
 - Next action: Provision the pinned toolchain, update the lockfile for the API workspace dependency, add/run denial tests and all required checks, then open a PR for Minu review. Only the owner merges after written approval.
+
+## 2026-11-06 - M01 review fixes and verification
+- Actor/session: Codex Module Implementation Agent; addressing Minu's blocking PR #4 review.
+- Branch/head before push: `work/m01-identity-and-workspace`, based on PR head `0fed2e325b6b88f703447c2bdc91d98a7d490815`.
+- Changes made: Updated and committed `pnpm-lock.yaml`; added workspace update with role checks; added a workspace-scoped repository helper and cross-workspace read/mutation denial tests; fixed lint/format/typecheck issues; added dummy scrypt work for unknown-email login timing; changed trust-boundary failures to Nest HTTP exceptions; gated secure cookies by production; decoded cookie values; added SQL defaults for raw inserts; and exported `DATABASE_URL` from `.env.example` for verification.
+- Commands and results: `corepack pnpm install` passed; `corepack pnpm install --frozen-lockfile` passed; `corepack pnpm lint` passed; `corepack pnpm format:check` passed; `corepack pnpm typecheck` passed; `corepack pnpm test` passed (4 files / 12 tests); `corepack pnpm build` passed; `corepack pnpm db:validate` passed; migration deploy passed against disposable PostgreSQL 18.6 on port 55432 after the existing port-5432 placeholder server rejected credentials with P1000.
+- External calls: npm package download through Corepack and GitHub branch push only; no provider calls or spend. Disposable PostgreSQL container was stopped after migration verification.
+- Decision/approval: No approval or integration is claimed. PR #4 remains for Minu review; only the repository owner merges after written approval.
+- Next action: Commit and push this review-fix head to `work/m01-identity-and-workspace`, then report the new SHA to the requester.

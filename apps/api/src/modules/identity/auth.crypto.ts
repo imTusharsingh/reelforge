@@ -1,11 +1,14 @@
 import { createHash, randomBytes, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import { BadRequestException } from "@nestjs/common";
 
 const scrypt = promisify(nodeScrypt);
 const SCRYPT_KEY_LENGTH = 64;
+export const DUMMY_PASSWORD_HASH = `scrypt:${Buffer.alloc(16).toString("base64url")}:${Buffer.alloc(SCRYPT_KEY_LENGTH).toString("base64url")}`;
 
 export async function hashPassword(password: string): Promise<string> {
-  if (password.length < 12) throw new Error("Password must be at least 12 characters.");
+  if (password.length < 12)
+    throw new BadRequestException("Password must be at least 12 characters.");
   const salt = randomBytes(16);
   const derived = (await scrypt(password, salt, SCRYPT_KEY_LENGTH)) as Buffer;
   return `scrypt:${salt.toString("base64url")}:${derived.toString("base64url")}`;

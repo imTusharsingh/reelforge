@@ -1,3 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 ALTER TABLE "users" ADD COLUMN "default_workspace_id" UUID;
 ALTER TABLE "workspaces" ADD COLUMN "archived_at" TIMESTAMPTZ(6);
 
@@ -5,12 +6,12 @@ CREATE TABLE "password_credentials" (
   "user_id" UUID NOT NULL,
   "password_hash" TEXT NOT NULL,
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updated_at" TIMESTAMPTZ(6) NOT NULL,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "password_credentials_pkey" PRIMARY KEY ("user_id"),
   CONSTRAINT "password_credentials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE "sessions" (
-  "id" UUID NOT NULL,
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "user_id" UUID NOT NULL,
   "token_hash" TEXT NOT NULL,
   "expires_at" TIMESTAMPTZ(6) NOT NULL,
@@ -22,7 +23,7 @@ CREATE TABLE "sessions" (
 );
 CREATE INDEX "sessions_user_id_revoked_at_expires_at_idx" ON "sessions"("user_id", "revoked_at", "expires_at");
 CREATE TABLE "auth_events" (
-  "id" UUID NOT NULL,
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "user_id" UUID,
   "event_type" TEXT NOT NULL,
   "outcome" TEXT NOT NULL,
