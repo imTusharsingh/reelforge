@@ -143,7 +143,8 @@ suite("IdeaService Prisma tenant ownership", () => {
       },
     });
     const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
-    expect(await service.list(context)).toEqual([]);
+    const scopedIdeas = await service.list(context);
+    expect(scopedIdeas).toEqual([expect.objectContaining({ id: ideaA, workspaceId: workspaceA })]);
     await expect(service.transition(context, ideaB, "APPROVED")).rejects.toThrow("Idea not found");
     await expect(
       service.create(

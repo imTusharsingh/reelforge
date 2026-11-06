@@ -350,3 +350,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Moved `pnpm db:migrate:deploy` before `pnpm test` in CI so the real Prisma integration suite runs only after the schema is applied.
 - Expanded integration coverage for foreign series, real negative lifecycle transition, creator FK, series FK, and matched-idea FK; added the missing varied-window series permit case.
 - Verification: exact local `pnpm test` passed (98 passed, 2 skipped without `DATABASE_URL`); typecheck, lint, and format checks passed. CI migration/test execution remains the required confirmation against the runner database.
+
+## 2026-11-06 - M06 PR #15 local CI reproduction
+- Reproduced the complete CI order locally with Node `24.22.2` and a fresh PostgreSQL `18.6-alpine` container. The first migrated run exposed an incorrect integration assertion expecting an empty workspace-A list despite a workspace-A fixture idea; corrected it to assert workspace scoping.
+- Verification: `pnpm install --frozen-lockfile`, lint, format check, typecheck, schema validation, migration deployment, tests, and build all passed. Tests: 19 files / 100 tests.
