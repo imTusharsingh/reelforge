@@ -360,4 +360,4 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - M08: added typed provider-neutral capability, credential, registry, error, provenance, ledger, and spend-guard contracts. Runtime remains fail-closed; no provider calls are made by startup or tests.
 - M07: added versioned script/scene schemas, validation, factual source requirements, and an injectable typed LLM generation boundary carrying snapshot/provenance inputs.
 - Verification: `pnpm typecheck` attempted and failed because Prisma generation could not resolve `DATABASE_URL`; package AI-provider typecheck passed before the workspace failure. Remaining required checks are not run and are not claimed.
-- Decision/approval: M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`; no PR was created, pushed, approved, or merged by this session.
+- Decision/approval: PR #16 exists and received Minu REQUEST_CHANGES review `5798838007`; M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`. This follow-up continues on the same branch and PR; no new PR or merge is created.

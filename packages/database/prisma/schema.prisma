@@ -131,6 +131,9 @@ model Workspace {
   ideas                     Idea[]
   ideaDuplicates            IdeaDuplicate[]
   ideaApprovalSnapshots     IdeaApprovalSnapshot[]
+  scripts                   Script[]
+  providerRequests          ProviderRequest[]
+  providerBudgets           ProviderBudget[]
   activeConfigSnapshot      WorkspaceConfigSnapshot?   @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -740,9 +743,98 @@ model IdeaApprovalSnapshot {
   idea           Idea      @relation(fields: [workspaceId, ideaId], references: [workspaceId, id], onDelete: Restrict)
   channel        Channel?  @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Restrict)
   series         ContentSeries? @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Restrict)
+  scripts        Script[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, ideaId])
   @@index([workspaceId, channelId, seriesId])
   @@map("idea_approval_snapshots")
+}
+
+enum ScriptStatus {
+  DRAFT
+  REVISION_PENDING
+  APPROVED
+  REJECTED
+}
+enum ProviderRequestStatus {
+  SUCCEEDED
+  FAILED
+}
+
+model Script {
+  id                      String           @id @default(uuid()) @db.Uuid
+  workspaceId             String           @map("workspace_id") @db.Uuid
+  channelId               String?          @map("channel_id") @db.Uuid
+  seriesId                String?          @map("series_id") @db.Uuid
+  approvedIdeaSnapshotId  String           @map("approved_idea_snapshot_id") @db.Uuid
+  approvedIdeaChecksum    String           @map("approved_idea_checksum")
+  status                  ScriptStatus     @default(DRAFT)
+  currentRevision         Int              @default(1) @map("current_revision")
+  approvedAt              DateTime?        @map("approved_at") @db.Timestamptz(6)
+  createdByUserId         String           @map("created_by_user_id") @db.Uuid
+  createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace               Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  snapshot                IdeaApprovalSnapshot @relation(fields: [workspaceId, approvedIdeaSnapshotId], references: [workspaceId, id], onDelete: Restrict)
+  revisions               ScriptRevision[]
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, createdAt])
+  @@map("scripts")
+}
+
+model ScriptRevision {
+  id                 String       @id @default(uuid()) @db.Uuid
+  workspaceId        String       @map("workspace_id") @db.Uuid
+  scriptId           String       @map("script_id") @db.Uuid
+  revision           Int
+  document           Json
+  promptVersion      String?      @map("prompt_version")
+  modelVersion       String?      @map("model_version")
+  cost               Decimal?     @db.Decimal(18,8)
+  costCurrency       String?      @map("cost_currency")
+  configSnapshotId   String?      @map("config_snapshot_id") @db.Uuid
+  createdByUserId    String       @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  script             Script       @relation(fields: [workspaceId, scriptId], references: [workspaceId, id], onDelete: Cascade)
+  @@unique([workspaceId, scriptId, revision])
+  @@unique([workspaceId, id])
+  @@map("script_revisions")
+}
+
+model ProviderRequest {
+  id                 String                @id @default(uuid()) @db.Uuid
+  workspaceId        String                @map("workspace_id") @db.Uuid
+  channelId          String?               @map("channel_id") @db.Uuid
+  correlationId      String                @map("correlation_id") @db.Uuid
+  providerId         String                @map("provider_id")
+  capabilityId       String                @map("capability_id")
+  status             ProviderRequestStatus
+  usage              Json?
+  estimatedCost      Decimal?              @map("estimated_cost") @db.Decimal(18,8)
+  actualCost         Decimal?              @map("actual_cost") @db.Decimal(18,8)
+  currency           String?
+  latencyMs          Int?                  @map("latency_ms")
+  responseMetadata   Json?                 @map("response_metadata")
+  errorCode          String?               @map("error_code")
+  errorMessage       String?               @map("error_message")
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace          Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+  @@map("provider_requests")
+}
+
+model ProviderBudget {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  channelId    String?   @map("channel_id") @db.Uuid
+  dailyLimit   Decimal   @map("daily_limit") @db.Decimal(18,8)
+  currency     String
+  reserved     Decimal   @default(0) @db.Decimal(18,8)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, channelId])
+  @@map("provider_budgets")
 }

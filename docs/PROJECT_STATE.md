@@ -13,7 +13,7 @@
 - **Current release:** v1.
 - **Current integrated commit:** `318d1f2dd7220233f9ca36a8b277a2257ebf8382` (`git rev-parse origin/main`; M06 PR #15 merge).
 - **Active implementation sessions:** `work/m07-m08-combined` (combined experiment PR; pending Minu review).
-- **Active work packages:** none after M05 closeout; M06 is next after this closeout merges.
+- **Active work packages:** combined M07/M08 implementation on PR #16; M09 resumes sequential flow after this review.
 - **Blocked work packages:** none recorded.
 - **Latest core review:** Minu approved M04 at `110fbc0f0f4925f062815dbca68b6b9d666abd33` (prior approval at `a7a1069fb8e8ff41575521dde126df4ad54936e6`); PR #10 merged at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` after owner-authorized PM merge.
 
@@ -33,8 +33,8 @@
 **Phase 1 in progress - M00–M06 integrated; M07/M08 pending review**
 
 Next exact action:
-1. After this closeout is merged, start M06 (Idea & Topic Registry).
-2. Do not start M06 implementation in this closeout.
+1. Minu reviews PR #16 after blocker fixes.
+2. After PR #16 is integrated, start M09 sequentially; do not repeat the combined M07/M08 experiment.
 
 ## Module status index
 

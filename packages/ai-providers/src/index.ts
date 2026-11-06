@@ -147,8 +147,29 @@ export class ProviderRegistry {
       );
     return result;
   }
-  public list(): ReadonlyArray<ProviderRegistration> {
-    return [...this.registrations.values()];
+  public list(): ReadonlyArray<
+    Omit<ProviderRegistration, "credential"> & { credential: Omit<ProviderCredential, "secret"> }
+  > {
+    return [...this.registrations.values()].map((registration) => ({
+      ...registration,
+      credential: {
+        providerId: registration.credential.providerId,
+        environment: registration.credential.environment,
+      },
+    }));
+  }
+  public assertReady(
+    capability: CapabilityMetadata,
+    environment: ProviderEnvironment,
+  ): ProviderRegistration {
+    const registration = this.get(capability.providerId, capability.capabilityId);
+    if (registration.credential.environment !== environment)
+      throw new ProviderError(
+        "NOT_CONFIGURED",
+        "Provider credential is not configured for this environment",
+        "registry",
+      );
+    return registration;
   }
 }
 export type UsageLedgerEntry = Readonly<{
@@ -188,3 +209,4 @@ export class SpendGuard {
   }
 }
 export const SCRIPT_LLM = Symbol("SCRIPT_LLM");
+export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");

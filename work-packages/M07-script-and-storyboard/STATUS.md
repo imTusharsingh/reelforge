@@ -3,7 +3,7 @@
 - **State:** IMPLEMENTED_PENDING_REVIEW
 - **Assigned session/editor:** Module Implementation Agent
 - **Branch/worktree:** `work/m07-m08-combined`
-- **Last updated:** 2026-11-05
+- **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -15,19 +15,27 @@ Convert an approved idea into a structured script and scene plan.
 - [x] M07-T02: Scene schema.
 - [x] M07-T03: Typed injectable LLM boundary with fail-closed runtime default.
 - [x] M07-T04: Duration, uniqueness, and factual-source validation.
-- [ ] M07-T05: T05 Implement script revision/versioning and manual edit/approval.
+- [x] M07-T05: Persisted script revisions, manual edit, approval, and immutable export routes.
 - [x] M07-T06: Factual claims require URL-backed sources.
-- [x] M07-T07: Generation result carries provenance and approved snapshot identifiers.
+- [x] M07-T07: Persisted provenance and approved snapshot identifiers.
 
 
 ## Files changed
 - `apps/api/src/modules/script/**`, `apps/api/src/app.module.ts`.
 
 ## Commands and evidence
-- `pnpm typecheck` — **FAILED**: database generation requires `DATABASE_URL`; `@reelforge/ai-providers` passed before the workspace failure.
+- `DATABASE_URL=... pnpm --filter @reelforge/api typecheck` — **PASSED**.
+- `DATABASE_URL=... pnpm db:validate` — **PASSED**.
+- `pnpm lint` — **PASSED**.
+- `pnpm format:check` — **PASSED**.
+- `pnpm test` — **PASSED**, 20 files / 102 passed / 2 skipped.
+- `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
+- Root `pnpm typecheck` and root `pnpm build` — **NOT COMPLETED within the command window**; individual API/database generation and build passed.
+- `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
+- `pnpm db:migrate:deploy` — **NOT RUN after blocker changes**; prior attempt failed with local PostgreSQL P1000.
 
 ## Contract/schema proposals
-- None.
+- Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
 
 ## Blockers / risks / unknowns
 - None recorded. Do not infer this means no risks exist; update after inspection.
@@ -36,7 +44,7 @@ Convert an approved idea into a structured script and scene plan.
 Read the work package and repository state, then report any conflict with existing code before implementation.
 
 ## Handoff notes
-No implementation session has started.
+Remaining review gap: genre-policy enforcement and full HTTP/integration negative-path coverage need completion before approval.
 
 ## Reviewer decision
 - Pending.

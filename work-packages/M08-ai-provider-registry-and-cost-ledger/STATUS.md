@@ -3,7 +3,7 @@
 - **State:** IMPLEMENTED_PENDING_REVIEW
 - **Assigned session/editor:** Module Implementation Agent
 - **Branch/worktree:** `work/m07-m08-combined`
-- **Last updated:** 2026-11-05
+- **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -15,16 +15,24 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - [x] M08-T02: Capability and cost metadata.
 - [x] M08-T03: Registry and non-secret credential boundary.
 - [x] M08-T04: Normalized fail-closed error taxonomy.
-- [x] M08-T05: Usage ledger entry contract.
-- [x] M08-T06: Workspace/channel spend guard.
+- [x] M08-T05: Persisted provider request ledger around script dispatch, including failure metadata.
+- [ ] M08-T06: Persisted budget caps and concurrent reservation API remain incomplete.
 - [ ] M08-T07: T07 Add real-provider health/capability checks that are explicitly invoked, never run automatically on startup or in CI.
 
 
 ## Files changed
-- None yet.
+- `packages/ai-providers/src/index.ts`, `apps/api/src/modules/script/**`, and additive migration `20261106160000_m07_m08_script_provider`.
 
 ## Commands and evidence
-- None run.
+- `DATABASE_URL=... pnpm --filter @reelforge/api typecheck` — **PASSED**.
+- `DATABASE_URL=... pnpm db:validate` — **PASSED**.
+- `pnpm lint` — **PASSED**.
+- `pnpm format:check` — **PASSED**.
+- `pnpm test` — **PASSED**, 20 files / 102 passed / 2 skipped.
+- `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
+- Root `pnpm typecheck` and root `pnpm build` — **NOT COMPLETED within the command window**.
+- `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
+- `pnpm db:migrate:deploy` — **NOT RUN after blocker changes**; prior attempt failed with local PostgreSQL P1000.
 
 ## Contract/schema proposals
 - None.
@@ -36,7 +44,7 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 Read the work package and repository state, then report any conflict with existing code before implementation.
 
 ## Handoff notes
-No implementation session has started.
+Remaining review gap: budget service/API with atomic reservation and explicit health/capability invocation are incomplete.
 
 ## Reviewer decision
 - Pending.
