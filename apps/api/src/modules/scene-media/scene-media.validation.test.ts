@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ProviderError } from "@reelforge/ai-providers";
+import { Prisma } from "@reelforge/database";
+import { ledgerUsage } from "./scene-media.budget.js";
 import {
   applicableKinds,
   assertVideoCapability,
   isCompletePackage,
+  normalizeMediaResult,
   validateGeneratedMedia,
 } from "./scene-media.validation.js";
 import { SCENE_MEDIA_SCHEMA_VERSION, type SceneMediaPackage } from "./scene-media.types.js";
@@ -110,5 +113,49 @@ describe("scene media validation", () => {
       ],
     };
     expect(isCompletePackage(pkg)).toBe(false);
+  });
+
+  it.each(["missing", "null", "non-object"] as const)(
+    "normalizes %s metadata without throwing",
+    (kind) => {
+      const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const raw =
+        kind === "missing"
+          ? {
+              mediaId: "asset",
+              providerJobId: "job",
+              media: { declaredMediaType: "image/png", body: png },
+            }
+          : {
+              mediaId: "asset",
+              providerJobId: "job",
+              metadata: kind === "null" ? null : "bad",
+              media: { declaredMediaType: "image/png", body: png },
+            };
+      const normalized = normalizeMediaResult(raw);
+      expect(normalized.envelopeValid).toBe(true);
+      expect(normalized.provenanceValid).toBe(false);
+      expect(normalized.usage).toBeNull();
+      expect(normalized.cost).toBeNull();
+      expect(normalized.currency).toBeNull();
+    },
+  );
+
+  it("keeps omitted usage and currency null on otherwise valid provenance", () => {
+    const normalized = normalizeMediaResult({
+      mediaId: "asset",
+      providerJobId: "job",
+      metadata: { modelVersion: "m", promptVersion: "p", cost: 1 },
+      media: {
+        declaredMediaType: "image/png",
+        body: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      },
+    });
+    expect(normalized.provenanceValid).toBe(true);
+    expect(normalized.usage).toBeNull();
+    expect(normalized.currency).toBeNull();
+    expect(normalized.cost).toBe(1);
+    expect(ledgerUsage(normalized.usage)).toBe(Prisma.JsonNull);
+    expect(ledgerUsage(normalized.usage)).not.toBe(Prisma.DbNull);
   });
 });

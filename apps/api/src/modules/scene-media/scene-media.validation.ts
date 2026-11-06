@@ -56,6 +56,116 @@ export const provenanceSchema = z.object({
   usage: providerUsageSchema.optional(),
 });
 export type ParsedProvenance = z.infer<typeof provenanceSchema>;
+export type NormalizedUsage = Readonly<{
+  inputTokens?: number;
+  outputTokens?: number;
+  seconds?: number;
+  characters?: number;
+}>;
+export type NormalizedMediaResult = Readonly<{
+  envelopeValid: boolean;
+  mediaId: string | null;
+  providerRequestId: string | null;
+  providerJobId: string | null;
+  declaredMediaType: string | null;
+  body: Uint8Array | null;
+  provenanceValid: boolean;
+  modelVersion: string | null;
+  promptVersion: string | null;
+  cost: number | null;
+  currency: string | null;
+  usage: NormalizedUsage | null;
+}>;
+
+const invalidMediaResult: NormalizedMediaResult = {
+  envelopeValid: false,
+  mediaId: null,
+  providerRequestId: null,
+  providerJobId: null,
+  declaredMediaType: null,
+  body: null,
+  provenanceValid: false,
+  modelVersion: null,
+  promptVersion: null,
+  cost: null,
+  currency: null,
+  usage: null,
+};
+
+/** Never throws. Missing, null, and non-object metadata become an invalid provenance with no usage. */
+export function normalizeMediaResult(raw: unknown): NormalizedMediaResult {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return invalidMediaResult;
+  const record = raw as Record<string, unknown>;
+  const media =
+    typeof record.media === "object" && record.media !== null && !Array.isArray(record.media)
+      ? (record.media as Record<string, unknown>)
+      : null;
+  const mediaId = nonEmptyString(record.mediaId);
+  const declaredMediaType = media === null ? null : nonEmptyString(media.declaredMediaType);
+  const body = media?.body instanceof Uint8Array ? media.body : null;
+  return {
+    envelopeValid: mediaId !== null && declaredMediaType !== null && body !== null,
+    mediaId,
+    providerRequestId: nonEmptyString(record.providerRequestId),
+    providerJobId: nonEmptyString(record.providerJobId),
+    declaredMediaType,
+    body,
+    ...normalizeProvenance(
+      record.metadata,
+      Object.prototype.hasOwnProperty.call(record, "metadata"),
+    ),
+  };
+}
+
+function normalizeProvenance(
+  metadata: unknown,
+  present: boolean,
+): Pick<
+  NormalizedMediaResult,
+  "provenanceValid" | "modelVersion" | "promptVersion" | "cost" | "currency" | "usage"
+> {
+  const invalid = {
+    provenanceValid: false,
+    modelVersion: null,
+    promptVersion: null,
+    cost: null,
+    currency: null,
+    usage: null,
+  };
+  if (!present || metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return invalid;
+  }
+  const parsed = provenanceSchema.safeParse(metadata);
+  if (!parsed.success) return invalid;
+  const hasUsage = Object.prototype.hasOwnProperty.call(metadata, "usage");
+  return {
+    provenanceValid: true,
+    modelVersion: parsed.data.modelVersion,
+    promptVersion: parsed.data.promptVersion,
+    cost: parsed.data.cost,
+    currency: parsed.data.currency ?? null,
+    usage: hasUsage ? compactUsage(parsed.data.usage) : null,
+  };
+}
+
+function compactUsage(usage: ParsedProvenance["usage"]): NormalizedUsage | null {
+  if (usage === undefined) return null;
+  const compact: {
+    inputTokens?: number;
+    outputTokens?: number;
+    seconds?: number;
+    characters?: number;
+  } = {};
+  if (usage.inputTokens !== undefined) compact.inputTokens = usage.inputTokens;
+  if (usage.outputTokens !== undefined) compact.outputTokens = usage.outputTokens;
+  if (usage.seconds !== undefined) compact.seconds = usage.seconds;
+  if (usage.characters !== undefined) compact.characters = usage.characters;
+  return Object.keys(compact).length === 0 ? null : compact;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
 
 export const mediaResponseSchema = z.object({
   mediaId: z.string().min(1),

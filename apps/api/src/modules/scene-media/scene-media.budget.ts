@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import type { Database } from "../identity/identity.types.js";
-import type { ParsedProvenance } from "./scene-media.validation.js";
+import type { NormalizedUsage } from "./scene-media.validation.js";
 
 export type DispatchReservation = Readonly<{
   id: string;
@@ -11,8 +11,6 @@ export type DispatchReservation = Readonly<{
   correlationId: string;
 }>;
 
-export type Provenance = ParsedProvenance;
-
 export type LedgerRecordInput = Readonly<{
   workspaceId: string;
   correlationId: string;
@@ -21,7 +19,8 @@ export type LedgerRecordInput = Readonly<{
   latencyMs: number;
   dispatchedPrompt: string;
   responseMetadata: Prisma.InputJsonValue;
-  provenance: Provenance | null;
+  actualCost: number | null;
+  usage: NormalizedUsage | null;
   error?: unknown;
 }>;
 
@@ -163,8 +162,7 @@ export class PrismaSceneDispatchLedger implements SceneDispatchLedger {
   }
 
   public async record(writer: ProviderRequestWriter, input: LedgerRecordInput): Promise<void> {
-    const provenance = input.provenance;
-    const actualCost = typeof provenance?.cost === "number" ? provenance.cost : null;
+    const error = input.error;
     await writer.providerRequest.update({
       where: {
         workspaceId_correlationId: {
@@ -173,19 +171,33 @@ export class PrismaSceneDispatchLedger implements SceneDispatchLedger {
         },
       },
       data: {
-        status: input.error === undefined ? "SUCCEEDED" : "FAILED",
-        usage: provenance?.usage ?? Prisma.JsonNull,
+        status: error === undefined ? "SUCCEEDED" : "FAILED",
+        usage: ledgerUsage(input.usage),
         estimatedCost: input.estimate,
-        actualCost,
-        currency: provenance?.currency ?? input.currency,
+        actualCost: input.actualCost,
+        currency: input.currency,
         latencyMs: input.latencyMs,
         dispatchedPrompt: input.dispatchedPrompt,
         responseMetadata: input.responseMetadata,
-        errorCode: errorCode(input.error),
-        errorMessage: errorMessage(input.error),
+        errorCode: errorCode(error),
+        errorMessage: errorMessage(error),
       },
     });
   }
+}
+
+/** Omitted usage is JSON null. DbNull is not a valid value for this nullable JSON column. */
+export function ledgerUsage(
+  usage: NormalizedUsage | null | undefined,
+): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (usage === undefined || usage === null) return Prisma.JsonNull;
+  const compact: Record<string, number> = {};
+  if (usage.inputTokens !== undefined) compact.inputTokens = usage.inputTokens;
+  if (usage.outputTokens !== undefined) compact.outputTokens = usage.outputTokens;
+  if (usage.seconds !== undefined) compact.seconds = usage.seconds;
+  if (usage.characters !== undefined) compact.characters = usage.characters;
+  if (Object.keys(compact).length === 0) return Prisma.JsonNull;
+  return compact;
 }
 
 function utcDay(date: Date): Date {

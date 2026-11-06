@@ -403,3 +403,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: No configured vendor adapter. Budget SQL is duplicated from the script service. A crash between provider acceptance and the success transaction can require another scene version. The Prisma ESM dist boot follow-up remains open.
 - Next exact action: Minu reviews the M09 pull request. Do not merge and do not start M10.
 - Related status/ADR: `work-packages/M09-scene-media-generation/STATUS.md`; `docs/PROJECT_STATE.md`.
+
+## 2026-11-06 - M09 B1 ledger finalization
+- Actor/session: Module Implementation Agent.
+- Work package: M09 - Scene Media Generation. PR #17 review blocker B1 only.
+- Branch: `cursor/m09-scene-media-generation-1810`.
+- Changes made: Normalize missing, null, and non-object provider metadata before ledger writes. Omitted usage is persisted as JSON null. Every post-dispatch ledger update is terminal; a failed finalization is not swallowed into `errorCode=PENDING`.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, fresh local PostgreSQL `16.15`. `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate`, `pnpm db:migrate:deploy` (12 migrations), `pnpm test` (29 files / 174 tests), `pnpm build`, and `git diff --check` all exited 0.
+- External calls: NONE.
+- Decisions/approvals: Still `IMPLEMENTED_PENDING_REVIEW`. No merge.
+- Next exact action: Minu re-reviews PR #17. Do not start M10.

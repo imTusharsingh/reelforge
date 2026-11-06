@@ -7,6 +7,8 @@
 - **Reviewer:** Core Architect/Reviewer (Minu)
 - **Approved commit:** none
 
+B1 from the PR #17 review is addressed in this branch and is awaiting re-review. The module is not approved.
+
 ## Current objective
 Generate image/video/voice assets for each storyboard scene.
 
@@ -38,10 +40,10 @@ Node `24.22.2`, pnpm `12.16.1`, local PostgreSQL `16.15` (CI image is `18.6-alpi
 - `pnpm typecheck` — **PASSED** (exit 0).
 - `pnpm db:validate` — **PASSED** (exit 0).
 - `pnpm db:migrate:deploy` — **PASSED** (exit 0). 12 migrations applied, including `20261106180000_m09_scene_media_generation`.
-- `pnpm test` — **PASSED**, 29 files / 161 tests.
+- `pnpm test` — **PASSED**, 29 files / 174 tests, after the B1 ledger fix. The earlier pre-fix run was 29 files / 161 tests.
 - `pnpm build` — **PASSED** (exit 0).
 - `git diff --check` — **PASSED** (exit 0).
-- GitHub Actions run [42220432709](https://github.com/imTusharsingh/reelforge/actions/runs/42220432709) on PR #17 — **PASSED** (`quality` job, PostgreSQL `18.6-alpine`).
+- GitHub Actions on the pre-fix head passed ([run 42220724790](https://github.com/imTusharsingh/reelforge/actions/runs/42220724790)). The B1 commit is verified locally above; its hosted run is the PR check and is not copied here in advance.
 
 No live provider call was made. Scene-media tests inject fixture ports and local filesystem storage.
 
@@ -51,7 +53,8 @@ No live provider call was made. Scene-media tests inject fixture ports and local
 - The cloud branch policy required `cursor/m09-scene-media-generation-1810`. The work-package convention remains `work/m09-*`.
 
 ## Blockers / risks / unknowns
-- Review is pending. This status is not approval, integration, or a production-readiness claim.
+- Review is pending again after the B1 ledger fix. This status is not approval, integration, or a production-readiness claim.
+- Malformed or partial provider envelopes now normalize before the ledger write. Omitted usage is stored as JSON null, not `DbNull`. A post-dispatch ledger write is terminal (`SUCCEEDED` or `FAILED`); a failed finalization is not swallowed into a synthetic `PENDING` row.
 - Runtime image, video, and TTS ports are unconfigured and fail closed. A real vendor adapter still requires the open provider decision and an explicit credential registration. Health checks run only on the authenticated provider-health route.
 - Budget SQL matches the M08 reservation, settlement, release, and unknown-cost rules, but it is duplicated in the scene-media module so M07-owned script files were not edited. A refused daily cap rolls the pending ledger insert back inside the same transaction. The script path can leave that pending row committed when the reservation insert matches nothing.
 - Generation runs in the API request, not the worker. A crash after a provider accepts work and before the success transaction commits can leave the scene unfinished. Retry creates a new scene version and can dispatch again.

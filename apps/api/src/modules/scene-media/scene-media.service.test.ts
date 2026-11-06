@@ -6,6 +6,7 @@ import {
   ProviderRegistry,
   type CapabilityMetadata,
   type ImageProviderPort,
+  type MediaGenerationResponse,
   type TtsProviderPort,
   type VideoProviderPort,
 } from "@reelforge/ai-providers";
@@ -165,7 +166,7 @@ class MemoryLedger implements SceneDispatchLedger {
     const next = {
       correlationId: input.correlationId,
       status: input.error === undefined ? "SUCCEEDED" : "FAILED",
-      actualCost: typeof input.provenance?.cost === "number" ? input.provenance.cost : null,
+      actualCost: input.actualCost,
       estimatedCost: input.estimate,
     };
     const existing = this.records.find((item) => item.correlationId === input.correlationId);
@@ -929,6 +930,113 @@ describe("scene media generation", () => {
     expect(created.status).toBe("FAILED");
     expect(env.assets).toHaveLength(0);
     expect(env.ledger.reservations).toHaveLength(0);
+  });
+
+  it.each(["missing", "null", "non-object"] as const)(
+    "finalizes a failed settled ledger when metadata is %s",
+    async (metadataKind) => {
+      const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const env = harness({
+        scenes: [scene("one", { narration: undefined, dialogue: "" })],
+        image: {
+          generate: async (request): Promise<MediaGenerationResponse> => {
+            const base = {
+              mediaId: `img-${request.correlationId}`,
+              providerJobId: `job-${request.correlationId}`,
+              providerRequestId: `req-${request.correlationId}`,
+              media: { declaredMediaType: "image/png", body: png },
+            };
+            if (metadataKind === "missing") return base as unknown as MediaGenerationResponse;
+            return {
+              ...base,
+              metadata: metadataKind === "null" ? null : "not-an-object",
+            } as unknown as MediaGenerationResponse;
+          },
+        },
+      });
+      const created = await env.service.create(env.context, {
+        ...createBody(env.scriptId),
+        outputs: { image: true, video: false, narration: false, dialogue: false },
+      });
+      expect(created.status).toBe("FAILED");
+      expect(created.scenes[0]?.outputs[0]).toMatchObject({
+        status: "FAILED_FINAL",
+        assetId: null,
+        errorCode: "CONFLICT",
+      });
+      expect(env.assets).toHaveLength(0);
+      expect(env.ledger.reservations[0]).toMatchObject({
+        status: "SETTLED",
+        actualCost: null,
+        chargedCost: 1,
+      });
+      expect(env.ledger.records[0]).toMatchObject({
+        status: "FAILED",
+        actualCost: null,
+        estimatedCost: 1,
+      });
+    },
+  );
+
+  it("succeeds when provenance omits usage and currency", async () => {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => ({
+          mediaId: `img-${request.correlationId}`,
+          providerJobId: `job-${request.correlationId}`,
+          metadata: { modelVersion: "m", promptVersion: "p", cost: 1 },
+          media: { declaredMediaType: "image/png", body: png },
+        }),
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    expect(created.status).toBe("SUCCEEDED");
+    expect(env.ledger.records[0]).toMatchObject({
+      status: "SUCCEEDED",
+      actualCost: 1,
+      estimatedCost: 1,
+    });
+    expect(env.ledger.reservations[0]?.status).toBe("SETTLED");
+  });
+
+  it("does not hide a ledger finalization failure behind a pending dispatch", async () => {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => ({
+          mediaId: `img-${request.correlationId}`,
+          providerJobId: `job-${request.correlationId}`,
+          metadata: { modelVersion: "m", promptVersion: "p", cost: 1 },
+          media: { declaredMediaType: "image/png", body: png },
+        }),
+      },
+    });
+    const failingLedger = new MemoryLedger();
+    failingLedger.record = async (): Promise<void> => {
+      throw new Error("ledger write failed");
+    };
+    const service = new SceneMediaService(
+      (env.service as unknown as { db: Database }).db,
+      (env.service as unknown as { image: ImageProviderPort }).image,
+      (env.service as unknown as { video: VideoProviderPort }).video,
+      (env.service as unknown as { tts: TtsProviderPort }).tts,
+      (env.service as unknown as { registry: ProviderRegistry }).registry,
+      (env.service as unknown as { storage: MemoryStorage }).storage,
+      (env.service as unknown as { assets: AssetService }).assets,
+      failingLedger,
+    );
+    await expect(
+      service.create(env.context, {
+        ...createBody(env.scriptId),
+        outputs: { image: true, video: false, narration: false, dialogue: false },
+      }),
+    ).rejects.toThrow(/could not be finalized/i);
   });
 
   it("rejects a character reference whose checksum does not match the published package", async () => {

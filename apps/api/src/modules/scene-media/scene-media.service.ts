@@ -56,15 +56,15 @@ import {
   assertVideoCapability,
   buildScenePrompt,
   isCompletePackage,
-  mediaResponseSchema,
+  normalizeMediaResult,
   parseCreateInput,
   parsePromptBundle,
   parseReplaceInput,
-  provenanceSchema,
   providerEnvironment,
   readVoice,
   validateGeneratedMedia,
-  type ParsedProvenance,
+  type NormalizedMediaResult,
+  type NormalizedUsage,
 } from "./scene-media.validation.js";
 
 type Plan = Readonly<{
@@ -585,8 +585,7 @@ export class SceneMediaService {
     let settled = false;
     let storedKey: string | undefined;
     const started = Date.now();
-    let response: ReturnType<typeof mediaResponseSchema.safeParse>["data"] | undefined;
-    let provenance: ParsedProvenance | null = null;
+    let normalized: NormalizedMediaResult | undefined;
     try {
       this.prepareDispatch(kind, planned, capability, correlationId);
       this.registry.assertReady(capability, providerEnvironment());
@@ -610,29 +609,29 @@ export class SceneMediaService {
         capabilityId: capability.capabilityId,
       });
       const raw = await this.invoke(kind, planned, correlationId);
-      const parsed = mediaResponseSchema.safeParse(raw);
-      if (!parsed.success)
+      normalized = normalizeMediaResult(raw);
+      if (
+        !normalized.envelopeValid ||
+        normalized.body === null ||
+        normalized.declaredMediaType === null
+      ) {
         throw new ConflictException("Provider returned an invalid media envelope");
-      response = parsed.data;
-      const provenanceResult = provenanceSchema.safeParse(response.metadata);
-      provenance = provenanceResult.success ? provenanceResult.data : null;
+      }
       await this.ledger.settle(
         context.workspaceId,
         reservation,
-        provenance?.cost ?? null,
+        normalized.provenanceValid ? normalized.cost : null,
         estimate,
       );
       settled = true;
-      if (!provenanceResult.success)
+      if (!normalized.provenanceValid)
         throw new ConflictException("Provider returned invalid provenance");
-      const accepted = provenanceResult.data;
-      const providerJobId = response.providerJobId ?? response.providerRequestId;
-      if (!providerJobId) throw new ConflictException("Provider did not return a job id");
-      const validated = validateGeneratedMedia(
-        kind,
-        response.media.declaredMediaType,
-        response.media.body,
-      );
+      const providerJobId = normalized.providerJobId ?? normalized.providerRequestId;
+      if (!providerJobId || normalized.mediaId === null) {
+        throw new ConflictException("Provider did not return a job id");
+      }
+      const providerAssetId = normalized.mediaId;
+      const validated = validateGeneratedMedia(kind, normalized.declaredMediaType, normalized.body);
       const assetId = randomUUID();
       const objectKey = buildAssetObjectKey(assetId, 1, validated.mediaType);
       await this.storage.putObject({
@@ -653,10 +652,21 @@ export class SceneMediaService {
       const metadata = {
         providerId: capability.providerId,
         capabilityId: capability.capabilityId,
-        modelVersion: accepted.modelVersion,
-        promptVersion: accepted.promptVersion,
-        costKnown: accepted.cost !== null,
+        modelVersion: normalized.modelVersion,
+        promptVersion: normalized.promptVersion,
+        costKnown: normalized.cost !== null,
       };
+      const ledgerInput = this.ledgerInput({
+        context,
+        correlationId,
+        estimate,
+        currency: ledgerCurrency(normalized.currency, capability.costModel.currency),
+        latencyMs: Date.now() - started,
+        dispatchedPrompt: dispatchPrompt(planned, kind),
+        normalized,
+        actualCost: normalized.cost,
+        usage: normalized.usage,
+      });
       await this.db.$transaction(async (tx) => {
         await tx.asset.create({
           data: {
@@ -678,16 +688,7 @@ export class SceneMediaService {
             createdByUserId: context.userId,
           },
         });
-        await this.ledger.record(tx, {
-          workspaceId: context.workspaceId,
-          correlationId,
-          estimate,
-          currency: capability.costModel.currency,
-          latencyMs: Date.now() - started,
-          dispatchedPrompt: dispatchPrompt(planned, kind),
-          responseMetadata: this.responseMetadata(response, accepted),
-          provenance: accepted,
-        });
+        await this.ledger.record(tx, ledgerInput);
         await tx.sceneGenerationOutput.create({
           data: {
             id: outputId,
@@ -698,7 +699,7 @@ export class SceneMediaService {
             assetId,
             assetVersion: 1,
             providerJobId,
-            providerAssetId: parsed.data.mediaId,
+            providerAssetId,
             correlationId,
             mediaType: validated.mediaType,
             byteSize: validated.byteSize,
@@ -726,23 +727,26 @@ export class SceneMediaService {
       return "SUCCEEDED";
     } catch (error) {
       if (reservation && !settled) {
-        await this.ledger.release(context.workspaceId, reservation).catch(() => undefined);
+        try {
+          await this.ledger.release(context.workspaceId, reservation);
+        } catch {
+          // A release failure must not skip the terminal ledger write below.
+        }
       }
       if (reservation) {
         const estimate = capability.costModel.amount ?? 0;
-        await this.ledger
-          .record(this.db, {
-            workspaceId: context.workspaceId,
-            correlationId,
-            estimate,
-            currency: capability.costModel.currency,
-            latencyMs: Date.now() - started,
-            dispatchedPrompt: dispatchPrompt(planned, kind),
-            responseMetadata: this.responseMetadata(response, provenance),
-            provenance,
-            error,
-          })
-          .catch(() => undefined);
+        await this.finalizeLedger({
+          workspaceId: context.workspaceId,
+          correlationId,
+          estimate,
+          currency: ledgerCurrency(normalized?.currency, capability.costModel.currency),
+          latencyMs: Date.now() - started,
+          dispatchedPrompt: dispatchPrompt(planned, kind),
+          responseMetadata: responseMetadata(normalized),
+          actualCost: normalized?.provenanceValid ? normalized.cost : null,
+          usage: normalized?.usage ?? null,
+          error,
+        });
       }
       if (storedKey) {
         await this.storage
@@ -751,6 +755,31 @@ export class SceneMediaService {
       }
       const failure = classify(error);
       return this.failOutput(context, generationId, kind, failure);
+    }
+  }
+
+  private async finalizeLedger(input: Parameters<SceneDispatchLedger["record"]>[1]): Promise<void> {
+    try {
+      await this.ledger.record(this.db, input);
+    } catch (first) {
+      try {
+        await this.ledger.record(this.db, {
+          ...input,
+          usage: null,
+          responseMetadata: {
+            dispatched: true,
+            costKnown: false,
+            providerRequestId: null,
+            providerJobId: null,
+            providerAssetId: null,
+            modelVersion: null,
+            promptVersion: null,
+          },
+          error: input.error ?? first,
+        });
+      } catch {
+        throw new ConflictException("Provider ledger could not be finalized");
+      }
     }
   }
 
@@ -809,18 +838,29 @@ export class SceneMediaService {
     return this.tts.synthesize({ text, voice, correlationId });
   }
 
-  private responseMetadata(
-    response: ReturnType<typeof mediaResponseSchema.safeParse>["data"] | undefined,
-    provenance: ParsedProvenance | null,
-  ): Prisma.InputJsonValue {
+  private ledgerInput(input: {
+    context: WorkspaceContext;
+    correlationId: string;
+    estimate: number;
+    currency: string;
+    latencyMs: number;
+    dispatchedPrompt: string;
+    normalized: NormalizedMediaResult;
+    actualCost: number | null;
+    usage: NormalizedUsage | null;
+    error?: unknown;
+  }): Parameters<SceneDispatchLedger["record"]>[1] {
     return {
-      dispatched: true,
-      providerRequestId: response?.providerRequestId ?? null,
-      providerJobId: response?.providerJobId ?? null,
-      providerAssetId: response?.mediaId ?? null,
-      modelVersion: provenance?.modelVersion ?? null,
-      promptVersion: provenance?.promptVersion ?? null,
-      costKnown: typeof provenance?.cost === "number",
+      workspaceId: input.context.workspaceId,
+      correlationId: input.correlationId,
+      estimate: input.estimate,
+      currency: input.currency,
+      latencyMs: input.latencyMs,
+      dispatchedPrompt: input.dispatchedPrompt,
+      responseMetadata: responseMetadata(input.normalized),
+      actualCost: input.actualCost,
+      usage: input.usage,
+      ...(input.error === undefined ? {} : { error: input.error }),
     };
   }
 
@@ -977,6 +1017,22 @@ function rollupJob(statuses: readonly SceneGenerationStatus[]): SceneMediaJobSta
   if (statuses.every((status) => status === "SUCCEEDED")) return "SUCCEEDED";
   if (statuses.some((status) => status === "SUCCEEDED")) return "PARTIAL";
   return "FAILED";
+}
+
+function responseMetadata(normalized: NormalizedMediaResult | undefined): Prisma.InputJsonValue {
+  return {
+    dispatched: true,
+    providerRequestId: normalized?.providerRequestId ?? null,
+    providerJobId: normalized?.providerJobId ?? null,
+    providerAssetId: normalized?.mediaId ?? null,
+    modelVersion: normalized?.modelVersion ?? null,
+    promptVersion: normalized?.promptVersion ?? null,
+    costKnown: normalized?.provenanceValid === true && typeof normalized.cost === "number",
+  };
+}
+
+function ledgerCurrency(currency: string | null | undefined, fallback: string): string {
+  return typeof currency === "string" && currency.length > 0 ? currency : fallback;
 }
 
 function dispatchPrompt(planned: PlannedScene, kind: SceneMediaKind): string {

@@ -9,6 +9,7 @@ import { compilePrompt, parsePromptTemplateBody, platformDefaults } from "@reelf
 import type {
   CapabilityMetadata,
   ImageProviderPort,
+  MediaGenerationResponse,
   TtsProviderPort,
   VideoProviderPort,
 } from "@reelforge/ai-providers";
@@ -87,23 +88,38 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
   let imageCalls = 0;
   let videoCalls = 0;
   let failImages = false;
+  let metadataMode: "complete" | "missing" | "null" | "non-object" | "omit-usage" = "complete";
   const image: ImageProviderPort = {
     capability: capability("image", "image"),
-    generate: async (request) => {
+    generate: async (request): Promise<MediaGenerationResponse> => {
       imageCalls += 1;
       if (failImages)
         throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
-      return {
+      const media = {
         mediaId: `img-${request.correlationId}`,
         providerJobId: `job-${request.correlationId}`,
         providerRequestId: `req-${request.correlationId}`,
+        media: { declaredMediaType: "image/png", body: PNG },
+      };
+      if (metadataMode === "missing") return media as unknown as MediaGenerationResponse;
+      if (metadataMode === "null")
+        return { ...media, metadata: null } as unknown as MediaGenerationResponse;
+      if (metadataMode === "non-object")
+        return { ...media, metadata: "bad" } as unknown as MediaGenerationResponse;
+      if (metadataMode === "omit-usage") {
+        return {
+          ...media,
+          metadata: { modelVersion: "fixture-model", promptVersion: "fixture-prompt", cost: 1 },
+        };
+      }
+      return {
+        ...media,
         metadata: {
           modelVersion: "fixture-model",
           promptVersion: "fixture-prompt",
           cost: 1,
           currency: "USD",
         },
-        media: { declaredMediaType: "image/png", body: PNG },
       };
     },
   };
@@ -395,5 +411,84 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
       ),
     ).toBe(true);
     await expect(service.exportPackage(context, created.jobId)).rejects.toThrow(/incomplete/i);
+  });
+
+  it.each(["missing", "null", "non-object"] as const)(
+    "persists a terminal failed ledger for %s metadata",
+    async (mode) => {
+      if (!db || !service) return;
+      metadataMode = mode;
+      const idempotencyKey = `scene-media-${mode}`;
+      const created = await service.create(context, {
+        scriptId,
+        idempotencyKey,
+        outputs: { image: true, video: false, narration: false, dialogue: false },
+      });
+      metadataMode = "complete";
+      expect(created.status).toBe("FAILED");
+      const requests = await db.providerRequest.findMany({
+        where: { workspaceId, dispatchedPrompt: { contains: "Scene:" } },
+        orderBy: { createdAt: "desc" },
+        take: 2,
+      });
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        expect(request.status).toBe("FAILED");
+        expect(request.errorCode).not.toBe("PENDING");
+        expect(request.errorMessage).toContain("invalid provenance");
+        expect(request.actualCost).toBeNull();
+        expect(request.usage).toBeNull();
+        expect(request.currency).toBe("USD");
+        expect(request.dispatchedPrompt?.length).toBeGreaterThan(0);
+        expect(request.latencyMs).toEqual(expect.any(Number));
+        expect(request.responseMetadata).toMatchObject({ dispatched: true, costKnown: false });
+        const reservation = await db.providerBudgetReservation.findUniqueOrThrow({
+          where: {
+            workspaceId_correlationId: { workspaceId, correlationId: request.correlationId },
+          },
+        });
+        expect(reservation.status).toBe("SETTLED");
+        expect(reservation.actualCost).toBeNull();
+        expect(reservation.chargedCost?.toString()).toBe("1");
+      }
+      expect(
+        created.scenes.every((scene) => scene.outputs.every((output) => output.assetId === null)),
+      ).toBe(true);
+    },
+  );
+
+  it("persists omitted usage as JSON null and a succeeded ledger", async () => {
+    if (!db || !service) return;
+    metadataMode = "omit-usage";
+    const created = await service.create(context, {
+      scriptId,
+      idempotencyKey: "scene-media-omit-usage",
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    metadataMode = "complete";
+    expect(created.status).toBe("SUCCEEDED");
+    const output = created.scenes[0]?.outputs[0];
+    const request = await db.providerRequest.findUniqueOrThrow({
+      where: {
+        workspaceId_correlationId: { workspaceId, correlationId: output?.correlationId ?? "" },
+      },
+    });
+    expect(request.status).toBe("SUCCEEDED");
+    expect(request.errorCode).toBeNull();
+    expect(request.usage).toBeNull();
+    expect(request.currency).toBe("USD");
+    expect(request.actualCost?.toString()).toBe("1");
+    expect(request.estimatedCost?.toString()).toBe("1");
+    expect(request.responseMetadata).toMatchObject({
+      dispatched: true,
+      costKnown: true,
+      modelVersion: "fixture-model",
+      promptVersion: "fixture-prompt",
+    });
+    const reservation = await db.providerBudgetReservation.findUniqueOrThrow({
+      where: { workspaceId_correlationId: { workspaceId, correlationId: request.correlationId } },
+    });
+    expect(reservation.status).toBe("SETTLED");
+    expect(reservation.actualCost?.toString()).toBe("1");
   });
 });
