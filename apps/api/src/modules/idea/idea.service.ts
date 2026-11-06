@@ -161,10 +161,15 @@ export class IdeaService {
         ? { prompt: request.prompt }
         : { prompt: request.prompt, context: request.contextText },
     );
-    const proposal = parseAiProposal(result.proposal, {
-      ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
-      ...(request.seriesId === undefined ? {} : { seriesId: request.seriesId }),
-    });
+    let proposal: IdeaInput;
+    try {
+      proposal = parseAiProposal(result.proposal, {
+        ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
+        ...(request.seriesId === undefined ? {} : { seriesId: request.seriesId }),
+      });
+    } catch {
+      throw new BadRequestException("AI provider returned an invalid proposal");
+    }
     const metadataResult = aiMetadataSchema.safeParse(result.metadata);
     if (!metadataResult.success)
       throw new BadRequestException("AI provider returned invalid provenance metadata");
@@ -224,8 +229,17 @@ export class IdeaService {
         data: updated,
       });
       if (changed.count !== 1) throw new ConflictException("Idea changed; retry the transition");
-      const snapshot = this.snapshotData({ ...idea, ...updated });
-      await tx.ideaApprovalSnapshot.create({ data: snapshot });
+      let snapshot: { id: string; checksumSha256: string } | null;
+      if (next === "APPROVED") {
+        const data = this.snapshotData({ ...idea, ...updated });
+        await tx.ideaApprovalSnapshot.create({ data: { ...data, references: data.references } });
+        snapshot = data;
+      } else {
+        snapshot = await tx.ideaApprovalSnapshot.findUnique({
+          where: { workspaceId_ideaId: { workspaceId: context.workspaceId, ideaId: id } },
+        });
+      }
+      if (!snapshot) throw new ConflictException("Approved idea snapshot is missing");
       return {
         ...idea,
         ...updated,
@@ -322,12 +336,13 @@ export class IdeaService {
         approvedAt: { gte: since },
       },
       select: { topic: true },
+      orderBy: { approvedAt: "desc" },
+      take: 3,
     });
     if (recent.some((idea) => normalizeTitle(idea.topic) === normalizeTitle(topic)))
       throw new ConflictException("Cooldown prevents a recent idea with the same topic");
-    const diversityWindow = recent.slice(0, 10).map((idea) => normalizeTitle(idea.topic));
-    const diversityTopics = new Set([...diversityWindow, normalizeTitle(topic)]);
-    if (recent.length >= 3 && diversityTopics.size < 2)
+    const diversityWindow = recent.map((idea) => normalizeTitle(idea.topic));
+    if (diversityWindow.length === 3 && new Set(diversityWindow).size < 2)
       throw new ConflictException("Minimum topic diversity rule not satisfied");
   }
 }

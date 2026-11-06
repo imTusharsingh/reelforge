@@ -59,14 +59,14 @@ Implementation is complete pending Core Architect/Reviewer validation.
 - Pending.
 
 ## Fix-forward blockers
-- B1: `@reelforge/ai-providers` now exposes source types for clean-checkout typecheck while retaining compiled runtime imports; `vitest.config.ts` aliases the provider source for pre-build tests.
-- B2: approval/scheduling creates an immutable workspace-scoped content snapshot with SHA-256 checksum and an approved read endpoint for M07 handoff.
-- B3: AI proposals and provenance are runtime-validated; series-only input canonicalizes its channel and mismatches are rejected.
-- B4: additive workspace-owned foreign keys cover channel, series, creator, matched idea, and approval snapshots; negative tests cover foreign references.
-- B5: diversity uses a separate ten-item eligible queue window and requires two normalized topics after the three-item threshold; cooldown remains separate.
+- B1: `@reelforge/ai-providers` source type resolution remains fixed for clean-checkout tests/typecheck.
+- B2: approval pins one immutable snapshot; scheduling reuses it, and the service test verifies exact readback/checksum preservation.
+- B3: malformed AI proposals and invalid provenance are rejected before persistence; series-only input persists the canonical channel.
+- B4: Prisma integration coverage now exercises workspace-scoped list/transition, foreign channel denial, and the composite FK; service coverage includes foreign series denial.
+- B5: diversity uses the latest three eligible ideas in the same channel/series and rejects three identical normalized topics independently of cooldown; channel and series cases are tested.
 
 ## Fix-forward verification
 - Plain `pnpm install --frozen-lockfile` — **NOT PASSED**: Node `24.16.0` vs pinned `24.22.2`.
-- Lint, format check, typecheck, full tests (18 files / 95 tests), build, schema validation, and `git diff --check` — **PASSED**.
+- Lint, format check, typecheck, full tests (18 files / 98 tests; 2 database integration tests skipped without `DATABASE_URL`), build, schema validation, and `git diff --check` — **PASSED**.
 - Migration deploy — **FAILED** with Prisma `P1000`; local PostgreSQL rejected supplied credentials.
 - No approval, integration, merge, or PR creation is claimed.
