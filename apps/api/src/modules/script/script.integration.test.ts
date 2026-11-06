@@ -69,7 +69,11 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       const registry = new ProviderRegistry();
       registry.register({
         capability: llm.capability,
-        credential: { providerId: "fixture", environment: "test", secret: "fixture-secret" },
+        credential: {
+          providerId: "fixture",
+          environment: process.env.NODE_ENV === "production" ? "production" : "development",
+          secret: "fixture-secret",
+        },
       });
       return registry;
     })(),
