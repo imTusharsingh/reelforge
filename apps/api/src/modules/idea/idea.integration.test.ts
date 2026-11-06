@@ -13,7 +13,12 @@ suite("IdeaService Prisma tenant ownership", () => {
   const workspaceB = randomUUID();
   const channelA = randomUUID();
   const channelB = randomUUID();
+  const seriesA = randomUUID();
+  const seriesB = randomUUID();
+  const genreA = randomUUID();
+  const genreB = randomUUID();
   const ideaB = randomUUID();
+  const ideaA = randomUUID();
 
   beforeAll(async (): Promise<void> => {
     if (!db) return;
@@ -28,6 +33,62 @@ suite("IdeaService Prisma tenant ownership", () => {
     });
     await db.channel.create({ data: { id: channelA, workspaceId: workspaceA, name: "A" } });
     await db.channel.create({ data: { id: channelB, workspaceId: workspaceB, name: "B" } });
+    await db.genre.create({
+      data: {
+        id: genreA,
+        workspaceId: workspaceA,
+        name: "Genre A",
+        audience: "all",
+        tone: "plain",
+        topicsAllowed: [],
+        topicsBlocked: [],
+        language: "en",
+        structure: {},
+        durationPreference: {},
+        safetyProfile: {},
+      },
+    });
+    await db.genre.create({
+      data: {
+        id: genreB,
+        workspaceId: workspaceB,
+        name: "Genre B",
+        audience: "all",
+        tone: "plain",
+        topicsAllowed: [],
+        topicsBlocked: [],
+        language: "en",
+        structure: {},
+        durationPreference: {},
+        safetyProfile: {},
+      },
+    });
+    await db.contentSeries.create({
+      data: {
+        id: seriesA,
+        workspaceId: workspaceA,
+        channelId: channelA,
+        genreId: genreA,
+        name: "Series A",
+        format: "short",
+        frequency: "weekly",
+        characterGroupRefs: [],
+        promptRefs: [],
+      },
+    });
+    await db.contentSeries.create({
+      data: {
+        id: seriesB,
+        workspaceId: workspaceB,
+        channelId: channelB,
+        genreId: genreB,
+        name: "Series B",
+        format: "short",
+        frequency: "weekly",
+        characterGroupRefs: [],
+        promptRefs: [],
+      },
+    });
     await db.idea.create({
       data: {
         id: ideaB,
@@ -37,6 +98,25 @@ suite("IdeaService Prisma tenant ownership", () => {
         title: "Foreign",
         normalizedTitle: "foreign",
         topic: "foreign",
+        hook: "hook",
+        angle: "angle",
+        audience: "audience",
+        references: [],
+        sourceNotes: null,
+        expectedFormat: "short",
+        createdByUserId: ownerId,
+      },
+    });
+    await db.idea.create({
+      data: {
+        id: ideaA,
+        workspaceId: workspaceA,
+        channelId: channelA,
+        seriesId: seriesA,
+        origin: "USER",
+        title: "Local",
+        normalizedTitle: "local",
+        topic: "local",
         hook: "hook",
         angle: "angle",
         audience: "audience",
@@ -81,6 +161,26 @@ suite("IdeaService Prisma tenant ownership", () => {
         "USER",
       ),
     ).rejects.toThrow("Channel not found");
+    await expect(
+      service.create(
+        context,
+        {
+          title: "Foreign series",
+          topic: "topic",
+          hook: "hook",
+          angle: "angle",
+          audience: "audience",
+          references: [],
+          expectedFormat: "short",
+          seriesId: seriesB,
+        },
+        "USER",
+      ),
+    ).rejects.toThrow("Series not found");
+    await expect(service.transition(context, ideaA, "APPROVED")).resolves.toBeDefined();
+    await expect(service.transition(context, ideaA, "APPROVED")).rejects.toThrow(
+      "Cannot transition",
+    );
   });
 
   it("enforces the workspace/channel composite foreign key", async () => {
@@ -101,6 +201,41 @@ suite("IdeaService Prisma tenant ownership", () => {
           sourceNotes: null,
           expectedFormat: "short",
           createdByUserId: ownerId,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    await expect(
+      db.idea.create({
+        data: {
+          workspaceId: workspaceA,
+          channelId: channelA,
+          origin: "USER",
+          title: "Invalid creator",
+          normalizedTitle: "invalid creator",
+          topic: "topic",
+          hook: "hook",
+          angle: "angle",
+          audience: "audience",
+          references: [],
+          expectedFormat: "short",
+          createdByUserId: randomUUID(),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    await expect(
+      db.idea.update({
+        where: { workspaceId_id: { workspaceId: workspaceA, id: ideaA } },
+        data: { seriesId: seriesB },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    await expect(
+      db.ideaDuplicate.create({
+        data: {
+          workspaceId: workspaceA,
+          ideaId: ideaA,
+          matchedIdeaId: ideaB,
+          reason: "foreign",
+          score: 0.5,
         },
       }),
     ).rejects.toMatchObject({ code: "P2003" });

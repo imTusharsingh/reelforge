@@ -223,7 +223,7 @@ describe("IdeaService", () => {
     db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
     await expect(service.transition(context, "idea-a", "APPROVED")).rejects.toThrow("diversity");
     db.idea.findMany.mockResolvedValue([{ topic: "one" }, { topic: "two" }, { topic: "three" }]);
-    db.idea.findUnique.mockResolvedValue(idea);
+    db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
     db.ideaApprovalSnapshot.create.mockResolvedValue({});
     await expect(service.transition(context, "idea-a", "APPROVED")).resolves.toBeDefined();
   });

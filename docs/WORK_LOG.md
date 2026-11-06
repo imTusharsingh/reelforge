@@ -345,3 +345,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-06 - M06 PR #15 clean-checkout test resolution
 - CI exposed one remaining fresh-checkout test issue: the Prisma integration test imported `@reelforge/database` before its `dist` existed. Added the Vitest source alias alongside the existing config-engine and AI-provider aliases.
 - Verification: exact `pnpm test` passed — 18 files passed, 1 integration file skipped without `DATABASE_URL`; 98 tests passed and 2 skipped.
+
+## 2026-11-06 - M06 PR #15 CI and B4 follow-up
+- Moved `pnpm db:migrate:deploy` before `pnpm test` in CI so the real Prisma integration suite runs only after the schema is applied.
+- Expanded integration coverage for foreign series, real negative lifecycle transition, creator FK, series FK, and matched-idea FK; added the missing varied-window series permit case.
+- Verification: exact local `pnpm test` passed (98 passed, 2 skipped without `DATABASE_URL`); typecheck, lint, and format checks passed. CI migration/test execution remains the required confirmation against the runner database.

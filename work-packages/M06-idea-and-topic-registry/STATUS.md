@@ -62,11 +62,12 @@ Implementation is complete pending Core Architect/Reviewer validation.
 - B1: `@reelforge/ai-providers` source type resolution remains fixed for clean-checkout tests/typecheck.
 - B2: approval pins one immutable snapshot; scheduling reuses it, and the service test verifies exact readback/checksum preservation.
 - B3: malformed AI proposals and invalid provenance are rejected before persistence; series-only input persists the canonical channel.
-- B4: Prisma integration coverage now exercises workspace-scoped list/transition, foreign channel denial, and the composite FK; service coverage includes foreign series denial.
-- B5: diversity uses the latest three eligible ideas in the same channel/series and rejects three identical normalized topics independently of cooldown; channel and series cases are tested.
+- B4: CI now migrates before tests; Prisma integration coverage exercises workspace-scoped list/transition, foreign channel/series denial, negative lifecycle, and channel/series/creator/matched-idea ownership FKs.
+- B5: diversity uses the latest three eligible ideas in the same channel/series and rejects three identical normalized topics independently of cooldown; channel and series permit/reject cases are tested.
 
 ## Fix-forward verification
 - Plain `pnpm install --frozen-lockfile` — **NOT PASSED**: Node `24.16.0` vs pinned `24.22.2`.
 - Lint, format check, typecheck, exact `pnpm test` (18 files / 98 tests; 2 database integration tests skipped without `DATABASE_URL`), build, schema validation, and `git diff --check` — **PASSED**.
 - Migration deploy — **FAILED** with Prisma `P1000`; local PostgreSQL rejected supplied credentials.
 - No approval, integration, merge, or PR creation is claimed.
+- CI follow-up: `db:migrate:deploy` now runs before `pnpm test` so integration tests execute against the migrated runner database.
