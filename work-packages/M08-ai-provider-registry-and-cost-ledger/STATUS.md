@@ -1,11 +1,12 @@
 # M08 Status - AI Provider Registry & Cost Ledger
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
-- **Branch/worktree:** `work/m07-m08-combined`
+- **Branch/worktree:** `main` (PR #16)
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`
+- **Merge commit:** `2d6d70379bf197d4db06c947077fa951b94d739f`
 
 ## Current objective
 Expose provider-neutral AI capabilities and record real provider use and costs.
@@ -39,14 +40,14 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 ## Blockers / risks / unknowns
 - Unknown provider cost is conservatively charged at the preflight estimate but remains `actualCost=null` and `costKnown=false`; it is not represented as a measured actual.
 - Cross-day settlement does not charge/reset two different daily windows; the original reservation retains cost and `budgetApplied=false` for reconciliation.
-- Final Minu/core review is pending; no approval, integration, merge, live provider call, or production readiness is claimed. Failure to persist the database ledger itself is an infrastructure limitation, not a silently claimed successful ledger write.
-- Prior documented Prisma compiled-dist ESM boot follow-up remains outside this fix-forward.
+- Integrated by squash merge of PR #16. No live provider call or production readiness is claimed by that merge. Failure to persist the database ledger itself remains an infrastructure limitation, not a silently claimed successful ledger write.
+- Prior documented Prisma compiled-dist ESM boot follow-up remains open and was not part of PR #16.
 
 ## Next exact action
-Minu reviews the pushed fix-forward head on PR #16.
+None for M08. M09 is the next sequential package and is pending Minu review. Do not start M10 from this module.
 
 ## Handoff notes
-Success `estimatedCost` is always the preflight estimate. Post-dispatch validation and persistence failures settle a received provider response; exceptions thrown by `complete()` release the reservation. Provider health remains explicit-only and the runtime registry remains fail-closed.
+Success `estimatedCost` is always the preflight estimate. Post-dispatch validation and persistence failures settle a received provider response; exceptions thrown before a response release the reservation. Provider health remains explicit-only and the runtime registry remains fail-closed.
 
 ## Reviewer decision
-- Pending.
+- Approved by Minu at `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` and integrated by squash merge `2d6d70379bf197d4db06c947077fa951b94d739f` (PR #16).

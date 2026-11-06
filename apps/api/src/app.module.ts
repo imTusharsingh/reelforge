@@ -9,6 +9,7 @@ import { CharacterModule } from "./modules/character/character.module.js";
 import { ConfigModule } from "./modules/config/config.module.js";
 import { IdeaModule } from "./modules/idea/idea.module.js";
 import { ScriptModule } from "./modules/script/script.module.js";
+import { SceneMediaModule } from "./modules/scene-media/scene-media.module.js";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ScriptModule } from "./modules/script/script.module.js";
     ConfigModule,
     IdeaModule,
     ScriptModule,
+    SceneMediaModule,
   ],
   controllers: [HealthController],
 })

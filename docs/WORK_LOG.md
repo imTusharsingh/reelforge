@@ -379,3 +379,27 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Test-first evidence on the unfixed program: the missing/null metadata unit and persisted cases failed with `TypeError` (`reading 'cost'`); the null response case failed reading `metadata`. After the fix, focused script suites passed (5 files / 36 tests).
 - Verification on fresh PostgreSQL `reelforge_pr16_b5` with Node `24.22.2`: all 11 migrations deployed; lint, format check, typecheck, schema validation, full test suite (25 files / 138 tests), and build passed.
 - M07/M08 remain `IMPLEMENTED_PENDING_REVIEW` with `Approved commit: none`. No merge, approval, integration, live-provider invocation, or independent reviewer execution is claimed. Minu should re-review the B5 fix-forward head.
+
+## 2026-11-06 - M07/M08 integrated via PR #16
+- Actor/session: Module Implementation Agent recording the squash merge already on `origin/main`. No application code from that pull request was rewritten in this entry.
+- Work package: M07 Script & Storyboard and M08 AI Provider Registry & Cost Ledger.
+- Branch and commit: `main` at `2d6d70379bf197d4db06c947077fa951b94d739f` (`feat: M07 script/storyboard + M08 AI providers (incl. M06 closeout) (#16)`). Minu's approval review is on head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`.
+- Starting state: `docs/PROJECT_STATE.md` and the M07/M08 status files still described PR #16 as pending on `work/m07-m08-combined`.
+- Changes made: Marked M07 and M08 `INTEGRATED` with the squash merge SHA and cleared the pending-review / combined-branch language from the project snapshot and those two status files.
+- External calls: NONE. No provider calls.
+- Decisions/approvals: Integration is the existing PR #16 squash merge. This documentation update is part of the M09 pull request and is not itself an approval of M09.
+- Next exact action: M09 proceeds sequentially. Do not repeat the combined M07/M08 experiment.
+
+## 2026-11-06 - M09 scene media generation
+- Actor/session: Module Implementation Agent.
+- Work package: M09 - Scene Media Generation.
+- Branch and commit: `cursor/m09-scene-media-generation-1810`, based on `origin/main` `2d6d70379bf197d4db06c947077fa951b94d739f`.
+- Starting state: M00–M08 integrated. M09 was `NOT_STARTED`.
+- Changes made: Added workspace-scoped scene media jobs with per-scene status and idempotency keys; resolved approved script prompt, config, and character reference packages; dispatched image, video, and TTS only through injected ports; failed closed for missing capability, missing voice, empty bytes, and non-video motion; reused successful scenes on retry; recorded provider ids and M08 budget ledger rows; validated checksums and exported a complete asset package.
+- Files/areas changed: `apps/api/src/modules/scene-media/**`, `apps/api/src/app.module.ts`, `packages/ai-providers/src/index.ts`, additive Prisma schema and migration `20261106180000_m09_scene_media_generation`, project state, work log, and M07/M08/M09 status.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, local PostgreSQL `16.15`. `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate`, `pnpm db:migrate:deploy` (12 migrations, including the new M09 migration), `pnpm test` (29 files / 161 tests), `pnpm build`, and `git diff --check` all exited 0.
+- External calls: NONE. Tests use fixture provider ports and local storage. No live AI or social call.
+- Decisions/approvals: M09 is `IMPLEMENTED_PENDING_REVIEW`. No approval or merge is claimed. The cloud branch prefix is `cursor/` rather than `work/`.
+- Defects/risks/blockers: No configured vendor adapter. Budget SQL is duplicated from the script service. A crash between provider acceptance and the success transaction can require another scene version. The Prisma ESM dist boot follow-up remains open.
+- Next exact action: Minu reviews the M09 pull request. Do not merge and do not start M10.
+- Related status/ADR: `work-packages/M09-scene-media-generation/STATUS.md`; `docs/PROJECT_STATE.md`.

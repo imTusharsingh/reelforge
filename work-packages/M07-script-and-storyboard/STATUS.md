@@ -1,11 +1,12 @@
 # M07 Status - Script & Storyboard
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
-- **Branch/worktree:** `work/m07-m08-combined`
+- **Branch/worktree:** `main` (PR #16)
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`
+- **Merge commit:** `2d6d70379bf197d4db06c947077fa951b94d739f`
 
 ## Current objective
 Convert an approved idea into a structured script and scene plan.
@@ -38,14 +39,14 @@ Convert an approved idea into a structured script and scene plan.
 - The pending request initializes atomically with its budget reservation; reservations reference the tenant/correlation ledger row. This is additive and deployed in the migration above.
 
 ## Blockers / risks / unknowns
-- Final Minu/core review is pending; no approval, integration, merge, live provider call, or production readiness is claimed.
-- Prior documented Prisma compiled-dist ESM boot follow-up remains outside this fix-forward.
+- Integrated by squash merge of PR #16. No live provider call or production readiness is claimed by that merge.
+- Prior documented Prisma compiled-dist ESM boot follow-up remains open and was not part of PR #16.
 
 ## Next exact action
-Minu reviews the pushed fix-forward head on PR #16.
+None for M07. M09 is the next sequential package and is pending Minu review. Do not start M10 from this module.
 
 ## Handoff notes
-Genre `requiresSourceBackedClaims` now drives factuality and source validation. When required, claims must match approved snapshot references; URLs alone do not satisfy support. Runtime remains fail-closed. Provider health is explicit-only. Unknown provider cost remains null; conservative budget charging uses the preflight estimate. Cross-day completion retains audit data and records `budgetApplied=false` rather than changing the new daily counters.
+Genre `requiresSourceBackedClaims` drives factuality and source validation. When required, claims must match approved snapshot references; URLs alone do not satisfy support. Runtime remains fail-closed. Provider health is explicit-only. Unknown provider cost remains null; conservative budget charging uses the preflight estimate. Cross-day completion retains audit data and records `budgetApplied=false` rather than changing the new daily counters.
 
 ## Reviewer decision
-- Pending.
+- Approved by Minu at `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` and integrated by squash merge `2d6d70379bf197d4db06c947077fa951b94d739f` (PR #16).

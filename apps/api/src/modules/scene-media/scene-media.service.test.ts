@@ -1,0 +1,964 @@
+import { randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  ProviderError,
+  ProviderRegistry,
+  type CapabilityMetadata,
+  type ImageProviderPort,
+  type TtsProviderPort,
+  type VideoProviderPort,
+} from "@reelforge/ai-providers";
+import type { AssetService } from "../asset/asset.service.js";
+import type { StoragePort } from "../asset/storage/storage.port.js";
+import { sha256Hex } from "../asset/storage/checksum.js";
+import { characterSnapshotChecksum } from "../character/character.validation.js";
+import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import type { SceneDispatchLedger } from "./scene-media.budget.js";
+import { SceneMediaService } from "./scene-media.service.js";
+import type { SceneMediaPackage } from "./scene-media.types.js";
+
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function wavBytes(): Uint8Array {
+  const body = Buffer.alloc(12);
+  body.write("RIFF", 0, "ascii");
+  body.write("WAVE", 8, "ascii");
+  return new Uint8Array(body);
+}
+
+function capability(
+  kind: CapabilityMetadata["kind"],
+  amount: number | null = 1,
+  overrides: Partial<CapabilityMetadata> = {},
+): CapabilityMetadata {
+  return {
+    providerId: "fixture",
+    capabilityId: kind,
+    kind,
+    input: ["text"],
+    output: [kind],
+    supportsReferenceImages: true,
+    asynchronous: false,
+    polling: false,
+    regions: [],
+    costModel: { currency: "USD", unit: "request", amount },
+    ...overrides,
+  };
+}
+
+function scene(id: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    startSeconds: 0,
+    durationSeconds: 1,
+    characterRefs: [],
+    dialogue: "Hello",
+    narration: "Welcome",
+    visualDescription: `Visual ${id}`,
+    camera: "wide",
+    audioCues: [],
+    ...patch,
+  };
+}
+
+function document(scenes: Record<string, unknown>[]): Record<string, unknown> {
+  return {
+    schemaVersion: "1.0",
+    title: "Title",
+    hook: "Hook",
+    dialogue: "Dialogue",
+    cta: "CTA",
+    metadata: { genre: "comedy", targetDurationSeconds: scenes.length, factual: false },
+    scenes,
+  };
+}
+
+type MemoryState = {
+  script: {
+    id: string;
+    workspaceId: string;
+    channelId: string | null;
+    status: string;
+    currentRevision: number;
+    revisions: Array<Record<string, unknown>>;
+  } | null;
+  config: { id: string; workspaceId: string; config: unknown } | null;
+  prompt: {
+    id: string;
+    workspaceId: string;
+    configSnapshotId: string;
+    bundle: unknown;
+    fingerprintSha256: string;
+  } | null;
+  budget: { id: string; workspaceId: string; channelId: string | null } | null;
+  characters: Array<Record<string, unknown>>;
+};
+
+class MemoryLedger implements SceneDispatchLedger {
+  public readonly reservations: Array<{
+    id: string;
+    status: string;
+    actualCost: number | null;
+    chargedCost: number | null;
+    correlationId: string;
+    estimate: number;
+  }> = [];
+  public readonly records: Array<{
+    correlationId: string;
+    status: string;
+    actualCost: number | null;
+    estimatedCost: number;
+  }> = [];
+
+  public async reserve(
+    input: Parameters<SceneDispatchLedger["reserve"]>[0],
+  ): ReturnType<SceneDispatchLedger["reserve"]> {
+    const row = {
+      id: randomUUID(),
+      budgetId: input.budgetId,
+      periodStart: new Date(),
+      reservedAmount: input.estimate,
+      correlationId: input.correlationId,
+      status: "RESERVED",
+      actualCost: null,
+      chargedCost: null,
+      estimate: input.estimate,
+    };
+    this.reservations.push(row);
+    this.records.push({
+      correlationId: input.correlationId,
+      status: "FAILED",
+      actualCost: null,
+      estimatedCost: input.estimate,
+    });
+    return row;
+  }
+
+  public async release(
+    _workspaceId: string,
+    reservation: Parameters<SceneDispatchLedger["release"]>[1],
+  ): Promise<void> {
+    const row = this.reservations.find((item) => item.id === reservation.id);
+    if (row && row.status === "RESERVED") row.status = "RELEASED";
+  }
+
+  public async settle(
+    _workspaceId: string,
+    reservation: Parameters<SceneDispatchLedger["settle"]>[1],
+    actualCost: number | null,
+    estimate: number,
+  ): Promise<void> {
+    const row = this.reservations.find((item) => item.id === reservation.id);
+    if (!row || row.status !== "RESERVED") {
+      throw new ConflictException("Provider reservation could not be settled exactly once");
+    }
+    row.status = "SETTLED";
+    row.actualCost = actualCost;
+    row.chargedCost = actualCost ?? estimate;
+  }
+
+  public async record(
+    _writer: Parameters<SceneDispatchLedger["record"]>[0],
+    input: Parameters<SceneDispatchLedger["record"]>[1],
+  ): Promise<void> {
+    const next = {
+      correlationId: input.correlationId,
+      status: input.error === undefined ? "SUCCEEDED" : "FAILED",
+      actualCost: typeof input.provenance?.cost === "number" ? input.provenance.cost : null,
+      estimatedCost: input.estimate,
+    };
+    const existing = this.records.find((item) => item.correlationId === input.correlationId);
+    if (existing) Object.assign(existing, next);
+    else this.records.push(next);
+  }
+}
+
+class MemoryStorage implements StoragePort {
+  public readonly objects = new Map<string, Buffer>();
+  public async putObject(
+    input: Parameters<StoragePort["putObject"]>[0],
+  ): ReturnType<StoragePort["putObject"]> {
+    const body = Buffer.from(input.body);
+    if (body.byteLength === 0) throw new Error("refusing empty object");
+    this.objects.set(`${input.workspaceId}/${input.objectKey}`, body);
+    return {
+      objectKey: input.objectKey,
+      byteSize: body.byteLength,
+      checksumSha256: sha256Hex(body),
+    };
+  }
+  public async getObject(
+    input: Parameters<StoragePort["getObject"]>[0],
+  ): ReturnType<StoragePort["getObject"]> {
+    const body = this.objects.get(`${input.workspaceId}/${input.objectKey}`);
+    if (!body) throw new Error("object missing");
+    return Buffer.from(body);
+  }
+  public async deleteObject(input: Parameters<StoragePort["deleteObject"]>[0]): Promise<void> {
+    this.objects.delete(`${input.workspaceId}/${input.objectKey}`);
+  }
+}
+
+function memoryDatabase(state: MemoryState): {
+  db: Database;
+  assets: Array<Record<string, unknown>>;
+} {
+  const jobs: Array<Record<string, unknown>> = [];
+  const generations: Array<Record<string, unknown>> = [];
+  const outputs: Array<Record<string, unknown>> = [];
+  const assets: Array<Record<string, unknown>> = [];
+  const rank: Record<string, number> = { IMAGE: 0, VIDEO: 1, NARRATION: 2, DIALOGUE: 3 };
+  const db = {
+    script: {
+      findUnique: async ({
+        where,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+      }): Promise<unknown> => {
+        const script = state.script;
+        if (
+          !script ||
+          script.workspaceId !== where.workspaceId_id.workspaceId ||
+          script.id !== where.workspaceId_id.id
+        ) {
+          return null;
+        }
+        return {
+          ...script,
+          revisions: [...script.revisions].sort(
+            (left, right) => Number(right.revision) - Number(left.revision),
+          ),
+        };
+      },
+    },
+    configSnapshot: {
+      findUnique: async (): Promise<unknown> => state.config,
+    },
+    promptBundleSnapshot: {
+      findUnique: async (): Promise<unknown> => state.prompt,
+    },
+    providerBudget: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { workspaceId: string; channelId: string | null };
+      }): Promise<unknown> => {
+        if (!state.budget || state.budget.workspaceId !== where.workspaceId) return null;
+        if ((state.budget.channelId ?? null) !== (where.channelId ?? null)) return null;
+        return { id: state.budget.id };
+      },
+    },
+    characterVersion: {
+      findMany: async ({
+        where,
+      }: {
+        where: { workspaceId: string; status: string; id: { in: string[] } };
+      }): Promise<unknown> =>
+        state.characters.filter(
+          (row) =>
+            row.workspaceId === where.workspaceId &&
+            row.status === where.status &&
+            where.id.in.includes(String(row.id)),
+        ),
+    },
+    sceneMediaJob: {
+      findUnique: async ({
+        where,
+        include,
+      }: {
+        where: {
+          workspaceId_idempotencyKey?: { workspaceId: string; idempotencyKey: string };
+          workspaceId_id?: { workspaceId: string; id: string };
+        };
+        include?: { scenes?: unknown };
+      }): Promise<unknown> => {
+        const job = where.workspaceId_idempotencyKey
+          ? jobs.find(
+              (row) =>
+                row.workspaceId === where.workspaceId_idempotencyKey?.workspaceId &&
+                row.idempotencyKey === where.workspaceId_idempotencyKey?.idempotencyKey,
+            )
+          : jobs.find(
+              (row) =>
+                row.workspaceId === where.workspaceId_id?.workspaceId &&
+                row.id === where.workspaceId_id?.id,
+            );
+        if (!job) return null;
+        if (!include?.scenes) return job;
+        return {
+          ...job,
+          scenes: generations
+            .filter((row) => row.jobId === job.id && row.activeSlot === 1)
+            .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+            .map((row) => ({
+              ...row,
+              outputs: outputs
+                .filter((output) => output.sceneGenerationId === row.id)
+                .sort(
+                  (left, right) => (rank[String(left.kind)] ?? 0) - (rank[String(right.kind)] ?? 0),
+                ),
+            })),
+        };
+      },
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
+        if (
+          jobs.some(
+            (row) =>
+              row.workspaceId === data.workspaceId && row.idempotencyKey === data.idempotencyKey,
+          )
+        ) {
+          throw { code: "P2002" };
+        }
+        const row = { id: randomUUID(), channelId: data.channelId ?? null, ...data };
+        jobs.push(row);
+        return row;
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const row = jobs.find(
+          (item) =>
+            item.workspaceId === where.workspaceId_id.workspaceId &&
+            item.id === where.workspaceId_id.id,
+        );
+        if (!row) throw new Error("missing job");
+        Object.assign(row, data);
+        return row;
+      },
+    },
+    sceneGeneration: {
+      findMany: async ({
+        where,
+        select,
+      }: {
+        where: { workspaceId: string; jobId: string; activeSlot: number };
+        select?: { status?: boolean };
+      }): Promise<unknown> => {
+        const rows = generations
+          .filter(
+            (row) =>
+              row.workspaceId === where.workspaceId &&
+              row.jobId === where.jobId &&
+              row.activeSlot === where.activeSlot,
+          )
+          .sort((left, right) => Number(left.ordinal) - Number(right.ordinal));
+        if (select?.status) return rows.map((row) => ({ status: row.status }));
+        return rows.map((row) => ({
+          ...row,
+          outputs: outputs.filter((output) => output.sceneGenerationId === row.id),
+        }));
+      },
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
+        const row = { id: randomUUID(), ...data };
+        generations.push(row);
+        return row;
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const row = generations.find(
+          (item) =>
+            item.workspaceId === where.workspaceId_id.workspaceId &&
+            item.id === where.workspaceId_id.id,
+        );
+        if (!row) throw new Error("missing generation");
+        Object.assign(row, data);
+        return row;
+      },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId: string; jobId: string; sceneId: string; activeSlot: number };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const matched = generations.filter(
+          (row) =>
+            row.workspaceId === where.workspaceId &&
+            row.jobId === where.jobId &&
+            row.sceneId === where.sceneId &&
+            row.activeSlot === where.activeSlot,
+        );
+        for (const row of matched) Object.assign(row, data);
+        return { count: matched.length };
+      },
+    },
+    sceneGenerationOutput: {
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
+        const row = {
+          assetId: null,
+          assetVersion: null,
+          providerJobId: null,
+          providerAssetId: null,
+          correlationId: null,
+          mediaType: null,
+          byteSize: null,
+          checksumSha256: null,
+          metadata: null,
+          errorCode: null,
+          errorMessage: null,
+          reusedFromOutputId: null,
+          ...data,
+          id: data.id ?? randomUUID(),
+        };
+        outputs.push(row);
+        return row;
+      },
+    },
+    asset: {
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
+        assets.push(data);
+        return data;
+      },
+    },
+    assetUsageReference: {
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => data,
+    },
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> =>
+      callback(db),
+  };
+  return { db: db as unknown as Database, assets };
+}
+
+function harness(options?: {
+  status?: string;
+  scenes?: Record<string, unknown>[];
+  image?: Partial<ImageProviderPort> & { capability?: CapabilityMetadata };
+  video?: Partial<VideoProviderPort> & { capability?: CapabilityMetadata };
+  tts?: Partial<TtsProviderPort> & { capability?: CapabilityMetadata };
+  register?: boolean;
+  characters?: Array<Record<string, unknown>>;
+  cost?: number | null;
+}): {
+  service: SceneMediaService;
+  context: WorkspaceContext;
+  ledger: MemoryLedger;
+  storage: MemoryStorage;
+  assets: Array<Record<string, unknown>>;
+  imageCalls: Array<{ prompt: string; referenceImageIds?: readonly string[] }>;
+  videoCalls: number;
+  ttsCalls: string[];
+  scriptId: string;
+} {
+  const workspaceId = randomUUID();
+  const scriptId = randomUUID();
+  const configId = randomUUID();
+  const promptId = randomUUID();
+  const imageCalls: Array<{ prompt: string; referenceImageIds?: readonly string[] }> = [];
+  const ttsCalls: string[] = [];
+  let videoCalls = 0;
+  const imageCapability = options?.image?.capability ?? capability("image", options?.cost ?? 1);
+  const videoCapability = options?.video?.capability ?? capability("video", options?.cost ?? 1);
+  const ttsCapability = options?.tts?.capability ?? capability("tts", options?.cost ?? 1);
+  const image: ImageProviderPort = {
+    capability: imageCapability,
+    generate: async (request) => {
+      imageCalls.push({
+        prompt: request.prompt,
+        ...(request.referenceImageIds ? { referenceImageIds: request.referenceImageIds } : {}),
+      });
+      if (options?.image?.generate) return options.image.generate(request);
+      return {
+        mediaId: `img-${request.correlationId}`,
+        providerJobId: `job-${request.correlationId}`,
+        providerRequestId: `req-${request.correlationId}`,
+        metadata: {
+          modelVersion: "fixture-model",
+          promptVersion: "fixture-prompt",
+          cost: options?.cost === undefined ? 1 : options.cost,
+          currency: "USD",
+        },
+        media: { declaredMediaType: "image/png", body: PNG },
+      };
+    },
+  };
+  const video: VideoProviderPort = {
+    capability: videoCapability,
+    generate: async (request) => {
+      videoCalls += 1;
+      if (options?.video?.generate) return options.video.generate(request);
+      throw new Error("video fixture was not expected to run");
+    },
+  };
+  const tts: TtsProviderPort = {
+    capability: ttsCapability,
+    synthesize: async (request) => {
+      ttsCalls.push(request.text);
+      if (options?.tts?.synthesize) return options.tts.synthesize(request);
+      return {
+        mediaId: `aud-${request.correlationId}`,
+        providerJobId: `job-${request.correlationId}`,
+        providerRequestId: `req-${request.correlationId}`,
+        metadata: {
+          modelVersion: "fixture-model",
+          promptVersion: "fixture-prompt",
+          cost: 1,
+          currency: "USD",
+        },
+        media: { declaredMediaType: "audio/wav", body: wavBytes() },
+      };
+    },
+  };
+  const registry = new ProviderRegistry();
+  if (options?.register !== false) {
+    for (const port of [image, video, tts]) {
+      registry.register({
+        capability: port.capability,
+        credential: {
+          providerId: port.capability.providerId,
+          environment: "development",
+          secret: "secret",
+        },
+      });
+    }
+  }
+  const state: MemoryState = {
+    script: {
+      id: scriptId,
+      workspaceId,
+      channelId: null,
+      status: options?.status ?? "APPROVED",
+      currentRevision: 1,
+      revisions: [
+        {
+          revision: 1,
+          document: document(options?.scenes ?? [scene("one"), scene("two")]),
+          configSnapshotId: configId,
+          promptSnapshotId: promptId,
+        },
+      ],
+    },
+    config: { id: configId, workspaceId, config: { tone: "warm" } },
+    prompt: {
+      id: promptId,
+      workspaceId,
+      configSnapshotId: configId,
+      bundle: { renderedText: "Rendered snapshot prompt", fingerprintSha256: "a".repeat(64) },
+      fingerprintSha256: "a".repeat(64),
+    },
+    budget: { id: randomUUID(), workspaceId, channelId: null },
+    characters: (options?.characters ?? []).map((row) => ({ workspaceId, ...row })),
+  };
+  const memory = memoryDatabase(state);
+  const ledger = new MemoryLedger();
+  const storage = new MemoryStorage();
+  const assets = {
+    resolveReferences: async (
+      _context: WorkspaceContext,
+      requests: ReadonlyArray<{ assetId: string; version?: number }>,
+    ) =>
+      requests.map((request) => ({
+        assetId: request.assetId,
+        version: request.version ?? 1,
+        checksumSha256: "b".repeat(64),
+        objectKey: "assets/ref",
+        mediaType: "image/png",
+        byteSize: PNG.byteLength,
+        ownership: "USER_UPLOADED" as const,
+        licenseType: "owned",
+        licenseTerms: null,
+        rightsHolder: "owner",
+      })),
+  } as unknown as AssetService;
+  const service = new SceneMediaService(
+    memory.db,
+    image,
+    video,
+    tts,
+    registry,
+    storage,
+    assets,
+    ledger,
+  );
+  return {
+    service,
+    context: { workspaceId, userId: randomUUID(), role: "OWNER" },
+    ledger,
+    storage,
+    assets: memory.assets,
+    imageCalls,
+    get videoCalls(): number {
+      return videoCalls;
+    },
+    ttsCalls,
+    scriptId,
+  };
+}
+
+const createBody = (
+  scriptId: string,
+  patch: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  scriptId,
+  idempotencyKey: randomUUID(),
+  outputs: { image: true, video: false, narration: false, dialogue: false },
+  ...patch,
+});
+
+function withVoice(sceneIds: string[]): {
+  scenes: Record<string, unknown>[];
+  characters: Array<Record<string, unknown>>;
+} {
+  const characterId = randomUUID();
+  const versionId = randomUUID();
+  const profile = {
+    name: "Nova",
+    description: null,
+    personality: {},
+    voicePreference: { voice: "nova-voice" },
+    visualInvariants: {},
+    variationRules: {},
+  };
+  return {
+    scenes: sceneIds.map((id) =>
+      scene(id, { characterRefs: [{ characterId, versionId }], narration: `Narrate ${id}` }),
+    ),
+    characters: [
+      {
+        id: versionId,
+        characterId,
+        version: 1,
+        status: "PUBLISHED",
+        profile,
+        referenceAssets: [],
+        checksumSha256: characterSnapshotChecksum(profile, []),
+      },
+    ],
+  };
+}
+
+describe("scene media generation", () => {
+  it("rejects viewers before resolving a script or calling a provider", async () => {
+    const { service, context, scriptId, imageCalls } = harness();
+    await expect(
+      service.create({ ...context, role: "VIEWER" }, createBody(scriptId)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(imageCalls).toHaveLength(0);
+  });
+
+  it("rejects an unapproved or foreign script before dispatch", async () => {
+    const unapproved = harness({ status: "DRAFT" });
+    await expect(
+      unapproved.service.create(unapproved.context, createBody(unapproved.scriptId)),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(unapproved.imageCalls).toHaveLength(0);
+    const missing = harness();
+    await expect(
+      missing.service.create(missing.context, createBody(randomUUID())),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("dispatches configured providers, binds checksums, and reuses the job idempotency key", async () => {
+    const env = harness();
+    const body = createBody(env.scriptId, { idempotencyKey: "same-job" });
+    const created = await env.service.create(env.context, body);
+    const again = await env.service.create(env.context, body);
+    const exported = await env.service.exportPackage(env.context, created.jobId);
+    expect(again.jobId).toBe(created.jobId);
+    expect(env.imageCalls).toHaveLength(2);
+    expect(created.status).toBe("SUCCEEDED");
+    expect(exported.schemaVersion).toBe("1.0");
+    expect(exported.scenes).toHaveLength(2);
+    expect(exported.scenes[0]?.outputs.every((output) => (output.byteSize ?? 0) > 0)).toBe(true);
+    expect(env.assets).toHaveLength(2);
+    expect(env.ledger.records.filter((record) => record.status === "SUCCEEDED")).toHaveLength(2);
+    expect(env.ledger.reservations.every((row) => row.status === "SETTLED")).toBe(true);
+    const checksum = exported.scenes[0]?.outputs[0]?.checksumSha256;
+    expect(checksum).toMatch(/^[0-9a-f]{64}$/);
+    expect([...env.storage.objects.values()].some((body) => sha256Hex(body) === checksum)).toBe(
+      true,
+    );
+  });
+
+  it("does not mark empty or placeholder bytes as generated media", async () => {
+    const env = harness({
+      image: {
+        generate: async () => ({
+          mediaId: "empty-asset",
+          providerJobId: "empty-job",
+          metadata: { modelVersion: "m", promptVersion: "p", cost: 1, currency: "USD" },
+          media: { declaredMediaType: "image/png", body: new Uint8Array() },
+        }),
+      },
+    });
+    const created = (await env.service.create(
+      env.context,
+      createBody(env.scriptId),
+    )) as SceneMediaPackage;
+    expect(created.status).not.toBe("SUCCEEDED");
+    expect(created.scenes.every((scene) => scene.status !== "SUCCEEDED")).toBe(true);
+    expect(env.assets).toHaveLength(0);
+    await expect(env.service.exportPackage(env.context, created.jobId)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it("fails closed for motion when the provider capability is not video", async () => {
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      video: { capability: capability("image") },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: true, narration: false, dialogue: false },
+    });
+    expect(env.videoCalls).toBe(0);
+    const videoOutput = created.scenes[0]?.outputs.find((output) => output.kind === "VIDEO");
+    expect(videoOutput?.status).toBe("FAILED_FINAL");
+    expect(videoOutput?.assetId).toBeNull();
+    expect(created.scenes[0]?.outputs.find((output) => output.kind === "IMAGE")?.status).toBe(
+      "SUCCEEDED",
+    );
+    await expect(env.service.exportPackage(env.context, created.jobId)).rejects.toThrow(
+      /incomplete/i,
+    );
+  });
+
+  it("retries only the failed scene and reuses the successful scene", async () => {
+    let failed = false;
+    const voiced = withVoice(["one", "two"]);
+    const env = harness({
+      scenes: voiced.scenes,
+      characters: voiced.characters,
+      image: {
+        generate: async (request) => {
+          if (request.prompt.includes("Scene: two") && !failed) {
+            failed = true;
+            throw new ProviderError(
+              "PROVIDER_UNAVAILABLE",
+              "temporary outage",
+              request.correlationId,
+            );
+          }
+          return {
+            mediaId: `img-${request.correlationId}`,
+            providerJobId: `job-${request.correlationId}`,
+            metadata: { modelVersion: "m", promptVersion: "p", cost: 1, currency: "USD" },
+            media: { declaredMediaType: "image/png", body: PNG },
+          };
+        },
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: true, dialogue: false },
+    });
+    const before = env.imageCalls.length;
+    const ttsBefore = env.ttsCalls.length;
+    const retried = await env.service.retry(env.context, created.jobId);
+    const sceneOne = retried.scenes.find((item) => item.sceneId === "one");
+    const sceneTwo = retried.scenes.find((item) => item.sceneId === "two");
+    expect(sceneOne?.sceneVersion).toBe(1);
+    expect(sceneTwo?.sceneVersion).toBe(2);
+    expect(sceneTwo?.status).toBe("SUCCEEDED");
+    expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: one"))).toHaveLength(1);
+    expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: two"))).toHaveLength(2);
+    expect(env.imageCalls.length).toBe(before + 1);
+    expect(env.ttsCalls).toHaveLength(ttsBefore);
+    expect(sceneTwo?.outputs.find((output) => output.kind === "NARRATION")?.status).toBe("REUSED");
+  });
+
+  it("regenerates and replaces one scene without restarting the other", async () => {
+    const voiced = withVoice(["one", "two"]);
+    const env = harness({ scenes: voiced.scenes, characters: voiced.characters });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: true, dialogue: false },
+    });
+    const regenerated = await env.service.regenerate(env.context, created.jobId, "one");
+    expect(regenerated.scenes.find((item) => item.sceneId === "one")?.sceneVersion).toBe(2);
+    expect(regenerated.scenes.find((item) => item.sceneId === "two")?.sceneVersion).toBe(1);
+    expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: two"))).toHaveLength(1);
+    const ttsAfterRegenerate = env.ttsCalls.length;
+    const replaced = await env.service.replace(env.context, created.jobId, "two", {
+      kind: "IMAGE",
+    });
+    const sceneTwo = replaced.scenes.find((item) => item.sceneId === "two");
+    expect(sceneTwo?.sceneVersion).toBe(2);
+    expect(sceneTwo?.outputs.find((output) => output.kind === "NARRATION")?.status).toBe("REUSED");
+    expect(env.ttsCalls).toHaveLength(ttsAfterRegenerate);
+    expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: one"))).toHaveLength(2);
+  });
+
+  it("fails closed when narration has no approved voice and does not call TTS", async () => {
+    const env = harness({
+      scenes: [scene("one", { characterRefs: [], narration: "Speak this", dialogue: "" })],
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: true, dialogue: false },
+    });
+    expect(env.ttsCalls).toHaveLength(0);
+    expect(created.scenes[0]?.outputs.find((output) => output.kind === "NARRATION")).toMatchObject({
+      status: "FAILED_FINAL",
+      errorCode: "MISSING_VOICE",
+      assetId: null,
+    });
+  });
+
+  it("resolves the owned prompt and character reference package into the provider request", async () => {
+    const characterId = randomUUID();
+    const versionId = randomUUID();
+    const assetId = randomUUID();
+    const profile = {
+      name: "Nova",
+      description: null,
+      personality: {},
+      voicePreference: { voice: "nova-voice" },
+      visualInvariants: {},
+      variationRules: {},
+    };
+    const references = [{ assetId, version: 1 }];
+    const env = harness({
+      scenes: [
+        scene("one", {
+          characterRefs: [{ characterId, versionId }],
+          narration: "Narrate Nova",
+          dialogue: "",
+        }),
+      ],
+      characters: [
+        {
+          id: versionId,
+          characterId,
+          version: 2,
+          status: "PUBLISHED",
+          profile,
+          referenceAssets: references,
+          checksumSha256: characterSnapshotChecksum(profile, references),
+        },
+      ],
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: true, dialogue: false },
+    });
+    expect(created.scenes[0]?.sourceRefs).toMatchObject({
+      characters: [
+        { characterId, characterVersionId: versionId, checksumSha256: expect.any(String) },
+      ],
+    });
+    expect(env.imageCalls[0]?.prompt).toContain("Rendered snapshot prompt");
+    expect(env.imageCalls[0]?.prompt).toContain("Visual one");
+    expect(env.imageCalls[0]?.referenceImageIds).toEqual([assetId]);
+    expect(env.ttsCalls).toEqual(["Narrate Nova"]);
+  });
+
+  it("does not dispatch when the provider estimate is unknown", async () => {
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: { capability: capability("image", null) },
+    });
+    const image = env;
+    const created = await image.service.create(image.context, {
+      ...createBody(image.scriptId),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    expect(created.status).toBe("FAILED");
+    expect(env.ledger.reservations).toHaveLength(0);
+    expect(env.assets).toHaveLength(0);
+  });
+
+  it("settles a null actual cost when the provider reports an unknown cost", async () => {
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => ({
+          mediaId: `img-${request.correlationId}`,
+          providerJobId: `job-${request.correlationId}`,
+          metadata: { modelVersion: "m", promptVersion: "p", cost: null, currency: "USD" },
+          media: { declaredMediaType: "image/png", body: PNG },
+        }),
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    expect(created.status).toBe("SUCCEEDED");
+    expect(env.ledger.reservations[0]).toMatchObject({
+      status: "SETTLED",
+      actualCost: null,
+      chargedCost: 1,
+    });
+    expect(env.ledger.records[0]).toMatchObject({
+      status: "SUCCEEDED",
+      actualCost: null,
+      estimatedCost: 1,
+    });
+  });
+
+  it("records a failed dispatch and releases the reservation when the provider throws", async () => {
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => {
+          throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
+        },
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    expect(created.scenes[0]?.outputs[0]?.status).toBe("FAILED_RETRYABLE");
+    expect(env.ledger.reservations[0]?.status).toBe("RELEASED");
+    expect(env.ledger.records[0]?.status).toBe("FAILED");
+    expect(env.assets).toHaveLength(0);
+  });
+
+  it("does not call an unconfigured provider or publish media", async () => {
+    const env = harness({
+      register: false,
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    expect(env.imageCalls).toHaveLength(0);
+    expect(created.status).toBe("FAILED");
+    expect(env.assets).toHaveLength(0);
+    expect(env.ledger.reservations).toHaveLength(0);
+  });
+
+  it("rejects a character reference whose checksum does not match the published package", async () => {
+    const characterId = randomUUID();
+    const versionId = randomUUID();
+    const profile = {
+      name: "Nova",
+      description: null,
+      personality: {},
+      voicePreference: { voice: "nova-voice" },
+      visualInvariants: {},
+      variationRules: {},
+    };
+    const env = harness({
+      scenes: [scene("one", { characterRefs: [{ characterId, versionId }] })],
+      characters: [
+        {
+          id: versionId,
+          characterId,
+          version: 1,
+          status: "PUBLISHED",
+          profile,
+          referenceAssets: [],
+          checksumSha256: "f".repeat(64),
+        },
+      ],
+    });
+    await expect(env.service.create(env.context, createBody(env.scriptId))).rejects.toThrow(
+      /checksum/i,
+    );
+    expect(env.imageCalls).toHaveLength(0);
+  });
+});
