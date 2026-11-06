@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { z } from "zod";
 import type { ScriptDocument } from "./script.types.js";
 
@@ -40,9 +40,35 @@ export function validateScript(document: ScriptDocument, toleranceSeconds = 1): 
   const total = document.scenes.reduce((sum, item) => sum + item.durationSeconds, 0);
   if (Math.abs(total - document.metadata.targetDurationSeconds) > toleranceSeconds)
     throw new BadRequestException("Scene duration does not match target duration");
-  if (document.metadata.factual && (!document.claims || document.claims.length === 0))
-    throw new BadRequestException("Factual scripts require source-backed claims");
   const ids = new Set(document.scenes.map((item) => item.id));
   if (ids.size !== document.scenes.length)
     throw new BadRequestException("Scene IDs must be unique");
+}
+
+export function validateGenrePolicy(
+  document: ScriptDocument,
+  policy: { safetyProfile: unknown },
+  approvedReferences: unknown,
+): void {
+  const safetyProfile =
+    typeof policy.safetyProfile === "object" &&
+    policy.safetyProfile !== null &&
+    !Array.isArray(policy.safetyProfile)
+      ? (policy.safetyProfile as Record<string, unknown>)
+      : {};
+  if (typeof safetyProfile.requiresSourceBackedClaims !== "boolean") {
+    throw new ConflictException("Genre source-backed claims policy is not configured");
+  }
+  if (document.metadata.factual !== safetyProfile.requiresSourceBackedClaims) {
+    throw new ConflictException("Genre factuality policy does not match the script metadata");
+  }
+  if (!safetyProfile.requiresSourceBackedClaims) return;
+  const approved = new Set(
+    Array.isArray(approvedReferences)
+      ? approvedReferences.filter((value): value is string => typeof value === "string")
+      : [],
+  );
+  if (!document.claims?.length || document.claims.some((claim) => !approved.has(claim.sourceUrl))) {
+    throw new ConflictException("Every factual claim must cite an approved idea source");
+  }
 }

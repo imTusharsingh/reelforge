@@ -365,3 +365,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Minu re-review `5798838007` identified B2/B3/B6/B7 gaps. Added atomic persisted budget reservation before provider dispatch, explicit authenticated provider-health operation, workspace genre lookup, per-claim source validation, config/prompt snapshot fields, race-safe revisions, shared character validation for manual revisions, and tenant/authorization unit negatives.
 - Corrected the remaining project-state footer and M06/#15 integrated history. The combined M06+M07+M08 workflow is recorded as a failed future process experiment; M09 resumes sequentially after PR #16.
 - M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, or new PR is claimed.
+
+## 2026-11-06 - PR #16 B2/B3/B5/B6/B7 fix-forward
+- On the existing `work/m07-m08-combined` branch, added actual authenticated HTTP negatives and persisted concurrent approve/revise coverage; paired required owned config/prompt snapshots and persisted the exact dispatch prompt; derived factual support from workspace genre policy.
+- Added durable reservation/ledger correlation FKs, complete post-dispatch ledger updates and actual-or-unknown-cost reconciliation. Reservations are independently persisted so cross-day completion cannot debit a new day or release it negative. Unknown cost remains null and conservatively charges the estimate.
+- Migration: additive `20261106170000_m07_m08_provenance_and_reservations`. No live provider was called; no runtime success adapter was added.
+- Verification on final program changes with Node 24.22.2 and fresh disposable PostgreSQL: frozen install, lint, format check, typecheck, schema validation, full 11-migration deploy, 25 test files / 132 tests, build, and `git diff --check` passed. Focused script suites: 5 files / 30 tests. Direct schema diff additionally showed pre-existing baseline drift, so no clean direct-diff result is claimed.
+- M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`. No merge, approval, integration, or new PR is claimed. Minu re-review is the next action.

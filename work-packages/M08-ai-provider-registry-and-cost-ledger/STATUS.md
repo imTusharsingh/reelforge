@@ -21,32 +21,32 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 
 
 ## Files changed
-- `packages/ai-providers/src/index.ts`, `apps/api/src/modules/script/**`, and additive migration `20261106160000_m07_m08_script_provider`.
+- `apps/api/src/modules/script/**`: preflight estimate, complete post-dispatch success/failure ledger, exact prompt, actual/unknown cost settlement, durable reservations.
+- `packages/database/prisma/**`: additive migration `20261106170000_m07_m08_provenance_and_reservations`.
 
 ## Commands and evidence
-- `DATABASE_URL=... pnpm --filter @reelforge/api typecheck` — **PASSED**.
-- `DATABASE_URL=... pnpm db:validate` — **PASSED**.
-- `pnpm lint` — **PASSED**.
-- `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 21 files / 106 passed / 5 skipped (database integration tests skipped without a configured database).
-- Persisted PostgreSQL budget reservation/settlement/concurrency coverage is implemented in the script integration suite and requires CI/local PostgreSQL credentials to execute.
-- `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
-- Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
-- Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
-- `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
-- `pnpm db:migrate:deploy` — **FAILED** with local PostgreSQL authentication error `P1000`.
+- Node `24.22.2`; `pnpm install --frozen-lockfile` — **PASSED**.
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate` — **PASSED**.
+- `pnpm db:migrate:deploy` — **PASSED** on a new local PostgreSQL database; 11 migrations applied in order, including the additive provenance/reservation migration.
+- `pnpm test` — **PASSED**, 25 test files / 132 tests. Focused script suites: 5 files / 30 tests.
+- `pnpm build` — **PASSED** for all packages/apps.
+- `git diff --check` — **PASSED**.
+- Persisted tests cover tenant isolation/FKs, atomic daily-cap concurrency, failure release, known actual-cost settlement, unknown-cost settlement, malformed output, invalid provenance, script persistence failure, and cross-day reservation behavior.
 
 ## Contract/schema proposals
-- None.
+- Additive request/reservation correlation FK and persisted reservation state; no destructive migration or prior applied migration rewrite.
 
 ## Blockers / risks / unknowns
-- Health requires a registered adapter callback; no live adapter is configured in tests or startup. Root build remains unrun after this fix-forward.
+- Unknown provider cost is conservatively charged at the preflight estimate but remains `actualCost=null` and `costKnown=false`; it is not represented as a measured actual.
+- Cross-day settlement does not charge/reset two different daily windows; the original reservation retains cost and `budgetApplied=false` for reconciliation.
+- Final Minu/core review is pending; no approval, integration, merge, live provider call, or production readiness is claimed. Failure to persist the database ledger itself is an infrastructure limitation, not a silently claimed successful ledger write.
+- Prior documented Prisma compiled-dist ESM boot follow-up remains outside this fix-forward.
 
 ## Next exact action
-Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.
+Minu reviews the pushed fix-forward head on PR #16.
 
 ## Handoff notes
-Health is an explicit operation and requires a registered adapter health callback; no live adapter is configured in tests or startup.
+Success `estimatedCost` is always the preflight estimate. Post-dispatch validation and persistence failures settle a received provider response; exceptions thrown by `complete()` release the reservation. Provider health remains explicit-only and the runtime registry remains fail-closed.
 
 ## Reviewer decision
 - Pending.

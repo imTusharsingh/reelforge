@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { BadRequestException } from "@nestjs/common";
 import { parseScriptDocument, validateScript } from "./script.validation.js";
 
 const document = {
@@ -26,9 +25,38 @@ describe("script validation", () => {
   it("accepts a duration-valid structured document", () => {
     validateScript(parseScriptDocument(document));
   });
-  it("rejects factual documents without sources", () => {
+  it("keeps structural validation independent of genre-driven factuality", () => {
     expect(() =>
       validateScript({ ...document, metadata: { ...document.metadata, factual: true } }),
-    ).toThrow(BadRequestException);
+    ).not.toThrow();
+  });
+});
+
+describe("genre-driven factuality", () => {
+  it("requires source-backed claims when genre policy requires them", async () => {
+    const { validateGenrePolicy } = await import("./script.validation.js");
+    const factualDocument = parseScriptDocument({
+      ...document,
+      metadata: { ...document.metadata, factual: true },
+    });
+    expect(() =>
+      validateGenrePolicy(
+        factualDocument,
+        { safetyProfile: { requiresSourceBackedClaims: true } },
+        [],
+      ),
+    ).toThrow("approved idea source");
+  });
+
+  it("rejects a provider factual flag that disagrees with genre policy", async () => {
+    const { validateGenrePolicy } = await import("./script.validation.js");
+    const factualDocument = parseScriptDocument(document);
+    expect(() =>
+      validateGenrePolicy(
+        factualDocument,
+        { safetyProfile: { requiresSourceBackedClaims: true } },
+        [],
+      ),
+    ).toThrow("Genre factuality");
   });
 });

@@ -21,32 +21,31 @@ Convert an approved idea into a structured script and scene plan.
 
 
 ## Files changed
-- `apps/api/src/modules/script/**`, `apps/api/src/app.module.ts`.
+- `apps/api/src/modules/script/**`: HTTP authorization tests, paired snapshot consumption, genre policy validation, atomic lifecycle operations, exact dispatched prompt provenance.
+- `packages/database/prisma/**`: additive migration `20261106170000_m07_m08_provenance_and_reservations`.
 
 ## Commands and evidence
-- `DATABASE_URL=... pnpm --filter @reelforge/api typecheck` — **PASSED**.
-- `DATABASE_URL=... pnpm db:validate` — **PASSED**.
-- `pnpm lint` — **PASSED**.
-- `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 21 files / 106 passed / 5 skipped (database integration tests skipped without a configured database).
-- Focused script lifecycle tests — **PASSED**, including workspace scoping, viewer authorization, concurrent revision claim rejection, and approved-export immutability in the database integration suite when enabled.
-- `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
-- Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
-- Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
-- `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
-- `pnpm db:migrate:deploy` — **FAILED** with local PostgreSQL authentication error `P1000`.
+- Node `24.22.2`; `pnpm install --frozen-lockfile` — **PASSED**.
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate` — **PASSED**.
+- `pnpm db:migrate:deploy` — **PASSED** on a new local PostgreSQL database; 11 migrations applied in order, including the additive provenance/reservation migration.
+- `pnpm test` — **PASSED**, 25 test files / 132 tests. Focused script suites: 5 files / 30 tests.
+- `pnpm build` — **PASSED** for all packages/apps.
+- `git diff --check` — **PASSED**.
+- Actual HTTP integration verifies unauthenticated 401s, outsider 403s and viewer 403s for get/revise/approve/export/provider health; owner read is successful. Persisted concurrent approve/revise test yields exactly one lifecycle winner and exports the consistent approved revision.
+- Exact provider request prompt equals successful revision prompt; generated revisions reference the owned coherent config/prompt pair with tenant-scoped FKs.
 
 ## Contract/schema proposals
-- Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
+- The pending request initializes atomically with its budget reservation; reservations reference the tenant/correlation ledger row. This is additive and deployed in the migration above.
 
 ## Blockers / risks / unknowns
-- Prompt text is now persisted with owned config/prompt snapshot references. Script integration coverage includes foreign reads, unauthorized lifecycle operations, concurrent budget dispatch, settlement, and immutable export; it is skipped locally without PostgreSQL credentials.
+- Final Minu/core review is pending; no approval, integration, merge, live provider call, or production readiness is claimed.
+- Prior documented Prisma compiled-dist ESM boot follow-up remains outside this fix-forward.
 
 ## Next exact action
-Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.
+Minu reviews the pushed fix-forward head on PR #16.
 
 ## Handoff notes
-Remaining review gap: full HTTP/integration coverage is still narrower than the unit route-gate coverage; root build remains unrun after this fix-forward.
+Genre `requiresSourceBackedClaims` now drives factuality and source validation. When required, claims must match approved snapshot references; URLs alone do not satisfy support. Runtime remains fail-closed. Provider health is explicit-only. Unknown provider cost remains null; conservative budget charging uses the preflight estimate. Cross-day completion retains audit data and records `budgetApplied=false` rather than changing the new daily counters.
 
 ## Reviewer decision
 - Pending.

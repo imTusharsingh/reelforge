@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ForbiddenException, ConflictException } from "@nestjs/common";
 import { ProviderRegistry } from "@reelforge/ai-providers";
@@ -48,9 +49,11 @@ describe("script tenant and authorization gates", () => {
     const service = new ScriptService(db(null), llm, new ProviderRegistry());
     await expect(
       service.generate(context(), {
-        approvedIdeaSnapshotId: "x",
+        approvedIdeaSnapshotId: randomUUID(),
         approvedIdeaChecksum: "x",
         prompt: "x",
+        configSnapshotId: randomUUID(),
+        promptSnapshotId: randomUUID(),
       }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
@@ -93,7 +96,12 @@ describe("script tenant and authorization gates", () => {
       ],
     };
     const concurrentDb = {
-      genre: { findFirst: async () => ({ id: "genre" }) },
+      genre: {
+        findFirst: async () => ({
+          id: "genre",
+          safetyProfile: { requiresSourceBackedClaims: false },
+        }),
+      },
       characterVersion: { findMany: async () => [] },
       script: {
         findUnique: async () => ({
