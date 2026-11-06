@@ -29,6 +29,7 @@ Convert an approved idea into a structured script and scene plan.
 - `pnpm lint` — **PASSED**.
 - `pnpm format:check` — **PASSED**.
 - `pnpm test` — **PASSED**, 21 files / 104 passed / 2 skipped.
+- Focused script lifecycle tests — **PASSED**, 4 tests including workspace scoping, viewer authorization, and concurrent revision claim rejection.
 - `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
 - Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
 - Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
@@ -39,7 +40,7 @@ Convert an approved idea into a structured script and scene plan.
 - Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
 
 ## Blockers / risks / unknowns
-- Full HTTP/integration coverage is still narrower than the unit route-gate coverage; root build remains unrun after this fix-forward.
+- Prompt text is now persisted with owned config/prompt snapshot references. HTTP integration coverage remains narrower than the unit route-gate coverage.
 
 ## Next exact action
 Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.

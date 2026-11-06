@@ -142,6 +142,7 @@ export class ScriptService {
             ...(input.promptSnapshotId === undefined
               ? {}
               : { promptSnapshotId: input.promptSnapshotId }),
+            promptText: input.prompt,
             createdByUserId: context.userId,
           },
         });

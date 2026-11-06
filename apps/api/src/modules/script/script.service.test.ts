@@ -54,4 +54,60 @@ describe("script tenant and authorization gates", () => {
       }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
+  it("scopes reads and lifecycle writes to the authenticated workspace/editor", async () => {
+    const scopedDb = {
+      ...db(null),
+      script: { findUnique: async () => null },
+    } as unknown as Database;
+    const service = new ScriptService(scopedDb, llm, new ProviderRegistry());
+    await expect(service.get(context(), "foreign-script")).rejects.toThrow("Script not found");
+    await expect(service.approve(context("VIEWER"), "foreign-script")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(
+      service.providerHealth(context("VIEWER"), "provider", "llm"),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+  it("rejects a concurrent revision claim instead of creating a duplicate revision", async () => {
+    const document = {
+      schemaVersion: "1.0" as const,
+      title: "T",
+      hook: "H",
+      dialogue: "D",
+      cta: "C",
+      metadata: { genre: "comedy", targetDurationSeconds: 1, factual: false },
+      scenes: [
+        {
+          id: "one",
+          startSeconds: 0,
+          durationSeconds: 1,
+          characterRefs: [],
+          dialogue: "D",
+          visualDescription: "V",
+          camera: "wide",
+          audioCues: [],
+        },
+      ],
+    };
+    const concurrentDb = {
+      genre: { findFirst: async () => ({ id: "genre" }) },
+      characterVersion: { findMany: async () => [] },
+      script: {
+        findUnique: async () => ({
+          currentRevision: 1,
+          status: "DRAFT",
+          snapshot: { references: [] },
+        }),
+      },
+      $transaction: async (
+        callback: (tx: {
+          script: { updateMany: () => Promise<{ count: number }> };
+        }) => Promise<unknown>,
+      ) => callback({ script: { updateMany: async () => ({ count: 0 }) } }),
+    } as unknown as Database;
+    const service = new ScriptService(concurrentDb, llm, new ProviderRegistry());
+    await expect(service.revise(context(), "script", document)).rejects.toThrow(
+      "changed concurrently",
+    );
+  });
 });
