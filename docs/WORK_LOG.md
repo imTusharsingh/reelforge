@@ -315,3 +315,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approvals: M05 product work is APPROVED by Minu and INTEGRATED by the repository owner. This closeout chore itself is not approved; it awaits Minu review. Bots must not merge.
 - Defects/risks/blockers: The post-M04 Prisma Client / Nest ESM compiled-dist boot follow-up remains open and is not fixed here.
 - Next exact action: Minu reviews and, if approved, merges this closeout; after that start M06 (Idea & Topic Registry) from the new `main` tip. Do not start M06 in this PR.
+
+## 2026-11-06 - M06 idea and topic registry implementation handoff
+- Actor/session: Module Implementation Agent; branch `work/m06-idea-and-topic-registry`, based on post-closeout `origin/main` tip `ea7403870dab2655a8bd785a7d0eb6a9d255cef1`.
+- Work package: M06 - Idea & Topic Registry.
+- Changes made: Added authenticated workspace-scoped idea creation/listing, typed user and AI proposal paths, lifecycle transitions, normalized-title and deterministic similarity duplicate flags, approval/backlog/rejection/scheduling, channel/series cooldown and diversity checks, and AI metadata persistence for model/prompt versions and known or unknown cost. Approved content is not mutable through the registry API.
+- Contract/schema: Added an additive Prisma migration for `Idea` and `IdeaDuplicate`; added the typed `IdeaProposalLlmPort`/`IDEA_PROPOSAL_LLM` surface to the M08 provider stub. No contracts package edits. Runtime AI is fail-closed with no fake adapter; tests use injected doubles.
+- Verification: Focused M06 tests passed (1 file / 4 tests); full test suite passed (18 files / 92 tests); lint, format check, typecheck, build, db validate, and `git diff --check` passed. `pnpm install --frozen-lockfile` was not runnable under Node 24.16.0 because the repo pins 24.22.2; lockfile-only install with engine strictness disabled passed. `db:migrate:deploy` was attempted and failed with Prisma P1000 because local PostgreSQL rejected the supplied credentials.
+- Decisions/approval: No approval or integration is claimed. Minu/Core Reviewer must review; only the owner merges after written approval.
+- Risks/gaps: Migration deployment remains unverified in this environment. The Prisma ESM compiled-dist boot follow-up remains open from M04/M05.
+- Next exact action: Commit and push this branch, open PR `M06: idea and topic registry`, request Minu review, and do not merge.

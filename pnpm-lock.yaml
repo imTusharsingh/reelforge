@@ -205,6 +205,9 @@ importers:
       '@nestjs/platform-express':
         specifier: 12.3.3
         version: 12.3.3(@nestjs/common@12.3.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.3.3)
+      '@reelforge/ai-providers':
+        specifier: workspace:*
+        version: link:../../packages/ai-providers
       '@reelforge/config-engine':
         specifier: workspace:*
         version: link:../../packages/config-engine

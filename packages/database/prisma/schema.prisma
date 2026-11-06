@@ -73,6 +73,19 @@ enum PromptTemplateVersionStatus {
   PUBLISHED
 }
 
+enum IdeaStatus {
+  DRAFT
+  BACKLOG
+  APPROVED
+  REJECTED
+  SCHEDULED
+}
+
+enum IdeaOrigin {
+  USER
+  AI
+}
+
 model User {
   id                 String                @id @default(uuid()) @db.Uuid
   email              String                @unique
@@ -114,6 +127,8 @@ model Workspace {
   promptTemplates           PromptTemplate[]
   promptTemplateVersions    PromptTemplateVersion[]
   promptBundleSnapshots     PromptBundleSnapshot[]
+  ideas                     Idea[]
+  ideaDuplicates            IdeaDuplicate[]
   activeConfigSnapshot      WorkspaceConfigSnapshot?   @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -637,4 +652,55 @@ model PromptBundleSnapshot {
   @@index([workspaceId, configSnapshotId])
   @@index([workspaceId, templateId])
   @@map("prompt_bundle_snapshots")
+}
+
+model Idea {
+  id                String         @id @default(uuid()) @db.Uuid
+  workspaceId       String         @map("workspace_id") @db.Uuid
+  channelId         String?        @map("channel_id") @db.Uuid
+  seriesId          String?        @map("series_id") @db.Uuid
+  status            IdeaStatus     @default(DRAFT)
+  origin            IdeaOrigin
+  title             String
+  normalizedTitle   String         @map("normalized_title")
+  topic             String
+  hook              String
+  angle             String
+  audience          String
+  references        Json
+  sourceNotes       String?        @map("source_notes")
+  expectedFormat    String         @map("expected_format")
+  modelVersion      String?        @map("model_version")
+  promptVersion     String?        @map("prompt_version")
+  cost              Decimal?       @db.Decimal(18, 8)
+  costCurrency      String?        @map("cost_currency")
+  scheduledAt       DateTime?      @map("scheduled_at") @db.Timestamptz(6)
+  approvedAt        DateTime?      @map("approved_at") @db.Timestamptz(6)
+  createdByUserId   String         @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  duplicateMatches  IdeaDuplicate[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, normalizedTitle])
+  @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, channelId, seriesId, approvedAt])
+  @@map("ideas")
+}
+
+model IdeaDuplicate {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @map("workspace_id") @db.Uuid
+  ideaId          String   @map("idea_id") @db.Uuid
+  matchedIdeaId   String?  @map("matched_idea_id") @db.Uuid
+  reason          String
+  score           Decimal  @db.Decimal(6, 5)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  idea            Idea      @relation(fields: [workspaceId, ideaId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, ideaId])
+  @@map("idea_duplicates")
 }

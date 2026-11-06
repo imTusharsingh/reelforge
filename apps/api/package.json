@@ -9,6 +9,7 @@
     "typecheck": "pnpm --filter @reelforge/database db:generate && tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@reelforge/ai-providers": "workspace:*",
     "@reelforge/config-engine": "workspace:*",
     "@reelforge/database": "workspace:*",
     "zod": "4.6.7",
