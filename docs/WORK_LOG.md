@@ -354,3 +354,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-06 - M06 PR #15 local CI reproduction
 - Reproduced the complete CI order locally with Node `24.22.2` and a fresh PostgreSQL `18.6-alpine` container. The first migrated run exposed an incorrect integration assertion expecting an empty workspace-A list despite a workspace-A fixture idea; corrected it to assert workspace scoping.
 - Verification: `pnpm install --frozen-lockfile`, lint, format check, typecheck, schema validation, migration deployment, tests, and build all passed. Tests: 19 files / 100 tests.
+## 2026-11-06 - Combined M06 closeout + M07/M08 implementation experiment
+- Actor/session: Module Implementation Agent; branch `work/m07-m08-combined`, based on `origin/main` `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
+- M06 closeout: PR #14 product landed at `277525df559f00625c467e3e63dad638390e1556`; fix-forward PR #15 was approved by Minu at `ed52885c2341a0c676e251f9beef54f6d77661cd` and merged at `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
+- M08: added typed provider-neutral capability, credential, registry, error, provenance, ledger, and spend-guard contracts. Runtime remains fail-closed; no provider calls are made by startup or tests.
+- M07: added versioned script/scene schemas, validation, factual source requirements, and an injectable typed LLM generation boundary carrying snapshot/provenance inputs.
+- Verification: `pnpm typecheck` attempted and failed because Prisma generation could not resolve `DATABASE_URL`; package AI-provider typecheck passed before the workspace failure. Remaining required checks are not run and are not claimed.
+- Decision/approval: M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`; no PR was created, pushed, approved, or merged by this session.

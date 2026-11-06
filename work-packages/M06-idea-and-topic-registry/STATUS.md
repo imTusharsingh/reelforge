@@ -1,11 +1,12 @@
 # M06 Status - Idea & Topic Registry
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
-- **Branch/worktree:** `work/m06-idea-and-topic-registry`
+- **Branch/worktree:** `main` (PR #15)
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `ed52885c2341a0c676e251f9beef54f6d77661cd`
+- **Merge commit:** `318d1f2dd7220233f9ca36a8b277a2257ebf8382`
 
 ## Current objective
 Generate, track, approve, and de-duplicate content ideas.

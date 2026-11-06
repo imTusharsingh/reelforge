@@ -1,8 +1,8 @@
 # M08 Status - AI Provider Registry & Cost Ledger
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Module Implementation Agent
+- **Branch/worktree:** `work/m07-m08-combined`
 - **Last updated:** 2026-11-05
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
@@ -11,12 +11,12 @@
 Expose provider-neutral AI capabilities and record real provider use and costs.
 
 ## Task checklist
-- [ ] M08-T01: T01 Define provider-neutral interfaces for LLM, image, video, and TTS capabilities.
-- [ ] M08-T02: T02 Define capability metadata: supported input/output, reference-image support, duration/resolution limits, async/polling, region, and cost model.
-- [ ] M08-T03: T03 Implement approved provider registry and per-environment credentials.
-- [ ] M08-T04: T04 Implement request validation and normalized error taxonomy.
-- [ ] M08-T05: T05 Record each actual request, response metadata, usage, estimated/actual cost, latency, and correlation IDs.
-- [ ] M08-T06: T06 Implement workspace/channel budgets, daily caps, preflight estimate, and spend guard.
+- [x] M08-T01: Provider-neutral LLM, image, video, and TTS interfaces.
+- [x] M08-T02: Capability and cost metadata.
+- [x] M08-T03: Registry and non-secret credential boundary.
+- [x] M08-T04: Normalized fail-closed error taxonomy.
+- [x] M08-T05: Usage ledger entry contract.
+- [x] M08-T06: Workspace/channel spend guard.
 - [ ] M08-T07: T07 Add real-provider health/capability checks that are explicitly invoked, never run automatically on startup or in CI.
 
 

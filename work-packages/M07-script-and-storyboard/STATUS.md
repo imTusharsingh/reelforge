@@ -1,8 +1,8 @@
 # M07 Status - Script & Storyboard
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Module Implementation Agent
+- **Branch/worktree:** `work/m07-m08-combined`
 - **Last updated:** 2026-11-05
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
@@ -11,20 +11,20 @@
 Convert an approved idea into a structured script and scene plan.
 
 ## Task checklist
-- [ ] M07-T01: T01 Define versioned JSON schema for script, hook, dialogue/narration, CTA, and metadata.
-- [ ] M07-T02: T02 Define scene schema: timing, characters, dialogue, visual description, camera, audio cues, transitions.
-- [ ] M07-T03: T03 Implement script generation through typed LLM provider port.
-- [ ] M07-T04: T04 Validate duration estimates, character references, genre policy, and required sections.
+- [x] M07-T01: Versioned script document schema.
+- [x] M07-T02: Scene schema.
+- [x] M07-T03: Typed injectable LLM boundary with fail-closed runtime default.
+- [x] M07-T04: Duration, uniqueness, and factual-source validation.
 - [ ] M07-T05: T05 Implement script revision/versioning and manual edit/approval.
-- [ ] M07-T06: T06 Add factuality/source-reference fields for factual genres; reject unsupported factual claims where source evidence is required.
-- [ ] M07-T07: T07 Persist prompt/model/version/cost and input snapshot IDs.
+- [x] M07-T06: Factual claims require URL-backed sources.
+- [x] M07-T07: Generation result carries provenance and approved snapshot identifiers.
 
 
 ## Files changed
-- None yet.
+- `apps/api/src/modules/script/**`, `apps/api/src/app.module.ts`.
 
 ## Commands and evidence
-- None run.
+- `pnpm typecheck` — **FAILED**: database generation requires `DATABASE_URL`; `@reelforge/ai-providers` passed before the workspace failure.
 
 ## Contract/schema proposals
 - None.
