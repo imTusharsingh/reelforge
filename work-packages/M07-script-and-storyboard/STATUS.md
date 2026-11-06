@@ -28,8 +28,8 @@ Convert an approved idea into a structured script and scene plan.
 - `DATABASE_URL=... pnpm db:validate` — **PASSED**.
 - `pnpm lint` — **PASSED**.
 - `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 21 files / 104 passed / 2 skipped.
-- Focused script lifecycle tests — **PASSED**, 4 tests including workspace scoping, viewer authorization, and concurrent revision claim rejection.
+- `pnpm test` — **PASSED**, 21 files / 106 passed / 5 skipped (database integration tests skipped without a configured database).
+- Focused script lifecycle tests — **PASSED**, including workspace scoping, viewer authorization, concurrent revision claim rejection, and approved-export immutability in the database integration suite when enabled.
 - `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
 - Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
 - Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
@@ -40,7 +40,7 @@ Convert an approved idea into a structured script and scene plan.
 - Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
 
 ## Blockers / risks / unknowns
-- Prompt text is now persisted with owned config/prompt snapshot references. HTTP integration coverage remains narrower than the unit route-gate coverage.
+- Prompt text is now persisted with owned config/prompt snapshot references. Script integration coverage includes foreign reads, unauthorized lifecycle operations, concurrent budget dispatch, settlement, and immutable export; it is skipped locally without PostgreSQL credentials.
 
 ## Next exact action
 Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.

@@ -64,6 +64,9 @@ describe("script tenant and authorization gates", () => {
     await expect(service.approve(context("VIEWER"), "foreign-script")).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+    await expect(service.revise(context("VIEWER"), "foreign-script", {})).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     await expect(
       service.providerHealth(context("VIEWER"), "provider", "llm"),
     ).rejects.toBeInstanceOf(ForbiddenException);

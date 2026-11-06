@@ -28,8 +28,8 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - `DATABASE_URL=... pnpm db:validate` — **PASSED**.
 - `pnpm lint` — **PASSED**.
 - `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 21 files / 104 passed / 2 skipped.
-- Focused script lifecycle coverage — **PASSED**; persisted PostgreSQL budget reservation/settlement integration remains CI-dependent.
+- `pnpm test` — **PASSED**, 21 files / 106 passed / 5 skipped (database integration tests skipped without a configured database).
+- Persisted PostgreSQL budget reservation/settlement/concurrency coverage is implemented in the script integration suite and requires CI/local PostgreSQL credentials to execute.
 - `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
 - Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
 - Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
