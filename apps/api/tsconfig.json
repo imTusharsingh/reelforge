@@ -4,7 +4,11 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false,
-    "types": ["node"]
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@reelforge/media": ["../../packages/media/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }
