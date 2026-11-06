@@ -10,6 +10,7 @@ export default defineConfig({
       "@reelforge/ai-providers": new URL("./packages/ai-providers/src/index.ts", import.meta.url)
         .pathname,
       "@reelforge/database": new URL("./packages/database/src/index.ts", import.meta.url).pathname,
+      "@reelforge/media": new URL("./packages/media/src/index.ts", import.meta.url).pathname,
     },
   },
   test: {

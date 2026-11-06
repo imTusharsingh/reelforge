@@ -15,6 +15,7 @@
     "@reelforge/ai-providers": "workspace:*",
     "@reelforge/config-engine": "workspace:*",
     "@reelforge/database": "workspace:*",
+    "@reelforge/media": "workspace:*",
     "express": "5.3.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",

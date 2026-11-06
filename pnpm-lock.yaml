@@ -214,6 +214,9 @@ importers:
       '@reelforge/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@reelforge/media':
+        specifier: workspace:*
+        version: link:../../packages/media
       express:
         specifier: 5.3.0
         version: 5.3.0
@@ -292,7 +295,11 @@ importers:
         specifier: 7.10.1
         version: 7.10.1(@types/node@24.19.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)
 
-  packages/media: {}
+  packages/media:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
 
   packages/observability: {}
 
