@@ -34,7 +34,7 @@ Generate, track, approve, and de-duplicate content ideas.
 - `pnpm --config.engine-strict=false lint` — **PASSED**.
 - `pnpm --config.engine-strict=false format:check` — **PASSED**.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm --config.engine-strict=false db:validate` — **PASSED**.
-- `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm --config.engine-strict=false test` — **PASSED**, 18 files / 92 tests.
+- `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm --config.engine-strict=false test` — **PASSED**, 18 files / 95 tests.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm --config.engine-strict=false build` — **PASSED**.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm --config.engine-strict=false db:migrate:deploy` — **FAILED** with Prisma `P1000`; local PostgreSQL credentials were rejected. No migration deployment success is claimed.
 - `git diff --check` — **PASSED**.
@@ -50,10 +50,24 @@ Generate, track, approve, and de-duplicate content ideas.
 - Approved/scheduled idea fields are not exposed through an update route, preserving immutable content after approval; future script handoff should consume the persisted record/snapshot contract.
 
 ## Next exact action
-Push this branch and open `M06: idea and topic registry` for Minu review. Do not merge or mark approved/integrated.
+Push this branch. Owner/PM opens `fix(m06): address post-merge Minu blockers`; do not merge or mark approved/integrated.
 
 ## Handoff notes
 Implementation is complete pending Core Architect/Reviewer validation.
 
 ## Reviewer decision
 - Pending.
+
+## Fix-forward blockers
+- B1: `@reelforge/ai-providers` source type resolution remains fixed for clean-checkout tests/typecheck.
+- B2: approval pins one immutable snapshot; scheduling reuses it, and the service test verifies exact readback/checksum preservation.
+- B3: malformed AI proposals and invalid provenance are rejected before persistence; series-only input persists the canonical channel.
+- B4: CI now migrates before tests; Prisma integration coverage exercises workspace-scoped list/transition, foreign channel/series denial, negative lifecycle, and channel/series/creator/matched-idea ownership FKs.
+- B5: diversity uses the latest three eligible ideas in the same channel/series and rejects three identical normalized topics independently of cooldown; channel and series permit/reject cases are tested.
+
+## Fix-forward verification
+- Plain `pnpm install --frozen-lockfile` — **NOT PASSED**: Node `24.16.0` vs pinned `24.22.2`.
+- Full local CI flow with Node `24.22.2` and fresh PostgreSQL `18.6-alpine`: frozen install, lint, format check, typecheck, schema validation, migration deployment, tests (19 files / 100 tests), and build — **PASSED**.
+- Migration deploy — **FAILED** with Prisma `P1000`; local PostgreSQL rejected supplied credentials.
+- No approval, integration, merge, or PR creation is claimed.
+- CI follow-up: `db:migrate:deploy` now runs before `pnpm test` so integration tests execute against the migrated runner database.

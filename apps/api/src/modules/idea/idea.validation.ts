@@ -1,7 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { z } from "zod";
 
-const ideaSchema = z.object({
+export const ideaSchema = z.object({
   title: z.string().trim().min(1).max(240),
   topic: z.string().trim().min(1).max(2000),
   hook: z.string().trim().min(1).max(2000),
@@ -22,7 +22,44 @@ export function parseIdeaInput(value: unknown): z.infer<typeof ideaSchema> {
   return result.data;
 }
 
+export function parseAiProposal(
+  value: unknown,
+  scope: { channelId?: string; seriesId?: string },
+): z.infer<typeof ideaSchema> {
+  const proposal = ideaSchema.partial().parse(value);
+  return parseIdeaInput({ ...proposal, ...scope });
+}
+
 export const aiIdeaSchema = z.object({
   prompt: z.string().trim().min(1).max(5000),
   context: z.string().max(10000).optional(),
+  channelId: z.string().uuid().optional(),
+  seriesId: z.string().uuid().optional(),
 });
+
+export const aiMetadataSchema = z.object({
+  modelVersion: z.string().trim().min(1),
+  promptVersion: z.string().trim().min(1),
+  cost: z.number().finite().nonnegative().nullable(),
+  currency: z.string().trim().min(1).optional(),
+});
+
+export const transitionSchema = z
+  .object({
+    status: z.enum(["BACKLOG", "APPROVED", "REJECTED", "SCHEDULED"]),
+    scheduledAt: z.string().datetime().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.status === "SCHEDULED" && value.scheduledAt === undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["scheduledAt"],
+        message: "scheduledAt is required",
+      });
+    if (value.scheduledAt !== undefined && new Date(value.scheduledAt).getTime() <= Date.now())
+      context.addIssue({
+        code: "custom",
+        path: ["scheduledAt"],
+        message: "scheduledAt must be in the future",
+      });
+  });

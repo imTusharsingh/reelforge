@@ -325,3 +325,32 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approval: No approval or integration is claimed. Minu/Core Reviewer must review; only the owner merges after written approval.
 - Risks/gaps: Migration deployment remains unverified in this environment. The Prisma ESM compiled-dist boot follow-up remains open from M04/M05.
 - Next exact action: Commit and push this branch, open PR `M06: idea and topic registry`, request Minu review, and do not merge.
+
+## 2026-11-06 - M06 fix-forward blockers
+- Actor/session: Module Implementation Agent; branch `fix/m06-postmerge-blockers`, based on `origin/main` containing `277525df559f00625c467e3e63dad638390e1556`.
+- Review source: Minu COMMENT review 5797242600 on PR #14; the referenced `/workspace/out/PR14_M06_POSTMERGE_REVIEW.md` was unavailable in this environment, so the supplied five-blocker brief and repository code were used.
+- Changes made: fixed clean-checkout provider type resolution; added immutable approval snapshots/checksums and approved read export; validated AI proposals/provenance; enforced channel-series integrity and canonical series channel; added tenant-owned database relations/FKs and negative tests; replaced the unreachable diversity predicate with an independent bounded window rule; hardened transition/scheduling validation and atomic status updates.
+- Verification: lint, format check, typecheck, full tests (18 files / 95 tests), build, db validate, and `git diff --check` passed. Frozen install was not runnable under Node 24.16.0 (repo pins 24.22.2). Migration deploy failed with Prisma P1000 because local PostgreSQL rejected supplied credentials.
+- Decision/approval: Not approved or integrated. No PR was created by this session. Owner/PM opens `fix(m06): address post-merge Minu blockers` and requests Minu review.
+
+## 2026-11-06 - M06 PR #15 CI fix
+- CI failed in `pnpm test` because Vitest resolved `@reelforge/ai-providers` through its unbuilt `dist` export on a clean checkout. Added a source alias in `vitest.config.ts`; runtime package imports still target compiled `dist`.
+- Verification after the fix: focused idea tests passed (7 tests), full tests passed (18 files / 95 tests), lint, format check, typecheck, and build passed; `git diff --check` passed.
+
+## 2026-11-06 - M06 PR #15 Minu blocker follow-up
+- Applied Minu’s REQUEST_CHANGES: approval snapshots are created once and reused through scheduling; AI negative-path and canonical-series tests were added; Prisma tenant/FK integration coverage was added; and minimum diversity now uses an independent bounded three-item queue rule for both channel and series scope.
+- Verification: focused M06 tests passed (10 tests); full test suite passed (18 files / 98 tests, with 2 database integration tests skipped because no `DATABASE_URL` was supplied); typecheck passed with the documented local `DATABASE_URL`; formatting passed. Migration deployment remains unverified because local PostgreSQL credentials previously returned Prisma P1000.
+- Decision/approval: still pending Minu review; no merge or approval claimed.
+
+## 2026-11-06 - M06 PR #15 clean-checkout test resolution
+- CI exposed one remaining fresh-checkout test issue: the Prisma integration test imported `@reelforge/database` before its `dist` existed. Added the Vitest source alias alongside the existing config-engine and AI-provider aliases.
+- Verification: exact `pnpm test` passed — 18 files passed, 1 integration file skipped without `DATABASE_URL`; 98 tests passed and 2 skipped.
+
+## 2026-11-06 - M06 PR #15 CI and B4 follow-up
+- Moved `pnpm db:migrate:deploy` before `pnpm test` in CI so the real Prisma integration suite runs only after the schema is applied.
+- Expanded integration coverage for foreign series, real negative lifecycle transition, creator FK, series FK, and matched-idea FK; added the missing varied-window series permit case.
+- Verification: exact local `pnpm test` passed (98 passed, 2 skipped without `DATABASE_URL`); typecheck, lint, and format checks passed. CI migration/test execution remains the required confirmation against the runner database.
+
+## 2026-11-06 - M06 PR #15 local CI reproduction
+- Reproduced the complete CI order locally with Node `24.22.2` and a fresh PostgreSQL `18.6-alpine` container. The first migrated run exposed an incorrect integration assertion expecting an empty workspace-A list despite a workspace-A fixture idea; corrected it to assert workspace scoping.
+- Verification: `pnpm install --frozen-lockfile`, lint, format check, typecheck, schema validation, migration deployment, tests, and build all passed. Tests: 19 files / 100 tests.

@@ -26,3 +26,23 @@ export type IdeaRecord = Readonly<{
   expectedFormat: string;
   duplicateMatches: ReadonlyArray<{ reason: string; score: unknown; matchedIdeaId: string | null }>;
 }>;
+
+export type ApprovedIdeaSnapshot = Readonly<{
+  id: string;
+  ideaId: string;
+  workspaceId: string;
+  channelId: string | null;
+  seriesId: string | null;
+  topic: string;
+  hook: string;
+  angle: string;
+  audience: string;
+  references: string[];
+  sourceNotes: string | null;
+  expectedFormat: string;
+  modelVersion: string | null;
+  promptVersion: string | null;
+  cost: string | null;
+  costCurrency: string | null;
+  checksumSha256: string;
+}>;
