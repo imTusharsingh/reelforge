@@ -59,7 +59,7 @@ Implementation is complete pending Core Architect/Reviewer validation.
 - Pending.
 
 ## Fix-forward blockers
-- B1: `@reelforge/ai-providers` now exposes source types for clean-checkout typecheck while retaining compiled runtime imports.
+- B1: `@reelforge/ai-providers` now exposes source types for clean-checkout typecheck while retaining compiled runtime imports; `vitest.config.ts` aliases the provider source for pre-build tests.
 - B2: approval/scheduling creates an immutable workspace-scoped content snapshot with SHA-256 checksum and an approved read endpoint for M07 handoff.
 - B3: AI proposals and provenance are runtime-validated; series-only input canonicalizes its channel and mismatches are rejected.
 - B4: additive workspace-owned foreign keys cover channel, series, creator, matched idea, and approval snapshots; negative tests cover foreign references.

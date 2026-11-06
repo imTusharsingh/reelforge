@@ -332,3 +332,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Changes made: fixed clean-checkout provider type resolution; added immutable approval snapshots/checksums and approved read export; validated AI proposals/provenance; enforced channel-series integrity and canonical series channel; added tenant-owned database relations/FKs and negative tests; replaced the unreachable diversity predicate with an independent bounded window rule; hardened transition/scheduling validation and atomic status updates.
 - Verification: lint, format check, typecheck, full tests (18 files / 95 tests), build, db validate, and `git diff --check` passed. Frozen install was not runnable under Node 24.16.0 (repo pins 24.22.2). Migration deploy failed with Prisma P1000 because local PostgreSQL rejected supplied credentials.
 - Decision/approval: Not approved or integrated. No PR was created by this session. Owner/PM opens `fix(m06): address post-merge Minu blockers` and requests Minu review.
+
+## 2026-11-06 - M06 PR #15 CI fix
+- CI failed in `pnpm test` because Vitest resolved `@reelforge/ai-providers` through its unbuilt `dist` export on a clean checkout. Added a source alias in `vitest.config.ts`; runtime package imports still target compiled `dist`.
+- Verification after the fix: focused idea tests passed (7 tests), full tests passed (18 files / 95 tests), lint, format check, typecheck, and build passed; `git diff --check` passed.

@@ -7,6 +7,8 @@ export default defineConfig({
     alias: {
       "@reelforge/config-engine": new URL("./packages/config-engine/src/index.ts", import.meta.url)
         .pathname,
+      "@reelforge/ai-providers": new URL("./packages/ai-providers/src/index.ts", import.meta.url)
+        .pathname,
     },
   },
   test: {
