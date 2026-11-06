@@ -39,10 +39,10 @@ Convert an approved idea into a structured script and scene plan.
 - Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
 
 ## Blockers / risks / unknowns
-- None recorded. Do not infer this means no risks exist; update after inspection.
+- Full HTTP/integration coverage is still narrower than the unit route-gate coverage; root build remains unrun after this fix-forward.
 
 ## Next exact action
-Read the work package and repository state, then report any conflict with existing code before implementation.
+Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.
 
 ## Handoff notes
 Remaining review gap: full HTTP/integration coverage is still narrower than the unit route-gate coverage; root build remains unrun after this fix-forward.

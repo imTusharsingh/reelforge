@@ -833,6 +833,8 @@ model ProviderBudget {
   dailyLimit   Decimal   @map("daily_limit") @db.Decimal(18,8)
   currency     String
   reserved     Decimal   @default(0) @db.Decimal(18,8)
+  spent        Decimal   @default(0) @db.Decimal(18,8)
+  periodStart  DateTime  @default(now()) @map("period_start") @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

@@ -54,6 +54,26 @@ export class ScriptService {
     if (estimate === null)
       throw new ConflictException("Provider cost is unknown; budget preflight cannot dispatch");
     const budget = await this.reserveBudget(context.workspaceId, input.channelId, estimate);
+    if (
+      input.configSnapshotId !== undefined &&
+      !(await this.db.configSnapshot.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: input.configSnapshotId } },
+        select: { id: true },
+      }))
+    ) {
+      await this.releaseBudget(budget.id, estimate);
+      throw new ConflictException("Configuration snapshot is not owned by this workspace");
+    }
+    if (
+      input.promptSnapshotId !== undefined &&
+      !(await this.db.promptBundleSnapshot.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: input.promptSnapshotId } },
+        select: { id: true },
+      }))
+    ) {
+      await this.releaseBudget(budget.id, estimate);
+      throw new ConflictException("Prompt snapshot is not owned by this workspace");
+    }
     const correlationId = randomUUID();
     const started = Date.now();
     let result: Awaited<ReturnType<ScriptLlmPort["complete"]>>;
@@ -67,81 +87,89 @@ export class ScriptService {
       await this.failure(context, correlationId, error);
       throw error;
     }
-    const provenance = z
-      .object({
-        modelVersion: z.string().min(1),
-        promptVersion: z.string().min(1),
-        cost: z.number().finite().nonnegative().nullable(),
-        currency: z.string().min(1).optional(),
-        usage: z
-          .object({
-            inputTokens: z.number().int().nonnegative().optional(),
-            outputTokens: z.number().int().nonnegative().optional(),
-            seconds: z.number().nonnegative().optional(),
-            characters: z.number().int().nonnegative().optional(),
-          })
-          .optional(),
-      })
-      .safeParse(result.metadata);
-    if (!provenance.success) {
-      await this.failure(context, correlationId, new Error("Invalid provider provenance"));
-      throw new ConflictException("Provider returned invalid provenance");
+    try {
+      const provenance = z
+        .object({
+          modelVersion: z.string().min(1),
+          promptVersion: z.string().min(1),
+          cost: z.number().finite().nonnegative().nullable(),
+          currency: z.string().min(1).optional(),
+          usage: z
+            .object({
+              inputTokens: z.number().int().nonnegative().optional(),
+              outputTokens: z.number().int().nonnegative().optional(),
+              seconds: z.number().nonnegative().optional(),
+              characters: z.number().int().nonnegative().optional(),
+            })
+            .optional(),
+        })
+        .safeParse(result.metadata);
+      if (!provenance.success) {
+        throw new ConflictException("Provider returned invalid provenance");
+      }
+      const document = parseScriptDocument(result.output);
+      validateScript(document);
+      this.validateFactualSources(document, snapshot.references);
+      const genre = await this.db.genre.findFirst({
+        where: { workspaceId: context.workspaceId, name: document.metadata.genre },
+        select: { id: true },
+      });
+      if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
+      await this.validateCharacters(context, document);
+      const created = await this.db.$transaction(async (tx) => {
+        const script = await tx.script.create({
+          data: {
+            workspaceId: context.workspaceId,
+            approvedIdeaSnapshotId: snapshot.id,
+            ...(input.channelId === undefined ? {} : { channelId: input.channelId }),
+            approvedIdeaChecksum: snapshot.checksumSha256,
+            createdByUserId: context.userId,
+          },
+        });
+        await tx.scriptRevision.create({
+          data: {
+            workspaceId: context.workspaceId,
+            scriptId: script.id,
+            revision: 1,
+            document,
+            promptVersion: result.metadata.promptVersion,
+            modelVersion: result.metadata.modelVersion,
+            cost: result.metadata.cost,
+            costCurrency: result.metadata.currency ?? null,
+            ...(input.configSnapshotId === undefined
+              ? {}
+              : { configSnapshotId: input.configSnapshotId }),
+            ...(input.promptSnapshotId === undefined
+              ? {}
+              : { promptSnapshotId: input.promptSnapshotId }),
+            createdByUserId: context.userId,
+          },
+        });
+        await tx.providerRequest.create({
+          data: {
+            workspaceId: context.workspaceId,
+            correlationId,
+            providerId: this.llm.capability.providerId,
+            capabilityId: this.llm.capability.capabilityId,
+            status: "SUCCEEDED",
+            ...(result.metadata.usage === undefined ? {} : { usage: result.metadata.usage }),
+            estimatedCost: result.metadata.cost,
+            actualCost: result.metadata.cost,
+            currency: result.metadata.currency ?? null,
+            latencyMs: Date.now() - started,
+            responseMetadata: { providerRequestId: result.providerRequestId ?? null },
+          },
+        });
+        return script;
+      });
+      const response = await this.get(context, created.id);
+      await this.settleBudget(budget.id, estimate);
+      return response;
+    } catch (error) {
+      await this.releaseBudget(budget.id, estimate);
+      await this.failure(context, correlationId, error);
+      throw error;
     }
-    const document = parseScriptDocument(result.output);
-    validateScript(document);
-    const genre = await this.db.genre.findFirst({
-      where: { workspaceId: context.workspaceId, name: document.metadata.genre },
-      select: { id: true },
-    });
-    if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
-    await this.validateCharacters(context, document);
-    const created = await this.db.$transaction(async (tx) => {
-      const script = await tx.script.create({
-        data: {
-          workspaceId: context.workspaceId,
-          approvedIdeaSnapshotId: snapshot.id,
-          ...(input.channelId === undefined ? {} : { channelId: input.channelId }),
-          approvedIdeaChecksum: snapshot.checksumSha256,
-          createdByUserId: context.userId,
-        },
-      });
-      await tx.scriptRevision.create({
-        data: {
-          workspaceId: context.workspaceId,
-          scriptId: script.id,
-          revision: 1,
-          document,
-          promptVersion: result.metadata.promptVersion,
-          modelVersion: result.metadata.modelVersion,
-          cost: result.metadata.cost,
-          costCurrency: result.metadata.currency ?? null,
-          ...(input.configSnapshotId === undefined
-            ? {}
-            : { configSnapshotId: input.configSnapshotId }),
-          ...(input.promptSnapshotId === undefined
-            ? {}
-            : { promptSnapshotId: input.promptSnapshotId }),
-          createdByUserId: context.userId,
-        },
-      });
-      await tx.providerRequest.create({
-        data: {
-          workspaceId: context.workspaceId,
-          correlationId,
-          providerId: this.llm.capability.providerId,
-          capabilityId: this.llm.capability.capabilityId,
-          status: "SUCCEEDED",
-          ...(result.metadata.usage === undefined ? {} : { usage: result.metadata.usage }),
-          estimatedCost: result.metadata.cost,
-          actualCost: result.metadata.cost,
-          currency: result.metadata.currency ?? null,
-          latencyMs: Date.now() - started,
-          responseMetadata: { providerRequestId: result.providerRequestId ?? null },
-        },
-      });
-      return script;
-    });
-    return this.get(context, created.id);
   }
   public async get(context: WorkspaceContext, id: string): Promise<unknown> {
     const row = await this.db.script.findUnique({
@@ -166,9 +194,10 @@ export class ScriptService {
     await this.validateCharacters(context, document);
     const row = await this.db.script.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-      select: { currentRevision: true, status: true },
+      select: { currentRevision: true, status: true, snapshot: { select: { references: true } } },
     });
     if (!row) throw new NotFoundException("Script not found");
+    this.validateFactualSources(document, row.snapshot.references);
     if (row.status === "APPROVED") throw new ConflictException("Approved scripts are immutable");
     await this.db.$transaction(async (tx) => {
       const claimed = await tx.script.updateMany({
@@ -294,7 +323,7 @@ export class ScriptService {
     });
     if (!budget) throw new ConflictException("No workspace provider budget is configured");
     const updated = await this.db
-      .$executeRaw`UPDATE "provider_budgets" SET "reserved" = "reserved" + ${estimate}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = ${budget.id}::uuid AND "workspace_id" = ${workspaceId}::uuid AND "reserved" + ${estimate} <= "daily_limit"`;
+      .$executeRaw`UPDATE "provider_budgets" SET "reserved" = CASE WHEN "period_start" < CURRENT_DATE THEN 0 ELSE "reserved" END + ${estimate}, "spent" = CASE WHEN "period_start" < CURRENT_DATE THEN 0 ELSE "spent" END, "period_start" = CASE WHEN "period_start" < CURRENT_DATE THEN CURRENT_DATE ELSE "period_start" END, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = ${budget.id}::uuid AND "workspace_id" = ${workspaceId}::uuid AND (CASE WHEN "period_start" < CURRENT_DATE THEN 0 ELSE "reserved" + "spent" END) + ${estimate} <= "daily_limit"`;
     if (updated !== 1) throw new ConflictException("Provider daily budget exceeded");
     return budget;
   }
@@ -303,5 +332,24 @@ export class ScriptService {
       where: { id },
       data: { reserved: { decrement: amount } },
     });
+  }
+  private async settleBudget(id: string, amount: number): Promise<void> {
+    await this.db.providerBudget.update({
+      where: { id },
+      data: { reserved: { decrement: amount }, spent: { increment: amount } },
+    });
+  }
+  private validateFactualSources(
+    document: ReturnType<typeof parseScriptDocument>,
+    references: unknown,
+  ): void {
+    if (!document.metadata.factual) return;
+    const allowed = new Set(
+      Array.isArray(references)
+        ? references.filter((value): value is string => typeof value === "string")
+        : [],
+    );
+    if (!document.claims || document.claims.some((claim) => !allowed.has(claim.sourceUrl)))
+      throw new ConflictException("Every factual claim must cite an approved idea source");
   }
 }

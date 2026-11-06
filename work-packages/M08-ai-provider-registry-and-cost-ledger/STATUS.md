@@ -39,10 +39,10 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - None.
 
 ## Blockers / risks / unknowns
-- None recorded. Do not infer this means no risks exist; update after inspection.
+- Health requires a registered adapter callback; no live adapter is configured in tests or startup. Root build remains unrun after this fix-forward.
 
 ## Next exact action
-Read the work package and repository state, then report any conflict with existing code before implementation.
+Minu reviews PR #16 at the pushed fix-forward head; do not mark this module approved or integrated.
 
 ## Handoff notes
 Health is an explicit operation and requires a registered adapter health callback; no live adapter is configured in tests or startup.
