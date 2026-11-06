@@ -1,0 +1,1098 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { randomUUID } from "node:crypto";
+import { Prisma } from "@reelforge/database";
+import {
+  IMAGE_PROVIDER,
+  PROVIDER_REGISTRY,
+  ProviderError,
+  TTS_PROVIDER,
+  VIDEO_PROVIDER,
+  type ImageProviderPort,
+  type ProviderRegistry,
+  type TtsProviderPort,
+  type VideoProviderPort,
+} from "@reelforge/ai-providers";
+import { AssetService } from "../asset/asset.service.js";
+import { buildAssetObjectKey } from "../asset/asset.validation.js";
+import { sha256Hex } from "../asset/storage/checksum.js";
+import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
+import {
+  characterSnapshotChecksum,
+  persistedReferenceAssets,
+  profileFromJson,
+} from "../character/character.validation.js";
+import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import { parseScriptDocument } from "../script/script.validation.js";
+import type { ScriptScene } from "../script/script.types.js";
+import {
+  SCENE_DISPATCH_LEDGER,
+  type DispatchReservation,
+  type SceneDispatchLedger,
+} from "./scene-media.budget.js";
+import {
+  SCENE_MEDIA_SCHEMA_VERSION,
+  type PlannedScene,
+  type RequestedOutputs,
+  type ResolvedCharacterRef,
+  type SceneGenerationStatus,
+  type SceneMediaJobStatus,
+  type SceneMediaKind,
+  type SceneMediaOutput,
+  type SceneMediaPackage,
+  type SceneOutputStatus,
+} from "./scene-media.types.js";
+import {
+  applicableKinds,
+  assertImageCapability,
+  assertTtsCapability,
+  assertVideoCapability,
+  buildScenePrompt,
+  isCompletePackage,
+  normalizeMediaResult,
+  parseCreateInput,
+  parsePromptBundle,
+  parseReplaceInput,
+  providerEnvironment,
+  readVoice,
+  validateGeneratedMedia,
+  type NormalizedMediaResult,
+  type NormalizedUsage,
+} from "./scene-media.validation.js";
+
+type Plan = Readonly<{
+  scriptId: string;
+  currentRevision: number;
+  channelId: string | null;
+  configId: string;
+  promptId: string;
+  budgetId: string;
+  scenes: readonly PlannedScene[];
+}>;
+
+type ActiveOutput = {
+  id: string;
+  kind: SceneMediaKind;
+  status: SceneOutputStatus;
+  assetId: string | null;
+  assetVersion: number | null;
+  providerJobId: string | null;
+  providerAssetId: string | null;
+  mediaType: string | null;
+  byteSize: number | null;
+  checksumSha256: string | null;
+  metadata: Prisma.JsonValue | null;
+};
+
+type ActiveGeneration = {
+  id: string;
+  sceneId: string;
+  sceneVersion: number;
+  status: SceneGenerationStatus;
+  outputs: ActiveOutput[];
+};
+
+type Selection =
+  | { readonly type: "initial" }
+  | { readonly type: "retry" }
+  | { readonly type: "regenerate"; readonly sceneId: string }
+  | { readonly type: "replace"; readonly sceneId: string; readonly outputKind: SceneMediaKind };
+
+class MissingVoiceError extends Error {
+  public readonly code = "MISSING_VOICE";
+  public constructor() {
+    super("Approved voice configuration is missing for this scene");
+    this.name = "MissingVoiceError";
+  }
+}
+
+@Injectable()
+export class SceneMediaService {
+  public constructor(
+    @Inject("DATABASE") private readonly db: Database,
+    @Inject(IMAGE_PROVIDER) private readonly image: ImageProviderPort,
+    @Inject(VIDEO_PROVIDER) private readonly video: VideoProviderPort,
+    @Inject(TTS_PROVIDER) private readonly tts: TtsProviderPort,
+    @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
+    @Inject(STORAGE_PORT) private readonly storage: StoragePort,
+    private readonly assets: AssetService,
+    @Inject(SCENE_DISPATCH_LEDGER) private readonly ledger: SceneDispatchLedger,
+  ) {}
+
+  public async create(context: WorkspaceContext, body: unknown): Promise<SceneMediaPackage> {
+    this.editor(context);
+    const input = parseCreateInput(body);
+    const existing = await this.db.sceneMediaJob.findUnique({
+      where: {
+        workspaceId_idempotencyKey: {
+          workspaceId: context.workspaceId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) return this.present(context, existing.id);
+    const plan = await this.plan(context, input.scriptId, input.outputs);
+    let jobId: string;
+    try {
+      const created = await this.db.sceneMediaJob.create({
+        data: {
+          workspaceId: context.workspaceId,
+          scriptId: plan.scriptId,
+          scriptRevision: plan.currentRevision,
+          channelId: plan.channelId,
+          idempotencyKey: input.idempotencyKey,
+          schemaVersion: SCENE_MEDIA_SCHEMA_VERSION,
+          status: "RUNNING",
+          requestedOutputs: input.outputs,
+          configSnapshotId: plan.configId,
+          promptSnapshotId: plan.promptId,
+          createdByUserId: context.userId,
+        },
+        select: { id: true },
+      });
+      jobId = created.id;
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+      const raced = await this.db.sceneMediaJob.findUnique({
+        where: {
+          workspaceId_idempotencyKey: {
+            workspaceId: context.workspaceId,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+        select: { id: true },
+      });
+      if (!raced) throw error;
+      return this.present(context, raced.id);
+    }
+    await this.execute(context, jobId, plan, { type: "initial" });
+    return this.present(context, jobId);
+  }
+
+  public async get(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
+    return this.present(context, jobId);
+  }
+
+  public async exportPackage(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
+    const pkg = await this.present(context, jobId);
+    if (!isCompletePackage(pkg)) {
+      throw new ConflictException("Scene media package is incomplete");
+    }
+    return pkg;
+  }
+
+  public async retry(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
+    this.editor(context);
+    const job = await this.requireJob(context, jobId);
+    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
+    await this.execute(context, job.id, plan, { type: "retry" });
+    return this.present(context, job.id);
+  }
+
+  public async regenerate(
+    context: WorkspaceContext,
+    jobId: string,
+    sceneId: string,
+  ): Promise<SceneMediaPackage> {
+    this.editor(context);
+    const job = await this.requireJob(context, jobId);
+    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
+    await this.execute(context, job.id, plan, { type: "regenerate", sceneId });
+    return this.present(context, job.id);
+  }
+
+  public async replace(
+    context: WorkspaceContext,
+    jobId: string,
+    sceneId: string,
+    body: unknown,
+  ): Promise<SceneMediaPackage> {
+    this.editor(context);
+    const kind = parseReplaceInput(body);
+    const job = await this.requireJob(context, jobId);
+    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
+    await this.execute(context, job.id, plan, { type: "replace", sceneId, outputKind: kind });
+    return this.present(context, job.id);
+  }
+
+  public async providerHealth(
+    context: WorkspaceContext,
+    providerId: string,
+    capabilityId: string,
+  ): Promise<unknown> {
+    this.editor(context);
+    return this.registry.healthCheck(providerId, capabilityId);
+  }
+
+  private editor(context: WorkspaceContext): void {
+    if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
+  }
+
+  private async plan(
+    context: WorkspaceContext,
+    scriptId: string,
+    outputs: RequestedOutputs,
+  ): Promise<Plan> {
+    const script = await this.db.script.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: scriptId } },
+      include: { revisions: { orderBy: { revision: "desc" }, take: 1 } },
+    });
+    if (!script) throw new NotFoundException("Script not found");
+    if (script.status !== "APPROVED") {
+      throw new ConflictException("Only approved scripts can generate scene media");
+    }
+    const revision = script.revisions[0];
+    if (!revision || revision.revision !== script.currentRevision) {
+      throw new ConflictException("Approved script revision is inconsistent");
+    }
+    if (!revision.configSnapshotId || !revision.promptSnapshotId) {
+      throw new ConflictException(
+        "Approved script is missing an owned configuration and prompt snapshot pair",
+      );
+    }
+    const document = parseScriptDocument(revision.document);
+    const [config, prompt] = await Promise.all([
+      this.db.configSnapshot.findUnique({
+        where: {
+          workspaceId_id: { workspaceId: context.workspaceId, id: revision.configSnapshotId },
+        },
+        select: { id: true, config: true },
+      }),
+      this.db.promptBundleSnapshot.findUnique({
+        where: {
+          workspaceId_id: { workspaceId: context.workspaceId, id: revision.promptSnapshotId },
+        },
+        select: { id: true, configSnapshotId: true, bundle: true, fingerprintSha256: true },
+      }),
+    ]);
+    if (!config || !prompt || prompt.configSnapshotId !== config.id) {
+      throw new ConflictException(
+        "Configuration and prompt snapshots must be an owned, valid pair",
+      );
+    }
+    const bundle = parsePromptBundle(prompt.bundle);
+    if (bundle.fingerprintSha256 !== prompt.fingerprintSha256) {
+      throw new ConflictException("Prompt snapshot fingerprint does not match its content");
+    }
+    const budget = await this.db.providerBudget.findFirst({
+      where: { workspaceId: context.workspaceId, channelId: script.channelId },
+      select: { id: true },
+    });
+    if (!budget) throw new ConflictException("No workspace provider budget is configured");
+    const scenes: PlannedScene[] = [];
+    for (const [ordinal, scene] of document.scenes.entries()) {
+      const characters = await this.resolveCharacters(context, scene);
+      const summary = characters.map((character) => ({
+        characterId: character.characterId,
+        characterVersionId: character.characterVersionId,
+        checksumSha256: character.checksumSha256,
+        referenceAssetIds: character.referenceAssetIds,
+      }));
+      scenes.push({
+        scene,
+        ordinal,
+        characters,
+        referenceImageIds: [
+          ...new Set(characters.flatMap((character) => character.referenceAssetIds)),
+        ],
+        kinds: applicableKinds(scene, outputs),
+        prompt: buildScenePrompt({
+          renderedText: bundle.renderedText,
+          config: config.config,
+          scene,
+          characters: summary,
+        }),
+        sourceRefs: {
+          configSnapshotId: config.id,
+          promptSnapshotId: prompt.id,
+          promptFingerprint: prompt.fingerprintSha256,
+          sceneId: scene.id,
+          characters: summary,
+        },
+      });
+    }
+    return {
+      scriptId: script.id,
+      currentRevision: script.currentRevision,
+      channelId: script.channelId,
+      configId: config.id,
+      promptId: prompt.id,
+      budgetId: budget.id,
+      scenes,
+    };
+  }
+
+  private async resolveCharacters(
+    context: WorkspaceContext,
+    scene: ScriptScene,
+  ): Promise<ResolvedCharacterRef[]> {
+    if (scene.characterRefs.length === 0) return [];
+    const versions = await this.db.characterVersion.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        status: "PUBLISHED",
+        id: { in: scene.characterRefs.map((ref) => ref.versionId) },
+      },
+    });
+    const resolved: ResolvedCharacterRef[] = [];
+    for (const ref of scene.characterRefs) {
+      const version = versions.find(
+        (item) => item.id === ref.versionId && item.characterId === ref.characterId,
+      );
+      if (!version) {
+        throw new ConflictException(
+          "Script references an unpublished or foreign character version",
+        );
+      }
+      let profile: ReturnType<typeof profileFromJson>;
+      try {
+        profile = profileFromJson(version.profile);
+      } catch (error) {
+        throw new ConflictException(
+          error instanceof Error ? error.message : "Character profile is invalid",
+        );
+      }
+      const references = persistedReferenceAssets(version.referenceAssets);
+      if (characterSnapshotChecksum(profile, references) !== version.checksumSha256) {
+        throw new ConflictException(
+          "Character reference package checksum does not match the published version",
+        );
+      }
+      const assets = await this.assets.resolveReferences(context, references);
+      resolved.push({
+        characterId: version.characterId,
+        characterVersionId: version.id,
+        version: version.version,
+        checksumSha256: version.checksumSha256,
+        voicePreference: profile.voicePreference,
+        referenceAssetIds: assets
+          .filter((asset) => asset.mediaType.startsWith("image/"))
+          .map((asset) => asset.assetId),
+      });
+    }
+    return resolved;
+  }
+
+  private async execute(
+    context: WorkspaceContext,
+    jobId: string,
+    plan: Plan,
+    selection: Selection,
+  ): Promise<void> {
+    await this.db.sceneMediaJob.update({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+      data: { status: "RUNNING" },
+    });
+    try {
+      const active = await this.activeGenerations(context.workspaceId, jobId);
+      if (selection.type === "replace") {
+        const planned = plan.scenes.find((scene) => scene.scene.id === selection.sceneId);
+        const previous = active.find((scene) => scene.sceneId === selection.sceneId);
+        if (!planned || !previous) throw new NotFoundException("Scene generation not found");
+        if (!previous.outputs.some((output) => output.kind === selection.outputKind)) {
+          throw new ConflictException("Scene output is not part of this generation");
+        }
+        const reuse = new Set(
+          previous.outputs
+            .filter(
+              (output) =>
+                output.kind !== selection.outputKind &&
+                (output.status === "SUCCEEDED" || output.status === "REUSED"),
+            )
+            .map((output) => output.kind),
+        );
+        await this.runScene(context, jobId, plan, planned, previous, reuse);
+        return;
+      }
+      let matched = selection.type !== "regenerate";
+      for (const planned of plan.scenes) {
+        const previous = active.find((scene) => scene.sceneId === planned.scene.id) ?? null;
+        if (selection.type === "retry") {
+          if (previous?.status === "SUCCEEDED") continue;
+          const reuse = new Set(
+            (previous?.outputs ?? [])
+              .filter((output) => output.status === "SUCCEEDED" || output.status === "REUSED")
+              .map((output) => output.kind),
+          );
+          await this.runScene(context, jobId, plan, planned, previous, reuse);
+          continue;
+        }
+        if (selection.type === "regenerate") {
+          if (planned.scene.id !== selection.sceneId) continue;
+          matched = true;
+          await this.runScene(context, jobId, plan, planned, previous, new Set());
+          continue;
+        }
+        await this.runScene(context, jobId, plan, planned, null, new Set());
+      }
+      if (!matched) throw new NotFoundException("Scene generation not found");
+    } finally {
+      await this.refreshJobStatus(context.workspaceId, jobId);
+    }
+  }
+
+  private async runScene(
+    context: WorkspaceContext,
+    jobId: string,
+    plan: Plan,
+    planned: PlannedScene,
+    previous: ActiveGeneration | null,
+    reuse: ReadonlySet<SceneMediaKind>,
+  ): Promise<void> {
+    const sceneVersion = (previous?.sceneVersion ?? 0) + 1;
+    const generation = await this.db.$transaction(async (tx) => {
+      if (previous) {
+        await tx.sceneGeneration.updateMany({
+          where: {
+            workspaceId: context.workspaceId,
+            jobId,
+            sceneId: planned.scene.id,
+            activeSlot: 1,
+          },
+          data: { activeSlot: null },
+        });
+      }
+      return tx.sceneGeneration.create({
+        data: {
+          workspaceId: context.workspaceId,
+          jobId,
+          sceneId: planned.scene.id,
+          ordinal: planned.ordinal,
+          sceneVersion,
+          status: "PROVIDER_PROCESSING",
+          idempotencyKey: `${jobId}:${planned.scene.id}:v${sceneVersion}`,
+          resolvedPrompt: planned.prompt,
+          sourceRefs: planned.sourceRefs as Prisma.InputJsonValue,
+          activeSlot: 1,
+        },
+        select: { id: true, sceneVersion: true },
+      });
+    });
+    const statuses: SceneOutputStatus[] = [];
+    for (const kind of planned.kinds) {
+      const previousOutput = previous?.outputs.find((output) => output.kind === kind);
+      const status =
+        previousOutput && reuse.has(kind)
+          ? await this.reuseOutput(
+              context,
+              jobId,
+              generation.id,
+              generation.sceneVersion,
+              planned,
+              previousOutput,
+            )
+          : await this.dispatchOutput(
+              context,
+              jobId,
+              plan,
+              planned,
+              generation.id,
+              generation.sceneVersion,
+              kind,
+            );
+      statuses.push(status);
+    }
+    await this.db.sceneGeneration.update({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
+      data: { status: rollupScene(statuses) },
+    });
+  }
+
+  private async reuseOutput(
+    context: WorkspaceContext,
+    jobId: string,
+    generationId: string,
+    sceneVersion: number,
+    planned: PlannedScene,
+    previous: ActiveOutput,
+  ): Promise<SceneOutputStatus> {
+    if (
+      previous.assetId === null ||
+      previous.assetVersion === null ||
+      previous.byteSize === null ||
+      previous.byteSize <= 0 ||
+      previous.checksumSha256 === null ||
+      previous.providerAssetId === null ||
+      previous.mediaType === null
+    ) {
+      return this.failOutput(context, generationId, previous.kind, {
+        status: "FAILED_RETRYABLE",
+        code: "REUSE_UNAVAILABLE",
+        message: "Successful scene output is missing persisted media and cannot be reused",
+      });
+    }
+    const outputId = randomUUID();
+    await this.db.$transaction(async (tx) => {
+      await tx.sceneGenerationOutput.create({
+        data: {
+          id: outputId,
+          workspaceId: context.workspaceId,
+          sceneGenerationId: generationId,
+          kind: previous.kind,
+          status: "REUSED",
+          assetId: previous.assetId,
+          assetVersion: previous.assetVersion,
+          providerJobId: previous.providerJobId,
+          providerAssetId: previous.providerAssetId,
+          mediaType: previous.mediaType,
+          byteSize: previous.byteSize,
+          checksumSha256: previous.checksumSha256,
+          metadata: previous.metadata ?? Prisma.JsonNull,
+          reusedFromOutputId: previous.id,
+        },
+      });
+      await tx.assetUsageReference.create({
+        data: {
+          workspaceId: context.workspaceId,
+          assetId: previous.assetId as string,
+          assetVersion: previous.assetVersion as number,
+          usedByType: "scene_generation_output",
+          usedById: outputId,
+          context: {
+            jobId,
+            sceneId: planned.scene.id,
+            sceneVersion,
+            kind: previous.kind,
+            checksumSha256: previous.checksumSha256,
+            reused: true,
+          },
+        },
+      });
+    });
+    return "REUSED";
+  }
+
+  private async dispatchOutput(
+    context: WorkspaceContext,
+    jobId: string,
+    plan: Plan,
+    planned: PlannedScene,
+    generationId: string,
+    sceneVersion: number,
+    kind: SceneMediaKind,
+  ): Promise<SceneOutputStatus> {
+    const correlationId = randomUUID();
+    const capability = this.capabilityFor(kind);
+    let reservation: DispatchReservation | undefined;
+    let settled = false;
+    let storedKey: string | undefined;
+    const started = Date.now();
+    let normalized: NormalizedMediaResult | undefined;
+    try {
+      this.prepareDispatch(kind, planned, capability, correlationId);
+      this.registry.assertReady(capability, providerEnvironment());
+      const estimate = capability.costModel.amount;
+      if (estimate === null) {
+        throw new ProviderError(
+          "NOT_CONFIGURED",
+          "Provider cost is unknown; budget preflight cannot dispatch",
+          correlationId,
+        );
+      }
+      reservation = await this.ledger.reserve({
+        workspaceId: context.workspaceId,
+        channelId: plan.channelId,
+        budgetId: plan.budgetId,
+        estimate,
+        currency: capability.costModel.currency,
+        correlationId,
+        dispatchedPrompt: dispatchPrompt(planned, kind),
+        providerId: capability.providerId,
+        capabilityId: capability.capabilityId,
+      });
+      const raw = await this.invoke(kind, planned, correlationId);
+      normalized = normalizeMediaResult(raw);
+      if (
+        !normalized.envelopeValid ||
+        normalized.body === null ||
+        normalized.declaredMediaType === null
+      ) {
+        throw new ConflictException("Provider returned an invalid media envelope");
+      }
+      await this.ledger.settle(
+        context.workspaceId,
+        reservation,
+        normalized.provenanceValid ? normalized.cost : null,
+        estimate,
+      );
+      settled = true;
+      if (!normalized.provenanceValid)
+        throw new ConflictException("Provider returned invalid provenance");
+      const providerJobId = normalized.providerJobId ?? normalized.providerRequestId;
+      if (!providerJobId || normalized.mediaId === null) {
+        throw new ConflictException("Provider did not return a job id");
+      }
+      const providerAssetId = normalized.mediaId;
+      const validated = validateGeneratedMedia(kind, normalized.declaredMediaType, normalized.body);
+      const assetId = randomUUID();
+      const objectKey = buildAssetObjectKey(assetId, 1, validated.mediaType);
+      await this.storage.putObject({
+        workspaceId: context.workspaceId,
+        objectKey,
+        body: validated.body,
+        contentType: validated.mediaType,
+      });
+      storedKey = objectKey;
+      const read = await this.storage.getObject({
+        workspaceId: context.workspaceId,
+        objectKey,
+      });
+      if (read.byteLength !== validated.byteSize || sha256Hex(read) !== validated.checksumSha256) {
+        throw new ConflictException("Stored media checksum does not match the generated bytes");
+      }
+      const outputId = randomUUID();
+      const metadata = {
+        providerId: capability.providerId,
+        capabilityId: capability.capabilityId,
+        modelVersion: normalized.modelVersion,
+        promptVersion: normalized.promptVersion,
+        costKnown: normalized.cost !== null,
+      };
+      const ledgerInput = this.ledgerInput({
+        context,
+        correlationId,
+        estimate,
+        currency: ledgerCurrency(normalized.currency, capability.costModel.currency),
+        latencyMs: Date.now() - started,
+        dispatchedPrompt: dispatchPrompt(planned, kind),
+        normalized,
+        actualCost: normalized.cost,
+        usage: normalized.usage,
+      });
+      await this.db.$transaction(async (tx) => {
+        await tx.asset.create({
+          data: {
+            id: assetId,
+            workspaceId: context.workspaceId,
+            objectKey,
+            mediaType: validated.mediaType,
+            filename: validated.filename,
+            byteSize: validated.byteSize,
+            checksumSha256: validated.checksumSha256,
+            version: 1,
+            rootAssetId: assetId,
+            ownership: "SYSTEM_GENERATED",
+            status: "PUBLISHED",
+            licenseType: "generated",
+            licenseTerms: "System-generated scene media for this workspace",
+            rightsHolder: "ReelForge",
+            rightsAttestedAt: new Date(),
+            createdByUserId: context.userId,
+          },
+        });
+        await this.ledger.record(tx, ledgerInput);
+        await tx.sceneGenerationOutput.create({
+          data: {
+            id: outputId,
+            workspaceId: context.workspaceId,
+            sceneGenerationId: generationId,
+            kind,
+            status: "SUCCEEDED",
+            assetId,
+            assetVersion: 1,
+            providerJobId,
+            providerAssetId,
+            correlationId,
+            mediaType: validated.mediaType,
+            byteSize: validated.byteSize,
+            checksumSha256: validated.checksumSha256,
+            metadata,
+          },
+        });
+        await tx.assetUsageReference.create({
+          data: {
+            workspaceId: context.workspaceId,
+            assetId,
+            assetVersion: 1,
+            usedByType: "scene_generation_output",
+            usedById: outputId,
+            context: {
+              jobId,
+              sceneId: planned.scene.id,
+              sceneVersion,
+              kind,
+              checksumSha256: validated.checksumSha256,
+            },
+          },
+        });
+      });
+      return "SUCCEEDED";
+    } catch (error) {
+      if (reservation && !settled) {
+        try {
+          await this.ledger.release(context.workspaceId, reservation);
+        } catch {
+          // A release failure must not skip the terminal ledger write below.
+        }
+      }
+      if (reservation) {
+        const estimate = capability.costModel.amount ?? 0;
+        await this.finalizeLedger({
+          workspaceId: context.workspaceId,
+          correlationId,
+          estimate,
+          currency: ledgerCurrency(normalized?.currency, capability.costModel.currency),
+          latencyMs: Date.now() - started,
+          dispatchedPrompt: dispatchPrompt(planned, kind),
+          responseMetadata: responseMetadata(normalized),
+          actualCost: normalized?.provenanceValid ? normalized.cost : null,
+          usage: normalized?.usage ?? null,
+          error,
+        });
+      }
+      if (storedKey) {
+        await this.storage
+          .deleteObject({ workspaceId: context.workspaceId, objectKey: storedKey })
+          .catch(() => undefined);
+      }
+      const failure = classify(error);
+      return this.failOutput(context, generationId, kind, failure);
+    }
+  }
+
+  private async finalizeLedger(input: Parameters<SceneDispatchLedger["record"]>[1]): Promise<void> {
+    try {
+      await this.ledger.record(this.db, input);
+    } catch (first) {
+      try {
+        await this.ledger.record(this.db, {
+          ...input,
+          usage: null,
+          responseMetadata: {
+            dispatched: true,
+            costKnown: false,
+            providerRequestId: null,
+            providerJobId: null,
+            providerAssetId: null,
+            modelVersion: null,
+            promptVersion: null,
+          },
+          error: input.error ?? first,
+        });
+      } catch {
+        throw new ConflictException("Provider ledger could not be finalized");
+      }
+    }
+  }
+
+  private prepareDispatch(
+    kind: SceneMediaKind,
+    planned: PlannedScene,
+    capability: ImageProviderPort["capability"],
+    correlationId: string,
+  ): void {
+    if (kind === "IMAGE") {
+      assertImageCapability(capability, planned.referenceImageIds.length > 0, correlationId);
+      return;
+    }
+    if (kind === "VIDEO") {
+      assertVideoCapability(capability, planned.scene.durationSeconds, correlationId);
+      return;
+    }
+    assertTtsCapability(capability, correlationId);
+    const lane = kind === "NARRATION" ? "narration" : "dialogue";
+    if (!planned.characters.some((character) => readVoice(character.voicePreference, lane))) {
+      throw new MissingVoiceError();
+    }
+  }
+
+  private capabilityFor(kind: SceneMediaKind): ImageProviderPort["capability"] {
+    if (kind === "IMAGE") return this.image.capability;
+    if (kind === "VIDEO") return this.video.capability;
+    return this.tts.capability;
+  }
+
+  private async invoke(
+    kind: SceneMediaKind,
+    planned: PlannedScene,
+    correlationId: string,
+  ): Promise<unknown> {
+    if (kind === "IMAGE") {
+      return this.image.generate({
+        prompt: planned.prompt,
+        referenceImageIds: planned.referenceImageIds,
+        correlationId,
+      });
+    }
+    if (kind === "VIDEO") {
+      return this.video.generate({
+        prompt: planned.prompt,
+        durationSeconds: planned.scene.durationSeconds,
+        correlationId,
+      });
+    }
+    const lane = kind === "NARRATION" ? "narration" : "dialogue";
+    const voice = planned.characters
+      .map((character) => readVoice(character.voicePreference, lane))
+      .find((value): value is string => value !== undefined);
+    if (!voice) throw new MissingVoiceError();
+    const text = kind === "NARRATION" ? (planned.scene.narration ?? "") : planned.scene.dialogue;
+    return this.tts.synthesize({ text, voice, correlationId });
+  }
+
+  private ledgerInput(input: {
+    context: WorkspaceContext;
+    correlationId: string;
+    estimate: number;
+    currency: string;
+    latencyMs: number;
+    dispatchedPrompt: string;
+    normalized: NormalizedMediaResult;
+    actualCost: number | null;
+    usage: NormalizedUsage | null;
+    error?: unknown;
+  }): Parameters<SceneDispatchLedger["record"]>[1] {
+    return {
+      workspaceId: input.context.workspaceId,
+      correlationId: input.correlationId,
+      estimate: input.estimate,
+      currency: input.currency,
+      latencyMs: input.latencyMs,
+      dispatchedPrompt: input.dispatchedPrompt,
+      responseMetadata: responseMetadata(input.normalized),
+      actualCost: input.actualCost,
+      usage: input.usage,
+      ...(input.error === undefined ? {} : { error: input.error }),
+    };
+  }
+
+  private async failOutput(
+    context: WorkspaceContext,
+    generationId: string,
+    kind: SceneMediaKind,
+    failure: { status: "FAILED_RETRYABLE" | "FAILED_FINAL"; code: string; message: string },
+  ): Promise<SceneOutputStatus> {
+    await this.db.sceneGenerationOutput.create({
+      data: {
+        workspaceId: context.workspaceId,
+        sceneGenerationId: generationId,
+        kind,
+        status: failure.status,
+        errorCode: failure.code,
+        errorMessage: failure.message,
+      },
+    });
+    return failure.status;
+  }
+
+  private async activeGenerations(workspaceId: string, jobId: string): Promise<ActiveGeneration[]> {
+    const rows = await this.db.sceneGeneration.findMany({
+      where: { workspaceId, jobId, activeSlot: 1 },
+      include: { outputs: true },
+      orderBy: { ordinal: "asc" },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      sceneId: row.sceneId,
+      sceneVersion: row.sceneVersion,
+      status: row.status,
+      outputs: row.outputs.map((output) => ({
+        id: output.id,
+        kind: output.kind,
+        status: output.status,
+        assetId: output.assetId,
+        assetVersion: output.assetVersion,
+        providerJobId: output.providerJobId,
+        providerAssetId: output.providerAssetId,
+        mediaType: output.mediaType,
+        byteSize: output.byteSize,
+        checksumSha256: output.checksumSha256,
+        metadata: output.metadata,
+      })),
+    }));
+  }
+
+  private async refreshJobStatus(workspaceId: string, jobId: string): Promise<void> {
+    const scenes = await this.db.sceneGeneration.findMany({
+      where: { workspaceId, jobId, activeSlot: 1 },
+      select: { status: true },
+    });
+    await this.db.sceneMediaJob.update({
+      where: { workspaceId_id: { workspaceId, id: jobId } },
+      data: { status: rollupJob(scenes.map((scene) => scene.status)) },
+    });
+  }
+
+  private async requireJob(
+    context: WorkspaceContext,
+    jobId: string,
+  ): Promise<{ id: string; scriptId: string; requestedOutputs: Prisma.JsonValue }> {
+    const job = await this.db.sceneMediaJob.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+      select: { id: true, scriptId: true, requestedOutputs: true },
+    });
+    if (!job) throw new NotFoundException("Scene media job not found");
+    return job;
+  }
+
+  private async present(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
+    const job = await this.db.sceneMediaJob.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+      include: {
+        scenes: {
+          where: { activeSlot: 1 },
+          orderBy: { ordinal: "asc" },
+          include: { outputs: { orderBy: { kind: "asc" } } },
+        },
+      },
+    });
+    if (!job) throw new NotFoundException("Scene media job not found");
+    const outputs = requestedOutputs(job.requestedOutputs);
+    const pkg: SceneMediaPackage = {
+      schemaVersion: SCENE_MEDIA_SCHEMA_VERSION,
+      jobId: job.id,
+      workspaceId: job.workspaceId,
+      scriptId: job.scriptId,
+      scriptRevision: job.scriptRevision,
+      channelId: job.channelId,
+      status: job.status,
+      idempotencyKey: job.idempotencyKey,
+      configSnapshotId: job.configSnapshotId,
+      promptSnapshotId: job.promptSnapshotId,
+      requestedOutputs: outputs,
+      scenes: job.scenes.map((scene) => ({
+        sceneId: scene.sceneId,
+        ordinal: scene.ordinal,
+        sceneVersion: scene.sceneVersion,
+        status: scene.status,
+        idempotencyKey: scene.idempotencyKey,
+        sourceRefs: scene.sourceRefs,
+        outputs: scene.outputs.map((output): SceneMediaOutput => ({
+          kind: output.kind,
+          status: output.status,
+          assetId: output.assetId,
+          assetVersion: output.assetVersion,
+          mediaType: output.mediaType,
+          byteSize: output.byteSize,
+          checksumSha256: output.checksumSha256,
+          providerJobId: output.providerJobId,
+          providerAssetId: output.providerAssetId,
+          correlationId: output.correlationId,
+          reusedFromOutputId: output.reusedFromOutputId,
+          errorCode: output.errorCode,
+          errorMessage: output.errorMessage,
+        })),
+      })),
+    };
+    if (job.schemaVersion !== SCENE_MEDIA_SCHEMA_VERSION) {
+      throw new ConflictException("Scene media job schema version is not supported");
+    }
+    return pkg;
+  }
+}
+
+function requestedOutputs(value: Prisma.JsonValue): RequestedOutputs {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ConflictException("Scene media job outputs are invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.image !== true) throw new ConflictException("Scene media job outputs are invalid");
+  return {
+    image: true,
+    video: record.video === true,
+    narration: record.narration === true,
+    dialogue: record.dialogue === true,
+  };
+}
+
+function rollupScene(statuses: readonly SceneOutputStatus[]): SceneGenerationStatus {
+  if (statuses.length === 0) return "FAILED_FINAL";
+  if (statuses.every((status) => status === "SUCCEEDED" || status === "REUSED")) return "SUCCEEDED";
+  if (statuses.some((status) => status === "FAILED_RETRYABLE" || status === "QUEUED")) {
+    return "FAILED_RETRYABLE";
+  }
+  return "FAILED_FINAL";
+}
+
+function rollupJob(statuses: readonly SceneGenerationStatus[]): SceneMediaJobStatus {
+  if (statuses.length === 0) return "FAILED";
+  if (statuses.every((status) => status === "SUCCEEDED")) return "SUCCEEDED";
+  if (statuses.some((status) => status === "SUCCEEDED")) return "PARTIAL";
+  return "FAILED";
+}
+
+function responseMetadata(normalized: NormalizedMediaResult | undefined): Prisma.InputJsonValue {
+  return {
+    dispatched: true,
+    providerRequestId: normalized?.providerRequestId ?? null,
+    providerJobId: normalized?.providerJobId ?? null,
+    providerAssetId: normalized?.mediaId ?? null,
+    modelVersion: normalized?.modelVersion ?? null,
+    promptVersion: normalized?.promptVersion ?? null,
+    costKnown: normalized?.provenanceValid === true && typeof normalized.cost === "number",
+  };
+}
+
+function ledgerCurrency(currency: string | null | undefined, fallback: string): string {
+  return typeof currency === "string" && currency.length > 0 ? currency : fallback;
+}
+
+function dispatchPrompt(planned: PlannedScene, kind: SceneMediaKind): string {
+  if (kind === "NARRATION")
+    return `${planned.prompt}\nSpeak narration: ${planned.scene.narration ?? ""}`;
+  if (kind === "DIALOGUE") return `${planned.prompt}\nSpeak dialogue: ${planned.scene.dialogue}`;
+  if (kind === "VIDEO")
+    return `${planned.prompt}\nDuration seconds: ${planned.scene.durationSeconds}`;
+  return planned.prompt;
+}
+
+function classify(error: unknown): {
+  status: "FAILED_RETRYABLE" | "FAILED_FINAL";
+  code: string;
+  message: string;
+} {
+  if (error instanceof MissingVoiceError) {
+    return { status: "FAILED_FINAL", code: error.code, message: error.message };
+  }
+  if (error instanceof ProviderError) {
+    return {
+      status: error.code === "INVALID_REQUEST" ? "FAILED_FINAL" : "FAILED_RETRYABLE",
+      code: error.code,
+      message: error.message,
+    };
+  }
+  if (error instanceof ConflictException) {
+    const budget = error.message.toLowerCase().includes("budget");
+    return {
+      status: budget ? "FAILED_RETRYABLE" : "FAILED_FINAL",
+      code: budget ? "BUDGET_EXCEEDED" : "CONFLICT",
+      message: error.message,
+    };
+  }
+  if (error instanceof BadRequestException || error instanceof HttpException) {
+    return { status: "FAILED_RETRYABLE", code: "INVALID_MEDIA", message: exceptionMessage(error) };
+  }
+  return {
+    status: "FAILED_RETRYABLE",
+    code: error instanceof Error ? error.name : "UNKNOWN",
+    message: error instanceof Error ? error.message : "Scene generation failed",
+  };
+}
+
+function exceptionMessage(error: HttpException): string {
+  const response = error.getResponse();
+  if (typeof response === "string") return response;
+  if (typeof response === "object" && response !== null && "message" in response) {
+    const message = (response as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    if (Array.isArray(message)) return message.map((item) => String(item)).join("; ");
+  }
+  return error.message;
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}

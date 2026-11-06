@@ -84,21 +84,36 @@ export type ImageResponse = Readonly<{
   metadata: ProviderProvenance;
   providerRequestId?: string;
 }>;
+export type ProviderMediaPayload = Readonly<{
+  declaredMediaType: string;
+  body: Uint8Array;
+}>;
+export type MediaGenerationResponse = ImageResponse &
+  Readonly<{
+    providerJobId?: string;
+    media: ProviderMediaPayload;
+  }>;
 export interface ImageProviderPort {
   readonly capability: CapabilityMetadata;
-  generate(request: ImageRequest): Promise<ImageResponse>;
+  generate(request: ImageRequest): Promise<MediaGenerationResponse>;
 }
+export type VideoRequest = Readonly<{
+  prompt: string;
+  durationSeconds: number;
+  correlationId: string;
+}>;
 export interface VideoProviderPort {
   readonly capability: CapabilityMetadata;
-  generate(
-    request: Readonly<{ prompt: string; durationSeconds: number; correlationId: string }>,
-  ): Promise<ImageResponse>;
+  generate(request: VideoRequest): Promise<MediaGenerationResponse>;
 }
+export type TtsRequest = Readonly<{
+  text: string;
+  voice: string;
+  correlationId: string;
+}>;
 export interface TtsProviderPort {
   readonly capability: CapabilityMetadata;
-  synthesize(
-    request: Readonly<{ text: string; voice: string; correlationId: string }>,
-  ): Promise<ImageResponse>;
+  synthesize(request: TtsRequest): Promise<MediaGenerationResponse>;
 }
 export type ProviderErrorCode =
   | "NOT_CONFIGURED"
@@ -224,3 +239,6 @@ export class SpendGuard {
 }
 export const SCRIPT_LLM = Symbol("SCRIPT_LLM");
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
+export const IMAGE_PROVIDER = Symbol("IMAGE_PROVIDER");
+export const VIDEO_PROVIDER = Symbol("VIDEO_PROVIDER");
+export const TTS_PROVIDER = Symbol("TTS_PROVIDER");

@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M06 integrated; combined M07/M08 pending review).
+- **Overall phase:** Phase 1 in progress (M00–M08 integrated; M09 pending review).
 - **Current release:** v1.
-- **Current integrated commit:** `318d1f2dd7220233f9ca36a8b277a2257ebf8382` (`git rev-parse origin/main`; M06 PR #15 merge).
-- **Active implementation sessions:** `work/m07-m08-combined` (combined experiment PR; pending Minu review).
-- **Active work packages:** combined M07/M08 implementation on PR #16; M09 resumes sequential flow after this review.
+- **Current integrated commit:** `2d6d70379bf197d4db06c947077fa951b94d739f` (`git rev-parse origin/main`; M07/M08 PR #16 squash merge).
+- **Active implementation sessions:** `cursor/m09-scene-media-generation-1810` (M09 pending Minu review).
+- **Active work packages:** M09 scene media generation.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M06 fix-forward head `ed52885c2341a0c676e251f9beef54f6d77661cd` via PR #15; merged at `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
+- **Latest core review:** Minu approved M07/M08 head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`; PR #16 squash-merged at `2d6d70379bf197d4db06c947077fa951b94d739f`.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M06 integrated; M07/M08 pending review**
+**Phase 1 in progress - M00–M08 integrated; M09 pending review**
 
 Next exact action:
-1. Minu reviews PR #16 after blocker fixes.
-2. After PR #16 is integrated, start M09 sequentially; do not repeat the combined M07/M08 experiment.
+1. Minu reviews the M09 pull request. Do not merge it from the implementation session.
+2. Do not start M10 until M09 is integrated. Do not repeat the combined M07/M08 experiment.
 
 ## Module status index
 
@@ -47,9 +47,9 @@ Next exact action:
 | M04 - Characters & Asset Library | INTEGRATED | `main` (PR #10) | `110fbc0f0f4925f062815dbca68b6b9d666abd33` | none |
 | M05 - Configuration & Prompt Engine | INTEGRATED | `main` (PR #12) | `055e11fab7d5dc058903766256c5b6c0de861e73` | none |
 | M06 - Idea & Topic Registry | INTEGRATED | `main` (PR #15) | `ed52885c2341a0c676e251f9beef54f6d77661cd` | none |
-| M07 - Script & Storyboard | IMPLEMENTED_PENDING_REVIEW | `work/m07-m08-combined` | none | Minu review |
-| M08 - AI Provider Registry & Cost Ledger | IMPLEMENTED_PENDING_REVIEW | `work/m07-m08-combined` | none | Minu review |
-| M09 - Scene Media Generation | NOT_STARTED | none | none | none recorded |
+| M07 - Script & Storyboard | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
+| M08 - AI Provider Registry & Cost Ledger | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
+| M09 - Scene Media Generation | IMPLEMENTED_PENDING_REVIEW | `cursor/m09-scene-media-generation-1810` | none | Minu review |
 | M10 - Video Composition & Export | NOT_STARTED | none | none | none recorded |
 | M11 - Quality Assurance & Approval | NOT_STARTED | none | none | none recorded |
 | M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
@@ -62,7 +62,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07/M08 remain pending review on PR #16. M09 resumes as the next sequential implementation after PR #16 is integrated; M10–M20 remain `NOT_STARTED`.
+M07 and M08 are integrated on `main` at PR #16. M09 is `IMPLEMENTED_PENDING_REVIEW`. M10–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -79,6 +79,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-06: M04 integrated via PR #10. Minu approved initial head `a7a1069fb8e8ff41575521dde126df4ad54936e6`, then approved merge head `110fbc0f0f4925f062815dbca68b6b9d666abd33`; merge `c0a408d9572011c3b0d66e6b6704d722477dc275` was performed by `minu-the-reviewer` after owner-authorized PM merge.
 - 2026-11-06: M05 integrated via PR #12. Minu approved head `055e11fab7d5dc058903766256c5b6c0de861e73`; merge `618bd26f8d23dd4729032281dedca7bd085f9851` was performed by `minu-the-reviewer` after owner-authorized PM merge.
 - 2026-11-06: M06 integrated via PR #15. Minu approved head `ed52885c2341a0c676e251f9beef54f6d77661cd`; merge `318d1f2dd7220233f9ca36a8b277a2257ebf8382` was performed by `minu-the-reviewer`.
+- 2026-11-06: M07 and M08 integrated via PR #16. Minu approved head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`; squash merge `2d6d70379bf197d4db06c947077fa951b94d739f`.
 
 ## Open engineering follow-ups
 
