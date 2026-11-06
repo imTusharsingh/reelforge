@@ -325,3 +325,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approval: No approval or integration is claimed. Minu/Core Reviewer must review; only the owner merges after written approval.
 - Risks/gaps: Migration deployment remains unverified in this environment. The Prisma ESM compiled-dist boot follow-up remains open from M04/M05.
 - Next exact action: Commit and push this branch, open PR `M06: idea and topic registry`, request Minu review, and do not merge.
+
+## 2026-11-06 - M06 fix-forward blockers
+- Actor/session: Module Implementation Agent; branch `fix/m06-postmerge-blockers`, based on `origin/main` containing `277525df559f00625c467e3e63dad638390e1556`.
+- Review source: Minu COMMENT review 5797242600 on PR #14; the referenced `/workspace/out/PR14_M06_POSTMERGE_REVIEW.md` was unavailable in this environment, so the supplied five-blocker brief and repository code were used.
+- Changes made: fixed clean-checkout provider type resolution; added immutable approval snapshots/checksums and approved read export; validated AI proposals/provenance; enforced channel-series integrity and canonical series channel; added tenant-owned database relations/FKs and negative tests; replaced the unreachable diversity predicate with an independent bounded window rule; hardened transition/scheduling validation and atomic status updates.
+- Verification: lint, format check, typecheck, full tests (18 files / 95 tests), build, db validate, and `git diff --check` passed. Frozen install was not runnable under Node 24.16.0 (repo pins 24.22.2). Migration deploy failed with Prisma P1000 because local PostgreSQL rejected supplied credentials.
+- Decision/approval: Not approved or integrated. No PR was created by this session. Owner/PM opens `fix(m06): address post-merge Minu blockers` and requests Minu review.
