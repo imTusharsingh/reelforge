@@ -794,6 +794,7 @@ model ScriptRevision {
   cost               Decimal?     @db.Decimal(18,8)
   costCurrency       String?      @map("cost_currency")
   configSnapshotId   String?      @map("config_snapshot_id") @db.Uuid
+  promptSnapshotId   String?      @map("prompt_snapshot_id") @db.Uuid
   createdByUserId    String       @map("created_by_user_id") @db.Uuid
   createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   script             Script       @relation(fields: [workspaceId, scriptId], references: [workspaceId, id], onDelete: Cascade)

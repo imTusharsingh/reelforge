@@ -15,7 +15,7 @@
 - **Active implementation sessions:** `work/m07-m08-combined` (combined experiment PR; pending Minu review).
 - **Active work packages:** combined M07/M08 implementation on PR #16; M09 resumes sequential flow after this review.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M04 at `110fbc0f0f4925f062815dbca68b6b9d666abd33` (prior approval at `a7a1069fb8e8ff41575521dde126df4ad54936e6`); PR #10 merged at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` after owner-authorized PM merge.
+- **Latest core review:** Minu approved M06 fix-forward head `ed52885c2341a0c676e251f9beef54f6d77661cd` via PR #15; merged at `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
 
 ## Frozen architecture summary
 
@@ -62,7 +62,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M05–M20 remain `NOT_STARTED`. M05 starts only when Minu assigns it after this closeout is merged.
+M07/M08 remain pending review on PR #16. M09 resumes as the next sequential implementation after PR #16 is integrated; M10–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -78,6 +78,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-06: M03 integrated via PR #8. Minu approved head `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merge `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
 - 2026-11-06: M04 integrated via PR #10. Minu approved initial head `a7a1069fb8e8ff41575521dde126df4ad54936e6`, then approved merge head `110fbc0f0f4925f062815dbca68b6b9d666abd33`; merge `c0a408d9572011c3b0d66e6b6704d722477dc275` was performed by `minu-the-reviewer` after owner-authorized PM merge.
 - 2026-11-06: M05 integrated via PR #12. Minu approved head `055e11fab7d5dc058903766256c5b6c0de861e73`; merge `618bd26f8d23dd4729032281dedca7bd085f9851` was performed by `minu-the-reviewer` after owner-authorized PM merge.
+- 2026-11-06: M06 integrated via PR #15. Minu approved head `ed52885c2341a0c676e251f9beef54f6d77661cd`; merge `318d1f2dd7220233f9ca36a8b277a2257ebf8382` was performed by `minu-the-reviewer`.
 
 ## Open engineering follow-ups
 

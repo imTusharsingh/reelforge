@@ -126,6 +126,7 @@ export type ProviderCredential = Readonly<{
 export type ProviderRegistration = Readonly<{
   capability: CapabilityMetadata;
   credential: ProviderCredential;
+  healthCheck?: () => Promise<Readonly<{ healthy: boolean; latencyMs: number }>>;
 }>;
 export class ProviderRegistry {
   private readonly registrations = new Map<string, ProviderRegistration>();
@@ -170,6 +171,19 @@ export class ProviderRegistry {
         "registry",
       );
     return registration;
+  }
+  public async healthCheck(
+    providerId: string,
+    capabilityId: string,
+  ): Promise<Readonly<{ healthy: boolean; latencyMs: number }>> {
+    const registration = this.get(providerId, capabilityId);
+    if (registration.healthCheck === undefined)
+      throw new ProviderError(
+        "NOT_CONFIGURED",
+        "Provider health check is not configured",
+        "health",
+      );
+    return registration.healthCheck();
   }
 }
 export type UsageLedgerEntry = Readonly<{

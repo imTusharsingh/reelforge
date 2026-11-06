@@ -28,11 +28,12 @@ Convert an approved idea into a structured script and scene plan.
 - `DATABASE_URL=... pnpm db:validate` — **PASSED**.
 - `pnpm lint` — **PASSED**.
 - `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 20 files / 102 passed / 2 skipped.
+- `pnpm test` — **PASSED**, 21 files / 104 passed / 2 skipped.
 - `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
-- Root `pnpm typecheck` and root `pnpm build` — **NOT COMPLETED within the command window**; individual API/database generation and build passed.
+- Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
+- Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
 - `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
-- `pnpm db:migrate:deploy` — **NOT RUN after blocker changes**; prior attempt failed with local PostgreSQL P1000.
+- `pnpm db:migrate:deploy` — **FAILED** with local PostgreSQL authentication error `P1000`.
 
 ## Contract/schema proposals
 - Additive script/revision persistence and tenant FKs are in migration `20261106160000_m07_m08_script_provider`.
@@ -44,7 +45,7 @@ Convert an approved idea into a structured script and scene plan.
 Read the work package and repository state, then report any conflict with existing code before implementation.
 
 ## Handoff notes
-Remaining review gap: genre-policy enforcement and full HTTP/integration negative-path coverage need completion before approval.
+Remaining review gap: full HTTP/integration coverage is still narrower than the unit route-gate coverage; root build remains unrun after this fix-forward.
 
 ## Reviewer decision
 - Pending.

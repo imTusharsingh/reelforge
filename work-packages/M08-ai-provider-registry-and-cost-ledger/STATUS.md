@@ -16,8 +16,8 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - [x] M08-T03: Registry and non-secret credential boundary.
 - [x] M08-T04: Normalized fail-closed error taxonomy.
 - [x] M08-T05: Persisted provider request ledger around script dispatch, including failure metadata.
-- [ ] M08-T06: Persisted budget caps and concurrent reservation API remain incomplete.
-- [ ] M08-T07: T07 Add real-provider health/capability checks that are explicitly invoked, never run automatically on startup or in CI.
+- [x] M08-T06: Persisted workspace/channel caps with atomic reservation before dispatch; missing budgets and over-capacity fail closed.
+- [x] M08-T07: Explicit authenticated provider-health operation; no startup/CI invocation and unconfigured adapters fail closed.
 
 
 ## Files changed
@@ -28,11 +28,12 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - `DATABASE_URL=... pnpm db:validate` — **PASSED**.
 - `pnpm lint` — **PASSED**.
 - `pnpm format:check` — **PASSED**.
-- `pnpm test` — **PASSED**, 20 files / 102 passed / 2 skipped.
+- `pnpm test` — **PASSED**, 21 files / 104 passed / 2 skipped.
 - `DATABASE_URL=... pnpm --filter @reelforge/api build` — **PASSED**.
-- Root `pnpm typecheck` and root `pnpm build` — **NOT COMPLETED within the command window**.
+- Root `pnpm typecheck` — **NOT COMPLETED within the command window**; API/database generation and API typecheck passed.
+- Root `pnpm build` — **NOT RUN after this fix-forward**; API build passed on the prior head.
 - `pnpm install --frozen-lockfile` — **NOT RUN after blocker changes**; prior attempt failed on Node 24.16.0 vs pinned 24.22.2.
-- `pnpm db:migrate:deploy` — **NOT RUN after blocker changes**; prior attempt failed with local PostgreSQL P1000.
+- `pnpm db:migrate:deploy` — **FAILED** with local PostgreSQL authentication error `P1000`.
 
 ## Contract/schema proposals
 - None.
@@ -44,7 +45,7 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 Read the work package and repository state, then report any conflict with existing code before implementation.
 
 ## Handoff notes
-Remaining review gap: budget service/API with atomic reservation and explicit health/capability invocation are incomplete.
+Health is an explicit operation and requires a registered adapter health callback; no live adapter is configured in tests or startup.
 
 ## Reviewer decision
 - Pending.

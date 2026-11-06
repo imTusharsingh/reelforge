@@ -25,6 +25,9 @@ export class ScriptService {
       approvedIdeaSnapshotId: string;
       approvedIdeaChecksum: string;
       prompt: string;
+      channelId?: string;
+      configSnapshotId?: string;
+      promptSnapshotId?: string;
     }>,
   ): Promise<unknown> {
     this.editor(context);
@@ -37,7 +40,8 @@ export class ScriptService {
     if (
       !snapshot ||
       snapshot.idea.status !== "APPROVED" ||
-      snapshot.checksumSha256 !== input.approvedIdeaChecksum
+      snapshot.checksumSha256 !== input.approvedIdeaChecksum ||
+      (input.channelId !== undefined && snapshot.channelId !== input.channelId)
     )
       throw new ConflictException(
         "Approved idea snapshot is missing, foreign, stale, or not approved",
@@ -46,6 +50,10 @@ export class ScriptService {
       this.llm.capability,
       process.env.NODE_ENV === "production" ? "production" : "development",
     );
+    const estimate = this.llm.capability.costModel.amount;
+    if (estimate === null)
+      throw new ConflictException("Provider cost is unknown; budget preflight cannot dispatch");
+    const budget = await this.reserveBudget(context.workspaceId, input.channelId, estimate);
     const correlationId = randomUUID();
     const started = Date.now();
     let result: Awaited<ReturnType<ScriptLlmPort["complete"]>>;
@@ -55,6 +63,7 @@ export class ScriptService {
         correlationId,
       });
     } catch (error) {
+      await this.releaseBudget(budget.id, estimate);
       await this.failure(context, correlationId, error);
       throw error;
     }
@@ -80,34 +89,18 @@ export class ScriptService {
     }
     const document = parseScriptDocument(result.output);
     validateScript(document);
-    const characterRefs = document.scenes.flatMap((scene) => scene.characterRefs);
-    if (characterRefs.length > 0) {
-      const versions = await this.db.characterVersion.findMany({
-        where: {
-          workspaceId: context.workspaceId,
-          id: { in: characterRefs.map((ref) => ref.versionId) },
-          status: "PUBLISHED",
-        },
-        select: { id: true, characterId: true },
-      });
-      if (
-        versions.length !== characterRefs.length ||
-        characterRefs.some(
-          (ref) =>
-            !versions.some(
-              (version) => version.id === ref.versionId && version.characterId === ref.characterId,
-            ),
-        )
-      )
-        throw new ConflictException(
-          "Script references an unpublished or foreign character version",
-        );
-    }
+    const genre = await this.db.genre.findFirst({
+      where: { workspaceId: context.workspaceId, name: document.metadata.genre },
+      select: { id: true },
+    });
+    if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
+    await this.validateCharacters(context, document);
     const created = await this.db.$transaction(async (tx) => {
       const script = await tx.script.create({
         data: {
           workspaceId: context.workspaceId,
           approvedIdeaSnapshotId: snapshot.id,
+          ...(input.channelId === undefined ? {} : { channelId: input.channelId }),
           approvedIdeaChecksum: snapshot.checksumSha256,
           createdByUserId: context.userId,
         },
@@ -122,6 +115,12 @@ export class ScriptService {
           modelVersion: result.metadata.modelVersion,
           cost: result.metadata.cost,
           costCurrency: result.metadata.currency ?? null,
+          ...(input.configSnapshotId === undefined
+            ? {}
+            : { configSnapshotId: input.configSnapshotId }),
+          ...(input.promptSnapshotId === undefined
+            ? {}
+            : { promptSnapshotId: input.promptSnapshotId }),
           createdByUserId: context.userId,
         },
       });
@@ -159,14 +158,31 @@ export class ScriptService {
     this.editor(context);
     const document = parseScriptDocument(body);
     validateScript(document);
+    const genre = await this.db.genre.findFirst({
+      where: { workspaceId: context.workspaceId, name: document.metadata.genre },
+      select: { id: true },
+    });
+    if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
+    await this.validateCharacters(context, document);
     const row = await this.db.script.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
       select: { currentRevision: true, status: true },
     });
     if (!row) throw new NotFoundException("Script not found");
     if (row.status === "APPROVED") throw new ConflictException("Approved scripts are immutable");
-    await this.db.$transaction([
-      this.db.scriptRevision.create({
+    await this.db.$transaction(async (tx) => {
+      const claimed = await tx.script.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          id,
+          currentRevision: row.currentRevision,
+          status: { not: "APPROVED" },
+        },
+        data: { currentRevision: { increment: 1 }, status: "REVISION_PENDING" },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException("Script revision changed concurrently; retry");
+      await tx.scriptRevision.create({
         data: {
           workspaceId: context.workspaceId,
           scriptId: id,
@@ -174,12 +190,8 @@ export class ScriptService {
           document,
           createdByUserId: context.userId,
         },
-      }),
-      this.db.script.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-        data: { currentRevision: { increment: 1 }, status: "REVISION_PENDING" },
-      }),
-    ]);
+      });
+    });
     return this.get(context, id);
   }
   public async approve(context: WorkspaceContext, id: string): Promise<unknown> {
@@ -218,8 +230,41 @@ export class ScriptService {
       document: row.revisions[0]?.document,
     };
   }
+  public async providerHealth(
+    context: WorkspaceContext,
+    providerId: string,
+    capabilityId: string,
+  ): Promise<unknown> {
+    this.editor(context);
+    return this.registry.healthCheck(providerId, capabilityId);
+  }
   private editor(context: WorkspaceContext): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
+  }
+  private async validateCharacters(
+    context: WorkspaceContext,
+    document: ReturnType<typeof parseScriptDocument>,
+  ): Promise<void> {
+    const refs = document.scenes.flatMap((scene) => scene.characterRefs);
+    if (refs.length === 0) return;
+    const versions = await this.db.characterVersion.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        id: { in: refs.map((ref) => ref.versionId) },
+        status: "PUBLISHED",
+      },
+      select: { id: true, characterId: true },
+    });
+    if (
+      versions.length !== refs.length ||
+      refs.some(
+        (ref) =>
+          !versions.some(
+            (version) => version.id === ref.versionId && version.characterId === ref.characterId,
+          ),
+      )
+    )
+      throw new ConflictException("Script references an unpublished or foreign character version");
   }
   private async failure(
     context: WorkspaceContext,
@@ -236,6 +281,27 @@ export class ScriptService {
         errorCode: error instanceof Error ? error.name : "UNKNOWN",
         errorMessage: error instanceof Error ? error.message : "Provider dispatch failed",
       },
+    });
+  }
+  private async reserveBudget(
+    workspaceId: string,
+    channelId: string | undefined,
+    estimate: number,
+  ): Promise<{ id: string }> {
+    const budget = await this.db.providerBudget.findFirst({
+      where: { workspaceId, channelId: channelId ?? null },
+      select: { id: true },
+    });
+    if (!budget) throw new ConflictException("No workspace provider budget is configured");
+    const updated = await this.db
+      .$executeRaw`UPDATE "provider_budgets" SET "reserved" = "reserved" + ${estimate}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = ${budget.id}::uuid AND "workspace_id" = ${workspaceId}::uuid AND "reserved" + ${estimate} <= "daily_limit"`;
+    if (updated !== 1) throw new ConflictException("Provider daily budget exceeded");
+    return budget;
+  }
+  private async releaseBudget(id: string, amount: number): Promise<void> {
+    await this.db.providerBudget.update({
+      where: { id },
+      data: { reserved: { decrement: amount } },
     });
   }
 }

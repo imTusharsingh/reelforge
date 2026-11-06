@@ -361,3 +361,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - M07: added versioned script/scene schemas, validation, factual source requirements, and an injectable typed LLM generation boundary carrying snapshot/provenance inputs.
 - Verification: `pnpm typecheck` attempted and failed because Prisma generation could not resolve `DATABASE_URL`; package AI-provider typecheck passed before the workspace failure. Remaining required checks are not run and are not claimed.
 - Decision/approval: PR #16 exists and received Minu REQUEST_CHANGES review `5798838007`; M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`. This follow-up continues on the same branch and PR; no new PR or merge is created.
+## 2026-11-06 - PR #16 re-review fix-forward
+- Minu re-review `5798838007` identified B2/B3/B6/B7 gaps. Added atomic persisted budget reservation before provider dispatch, explicit authenticated provider-health operation, workspace genre lookup, per-claim source validation, config/prompt snapshot fields, race-safe revisions, shared character validation for manual revisions, and tenant/authorization unit negatives.
+- Corrected the remaining project-state footer and M06/#15 integrated history. The combined M06+M07+M08 workflow is recorded as a failed future process experiment; M09 resumes sequentially after PR #16.
+- M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, or new PR is claimed.

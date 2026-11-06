@@ -39,11 +39,20 @@ export class ScriptController {
       throw new BadRequestException(
         "approvedIdeaSnapshotId, approvedIdeaChecksum, and prompt are required",
       );
+    if (value.channelId !== undefined && typeof value.channelId !== "string")
+      throw new BadRequestException("channelId must be a string");
     return this.context(request, workspaceId).then((context) =>
       this.scripts.generate(context, {
         approvedIdeaSnapshotId: value.approvedIdeaSnapshotId as string,
         approvedIdeaChecksum: value.approvedIdeaChecksum as string,
         prompt: value.prompt as string,
+        ...(value.channelId === undefined ? {} : { channelId: value.channelId as string }),
+        ...(value.configSnapshotId === undefined
+          ? {}
+          : { configSnapshotId: value.configSnapshotId as string }),
+        ...(value.promptSnapshotId === undefined
+          ? {}
+          : { promptSnapshotId: value.promptSnapshotId as string }),
       }),
     );
   }
@@ -82,6 +91,16 @@ export class ScriptController {
   ): Promise<unknown> {
     return this.context(request, workspaceId).then((context) =>
       this.scripts.exportApproved(context, scriptId),
+    );
+  }
+  @Get("provider-health/:providerId/:capabilityId") public providerHealth(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("providerId") providerId: string,
+    @Param("capabilityId") capabilityId: string,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) =>
+      this.scripts.providerHealth(context, providerId, capabilityId),
     );
   }
 }
