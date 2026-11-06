@@ -54,6 +54,28 @@ describe("M10 media composition", () => {
     expect(validateMediaInspection(valid, DEFAULT_RENDER_PROFILE, 2, true)).toEqual(valid);
   });
 
+  it("uses an independent generator per still image", () => {
+    const argv = buildCompositionArguments(
+      {
+        scenes: [1000, 2000].map((durationMs, index) => ({
+          path: `/tmp/scene-${index}.png`,
+          durationMs,
+          image: true,
+        })),
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/output.mp4",
+      },
+      DEFAULT_RENDER_PROFILE,
+    );
+    const filters = argv[argv.indexOf("-filter_complex") + 1];
+    expect(filters).toContain("[0:v]scale=");
+    expect(filters).toContain("[1:v]scale=");
+    expect(filters).toContain("[v0][v1]concat=n=2:v=1:a=0[video]");
+    expect(argv.filter((arg) => arg === "-loop")).toHaveLength(2);
+    expect(filters).toContain("setpts=PTS-STARTPTS");
+  });
+
   it("builds deterministic arguments without a shell or interpolated shell syntax", () => {
     const input = {
       scenes: [
@@ -72,6 +94,60 @@ describe("M10 media composition", () => {
     const subtitles = subtitleDocument([], DEFAULT_RENDER_PROFILE);
     expect(subtitles).toContain("2,120,120,120,1");
     expect(first.join(" ")).toContain("libx264");
+  });
+
+  it("maps video-only scenes to the correct input index", () => {
+    const argv = buildCompositionArguments(
+      {
+        scenes: [
+          { path: "/tmp/first.mp4", durationMs: 1000, image: false },
+          { path: "/tmp/second.png", durationMs: 2000, image: true },
+        ],
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/output.mp4",
+      },
+      DEFAULT_RENDER_PROFILE,
+    );
+    const filters = argv[argv.indexOf("-filter_complex") + 1];
+    expect(filters).toContain("[0:v]scale=1080:1920");
+    expect(filters).toContain("[1:v]scale=1080:1920");
+    expect(filters).not.toContain("[2:v]");
+  });
+
+  it("rejects an output that does not match the requested duration", () => {
+    expect(() => validateMediaInspection(valid, DEFAULT_RENDER_PROFILE, 2.1, true)).toThrow(
+      /duration/i,
+    );
+    expect(() => validateMediaInspection(valid, DEFAULT_RENDER_PROFILE, 1.9, true)).toThrow(
+      /duration/i,
+    );
+  });
+
+  it("offsets narration by each scene start for three-scene fades", () => {
+    const profile = {
+      ...DEFAULT_RENDER_PROFILE,
+      transition: "FADE" as const,
+      transitionDurationMs: 400,
+    };
+    const argv = buildCompositionArguments(
+      {
+        scenes: [1000, 2000, 1500].map((durationMs, index) => ({
+          path: `/tmp/scene-${index}.png`,
+          durationMs,
+          narrationPath: `/tmp/narration-${index}.m4a`,
+          image: true,
+        })),
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/output.mp4",
+      },
+      profile,
+    );
+    const filters = argv[argv.indexOf("-filter_complex") + 1];
+    expect(filters).toContain("[a0]adelay=0|0[d0]");
+    expect(filters).toContain("[a1]adelay=600|600[d1]");
+    expect(filters).toContain("[a2]adelay=2200|2200[d2]");
   });
 
   it("fingerprints canonical content independently of object key insertion order", () => {
@@ -99,5 +175,39 @@ describe("M10 subtitle timing", () => {
         DEFAULT_RENDER_PROFILE,
       ),
     ).toThrow(/inside/i);
+  });
+});
+
+describe("M10 fade timeline", () => {
+  it("lays second-scene captions and speech over the transition overlap", () => {
+    const scenes = [
+      { durationMs: 1000, captions: [] },
+      {
+        durationMs: 2000,
+        captions: [{ text: "Second scene", startMs: 0, endMs: 1000 }],
+      },
+    ];
+    const profile = {
+      ...DEFAULT_RENDER_PROFILE,
+      transition: "FADE" as const,
+      transitionDurationMs: 400,
+    };
+    const subtitles = subtitleDocument(scenes, profile);
+    expect(subtitles).toContain("0:00:00.60,0:00:01.60");
+    const argv = buildCompositionArguments(
+      {
+        scenes: scenes.map((scene, index) => ({
+          path: `/tmp/scene-${index}.png`,
+          durationMs: scene.durationMs,
+          narrationPath: `/tmp/narration-${index}.m4a`,
+          image: true,
+        })),
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/output.mp4",
+      },
+      profile,
+    );
+    expect(argv[argv.indexOf("-filter_complex") + 1]).toContain("adelay=600|600");
   });
 });

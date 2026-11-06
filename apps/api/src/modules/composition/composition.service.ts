@@ -9,20 +9,23 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
-import { canonicalRenderFingerprint } from "@reelforge/media";
+import type { RenderManifest } from "./composition.manifest.js";
+
+import { canonicalRenderFingerprint, MediaValidationError } from "@reelforge/media";
 import { createHash } from "node:crypto";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionEnginePort } from "./composition.engine.js";
+import { AssetService } from "../asset/asset.service.js";
 import { COMPOSITION_ENGINE } from "./composition.types.js";
 import type {
   RenderArtifactView,
   RenderCompositionInput,
   RenderJobView,
 } from "./composition.types.js";
+import { validateEngineManifest, validateStoredManifest } from "./composition.manifest.js";
 import {
   createRenderSchema,
-  duration,
   editRenderSchema,
   parse,
   validateComposition,
@@ -35,6 +38,7 @@ export class CompositionService {
     @Inject("DATABASE") private readonly db: Database,
     @Inject(COMPOSITION_ENGINE) private readonly engine: CompositionEnginePort,
     @Inject(STORAGE_PORT) private readonly storage: StoragePort,
+    private readonly assets: AssetService,
   ) {}
   public async create(context: WorkspaceContext, body: unknown): Promise<RenderJobView> {
     this.editor(context);
@@ -51,7 +55,13 @@ export class CompositionService {
       if (isUnique(error))
         return this.present(
           context,
-          await this.existingId(context.workspaceId, parsed.idempotencyKey),
+          await this.existingId(
+            context.workspaceId,
+            parsed.idempotencyKey,
+            canonicalRenderFingerprint(parsed.input),
+            parsed.retentionDays,
+            null,
+          ),
         );
       throw error;
     }
@@ -59,19 +69,22 @@ export class CompositionService {
   public async get(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     return this.present(context, id);
   }
-  public async getManifest(context: WorkspaceContext, id: string): Promise<unknown> {
+  public async getManifest(context: WorkspaceContext, id: string): Promise<RenderManifest> {
     const job = await this.present(context, id);
     const artifact = job.artifacts.find((item) => item.kind === "MANIFEST");
     if (job.status !== "SUCCEEDED" || !artifact)
       throw new ConflictException("A successful render and validated manifest are required");
-    return JSON.parse(
-      (
-        await this.storage.getObject({
-          workspaceId: context.workspaceId,
-          objectKey: artifact.objectKey,
-        })
-      ).toString("utf8"),
-    );
+    const bytes = await this.storage.getObject({
+      workspaceId: context.workspaceId,
+      objectKey: artifact.objectKey,
+    });
+    try {
+      return validateStoredManifest(bytes, job.id, job.input, job.artifacts);
+    } catch (error) {
+      throw new ConflictException("Stored render manifest failed checksum validation", {
+        cause: error,
+      });
+    }
   }
   public async cancel(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     this.editor(context);
@@ -89,15 +102,43 @@ export class CompositionService {
     const job = await this.require(context, id);
     if (job.status !== "FAILED_RETRYABLE")
       throw new ConflictException("Only a failed retryable render can be retried");
-    const parsed = parse(createRenderSchema, body);
+    const request = parse(createRenderSchema, body);
     if (
-      canonicalRenderFingerprint(parsed.input) !== job.inputFingerprint ||
-      parsed.input.sourceMediaPackage.jobId !== job.sceneMediaJobId
+      canonicalRenderFingerprint(request.input) !== job.inputFingerprint ||
+      request.input.sourceMediaPackage.jobId !== job.sceneMediaJobId
     )
       throw new ConflictException(
         "Retry must exactly replay the failed pinned input and render profile",
       );
-    return this.start(context, id, parsed.idempotencyKey, parsed.retentionDays, parsed.input);
+    if (request.idempotencyKey === job.idempotencyKey)
+      throw new ConflictException("Retry requires a fresh idempotency key");
+    const parsed = parse(createRenderSchema, {
+      idempotencyKey: request.idempotencyKey,
+      retentionDays: request.retentionDays,
+      input: request.input,
+    });
+    try {
+      return await this.start(
+        context,
+        id,
+        parsed.idempotencyKey,
+        parsed.retentionDays,
+        parsed.input,
+      );
+    } catch (error) {
+      if (isUnique(error))
+        return this.present(
+          context,
+          await this.existingId(
+            context.workspaceId,
+            parsed.idempotencyKey,
+            canonicalRenderFingerprint(parsed.input),
+            parsed.retentionDays,
+            id,
+          ),
+        );
+      throw error;
+    }
   }
   public async edit(context: WorkspaceContext, id: string, body: unknown): Promise<RenderJobView> {
     this.editor(context);
@@ -143,21 +184,31 @@ export class CompositionService {
     retentionDays: number,
     raw: RenderCompositionInput,
   ): Promise<RenderJobView> {
-    if (parentId === null) {
-      const repeated = await this.db.renderJob.findUnique({
-        where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey } },
-        select: { id: true },
-      });
-      if (repeated) return this.present(context, repeated.id);
-    }
     const input = parse(createRenderSchema, {
       idempotencyKey: "validate",
       retentionDays,
       input: raw,
     }).input;
     validateComposition(input);
+    if (parentId === null) {
+      const repeated = await this.db.renderJob.findUnique({
+        where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey } },
+        select: { id: true, inputFingerprint: true, retentionDays: true, parentJobId: true },
+      });
+      if (repeated) {
+        if (
+          repeated.parentJobId !== parentId ||
+          repeated.inputFingerprint !== canonicalRenderFingerprint(input) ||
+          repeated.retentionDays !== retentionDays
+        )
+          throw new ConflictException(
+            "The same idempotency key requires identical render input and retention",
+          );
+        return this.present(context, repeated.id);
+      }
+    }
     await this.assertPackage(context, input);
-    let jobId = randomUUID();
+    const jobId = randomUUID();
     try {
       await this.db.renderJob.create({
         data: {
@@ -167,7 +218,7 @@ export class CompositionService {
           parentJobId: parentId,
           idempotencyKey,
           status: "QUEUED",
-          attempt: parentId === null ? 0 : await this.nextAttempt(context, parentId),
+          attempt: parentId === null ? 0 : (await this.require(context, parentId)).attempt + 1,
           input: input as Prisma.InputJsonValue,
           inputFingerprint: canonicalRenderFingerprint(input),
           retentionDays,
@@ -176,7 +227,16 @@ export class CompositionService {
       });
     } catch (error) {
       if (isUnique(error))
-        return this.present(context, await this.existingId(context.workspaceId, idempotencyKey));
+        return this.present(
+          context,
+          await this.existingId(
+            context.workspaceId,
+            idempotencyKey,
+            canonicalRenderFingerprint(input),
+            retentionDays,
+            parentId,
+          ),
+        );
       throw error;
     }
     // Atomic claim prevents a concurrent retry from running the same render twice.
@@ -208,27 +268,40 @@ export class CompositionService {
       const retainedUntil = new Date(Date.now() + retentionDays * 86400000);
       const insertResults: Array<{
         kind: "VIDEO" | "MANIFEST" | "COVER";
+        id: string;
         assetId: string;
         objectKey: string;
       }> = [];
       for (const artifact of artifacts) {
         const assetId = randomUUID();
         const objectKey = `render/${jobId}/${artifact.filename}`;
-        insertResults.push({ kind: artifact.kind, assetId, objectKey });
+        insertResults.push({
+          kind: artifact.kind,
+          id: assetId,
+          assetId,
+          objectKey,
+        });
       }
-      const manifestResult = insertResults.find((item) => item.kind === "MANIFEST")!;
       const videoResult = insertResults.find((item) => item.kind === "VIDEO")!;
       const covers = insertResults.filter((item) => item.kind === "COVER");
-      const manifestParsed = JSON.parse(manifest.body.toString("utf8")) as Record<string, unknown>;
+      const manifestParsed = validateEngineManifest(
+        manifest.body,
+        input,
+        jobId,
+        video,
+        pictures,
+      ) as unknown as Record<string, unknown>;
       manifestParsed.video = {
         ...(manifestParsed.video as Record<string, unknown>),
-        artifactId: videoResult.assetId,
+        artifactId: videoResult.id,
         objectKey: videoResult.objectKey,
       };
       manifestParsed.covers = input.coverFrames.map((frame, index) => ({
-        ...frame,
-        artifactId: covers[index]!.assetId,
+        artifactId: covers[index]!.id,
         objectKey: covers[index]!.objectKey,
+        checksumSha256: checksum(pictures[index]!.body),
+        byteSize: pictures[index]!.body.length,
+        selectedFrame: frame,
       }));
       const manifestBytes = Buffer.from(JSON.stringify(manifestParsed, null, 2) + "\n");
       const artifactByKind = insertResults.map((result) => ({
@@ -274,7 +347,7 @@ export class CompositionService {
             const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
             await tx.asset.create({
               data: {
-                id: result.assetId,
+                id: result.id,
                 workspaceId: context.workspaceId,
                 objectKey: result.objectKey,
                 mediaType: artifact.mediaType,
@@ -294,11 +367,11 @@ export class CompositionService {
             });
             await tx.renderArtifact.create({
               data: {
-                id: result.assetId,
+                id: result.id,
                 workspaceId: context.workspaceId,
                 renderJobId: jobId,
                 kind: result.kind,
-                assetId: result.assetId,
+                assetId: result.id,
                 assetVersion: 1,
                 objectKey: result.objectKey,
                 mediaType: artifact.mediaType,
@@ -316,10 +389,10 @@ export class CompositionService {
             await tx.assetUsageReference.create({
               data: {
                 workspaceId: context.workspaceId,
-                assetId: result.assetId,
+                assetId: result.id,
                 assetVersion: 1,
                 usedByType: "render_artifact",
-                usedById: result.assetId,
+                usedById: result.id,
                 context: { jobId, kind: result.kind },
               },
             });
@@ -382,14 +455,20 @@ export class CompositionService {
       await this.db.renderJob.update({
         where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
         data: {
-          status: isCancellation(error, controller.signal) ? "CANCELED" : "FAILED_RETRYABLE",
+          status: isCancellation(error, controller.signal)
+            ? "CANCELED"
+            : isPermanent(error)
+              ? "FAILED_FINAL"
+              : "FAILED_RETRYABLE",
           errorCode: isCancellation(error, controller.signal) ? "CANCELED" : errorCode(error),
           errorMessage: safeMessage(error),
         },
       });
       throw isCancellation(error, controller.signal)
         ? new ConflictException("Render was canceled")
-        : toHttp(error);
+        : isPermanent(error)
+          ? new ConflictException(safeMessage(error), { cause: error })
+          : toHttp(error);
     } finally {
       this.active.delete(jobId);
     }
@@ -425,6 +504,54 @@ export class CompositionService {
       )
     )
       throw new ConflictException("Failed or incomplete scene media cannot be composed");
+    if (
+      pkg.scenes.length !== input.scenes.length ||
+      [...pkg.scenes]
+        .sort((a, b) => a.ordinal - b.ordinal)
+        .map((scene) => scene.sceneId)
+        .join("\0") !== input.scenes.map((scene) => scene.sceneId).join("\0")
+    )
+      throw new ConflictException("Composition must exactly preserve the active M09 scene order");
+    const pinnedAssets = new Map<string, Awaited<ReturnType<AssetService["getReference"]>>>();
+    for (const asset of [
+      ...input.scenes.map((scene) => ({ assetId: scene.assetId, version: scene.assetVersion })),
+      ...input.audio.map((audio) => ({ assetId: audio.assetId, version: audio.assetVersion })),
+    ]) {
+      const key = `${asset.assetId}:${asset.version}`;
+      const existing = pinnedAssets.get(key);
+      if (existing) continue;
+      const reference = await this.assets.getReference(context, asset);
+      if (
+        reference.assetId !== asset.assetId ||
+        reference.version !== asset.version ||
+        !reference.licenseType ||
+        !reference.rightsHolder ||
+        reference.byteSize <= 0 ||
+        !/^[0-9a-f]{64}$/.test(reference.checksumSha256)
+      )
+        throw new ConflictException(
+          "Pinned input must be a published, licensed, checksummed asset",
+        );
+      pinnedAssets.set(key, reference);
+    }
+    for (const frame of input.coverFrames) {
+      let start = 0;
+      let coverScene: (typeof input.scenes)[number] | undefined;
+      for (const [index, scene] of input.scenes.entries()) {
+        const end = start + scene.durationMs;
+        if (frame.timestampMs >= start && frame.timestampMs < end) {
+          coverScene = scene;
+          break;
+        }
+        start = end - (index < input.scenes.length - 1 ? input.profile.transitionDurationMs : 0);
+      }
+      if (
+        !coverScene ||
+        coverScene.assetId !== frame.assetId ||
+        coverScene.assetVersion !== frame.assetVersion
+      )
+        throw new ConflictException("Cover must reference the M09 scene visible at its timestamp");
+    }
     for (const scene of input.scenes) {
       const approved = pkg.scenes.find((candidate) => candidate.sceneId === scene.sceneId);
       if (!approved)
@@ -455,24 +582,6 @@ export class CompositionService {
           throw new ConflictException("Narration must be a pinned successful M09 output");
       }
     }
-  }
-  private async nextAttempt(context: WorkspaceContext, parentId: string): Promise<number> {
-    let id: string | null = parentId;
-    let attempt = 0;
-    const ancestry = new Set<string>();
-    while (id) {
-      if (ancestry.has(id)) throw new ConflictException("Render ancestry contains a cycle");
-      ancestry.add(id);
-      const job: { parentJobId: string | null; attempt: number } | null =
-        await this.db.renderJob.findUnique({
-          where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-          select: { parentJobId: true, attempt: true },
-        });
-      if (!job) throw new NotFoundException("Parent render not found");
-      attempt = Math.max(attempt, job.attempt);
-      id = job.parentJobId;
-    }
-    return attempt + 1;
   }
   private async present(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     const job = await this.db.renderJob.findUnique({
@@ -524,7 +633,19 @@ export class CompositionService {
       artifacts,
     };
   }
-  private async require(context: WorkspaceContext, id: string) {
+  private async require(
+    context: WorkspaceContext,
+    id: string,
+  ): Promise<{
+    id: string;
+    status: string;
+    sceneMediaJobId: string;
+    inputFingerprint: string;
+    idempotencyKey: string;
+    retentionDays: number;
+    attempt: number;
+    input: Prisma.JsonValue;
+  }> {
     const job = await this.db.renderJob.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
       select: {
@@ -532,25 +653,45 @@ export class CompositionService {
         status: true,
         sceneMediaJobId: true,
         inputFingerprint: true,
+        idempotencyKey: true,
         retentionDays: true,
+        attempt: true,
         input: true,
       },
     });
     if (!job) throw new NotFoundException("Render job not found");
     return job;
   }
-  private async existingId(workspaceId: string, idempotencyKey: string): Promise<string> {
+  private async existingId(
+    workspaceId: string,
+    idempotencyKey: string,
+    inputFingerprint: string,
+    retentionDays: number,
+    parentId: string | null,
+  ): Promise<string> {
     const existing = await this.db.renderJob.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } },
-      select: { id: true },
+      select: { id: true, inputFingerprint: true, retentionDays: true, parentJobId: true },
     });
     if (!existing) throw new ConflictException("Idempotent render could not be retrieved");
+    if (
+      existing.inputFingerprint !== inputFingerprint ||
+      existing.retentionDays !== retentionDays ||
+      existing.parentJobId !== parentId
+    )
+      throw new ConflictException(
+        "The same idempotency key requires identical render input and retention for the same workflow",
+      );
     return existing.id;
   }
   private editor(context: WorkspaceContext): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
   }
 }
+function isPermanent(error: unknown): boolean {
+  return error instanceof BadRequestException || error instanceof MediaValidationError;
+}
+
 function checksum(body: Buffer): string {
   return createHash("sha256").update(body).digest("hex");
 }
@@ -561,6 +702,7 @@ function isCancellation(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (error instanceof Error && error.name === "AbortError");
 }
 function errorCode(error: unknown): string {
+  if (error instanceof MediaValidationError) return error.errorCode;
   return error instanceof BadRequestException ||
     error instanceof ConflictException ||
     error instanceof NotFoundException

@@ -413,3 +413,25 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: NONE.
 - Decisions/approvals: Still `IMPLEMENTED_PENDING_REVIEW`. No merge.
 - Next exact action: Minu re-reviews PR #17. Do not start M10.
+
+
+## 2026-11-06 16:36 UTC - INTEGRATION HISTORY / M10 - M09 integrated and M10 video composition implemented pending review
+- Actor/session: M10 implementation agent, entirely on owner Desktop `TRACXN-LP-784`; no cloud agent used.
+- Work package: M10 Video Composition & Export; historical M09 closeout from actual `origin/main` main integration.
+- Branch and commit: `work/m10-video-composition-and-export`, built on WIP `1b0dd96ddf9c40b55b99b9076862d63eca4b27c8`. M09 main is `589d28c86feaede46f516bf27555f02802882610` via PR #17, with technical review approval at `99b1972191038f5e4f839892bbbb196e554d6215`.
+- Starting state: M00–M09 integrated. M10 WIP existed but lifecycle/source/FFmpeg/media validation and closeout evidence were incomplete.
+- Changes made:
+  - Added M10 Nest API, render job/artifact lifecycle, idempotent create/retry, in-process cancellation, bounded scene/audio/subtitle/title/cover rerenders, and authorized M09 scene/output/audio pin resolution.
+  - Built `@reelforge/media` FFmpeg/ffprobe contracts and strict numeric/profile validators; used array argv + `shell:false`, independent safe per-input reads, canceled-child cleanup, delayed crossfade narration and distinct per-timestamp covers.
+  - Final H264/AAC/30fps/duration validation and two-phase manifest identity/checksum validation prevent invalid media, wrong fields, corrupt persisted JSON, or absent covers becoming a successful export.
+  - Added real PostgreSQL lifecycle/HTTP tenant-guard tests; actual locally supplied FFmpeg CUT/FADE renders include local PNG/WAV/music, subtitles, two cover frames, profile and deterministic SHA-256 evidence. No live provider calls.
+  - Added migration `20261106190000_m10_video_composition_export` for tenant-scoped render jobs, immutable parent chain, artifact identity/storage/size/SHA-256 checksum and retention fields. No previous migration edited.
+- Commands actually run and results:
+  - Node via nvm `24.22.2`, pnpm `12.16.1`, local Docker PostgreSQL `18.6-alpine`, fresh test DB, local FFmpeg `7.0.2-static` via env only.
+  - Fresh `pnpm db:migrate:deploy`: all 13 migrations applied; `pnpm db:validate`, `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, and strict workspace `pnpm typecheck` all passed.
+  - Full `pnpm test` with DATABASE_URL/FFMPEG_PATH/FFPROBE_PATH: **34 files / 200 tests passed**, no failed/skipped. Focused M10: **5 files / 26 tests**. `pnpm build` passed on final product tree; `git diff --check` passed.
+- External calls: provider generation **NONE**. Git/network used only for existing repo authentication/pull request metadata. Deterministic fixture engines used for persisted and HTTP tests; real FFmpeg exercised only local binary + generated fixtures.
+- Decision/approval: M10 only. No M10 approval/integration assigned to agent; M10 remains `IMPLEMENTED_PENDING_REVIEW`. M09 integration recorded from actual merge, not asserted from previous status.
+- Defects/risks/blockers: in-request renderer and cancellation lack durable worker/resume; retention expiry stored but there is no sweeping object lifecycle; no automatic bounded retry/backoff scheduler; FFmpeg needs supplying for hosted CI to run 3 opt-in real-render tests. Earlier Prisma ESM runtime follow-up is out of scope. Core reviewer must assess these boundaries before approving.
+- Next exact action: Minu reviews M10 PR product and tests, determines worker/retention/retry follow-ups, and decides merge. Never self-merge.
+- Related status/ADR: `work-packages/M10-video-composition-and-export/STATUS.md`, this M10 additive schema/engine validation evidence, and `docs/PROJECT_STATE.md`.

@@ -101,6 +101,13 @@ export function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 export function validateComposition(input: RenderCompositionInput): void {
+  if (
+    input.profile.transition === "FADE" &&
+    (input.scenes.length <= 1 ||
+      duration(input) <= 0 ||
+      input.scenes.some((scene) => scene.durationMs <= input.profile.transitionDurationMs))
+  )
+    throw new BadRequestException("Fade transitions require positive overlap between scenes");
   const ids = new Set<string>();
   for (const scene of input.scenes) {
     if (ids.has(scene.sceneId)) throw new BadRequestException("Scene ids must be unique");
@@ -120,9 +127,16 @@ export function validateComposition(input: RenderCompositionInput): void {
     throw new BadRequestException("Cut transitions must have zero duration");
   if (input.profile.transition === "FADE" && input.profile.transitionDurationMs === 0)
     throw new BadRequestException("Fade transitions must have a duration");
-  for (const cover of input.coverFrames)
-    if (cover.timestampMs > duration(input))
+  for (const cover of input.coverFrames) {
+    if (cover.timestampMs >= duration(input))
       throw new BadRequestException("Cover timestamp must be inside the video");
+    if (
+      !input.scenes.some(
+        (scene) => scene.assetId === cover.assetId && scene.assetVersion === cover.assetVersion,
+      )
+    )
+      throw new BadRequestException("Cover asset must belong to a composed scene");
+  }
   if (duration(input) <= 0) throw new BadRequestException("Composition duration must be positive");
 }
 export function duration(input: RenderCompositionInput): number {

@@ -1,13 +1,13 @@
 # M09 Status - Scene Media Generation
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
-- **Branch/worktree:** `cursor/m09-scene-media-generation-1810`
+- **Branch/worktree:** `main` (PR #17)
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `589d28c86feaede46f516bf27555f02802882610` (PR #17 squash merge; reviewed head `99b1972191038f5e4f839892bbbb196e554d6215`)
 
-B1 from the PR #17 review is addressed in this branch and is awaiting re-review. The module is not approved.
+PR #17 B1 re-review found the technical criteria met at `99b1972191038f5e4f839892bbbb196e554d6215`, with exact-head run `42222606082` / job `127908073738` green. Official `APPROVE` could not be self-posted because the reviewer authored the PR; Minu subsequently squash-merged PR #17 on main at `589d28c86feaede46f516bf27555f02802882610`. This entry records that established integration, not a new implementation-agent approval.
 
 ## Current objective
 Generate image/video/voice assets for each storyboard scene.
@@ -53,7 +53,8 @@ No live provider call was made. Scene-media tests inject fixture ports and local
 - The cloud branch policy required `cursor/m09-scene-media-generation-1810`. The work-package convention remains `work/m09-*`.
 
 ## Blockers / risks / unknowns
-- Review is pending again after the B1 ledger fix. This status is not approval, integration, or a production-readiness claim.
+- Historical M09 implementation/provider operational risks below remain open. The M10 snapshot records that M09 PR #17 has integrated; it does not make new provider-production-readiness claims.
+- [Historical pending-review note retained for audit context] Review had been pending again after the B1 ledger fix. This was superseded by the main integration recorded in this document header.
 - Malformed or partial provider envelopes now normalize before the ledger write. Omitted usage is stored as JSON null, not `DbNull`. A post-dispatch ledger write is terminal (`SUCCEEDED` or `FAILED`); a failed finalization is not swallowed into a synthetic `PENDING` row.
 - Runtime image, video, and TTS ports are unconfigured and fail closed. A real vendor adapter still requires the open provider decision and an explicit credential registration. Health checks run only on the authenticated provider-health route.
 - Budget SQL matches the M08 reservation, settlement, release, and unknown-cost rules, but it is duplicated in the scene-media module so M07-owned script files were not edited. A refused daily cap rolls the pending ledger insert back inside the same transaction. The script path can leave that pending row committed when the reservation insert matches nothing.
@@ -62,10 +63,10 @@ No live provider call was made. Scene-media tests inject fixture ports and local
 - The post-M04 Prisma compiled-dist ESM boot follow-up remains open and was not changed.
 
 ## Next exact action
-Minu reviews the M09 pull request. Do not merge. Do not start M10.
+M09 is integrated. M10 proceeds in its separately owned composition/export work package and remains pending Minu review.
 
 ## Handoff notes
 Create a job from an approved script revision that already points at an owned config/prompt snapshot pair. Image output is required. Video is dispatched only for a `video` capability. Narration and dialogue are dispatched only when the scene has text and a published character voice. Export returns schema `1.0` only when every active scene output is bound to published, non-empty, checksummed media. Successful outputs are copied forward on retry and replace.
 
 ## Reviewer decision
-- Pending.
+- **INTEGRATED:** Minu, PR #17 squash merge `589d28c86feaede46f516bf27555f02802882610`, with technical approval at `99b1972191038f5e4f839892bbbb196e554d6215`. (The official self-approval restriction was documented on the PR.)

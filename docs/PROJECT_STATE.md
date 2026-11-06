@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M08 integrated; M09 pending review).
+- **Overall phase:** Phase 1 in progress (M00–M09 integrated; M10 pending review).
 - **Current release:** v1.
-- **Current integrated commit:** `2d6d70379bf197d4db06c947077fa951b94d739f` (`git rev-parse origin/main`; M07/M08 PR #16 squash merge).
-- **Active implementation sessions:** `cursor/m09-scene-media-generation-1810` (M09 pending Minu review).
-- **Active work packages:** M09 scene media generation.
+- **Current integrated commit:** `589d28c86feaede46f516bf27555f02802882610` (`origin/main` at this branch base; M09 PR #17 squash merge).
+- **Active implementation sessions:** `work/m10-video-composition-and-export` (M10 pending Minu review).
+- **Active work packages:** M10 video composition and export.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M07/M08 head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`; PR #16 squash-merged at `2d6d70379bf197d4db06c947077fa951b94d739f`.
+- **Latest core review:** Minu technically approved M09 head `99b1972191038f5e4f839892bbbb196e554d6215` (official self-approval was unavailable on reviewer-authored PR #17); Minu squash-merged PR #17 at `589d28c86feaede46f516bf27555f02802882610`. Hosted exact-head quality run `42222606082` job `127908073738` passed.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M08 integrated; M09 pending review**
+**Phase 1 in progress - M00–M09 integrated; M10 pending review**
 
 Next exact action:
-1. Minu reviews the M09 pull request. Do not merge it from the implementation session.
-2. Do not start M10 until M09 is integrated. Do not repeat the combined M07/M08 experiment.
+1. Minu reviews the M10 PR composition, export and security evidence; the implementation agent does not merge/approve.
+2. Resolve M10 orchestration/retention automation review decisions before merging into main.
 
 ## Module status index
 
@@ -49,8 +49,8 @@ Next exact action:
 | M06 - Idea & Topic Registry | INTEGRATED | `main` (PR #15) | `ed52885c2341a0c676e251f9beef54f6d77661cd` | none |
 | M07 - Script & Storyboard | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
 | M08 - AI Provider Registry & Cost Ledger | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
-| M09 - Scene Media Generation | IMPLEMENTED_PENDING_REVIEW | `cursor/m09-scene-media-generation-1810` | none | Minu review |
-| M10 - Video Composition & Export | NOT_STARTED | none | none | none recorded |
+| M09 - Scene Media Generation | INTEGRATED | `main` (PR #17) | `589d28c86feaede46f516bf27555f02802882610` | none |
+| M10 - Video Composition & Export | IMPLEMENTED_PENDING_REVIEW | `work/m10-video-composition-and-export` | none | Minu review |
 | M11 - Quality Assurance & Approval | NOT_STARTED | none | none | none recorded |
 | M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
 | M13 - Publishing Calendar & Delivery | NOT_STARTED | none | none | none recorded |
@@ -62,7 +62,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07 and M08 are integrated on `main` at PR #16. M09 is `IMPLEMENTED_PENDING_REVIEW`. M10–M20 remain `NOT_STARTED`.
+M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is `IMPLEMENTED_PENDING_REVIEW`; M11–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -80,8 +80,12 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-06: M05 integrated via PR #12. Minu approved head `055e11fab7d5dc058903766256c5b6c0de861e73`; merge `618bd26f8d23dd4729032281dedca7bd085f9851` was performed by `minu-the-reviewer` after owner-authorized PM merge.
 - 2026-11-06: M06 integrated via PR #15. Minu approved head `ed52885c2341a0c676e251f9beef54f6d77661cd`; merge `318d1f2dd7220233f9ca36a8b277a2257ebf8382` was performed by `minu-the-reviewer`.
 - 2026-11-06: M07 and M08 integrated via PR #16. Minu approved head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`; squash merge `2d6d70379bf197d4db06c947077fa951b94d739f`.
+- 2026-11-06: M09 integrated via PR #17. Minu technically approved head `99b1972191038f5e4f839892bbbb196e554d6215` with hosted run `42222606082`, job `127908073738`, green; official self-approval was unavailable because reviewer Minu authored PR #17. Minu performed the squash merge at `589d28c86feaede46f516bf27555f02802882610` (18:41 IST).
 
 ## Open engineering follow-ups
+
+- **M10 pending Minu:** Inline API rendering (not durable worker execution), no automatic bounded retry/backoff, no scheduled `retainedUntil` object deletion, and FFmpeg absent in repo CI are explicit M10 review decisions. Metadata retention and fail-closed invalid output are implemented; automatic expiry/temporal recovery are not claimed.
+
 
 - **Follow-up (post-M04) - Prisma Client / Nest ESM runtime:** Fix the post-build Node ESM runtime so `node dist/...` boots without manually patching compiled dist imports. Prisma-generated client output currently contains extensionless relative imports that plain Node ESM cannot resolve (observed on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` with Node 24.22.2; `--experimental-specifier-resolution=node` did not resolve it). Prefer a durable fix on `main` (for example generator, `package.json` `"type"`, module-resolution, or build-emit strategy), chosen by the implementer of a later fix after reading the current `packages/database` and `apps/api` build. Track as open until a product PR lands; not part of this closeout PR and not fixed here.
 

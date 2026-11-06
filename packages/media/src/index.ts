@@ -33,11 +33,19 @@ export type MediaStream = Readonly<{
   width?: number;
   height?: number;
   fps?: number;
-  durationSeconds: number;
+  durationSeconds?: number;
   sampleRate?: number;
   channels?: number;
 }>;
 export type MediaInspection = Readonly<{ streams: readonly MediaStream[] }>;
+export class MediaValidationError extends Error {
+  public override readonly name = "MediaValidationError";
+  public readonly errorCode = "INVALID_RENDER_MEDIA";
+}
+export class ProcessExecutionError extends Error {
+  public override readonly name = "ProcessExecutionError";
+  public readonly errorCode = "RENDER_PROCESS_FAILED";
+}
 export interface ProcessRunner {
   run(
     input: Readonly<{
@@ -61,18 +69,19 @@ export type CompositionInput = Readonly<{
 
 export function parseSpawnedProcessReport(value: unknown): MediaInspection {
   if (typeof value !== "object" || value === null || !("streams" in value))
-    throw new Error("FFprobe report is missing streams");
+    throw new MediaValidationError("FFprobe report is missing streams");
   const streams = (value as { streams: unknown }).streams;
-  if (!Array.isArray(streams)) throw new Error("FFprobe streams must be an array");
+  if (!Array.isArray(streams)) throw new MediaValidationError("FFprobe streams must be an array");
   return {
     streams: streams.map((stream): MediaStream => {
       if (typeof stream !== "object" || stream === null)
-        throw new Error("FFprobe stream is invalid");
+        throw new MediaValidationError("FFprobe stream is invalid");
       const record = stream as Record<string, unknown>;
       const type = record.streams ?? record.codec_type;
       if (type !== "video" && type !== "audio")
-        throw new Error("Only video and audio streams are supported");
+        throw new MediaValidationError("Only video and audio streams are supported");
       const fps = parseFrameRate(record.r_frame_rate ?? record.avg_frame_rate);
+      const durationSeconds = optionalPositiveNumber(record.duration, "duration");
       return {
         type,
         codec: requiredText(record.codec_name, "codec"),
@@ -83,7 +92,7 @@ export function parseSpawnedProcessReport(value: unknown): MediaInspection {
               fps: positiveNumber(fps, "fps"),
             }
           : {}),
-        durationSeconds: positiveNumber(record.duration, "duration"),
+        ...(durationSeconds === undefined ? {} : { durationSeconds }),
         ...(type === "audio"
           ? {
               sampleRate: positiveNumber(record.sample_rate, "sample rate"),
@@ -95,14 +104,20 @@ export function parseSpawnedProcessReport(value: unknown): MediaInspection {
   };
 }
 function requiredText(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value) throw new Error(`FFprobe ${label} is missing`);
+  if (typeof value !== "string" || !value)
+    throw new MediaValidationError(`FFprobe ${label} is missing`);
   return value;
 }
 function positiveNumber(value: unknown, label: string): number {
   const number =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(number) || number <= 0) throw new Error(`FFprobe ${label} must be positive`);
+  if (!Number.isFinite(number) || number <= 0)
+    throw new MediaValidationError(`FFprobe ${label} must be positive`);
   return number;
+}
+function optionalPositiveNumber(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null || value === "" || value === "N/A") return undefined;
+  return positiveNumber(value, label);
 }
 function parseFrameRate(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -116,30 +131,40 @@ export function validateMediaInspection(
   durationSeconds: number,
   audioRequired: boolean,
 ): MediaInspection {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0)
+    throw new MediaValidationError("Validated duration must be positive");
   const videos = inspection.streams.filter((stream) => stream.type === "video");
   const audios = inspection.streams.filter((stream) => stream.type === "audio");
-  if (videos.length !== 1) throw new Error("Source must contain exactly one video stream");
+  if (videos.length !== 1)
+    throw new MediaValidationError("Source must contain exactly one video stream");
   const video = videos[0]!;
   if (video.width !== profile.width || video.height !== profile.height)
-    throw new Error(`Source dimensions must be ${profile.width}x${profile.height}`);
+    throw new MediaValidationError(`Source dimensions must be ${profile.width}x${profile.height}`);
   if (video.codec !== profile.videoCodec)
-    throw new Error(`Source video codec must be ${profile.videoCodec}`);
+    throw new MediaValidationError(`Source video codec must be ${profile.videoCodec}`);
   if (Math.abs((video.fps ?? 0) - profile.fps) >= 0.01)
-    throw new Error(`Source frame rate must be ${profile.fps}`);
-  if (video.durationSeconds + 0.001 < durationSeconds)
-    throw new Error("Source video duration is shorter than the scene");
+    throw new MediaValidationError(`Source frame rate must be ${profile.fps}`);
+  if (video.durationSeconds === undefined)
+    throw new MediaValidationError("Validated video duration is missing");
+  if (Math.abs(video.durationSeconds - durationSeconds) >= 0.051)
+    throw new MediaValidationError(
+      "Source video duration must match the requested composition duration",
+    );
   if (audioRequired && audios.length !== 1)
-    throw new Error("Source must contain exactly one audio stream");
-  if (audios.length > 1) throw new Error("Source contains ambiguous audio streams");
+    throw new MediaValidationError("Source must contain exactly one audio stream");
+  if (audios.length > 1) throw new MediaValidationError("Source contains ambiguous audio streams");
   const audio = audios[0];
   if (audio) {
     if (audio.codec !== profile.audioCodec)
-      throw new Error(`Source audio codec must be ${profile.audioCodec}`);
-    if (audio.durationSeconds - 0.001 > durationSeconds)
-      throw new Error("Source audio duration exceeds the scene");
+      throw new MediaValidationError(`Source audio codec must be ${profile.audioCodec}`);
+    const audioDuration = audio.durationSeconds;
+    if (audioDuration === undefined)
+      throw new MediaValidationError("Validated audio duration is missing");
+    if (Math.abs(audioDuration - durationSeconds) >= 0.051)
+      throw new MediaValidationError(
+        "Source audio duration must match the requested composition duration",
+      );
   }
-  if (inspection.streams.some((stream) => stream.durationSeconds <= 0))
-    throw new Error("Source duration must be positive");
   if (
     audios.some(
       (stream) =>
@@ -147,14 +172,15 @@ export function validateMediaInspection(
         stream.channels !== profile.audioChannels,
     )
   )
-    throw new Error("Final audio sample rate and channels must match the profile");
+    throw new MediaValidationError("Final audio sample rate and channels must match the profile");
   return inspection;
 }
 export function buildCompositionArguments(
   input: CompositionInput,
   profile: RenderProfile,
 ): readonly string[] {
-  if (input.scenes.length === 0) throw new Error("A composition requires at least one scene");
+  if (input.scenes.length === 0)
+    throw new MediaValidationError("A composition requires at least one scene");
   assertSafePaths([
     input.subtitlePath,
     input.outputPath,
@@ -164,22 +190,30 @@ export function buildCompositionArguments(
   ]);
   const argv = ["-hide_banner", "-nostdin", "-y"];
   const fileInputs = input.scenes.flatMap((scene) => {
-    if (scene.image) return [scene.path, ...(scene.narrationPath ? [scene.narrationPath] : [])];
-    // Source videos are demuxed to a video-only file by the engine.
-    return [scene.path, ...(scene.narrationPath ? [scene.narrationPath] : [])];
+    return scene.image
+      ? [
+          "-loop",
+          "1",
+          "-framerate",
+          String(profile.fps),
+          "-i",
+          scene.path,
+          ...(scene.narrationPath ? ["-i", scene.narrationPath] : []),
+        ]
+      : ["-i", scene.path, ...(scene.narrationPath ? ["-i", scene.narrationPath] : [])];
   });
-  for (const path of [...fileInputs, ...input.mixAudioPaths]) argv.push("-i", path);
+  argv.push(...fileInputs);
+  for (const path of input.mixAudioPaths) argv.push("-i", path);
   const filters: string[] = [];
   const visualSources: string[] = [];
   let nextInput = 0;
   for (const [sceneIndex, scene] of input.scenes.entries()) {
-    const visualSource = fileInputs[nextInput]!;
-    nextInput += scene.image ? 2 : 2;
     const visual = `v${sceneIndex}`;
     filters.push(
-      `[${nextInput - (scene.image ? 2 : 2)}:v]scale=${profile.width}:${profile.height}:force_original_aspect_ratio=increase,crop=${profile.width}:${profile.height},fps=${profile.fps},setsar=1${scene.image ? `,loop=loop=-1:size=1:start=0` : ""},trim=duration=${seconds(scene.durationMs)},setpts=PTS-STARTPTS[${visual}]`,
+      `[${nextInput}:v]scale=${profile.width}:${profile.height}:force_original_aspect_ratio=increase,crop=${profile.width}:${profile.height},setsar=1,trim=duration=${seconds(scene.durationMs)},setpts=PTS-STARTPTS,fps=${profile.fps},settb=AVTB[${visual}]`,
     );
     visualSources.push(`[${visual}]`);
+    nextInput += 1 + (scene.narrationPath ? 1 : 0);
   }
   if (input.scenes.length === 1) filters.push(`${visualSources[0]}null[video]`);
   else if (profile.transition === "CUT")
@@ -209,10 +243,27 @@ export function buildCompositionArguments(
       filters.push(
         `anullsrc=channel_layout=stereo:sample_rate=${profile.audioSampleRate},atrim=duration=${seconds(scene.durationMs)}[a${sceneIndex}]`,
       );
-    nextInput += 2;
+    nextInput += 1 + (scene.narrationPath ? 1 : 0);
     totalDuration += scene.durationMs;
   }
-  filters.push(`${speechSources.join("")}concat=n=${input.scenes.length}:v=0:a=1[speech]`);
+  const outputDuration = totalDuration - (input.scenes.length - 1) * profile.transitionDurationMs;
+  if (profile.transition === "FADE" && input.scenes.length > 1) {
+    const delayedSources: string[] = [];
+    let offset = 0;
+    for (let index = 0; index < speechSources.length; index += 1) {
+      const delay = Math.round(offset);
+      filters.push(`${speechSources[index]}adelay=${delay}|${delay}[d${index}]`);
+      delayedSources.push(`[d${index}]`);
+      offset +=
+        input.scenes[index]!.durationMs -
+        (index < speechSources.length - 1 ? profile.transitionDurationMs : 0);
+    }
+    filters.push(
+      `${delayedSources.join("")}amix=inputs=${delayedSources.length}:duration=longest:normalize=0,atrim=duration=${seconds(outputDuration)}[speech]`,
+    );
+  } else {
+    filters.push(`${speechSources.join("")}concat=n=${input.scenes.length}:v=0:a=1[speech]`);
+  }
   const mixedSources: string[] = [];
   for (let index = 0; index < input.mixAudioPaths.length; index += 1) {
     filters.push(
@@ -220,7 +271,6 @@ export function buildCompositionArguments(
     );
     mixedSources.push(`[mix${index}]`);
   }
-  const outputDuration = totalDuration - (input.scenes.length - 1) * profile.transitionDurationMs;
   filters.push(
     `[speech]${mixedSources.join("")}amix=inputs=${1 + mixedSources.length}:duration=first:normalize=0,alimiter=limit=0.95,atrim=duration=${seconds(outputDuration)}[aout]`,
   );
@@ -282,7 +332,7 @@ export function subtitleDocument(
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ];
   let sceneStart = 0;
-  for (const scene of scenes) {
+  for (const [index, scene] of scenes.entries()) {
     for (const caption of scene.captions) {
       if (
         !caption.text.trim() ||
@@ -290,12 +340,12 @@ export function subtitleDocument(
         caption.endMs <= caption.startMs ||
         caption.endMs > scene.durationMs
       )
-        throw new Error("Caption timing must be non-empty and inside its scene");
+        throw new MediaValidationError("Caption timing must be non-empty and inside its scene");
       lines.push(
         `Dialogue: 0,${captionTime(sceneStart + caption.startMs)},${captionTime(sceneStart + caption.endMs)},ReelForge,,0,0,0,,${caption.text.replace(/\r?\n/g, "\\N").replace(/[{}]/g, "")}`,
       );
     }
-    sceneStart += scene.durationMs;
+    sceneStart += scene.durationMs - (index < scenes.length - 1 ? profile.transitionDurationMs : 0);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -318,7 +368,7 @@ function seconds(milliseconds: number): string {
 }
 function assertSafePaths(paths: readonly string[]): void {
   if (paths.some((path) => !path || path.startsWith("-") || path.includes("\0")))
-    throw new Error("FFmpeg paths must be safe local files");
+    throw new MediaValidationError("FFmpeg paths must be safe local files");
 }
 function escapeFilterPath(path: string): string {
   return path.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
