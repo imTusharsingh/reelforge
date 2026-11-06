@@ -1,12 +1,13 @@
 # M05 Status - Configuration & Prompt Engine
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
 - **Branch/worktree:** `work/m05-configuration-and-prompt-engine`
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
-- **Completion estimate:** implementation complete pending Core Architect/Reviewer validation.
+- **Approved commit:** `055e11fab7d5dc058903766256c5b6c0de861e73`
+- **Integrated commit:** `618bd26f8d23dd4729032281dedca7bd085f9851` (PR #12 merge on `main`)
+- **Completion estimate:** implementation, review, and integration complete.
 
 ## Current objective
 Resolve hierarchical configuration and compile versioned prompts deterministically.
@@ -99,4 +100,8 @@ evidence; no approval or integration is claimed by this session.
 Implementation complete and pending Core Architect/Reviewer validation; no approval or integration is claimed.
 
 ## Reviewer decision
-- Pending.
+- Minu approved `055e11fab7d5dc058903766256c5b6c0de861e73`; PR #12 was merged into `main` at `618bd26f8d23dd4729032281dedca7bd085f9851` by `minu-the-reviewer` after owner authorization. No product rework is requested by this closeout.
+
+## Closeout handoff
+- This documentation-only closeout records the verified integration. The Prisma Client / Nest ESM compiled-dist boot follow-up remains open and is not fixed here.
+- Next exact action after this closeout merges: start M06 - Idea & Topic Registry from the new `main` tip.

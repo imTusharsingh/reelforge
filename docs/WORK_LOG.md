@@ -304,3 +304,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
   the final verification pass.
 - Next exact action: Run all checks, push the review-fix commit, and request Minu re-review.
 - Related status/ADR: `work-packages/M05-configuration-and-prompt-engine/STATUS.md`; PR #12.
+
+## 2026-11-06 - REVIEW - M05 integrated via PR #12
+- Actor/session: Minu (Core Architect/Reviewer) + repository owner merge; this `chore/m05-integrated-closeout` session records the documentation closeout only.
+- Work package: M05 - Configuration & Prompt Engine. Minu approved head `055e11fab7d5dc058903766256c5b6c0de861e73`; PR #12 (https://github.com/imTusharsingh/reelforge/pull/12) merged on `main` at `618bd26f8d23dd4729032281dedca7bd085f9851` by `minu-the-reviewer` after owner authorization.
+- Starting state: M05 product work was merged but project state and M05 status still reported pre-integration state.
+- Changes made: Updated `docs/PROJECT_STATE.md` and M05 `STATUS.md` to record approval, merge, M00-M05 integration, and M06 as next. Added this append-only closeout record. No application code, schema, migration, CI, lockfile, dependency, or `dist/` changes.
+- Commands actually run and results: `git fetch` completed; `git rev-parse origin/main` printed `618bd26f8d23dd4729032281dedca7bd085f9851`; `git merge-base --is-ancestor 618bd26f8d23dd4729032281dedca7bd085f9851 origin/main` succeeded.
+- Tests/evidence: This is docs-only; M05 verification evidence remains in its status and approved PR review. `git diff --check` is required for this closeout and will be recorded before handoff.
+- Decisions/approvals: M05 product work is APPROVED by Minu and INTEGRATED by the repository owner. This closeout chore itself is not approved; it awaits Minu review. Bots must not merge.
+- Defects/risks/blockers: The post-M04 Prisma Client / Nest ESM compiled-dist boot follow-up remains open and is not fixed here.
+- Next exact action: Minu reviews and, if approved, merges this closeout; after that start M06 (Idea & Topic Registry) from the new `main` tip. Do not start M06 in this PR.

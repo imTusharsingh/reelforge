@@ -9,11 +9,11 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M01–M04 integrated; M05 next).
+- **Overall phase:** Phase 1 in progress (M00–M05 integrated; M06 next).
 - **Current release:** v1.
-- **Current integrated commit:** `c0a408d9572011c3b0d66e6b6704d722477dc275` (`git rev-parse origin/main`; M04 PR #10 merge).
+- **Current integrated commit:** `618bd26f8d23dd4729032281dedca7bd085f9851` (`git rev-parse origin/main`; M05 PR #12 merge).
 - **Active implementation sessions:** none.
-- **Active work packages:** none after M04 closeout; M05 is not yet assigned.
+- **Active work packages:** none after M05 closeout; M06 is next after this closeout merges.
 - **Blocked work packages:** none recorded.
 - **Latest core review:** Minu approved M04 at `110fbc0f0f4925f062815dbca68b6b9d666abd33` (prior approval at `a7a1069fb8e8ff41575521dde126df4ad54936e6`); PR #10 merged at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` after owner-authorized PM merge.
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M01–M04 integrated; M05 next**
+**Phase 1 in progress - M00–M05 integrated; M06 next**
 
 Next exact action:
-1. After this closeout is merged, Minu assigns M05 (Prompt Engine).
-2. Do not start M05 implementation in this closeout.
+1. After this closeout is merged, start M06 (Idea & Topic Registry).
+2. Do not start M06 implementation in this closeout.
 
 ## Module status index
 
@@ -45,7 +45,7 @@ Next exact action:
 | M02 - Channel & Brand Management | INTEGRATED | `main` (PR #6) | `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` | none |
 | M03 - Genres, Formats & Content Series | INTEGRATED | `main` (PR #8) | `51fedc64fc655650ca345030d62934f8b16be1bc` | none |
 | M04 - Characters & Asset Library | INTEGRATED | `main` (PR #10) | `110fbc0f0f4925f062815dbca68b6b9d666abd33` | none |
-| M05 - Configuration & Prompt Engine | NOT_STARTED | none | none | none recorded |
+| M05 - Configuration & Prompt Engine | INTEGRATED | `main` (PR #12) | `055e11fab7d5dc058903766256c5b6c0de861e73` | none |
 | M06 - Idea & Topic Registry | NOT_STARTED | none | none | none recorded |
 | M07 - Script & Storyboard | NOT_STARTED | none | none | none recorded |
 | M08 - AI Provider Registry & Cost Ledger | NOT_STARTED | none | none | none recorded |
@@ -77,6 +77,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-05/06: M02 integrated via PR #6. Minu approved head `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merge `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
 - 2026-11-06: M03 integrated via PR #8. Minu approved head `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merge `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
 - 2026-11-06: M04 integrated via PR #10. Minu approved initial head `a7a1069fb8e8ff41575521dde126df4ad54936e6`, then approved merge head `110fbc0f0f4925f062815dbca68b6b9d666abd33`; merge `c0a408d9572011c3b0d66e6b6704d722477dc275` was performed by `minu-the-reviewer` after owner-authorized PM merge.
+- 2026-11-06: M05 integrated via PR #12. Minu approved head `055e11fab7d5dc058903766256c5b6c0de861e73`; merge `618bd26f8d23dd4729032281dedca7bd085f9851` was performed by `minu-the-reviewer` after owner-authorized PM merge.
 
 ## Open engineering follow-ups
 
