@@ -45,13 +45,13 @@ Environment on TRACXN-LP-784: Node `24.22.2` via nvm, pnpm `12.16.1`, Docker Pos
 
 - `pnpm install --frozen-lockfile` — **PASSED** on Node 24.22.2; existing frozen lockfile unchanged by install/supply chain check.
 - `pnpm db:validate` — **PASSED**, valid Prisma schema.
-- `pnpm db:migrate:deploy` — **PASSED**, fresh database, all 13 migrations including additive `20261106190000_m10_video_composition_export`.
+- `pnpm db:migrate:deploy` — **PASSED**, fresh database, all 14 migrations including additive `20261106190000_m10_video_composition_export` and `20261106220000_m10_retry_recovery_retention`.
 - `pnpm lint` — **PASSED** exit 0 after explicit controller/service returns and test cleanup.
 - `pnpm format:check` — **PASSED**, all checked repository files match Prettier.
 - `pnpm typecheck` — **PASSED** for all workspaces, with Prisma generation checked separately.
-- Focused `pnpm exec vitest run apps/api/src/modules/composition packages/media/src` with configured DB/binaries — **PASSED**, 5 files / 26 tests. Includes 11 lifecycle, 1 HTTP, 2 validation/runner unit, 2 real engine, 10 media tests.
-- Full `pnpm test` with DB and binary paths, `CI=1` — **PASSED**, 34 files / 200 tests, zero failed and zero skipped. This run includes all three configured-FFmpeg gated tests. Without binaries, those three local-only tests are explicitly skipped; no CI FFmpeg supply or actual render evidence is claimed.
-- `pnpm build` — **PASSED** on this final product candidate; Next and all recursive TypeScript builds exited 0.
+- Focused `pnpm exec vitest run apps/api/src/modules/composition/composition.integration.test.ts apps/api/src/modules/composition/composition.engine.integration.test.ts` with configured DB/binaries — **PASSED**, 2 files / 27 tests, including stale-lease recovery, concurrent claims, bounded retry/backoff, retention deletion, real CUT/FADE renders, multi-cover output, and source-audio coverage.
+- Full `pnpm test` with DB and binary paths, `CI=1` — **PASSED**, 35 files / 217 tests, zero failed and zero skipped. This run includes all configured-FFmpeg gated tests.
+- `pnpm build` — **PASSED** with `DATABASE_URL` set; Next and all recursive TypeScript builds exited 0. Built worker probe `timeout 3s node apps/worker/dist/main.js` started without module/runtime errors and ended only by the intentional timeout.
 - `git diff --check` — **PASSED** on final candidate.
 - Documentation edits and CI status do not change the above program verdict; Minu/hosted CI must independently review the pushed head.
 
@@ -66,9 +66,9 @@ No live AI, social or other external provider was called. Video test assets are 
 ## Blockers / risks / unknowns
 - **Still open for review:** M10 is not approved, merged or production-complete until Minu independently checks T01–T08 and boundaries.
 - Render composition currently runs inline in the API service call. Cancellation is in-process; a restart cannot resume a queued/running render automatically. An injected worker queue was not introduced because it would be an architecture change requiring Core review.
-- Retry permits only failed retryable parents and attempts the same pinned input with a fresh idempotency key. Manual new input/parent/retention combinations fail as conflicts. There is **no configured automatic retry cap/backoff policy**; rendering failures are synchronous once per requested attempt. Work packages expect orchestration in a later scheduling pack; add durable retry scheduling if Core wants it before production approval.
-- `retentionDays` (1–3650) and `retainedUntil` are persisted on every successful artifact, with input recorded. **No background expiry sweeper / external object lifecycle deletion is implemented**. Do not claim automatic erasure; storage retention/lifecycle remains a Core/storage deployment decision.
-- Real FFmpeg is opt-in for tests through explicit binary paths. The repository CI plan installs PostgreSQL but not FFmpeg; these three tests skip there. Supply and pin FFmpeg in production/runner CI to make tests always exercise them.
+- Retry permits only failed retryable parents and attempts the same pinned input with a fresh idempotency key. Worker claims persist a 1-based execution attempt, enforce bounded retry/backoff, recover expired leases, and exhaust durably. Manual new input/parent/retention combinations fail as conflicts.
+- `retentionDays` (1–3650) and `retainedUntil` are persisted on every successful artifact. The worker retention pass claims due outputs, deletes every stored artifact, marks expiry, and denies later access; failed deletion releases the claim for a later retry. Deployment still needs to schedule this pass.
+- Real FFmpeg is exercised locally through explicit binary paths; hosted CI without those binaries will skip the opt-in render tests. No live provider or network call is used.
 - Source media is deliberately bounded to generated vertical H264/30/1080x1920 video and absent-audio PNG stills per M09's source shape; failed source format/duration/codec is FAILED_FINAL, not blindly retried. Underlying decoding/pixel dimensions for stills are dependency-management review items after this baseline.
 - Earlier M04 compiled-dist ESM boot follow-up still applies; this-stage `pnpm build` is not a production process smoke.
 - There is no user UI, social export or provider generation here. No change to M11 approval/status or M13 publication behavior.

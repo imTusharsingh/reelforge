@@ -25,5 +25,23 @@
     "@nestjs/testing": "12.3.3",
     "@types/supertest": "6.0.3",
     "supertest": "7.1.4"
+  },
+  "exports": {
+    "./asset-service": {
+      "types": "./types/asset.service.ts",
+      "import": "./dist/modules/asset/asset.service.js"
+    },
+    "./composition-service": {
+      "types": "./types/composition.service.ts",
+      "import": "./dist/modules/composition/composition.service.js"
+    },
+    "./composition-engine": {
+      "types": "./types/composition.engine.ts",
+      "import": "./dist/modules/composition/composition.engine.js"
+    },
+    "./storage-factory": {
+      "types": "./types/storage.factory.ts",
+      "import": "./dist/modules/asset/storage/storage.factory.js"
+    }
   }
 }

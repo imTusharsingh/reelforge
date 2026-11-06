@@ -60,6 +60,7 @@ export type CompositionInput = Readonly<{
     path: string;
     durationMs: number;
     narrationPath?: string | undefined;
+    sourceAudio?: boolean;
     image: boolean;
   }>[];
   mixAudioPaths: readonly string[];
@@ -175,6 +176,23 @@ export function validateMediaInspection(
     throw new MediaValidationError("Final audio sample rate and channels must match the profile");
   return inspection;
 }
+export function validateSourceImageDimensions(stream: MediaStream, profile: RenderProfile): void {
+  if (stream.type !== "video" || stream.codec !== "png")
+    throw new MediaValidationError("Still inputs must contain one PNG video stream");
+  if (stream.width === undefined || stream.height === undefined)
+    throw new MediaValidationError("PNG source dimensions are required");
+  if (stream.width < profile.width || stream.height < profile.height)
+    throw new MediaValidationError(
+      `PNG source must be at least ${profile.width}x${profile.height}; tiny images cannot be losslessly normalized`,
+    );
+  const targetRatio = profile.width / profile.height;
+  const sourceRatio = stream.width / stream.height;
+  if (Math.abs(sourceRatio - targetRatio) > 0.01)
+    throw new MediaValidationError(
+      `PNG source must be approximately ${profile.width}:${profile.height} aspect ratio before profile normalization`,
+    );
+}
+
 export function buildCompositionArguments(
   input: CompositionInput,
   profile: RenderProfile,
@@ -239,10 +257,15 @@ export function buildCompositionArguments(
       filters.push(
         `[${nextInput + 1}:a]aresample=${profile.audioSampleRate},aformat=channel_layouts=stereo,apad=whole_dur=${seconds(scene.durationMs)},atrim=duration=${seconds(scene.durationMs)}[a${sceneIndex}]`,
       );
-    } else
+    } else if (scene.sourceAudio) {
+      filters.push(
+        `[${nextInput}:a]aresample=${profile.audioSampleRate},aformat=channel_layouts=stereo,apad=whole_dur=${seconds(scene.durationMs)},atrim=duration=${seconds(scene.durationMs)}[a${sceneIndex}]`,
+      );
+    } else {
       filters.push(
         `anullsrc=channel_layout=stereo:sample_rate=${profile.audioSampleRate},atrim=duration=${seconds(scene.durationMs)}[a${sceneIndex}]`,
       );
+    }
     nextInput += 1 + (scene.narrationPath ? 1 : 0);
     totalDuration += scene.durationMs;
   }

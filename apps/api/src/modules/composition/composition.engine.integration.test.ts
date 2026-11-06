@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,8 @@ suite("CompositionEngine real FFmpeg export", () => {
   const audioId = randomUUID();
   const secondImageId = randomUUID();
   const musicId = randomUUID();
+  const audibleVideoId = randomUUID();
+  const undersizedImageId = randomUUID();
   const sources = new Map<string, Buffer>();
   let root = "";
   let storage: StoragePort;
@@ -42,7 +45,7 @@ suite("CompositionEngine real FFmpeg export", () => {
           "-f",
           "lavfi",
           "-i",
-          `color=c=${color}:s=64x64:d=0.2`,
+          `color=c=${color}:s=1080x1920:d=0.2`,
           "-frames:v",
           "1",
           "-update",
@@ -56,6 +59,69 @@ suite("CompositionEngine real FFmpeg export", () => {
       );
       sources.set(key, png);
     }
+    const pngCrc32 = (body: Buffer): number => {
+      let crc = 0xffffffff;
+      for (const byte of body) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+      return (crc ^ 0xffffffff) >>> 0;
+    };
+    const pngChunk = (name: string, body: Buffer): Buffer => {
+      const tag = Buffer.from(name);
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(body.length);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(pngCrc32(Buffer.concat([tag, body])));
+      return Buffer.concat([length, tag, body, crc]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(1, 0);
+    header.writeUInt32BE(1, 4);
+    header.set([8, 6, 0, 0, 0], 8);
+    sources.set(
+      "undersized.png",
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        pngChunk("IHDR", header),
+        pngChunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0, 255]))),
+        pngChunk("IEND", Buffer.alloc(0)),
+      ]),
+    );
+    const audibleVideoPath = join(root, "audible-video.mp4");
+    const audibleVideo = await runner.run({
+      executable: "ffmpeg",
+      argv: [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=navy:s=1080x1920:r=30:d=1",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=880:duration=1",
+        "-t",
+        "1",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        audibleVideoPath,
+      ],
+    });
+    if (audibleVideo.exitCode !== 0) throw new Error(audibleVideo.stderr);
+    sources.set(
+      "audible-video.mp4",
+      await import("node:fs/promises").then(({ readFile }) => readFile(audibleVideoPath)),
+    );
     const musicPath = join(root, "music.wav");
     await runner.run({
       executable: "ffmpeg",
@@ -100,7 +166,11 @@ suite("CompositionEngine real FFmpeg export", () => {
         workspaceId,
         objectKey,
         body,
-        contentType: objectKey.endsWith(".wav") ? "audio/wav" : "image/png",
+        contentType: objectKey.endsWith(".wav")
+          ? "audio/wav"
+          : objectKey.endsWith(".mp4")
+            ? "video/mp4"
+            : "image/png",
       });
     }
     assets = {
@@ -110,13 +180,17 @@ suite("CompositionEngine real FFmpeg export", () => {
       ) => {
         const isAudio = request.assetId === audioId;
         const objectKey =
-          request.assetId === musicId
-            ? "music.wav"
-            : isAudio
-              ? "narration.wav"
-              : request.assetId === imageId
-                ? "source-0.png"
-                : "source-1.png";
+          request.assetId === audibleVideoId
+            ? "audible-video.mp4"
+            : request.assetId === musicId
+              ? "music.wav"
+              : isAudio
+                ? "narration.wav"
+                : request.assetId === imageId
+                  ? "source-0.png"
+                  : request.assetId === undersizedImageId
+                    ? "undersized.png"
+                    : "source-1.png";
         const source = sources.get(objectKey)!;
         return {
           assetId: request.assetId,
@@ -124,7 +198,11 @@ suite("CompositionEngine real FFmpeg export", () => {
           objectKey,
           checksumSha256: createHash("sha256").update(source).digest("hex"),
           byteSize: source.length,
-          mediaType: isAudio ? "audio/wav" : "image/png",
+          mediaType: isAudio
+            ? "audio/wav"
+            : request.assetId === audibleVideoId
+              ? "video/mp4"
+              : "image/png",
           ownership: "USER_UPLOADED",
           licenseType: "CC0-1.0",
           licenseTerms: "fixture",
@@ -219,6 +297,59 @@ suite("CompositionEngine real FFmpeg export", () => {
       createHash("sha256").update(video.body).digest("hex"),
     );
   }, 120_000);
+
+  it("preserves audible source-video audio when there is no separate narration", async () => {
+    const local = new CompositionEngine(runner, storage, assets);
+    const artifacts = await local.execute(context, randomUUID(), {
+      ...input,
+      scenes: [{ ...input.scenes[0]!, assetId: audibleVideoId, image: false }],
+      coverFrames: [{ assetId: audibleVideoId, assetVersion: 1, timestampMs: 400 }],
+    });
+    const video = artifacts.find((artifact) => artifact.kind === "VIDEO")!;
+    const outputPath = join(root, "audible-output.mp4");
+    await import("node:fs/promises").then(({ writeFile }) => writeFile(outputPath, video.body));
+    const measured = await runner.run({
+      executable: "ffmpeg",
+      argv: [
+        "-i",
+        outputPath,
+        "-af",
+        "volumedetect",
+        "-vn",
+        "-sn",
+        "-dn",
+        "-f",
+        "null",
+        "/dev/null",
+      ],
+    });
+    if (measured.exitCode !== 0) throw new Error(measured.stderr);
+    const maxVolume = Number(/max_volume: (-?[0-9.]+) dB/.exec(measured.stderr)?.[1]);
+    const meanVolume = Number(/mean_volume: (-?[0-9.]+) dB/.exec(measured.stderr)?.[1]);
+    expect(Number.isFinite(maxVolume)).toBe(true);
+    expect(Number.isFinite(meanVolume)).toBe(true);
+    expect(maxVolume).toBeGreaterThan(-40);
+    expect(meanVolume).toBeGreaterThan(-40);
+    expect(
+      (
+        await runner.run({
+          executable: "ffprobe",
+          argv: ["-v", "error", "-show_streams", "-of", "json", outputPath],
+        })
+      ).stdout,
+    ).toContain('"codec_name": "aac"');
+  }, 120000);
+
+  it("rejects an undersized PNG before scaling up a tiny source image", async () => {
+    const local = new CompositionEngine(runner, storage, assets);
+    await expect(
+      local.execute(context, randomUUID(), {
+        ...input,
+        scenes: [{ ...input.scenes[0]!, assetId: undersizedImageId, image: true }],
+        coverFrames: [{ assetId: undersizedImageId, assetVersion: 1, timestampMs: 400 }],
+      }),
+    ).rejects.toThrow(/PNG.*at least 1080x1920/);
+  }, 120000);
 
   it("renders a fade with licensed music and two distinct exact cover frames", async () => {
     const commands: string[][] = [];

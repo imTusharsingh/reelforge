@@ -435,3 +435,9 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: in-request renderer and cancellation lack durable worker/resume; retention expiry stored but there is no sweeping object lifecycle; no automatic bounded retry/backoff scheduler; FFmpeg needs supplying for hosted CI to run 3 opt-in real-render tests. Earlier Prisma ESM runtime follow-up is out of scope. Core reviewer must assess these boundaries before approving.
 - Next exact action: Minu reviews M10 PR product and tests, determines worker/retention/retry follow-ups, and decides merge. Never self-merge.
 - Related status/ADR: `work-packages/M10-video-composition-and-export/STATUS.md`, this M10 additive schema/engine validation evidence, and `docs/PROJECT_STATE.md`.
+
+## 2026-11-06 23:09 IST - M10 fix-forward lifecycle attempt semantics
+
+- On the existing `work/m10-video-composition-and-export` branch, corrected worker claim accounting so persisted `attempt` is incremented with `scheduledAttempts` and remains 1-based for due/stale/concurrent worker claims. Retry backoff uses the base delay for the first retry and permits the configured bounded retry window before durable exhaustion.
+- Verification: local PostgreSQL received the additive M10 retry/recovery migration; focused composition/engine suites passed 2 files / 27 tests; full suite passed 35 files / 217 tests; lint, format check, typecheck, schema validation, and build passed with `DATABASE_URL`; built worker startup probe passed until intentional timeout. Local FFmpeg/ffprobe 7.0.2 exercised real CUT/FADE, multi-cover, and source-audio paths.
+- M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, new PR, or main push is claimed. The existing PR #18 is handed back to Minu for review.

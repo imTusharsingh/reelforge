@@ -11,6 +11,7 @@ import { COMPOSITION_ENGINE } from "./composition.types.js";
   controllers: [CompositionController],
   providers: [
     CompositionService,
+    { provide: "COMPOSITION_CLOCK", useValue: { now: (): Date => new Date() } },
     CompositionEngine,
     SpawnProcessRunner,
     { provide: COMPOSITION_RUNNER, useExisting: SpawnProcessRunner },

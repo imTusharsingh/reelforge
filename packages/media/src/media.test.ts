@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RENDER_PROFILE,
+  validateSourceImageDimensions,
   buildCompositionArguments,
   canonicalRenderFingerprint,
   subtitleDocument,
@@ -13,6 +14,74 @@ const valid = {
     { type: "audio", codec: "aac", sampleRate: 48000, channels: 2, durationSeconds: 2 },
   ],
 } as const;
+
+describe("B3/B5 media policy regressions", () => {
+  it("preserves a scene's source audio when separate narration is absent", () => {
+    const argv = buildCompositionArguments(
+      {
+        scenes: [{ path: "/tmp/scene.mp4", durationMs: 1000, image: false, sourceAudio: true }],
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/result.mp4",
+      },
+      DEFAULT_RENDER_PROFILE,
+    ) as string[];
+    const filters = argv[argv.indexOf("-filter_complex") + 1]!;
+    expect(filters).toMatch(/\[0:a\][^;]*\[a0\]/);
+    expect(filters).not.toContain("anullsrc");
+  });
+
+  it("enforces PNG source dimensions and compatible aspect ratio", () => {
+    const invalid: [number, number][] = [
+      [1, 1],
+      [1079, 1920],
+      [1080, 1919],
+      [1920, 1080],
+    ];
+    const valid: [number, number][] = [
+      [1080, 1920],
+      [2160, 3840],
+    ];
+    for (const [width, height] of invalid) {
+      expect(() =>
+        validateSourceImageDimensions(
+          { type: "video", codec: "png", width, height },
+          DEFAULT_RENDER_PROFILE,
+        ),
+      ).toThrow(/PNG/);
+    }
+    for (const [width, height] of valid) {
+      expect(() =>
+        validateSourceImageDimensions(
+          { type: "video", codec: "png", width, height },
+          DEFAULT_RENDER_PROFILE,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("uses narration explicitly when provided, instead of doubling source audio", () => {
+    const argv = buildCompositionArguments(
+      {
+        scenes: [
+          {
+            path: "/tmp/scene.mp4",
+            narrationPath: "/tmp/narration.wav",
+            durationMs: 1000,
+            image: false,
+            sourceAudio: true,
+          },
+        ],
+        mixAudioPaths: [],
+        subtitlePath: "/tmp/captions.ass",
+        outputPath: "/tmp/result.mp4",
+      },
+      DEFAULT_RENDER_PROFILE,
+    ) as string[];
+    const filters = argv[argv.indexOf("-filter_complex") + 1]!;
+    expect(filters).toMatch(/\[1:a\][^;]*\[a0\]/);
+  });
+});
 
 describe("M10 media composition", () => {
   it("rejects missing audio, bad dimensions, codecs, fps, and short durations", () => {

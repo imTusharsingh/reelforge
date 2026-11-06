@@ -1,6 +1,8 @@
 generator client {
   provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
 datasource db {
@@ -1047,6 +1049,12 @@ model RenderJob {
   inputFingerprint     String          @map("input_fingerprint")
   input                Json
   retentionDays        Int             @default(90) @map("retention_days")
+  nextAttemptAt        DateTime         @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  leaseToken           String?          @map("lease_token") @db.Uuid
+  leaseExpiresAt       DateTime?        @map("lease_expires_at") @db.Timestamptz(6)
+  maxRetries           Int             @default(3) @map("max_retries")
+  scheduledAttempts    Int             @default(0) @map("scheduled_attempts")
+  retryBackoffMs       Int              @default(250) @map("retry_backoff_ms")
   cancelRequestedAt    DateTime?       @map("cancel_requested_at") @db.Timestamptz(6)
   errorCode            String?         @map("error_code")
   errorMessage         String?         @map("error_message")
@@ -1059,10 +1067,13 @@ model RenderJob {
   children               RenderJob[]      @relation("RenderRenders")
   createdBy             User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   artifacts              RenderArtifact[]
+  expiredAt              DateTime?        @map("expired_at") @db.Timestamptz(6)
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "render_jobs_idempotency_key")
   @@index([workspaceId, createdAt])
   @@index([workspaceId, status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([leaseExpiresAt])
   @@map("render_jobs")
 }
 
@@ -1087,5 +1098,6 @@ model RenderArtifact {
   @@unique([workspaceId, renderJobId, kind, assetId], map: "render_artifacts_unique_key")
   @@unique([workspaceId, objectKey], map: "render_artifacts_object_key")
   @@index([workspaceId, renderJobId, createdAt])
+  @@index([retainedUntil])
   @@map("render_artifacts")
 }

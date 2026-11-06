@@ -11,6 +11,7 @@ import {
   ProcessExecutionError,
   subtitleDocument,
   validateMediaInspection,
+  validateSourceImageDimensions,
   type MediaInspection,
   type ProcessRunner,
 } from "@reelforge/media";
@@ -121,6 +122,7 @@ export class CompositionEngine implements CompositionEnginePort {
       const sceneInputs: Array<{
         path: string;
         narrationPath?: string;
+        sourceAudio: boolean;
         image: boolean;
         durationMs: number;
       }> = [];
@@ -140,8 +142,9 @@ export class CompositionEngine implements CompositionEnginePort {
           invalid("Scene must have exactly one video stream and at most one optional audio stream");
         const stream = videos[0]!;
         if (scene.image) {
-          if (stream.codec !== "png" || stream.durationSeconds !== undefined || audios.length !== 0)
+          if (stream.durationSeconds !== undefined || audios.length !== 0)
             invalid("Still inputs must be one PNG without an audio stream");
+          validateSourceImageDimensions(stream, input.profile);
         } else {
           validateSourceVisual(stream, input.profile, scene.durationMs);
         }
@@ -168,6 +171,7 @@ export class CompositionEngine implements CompositionEnginePort {
         sceneInputs.push({
           path: visualPath,
           ...(narrationPath ? { narrationPath } : {}),
+          sourceAudio: audios.length === 1 && narrationPath === undefined,
           image: scene.image,
           durationMs: scene.durationMs,
         });

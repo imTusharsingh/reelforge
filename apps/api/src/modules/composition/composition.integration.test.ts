@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
@@ -368,7 +368,7 @@ suite("CompositionService persisted lifecycle", () => {
     if (!db) return;
     await db.renderJob.updateMany({ where: { workspaceId }, data: { parentJobId: null } });
     await db.renderArtifact.deleteMany({ where: { workspaceId } });
-    await db.renderJob.deleteMany({ where: { workspaceId } });
+    await db.$executeRaw`DELETE FROM render_jobs WHERE workspace_id = ${workspaceId}::uuid`;
     await db.sceneGenerationOutput.deleteMany({ where: { workspaceId } });
     await db.sceneGeneration.deleteMany({ where: { workspaceId } });
     await db.sceneMediaJob.deleteMany({ where: { workspaceId } });
@@ -487,6 +487,37 @@ suite("CompositionService persisted lifecycle", () => {
     expect(audioEdited.input.audio.at(0)).toMatchObject({ kind: "SFX" });
   });
 
+  it("verifies stored video and each cover bytes before returning a manifest", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const first = await service.create(context, body("b2-video-cover-integrity"));
+    const edited = await service.edit(context, first.id, {
+      idempotencyKey: "b2-cover-integrity-variant",
+      retentionDays: 30,
+      operation: { kind: "REPLACE_TITLE", title: "Second artifact variant" },
+    });
+    for (const rendered of [first, edited]) {
+      for (const artifact of rendered.artifacts) {
+        if (artifact.kind === "MANIFEST") continue;
+        const path = join(storageRoot, workspaceId, artifact.objectKey);
+        const original = await readFile(path);
+        try {
+          await writeFile(path, Buffer.from(original.map((byte) => byte ^ 0xff)));
+          await expect(service.getManifest(context, rendered.id)).rejects.toThrow(
+            /Stored render object failed freshness validation|Stored render artifact failed integrity validation/,
+          );
+          await rm(path);
+          await expect(service.getManifest(context, rendered.id)).rejects.toThrow(
+            /Stored render artifact failed integrity validation/,
+          );
+        } finally {
+          await writeFile(path, original);
+        }
+      }
+      expect((await service.getManifest(context, rendered.id)).jobId).toBe(rendered.id);
+    }
+  });
+
   it("does not create a render when the pinned M09 package has a failed scene", async () => {
     if (!db || !service) return;
     await db.sceneGeneration.update({
@@ -543,6 +574,285 @@ suite("CompositionService persisted lifecycle", () => {
       input: request.input,
     });
     expect(again.id).toBe(retried.id);
+  });
+
+  it("schedules bounded automatic retries, respects backoff and exhausts durably", async () => {
+    if (!db || !service) return;
+    await db.renderJob.updateMany({
+      where: { workspaceId, status: "FAILED_RETRYABLE" },
+      data: {
+        status: "FAILED_FINAL",
+        errorCode: "RETRY_EXHAUSTED",
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    });
+    const request = body(`b4-backoff-${randomUUID()}`);
+    fail = true;
+    try {
+      await expect(service.create(context, request)).rejects.toThrow(/no successful export/);
+    } finally {
+      fail = false;
+    }
+    const stored = await db.renderJob.findUniqueOrThrow({
+      where: {
+        workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
+      },
+    });
+    let now = Date.now();
+    const alwaysFails: CompositionEnginePort = {
+      execute: async () => {
+        throw new Error("storage unavailable for committed recovery test");
+      },
+    };
+    const worker = new CompositionService(db as Database, alwaysFails, storage, assetReference, {
+      now: (): Date => new Date(now),
+    });
+    for (const [attempt, delay] of [250, 500, 1000].entries()) {
+      expect(await worker.runClaim(stored.id)).toBeNull();
+      now += delay;
+      expect((await worker.runScheduled(10, stored.id)).claimed).toBe(1);
+      const failed = await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } });
+      expect(failed.scheduledAttempts).toBe(attempt + 1);
+      expect(failed.nextAttemptAt.getTime()).toBe(now + delay);
+      if (attempt < 3) expect(failed.status).toBe("FAILED_RETRYABLE");
+      else {
+        expect(failed).toMatchObject({ status: "FAILED_FINAL", errorCode: "RETRY_EXHAUSTED" });
+        expect(await worker.runClaim(failed.id)).toBeNull();
+      }
+    }
+  });
+
+  it("recovers a stale running job left during execution and publishes exactly once", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const key = `b4-running-recovery-${randomUUID()}`;
+    const created = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        input: body(key).input,
+        inputFingerprint: "c".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const stale = await db.renderJob.update({
+      where: { id: created.id },
+      data: {
+        status: "RUNNING",
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() - 1000),
+        nextAttemptAt: new Date(Date.now() - 1000),
+      },
+    });
+    expect(await db.renderArtifact.count({ where: { renderJobId: created.id } })).toBe(0);
+    const recoveryEngine: CompositionEnginePort = {
+      execute: async (_context, id, input) => validArtifacts(input, id),
+    };
+    const restarted = new CompositionService(
+      db as Database,
+      recoveryEngine,
+      storage,
+      assetReference,
+    );
+    expect((await restarted.runClaim(stale.id))?.status).toBe("SUCCEEDED");
+    expect(await restarted.runClaim(stale.id)).toBeNull();
+    const done = await restarted.get(context, stale.id);
+    expect(done).toMatchObject({ status: "SUCCEEDED" });
+    expect(done.artifacts).toHaveLength(3);
+    expect((await restarted.getManifest(context, stale.id)).jobId).toBe(stale.id);
+    expect((await db.renderJob.findUniqueOrThrow({ where: { id: stale.id } })).attempt).toBe(1);
+  });
+
+  it("allows an exact retry after cancellation without reusing terminal state", async () => {
+    if (!db || !service) return;
+    const request = body(`b1-canceled-retry-${randomUUID()}`);
+    let release = (): void => {};
+    wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    entered = new Promise<void>((resolve) => {
+      engineEntered = resolve;
+    });
+    fail = false;
+    const first = service.create(context, request);
+    await entered;
+    const job = await db.renderJob.findUniqueOrThrow({
+      where: {
+        workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
+      },
+    });
+    await service.cancel(context, job.id);
+    release();
+    wait = Promise.resolve();
+    await expect(first).rejects.toThrow(/canceled/i);
+    expect((await service.get(context, job.id)).status).toBe("CANCELED");
+    const retried = await service.retry(context, job.id, {
+      ...request,
+      idempotencyKey: `b1-canceled-retry-child-${randomUUID()}`,
+    });
+    expect(retried).toMatchObject({ status: "SUCCEEDED", parentJobId: job.id, attempt: 1 });
+  });
+
+  it("cancels after a durable claim but before controller registration and cannot render", async () => {
+    if (!db || !service) return;
+    fail = false;
+    let releaseRegistration = (): void => {};
+    const registration = new Promise<void>((resolve) => {
+      releaseRegistration = resolve;
+    });
+    let claimedJobId = "";
+    let reachedClaim = (): void => {};
+    const claimed = new Promise<void>((resolve) => {
+      reachedClaim = resolve;
+    });
+    let engineCalls = 0;
+    class RegisterRaceCompositionService extends CompositionService {
+      protected override async afterClaim(jobId: string): Promise<void> {
+        claimedJobId = jobId;
+        reachedClaim();
+        await registration;
+      }
+    }
+    const racing = new RegisterRaceCompositionService(
+      db as Database,
+      {
+        execute: async (_context, id, input): Promise<readonly RenderedArtifact[]> => {
+          engineCalls++;
+          return validArtifacts(input, id);
+        },
+      },
+      storage,
+      assetReference,
+    );
+    const rendering = racing.create(context, body(`b1-registration-${randomUUID()}`));
+    await claimed;
+    await service.cancel(context, claimedJobId);
+    releaseRegistration();
+    await expect(rendering).rejects.toThrow(/canceled/i);
+    expect((await service.get(context, claimedJobId)).status).toBe("CANCELED");
+    expect(engineCalls).toBe(0);
+  });
+
+  it("two due worker claims execute and publish only once", async () => {
+    if (!db || !service) return;
+    const key = `b1-concurrent-claims-${randomUUID()}`;
+    const request = body(key);
+    const created = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "QUEUED",
+        input: request.input,
+        inputFingerprint: "e".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const committedEngine: CompositionEnginePort = {
+      execute: async (_context, id, input) => validArtifacts(input, id),
+    };
+    const one = new CompositionService(db as Database, committedEngine, storage, assetReference);
+    const two = new CompositionService(db as Database, committedEngine, storage, assetReference);
+    await Promise.all([one.runScheduled(10, created.id), two.runScheduled(10, created.id)]);
+    const result = await one.get(context, created.id);
+    expect(result.status).toBe("SUCCEEDED");
+    expect(result.artifacts).toHaveLength(3);
+    expect(await db.renderJob.count({ where: { workspaceId, id: created.id } })).toBe(1);
+    expect(await db.renderArtifact.count({ where: { renderJobId: created.id } })).toBe(3);
+    expect(await db.renderJob.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      attempt: 1,
+      status: "SUCCEEDED",
+    });
+  });
+
+  it("a restarted service actually completes an abandoned running lease once and publishes output", async () => {
+    if (!db || !service) return;
+    const recoveryEngine: CompositionEnginePort = {
+      execute: async (_context, id, input) => validArtifacts(input, id),
+    };
+    fail = false;
+    const key = `b4-recovery-${randomUUID()}`;
+    const request = body(key);
+    const aborted = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "QUEUED",
+        input: request.input,
+        inputFingerprint: "d".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    await db.renderJob.update({
+      where: { id: aborted.id },
+      data: {
+        status: "RUNNING",
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() - 1000),
+        nextAttemptAt: new Date(Date.now() - 1000),
+      },
+    });
+    const worker = new CompositionService(db as Database, recoveryEngine, storage, assetReference);
+    const recovered = await worker.runClaim(aborted.id);
+    expect(recovered).toMatchObject({ status: "SUCCEEDED", leaseExpiresAt: null });
+    expect(await worker.runClaim(aborted.id)).toBeNull();
+    expect((await worker.getManifest(context, aborted.id)).jobId).toBe(aborted.id);
+  });
+
+  it("deletes expired video covers and manifest bytes then denies subsequent access", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const created = await service.create(context, body("b4-retention"));
+    expect(created.expiredAt).toBeNull();
+    const past = new Date(Date.now() - 1000);
+    await db.renderArtifact.updateMany({
+      where: { renderJobId: created.id },
+      data: { retainedUntil: past },
+    });
+    const removed = await service.expireRetainedOutputs();
+    expect(removed).toBe(3);
+    for (const artifact of created.artifacts)
+      await expect(
+        storage.getObject({ workspaceId, objectKey: artifact.objectKey }),
+      ).rejects.toThrow();
+    expect(
+      (await db.renderJob.findUniqueOrThrow({ where: { id: created.id } })).expiredAt,
+    ).not.toBeNull();
+    await expect(service.get(context, created.id)).rejects.toThrow(/expired/);
+  });
+
+  it("retains artifacts and denies access when retention deletion fails", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const created = await service.create(context, body(`b4-retention-failure-${randomUUID()}`));
+    await db.renderArtifact.updateMany({
+      where: { renderJobId: created.id },
+      data: { retainedUntil: new Date(Date.now() - 1000) },
+    });
+    const originalDelete = storage.deleteObject.bind(storage);
+    let injected = true;
+    const calls: string[] = [];
+    storage.deleteObject = async (input): Promise<void> => {
+      calls.push(input.objectKey);
+      if (injected) throw new Error("simulated storage outage");
+      return originalDelete(input);
+    };
+    try {
+      await expect(service.expireRetainedOutputs()).rejects.toThrow(/retried/);
+      const pending = await db.renderJob.findUniqueOrThrow({ where: { id: created.id } });
+      expect(pending.expiredAt).toBeNull();
+      expect(pending.leaseToken).toBeNull();
+      expect(calls).toHaveLength(1);
+      await expect(service.get(context, created.id)).rejects.toThrow(/expired/);
+      injected = false;
+      expect(await service.expireRetainedOutputs()).toBe(3);
+      await expect(service.getManifest(context, created.id)).rejects.toThrow(/expired/);
+    } finally {
+      storage.deleteObject = originalDelete;
+    }
   });
 
   it("rejects a cross-scene cover selection before creating a render", async () => {
@@ -725,6 +1035,47 @@ suite("CompositionService persisted lifecycle", () => {
     expect(await db.renderJob.count({ where: { workspaceId, idempotencyKey: "viewer" } })).toBe(0);
   });
 
+  it("terminalizes cancel-before-claim and does not allow its old executor to claim", async () => {
+    const job = await db!.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `b1-cancel-before-claim-${randomUUID()}`,
+        status: "QUEUED",
+        input: body("b1-cancel-before-claim").input,
+        inputFingerprint: "a".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const canceled = await service!.cancel(context, job.id);
+    expect(canceled.status).toBe("CANCELED");
+    expect(canceled.cancelRequestedAt).not.toBeNull();
+    expect(canceled.errorCode).toBe("CANCELED");
+    expect(await service!.claimForExecution(job.id)).toBe(false);
+  });
+
+  it("allows only one worker and recovers an abandoned claim after lease expiry", async () => {
+    const job = await db!.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: "b1-restart-after-abandoned-claim",
+        status: "QUEUED",
+        input: body("b1-restart-after-abandoned-claim").input,
+        inputFingerprint: "b".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const otherWorker = new CompositionService(db! as Database, engine, storage, assetReference);
+    expect(await service!.claimForExecution(job.id)).toBe(true);
+    expect(await otherWorker.claimForExecution(job.id)).toBe(false);
+    await db!.renderJob.update({
+      where: { id: job.id },
+      data: { leaseExpiresAt: new Date(Date.now() - 1) },
+    });
+    expect(await otherWorker.claimForExecution(job.id)).toBe(true);
+    expect(await service!.claimForExecution(job.id)).toBe(false);
+  });
   it("cancels a running render and publishes no successful artifacts", async () => {
     if (!db || !service) return;
     let release = (): void => {};

@@ -1,5 +1,11 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
+  "extends": "../api/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@reelforge/media": ["../../packages/media/src/index.ts"],
+      "@reelforge/api/*": ["../api/types/*"]
+    }
+  },
   "include": ["src/**/*.ts"]
 }

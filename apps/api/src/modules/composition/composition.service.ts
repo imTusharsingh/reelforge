@@ -6,9 +6,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
+import { renderRetryDelayMs } from "./composition.retry-policy.js";
 import type { RenderManifest } from "./composition.manifest.js";
 
 import { canonicalRenderFingerprint, MediaValidationError } from "@reelforge/media";
@@ -23,7 +25,11 @@ import type {
   RenderCompositionInput,
   RenderJobView,
 } from "./composition.types.js";
-import { validateEngineManifest, validateStoredManifest } from "./composition.manifest.js";
+import {
+  validateEngineManifest,
+  validateManifestArtifactReferences,
+  validateStoredManifest,
+} from "./composition.manifest.js";
 import {
   createRenderSchema,
   editRenderSchema,
@@ -31,15 +37,27 @@ import {
   validateComposition,
 } from "./composition.validation.js";
 
+export type CompositionClock = { readonly now: () => Date };
+export const COMPOSITION_CLOCK = "COMPOSITION_CLOCK";
+
 @Injectable()
 export class CompositionService {
   private readonly active = new Map<string, AbortController>();
+  private readonly instanceId = randomUUID();
+  private readonly now: () => Date;
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
     @Inject(COMPOSITION_ENGINE) private readonly engine: CompositionEnginePort,
     @Inject(STORAGE_PORT) private readonly storage: StoragePort,
     private readonly assets: AssetService,
-  ) {}
+    @Optional()
+    @Inject(COMPOSITION_CLOCK)
+    options: CompositionClock = {
+      now: () => new Date(),
+    },
+  ) {
+    this.now = options.now;
+  }
   public async create(context: WorkspaceContext, body: unknown): Promise<RenderJobView> {
     this.editor(context);
     const parsed = parse(createRenderSchema, body);
@@ -74,34 +92,61 @@ export class CompositionService {
     const artifact = job.artifacts.find((item) => item.kind === "MANIFEST");
     if (job.status !== "SUCCEEDED" || !artifact)
       throw new ConflictException("A successful render and validated manifest are required");
-    const bytes = await this.storage.getObject({
-      workspaceId: context.workspaceId,
-      objectKey: artifact.objectKey,
-    });
+    if (job.artifacts.length !== 2 + job.input.coverFrames.length)
+      throw new ConflictException("Stored render artifact set is incomplete");
+    const bound = validateManifestArtifactReferences(job.id, job.input, job.artifacts);
     try {
-      return validateStoredManifest(bytes, job.id, job.input, job.artifacts);
+      const bytes = await Promise.all(
+        bound.map(async (expected) => {
+          const body = await this.storage.getObject({
+            workspaceId: context.workspaceId,
+            objectKey: expected.objectKey,
+          });
+          if (body.length !== expected.byteSize || checksum(body) !== expected.checksumSha256)
+            throw new Error(`Stored ${expected.kind} size or digest mismatch`);
+          return body;
+        }),
+      );
+      return validateStoredManifest(bytes[bytes.length - 1]!, job.id, job.input, job.artifacts);
     } catch (error) {
-      throw new ConflictException("Stored render manifest failed checksum validation", {
+      throw new ConflictException("Stored render artifact failed integrity validation", {
         cause: error,
       });
     }
   }
   public async cancel(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     this.editor(context);
-    await this.require(context, id);
     const rows = await this.db.renderJob.updateMany({
-      where: { workspaceId: context.workspaceId, id, status: { in: ["QUEUED", "RUNNING"] } },
-      data: { cancelRequestedAt: new Date() },
+      where: { workspaceId: context.workspaceId, id, status: "QUEUED" },
+      data: {
+        status: "CANCELED",
+        cancelRequestedAt: new Date(),
+        errorCode: "CANCELED",
+        errorMessage: "Canceled before execution",
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
     });
-    if (rows.count === 0) throw new ConflictException("A terminal render cannot be canceled");
+    if (rows.count === 0) {
+      const running = await this.db.renderJob.updateMany({
+        where: { workspaceId: context.workspaceId, id, status: "RUNNING" },
+        data: {
+          cancelRequestedAt: new Date(),
+          status: "CANCELED",
+          errorCode: "CANCELED",
+          errorMessage: "Canceled during execution",
+        },
+      });
+      if (running.count === 0) throw new ConflictException("A terminal render cannot be canceled");
+    }
     this.active.get(id)?.abort();
     return this.present(context, id);
   }
   public async retry(context: WorkspaceContext, id: string, body: unknown): Promise<RenderJobView> {
     this.editor(context);
     const job = await this.require(context, id);
-    if (job.status !== "FAILED_RETRYABLE")
-      throw new ConflictException("Only a failed retryable render can be retried");
+    if (!["FAILED_RETRYABLE", "CANCELED"].includes(job.status))
+      throw new ConflictException("Only a failed retryable or canceled render can be retried");
     const request = parse(createRenderSchema, body);
     if (
       canonicalRenderFingerprint(request.input) !== job.inputFingerprint ||
@@ -110,8 +155,6 @@ export class CompositionService {
       throw new ConflictException(
         "Retry must exactly replay the failed pinned input and render profile",
       );
-    if (request.idempotencyKey === job.idempotencyKey)
-      throw new ConflictException("Retry requires a fresh idempotency key");
     const parsed = parse(createRenderSchema, {
       idempotencyKey: request.idempotencyKey,
       retentionDays: request.retentionDays,
@@ -177,6 +220,195 @@ export class CompositionService {
     validateComposition(input);
     return this.start(context, id, parsed.idempotencyKey, parsed.retentionDays, input);
   }
+  public async claimForExecution(jobId: string, leaseMs = 30_000): Promise<boolean> {
+    return (await this.claim(jobId, leaseMs)) !== null;
+  }
+
+  public async runClaim(jobId: string, leaseMs = 15 * 60 * 1000): Promise<RenderJobView | null> {
+    const wait = await this.db.renderJob.findUnique({
+      where: { id: jobId },
+      select: { scheduledAttempts: true, maxRetries: true },
+    });
+    if (!wait || wait.scheduledAttempts > wait.maxRetries) return null;
+    let claim = await this.claim(jobId, leaseMs);
+    if (!claim) return null;
+    const attempted = await this.db.renderJob.updateMany({
+      where: { id: jobId, leaseToken: this.instanceId },
+      data: {
+        scheduledAttempts: { increment: 1 },
+        attempt: { increment: 1 },
+      },
+    });
+    if (attempted.count !== 1) return null;
+    const claimed = await this.db.renderJob.findFirst({
+      where: { id: jobId, leaseToken: this.instanceId },
+    });
+    if (!claimed || claimed.scheduledAttempts > claimed.maxRetries) return null;
+    // scheduledAttempts is the durable, 1-based execution ordinal for worker
+    // claims. Keep the retry policy aligned with the attempt recorded for the
+    // execution instead of converting the first claim back to zero.
+    claim = { ...claim, attempt: claimed.attempt };
+    await this.afterClaim(jobId);
+    try {
+      return await this.executeClaimed(claim);
+    } catch (error) {
+      const state = await this.db.renderJob.findUnique({
+        where: { id: claim.id },
+        select: { status: true },
+      });
+      if (
+        state?.status === "CANCELED" ||
+        ["QUEUED", "RUNNING", "FAILED_RETRYABLE"].includes(state?.status ?? "")
+      )
+        return this.present(
+          { workspaceId: claim.workspaceId, userId: claim.createdByUserId, role: "OWNER" },
+          claim.id,
+        );
+      throw error;
+    }
+  }
+
+  public async runScheduled(
+    batch = 10,
+    jobId?: string,
+  ): Promise<{ claimed: number; retained: number }> {
+    const jobs = await this.db.renderJob.findMany({
+      where: {
+        nextAttemptAt: { lte: this.now() },
+        expiredAt: null,
+        parentJobId: null,
+        scheduledAttempts: { lte: 3 },
+        ...(jobId === undefined ? {} : { id: jobId }),
+        OR: [
+          {
+            status: { in: ["QUEUED", "FAILED_RETRYABLE"] },
+            OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }],
+          },
+          { status: "RUNNING", leaseExpiresAt: { lt: this.now() } },
+        ],
+      },
+      orderBy: { nextAttemptAt: "asc" },
+      take: batch,
+      select: { id: true },
+    });
+    let claimed = 0;
+    for (const job of jobs) {
+      const view = await this.runClaim(job.id);
+      if (view) claimed++;
+    }
+    return { claimed, retained: await this.expireRetainedOutputs(batch) };
+  }
+
+  public async expireRetainedOutputs(batch = 100): Promise<number> {
+    const jobs = await this.db.renderJob.findMany({
+      where: { expiredAt: null, artifacts: { some: { retainedUntil: { lte: this.now() } } } },
+      take: batch,
+      select: { id: true },
+    });
+    let removed = 0;
+    for (const { id } of jobs) {
+      const retentionToken = randomUUID();
+      const claimed = await this.db.renderJob.updateMany({
+        where: { id, expiredAt: null, leaseToken: null, status: "SUCCEEDED" },
+        data: {
+          leaseToken: retentionToken,
+          leaseExpiresAt: new Date(this.now().getTime() + 60000),
+        },
+      });
+      if (claimed.count !== 1) continue;
+      const artifacts = await this.db.renderArtifact.findMany({ where: { renderJobId: id } });
+      try {
+        for (const artifact of artifacts) {
+          await this.storage.getObject({
+            workspaceId: artifact.workspaceId,
+            objectKey: artifact.objectKey,
+          });
+          await this.storage.deleteObject({
+            workspaceId: artifact.workspaceId,
+            objectKey: artifact.objectKey,
+          });
+          removed++;
+        }
+        await this.db.renderJob.updateMany({
+          where: { id, leaseToken: retentionToken },
+          data: { expiredAt: this.now(), leaseToken: null, leaseExpiresAt: null },
+        });
+      } catch (error) {
+        await this.db.renderJob.updateMany({
+          where: { id, leaseToken: retentionToken },
+          data: { leaseToken: null, leaseExpiresAt: null },
+        });
+        throw new ServiceUnavailableException(
+          "Output retention deletion did not complete; expiry will be retried",
+          { cause: error },
+        );
+      }
+    }
+    return removed;
+  }
+
+  private async claim(
+    jobId: string,
+    leaseMs: number,
+    scheduled = true,
+  ): Promise<ClaimedRender | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const now = this.now();
+      const claimed = await this.db.$transaction(async (tx): Promise<ClaimedRender | null> => {
+        const terminal = await tx.renderJob.updateMany({
+          where: { id: jobId, status: "QUEUED", cancelRequestedAt: { not: null } },
+          data: {
+            status: "CANCELED",
+            errorCode: "CANCELED",
+            errorMessage: "Canceled before execution",
+          },
+        });
+        if (terminal.count === 1) return null;
+        const result = await tx.renderJob.updateMany({
+          where: {
+            id: jobId,
+            status: { in: ["QUEUED", "RUNNING", "FAILED_RETRYABLE"] },
+            cancelRequestedAt: null,
+            nextAttemptAt: { lte: now },
+            ...(scheduled ? { scheduledAttempts: { lte: 3 } } : {}),
+            OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
+          },
+          data: {
+            status: "RUNNING",
+            leaseToken: this.instanceId,
+            leaseExpiresAt: new Date(now.getTime() + leaseMs),
+            errorCode: null,
+            errorMessage: null,
+          },
+        });
+        if (result.count !== 1) return null;
+        const row = await tx.renderJob.findUnique({ where: { id: jobId } });
+        if (
+          !row ||
+          row.cancelRequestedAt ||
+          row.status !== "RUNNING" ||
+          row.leaseToken !== this.instanceId
+        ) {
+          await tx.renderJob.updateMany({
+            where: { id: jobId, leaseToken: this.instanceId },
+            data: {
+              status: "CANCELED",
+              cancelRequestedAt: now,
+              errorCode: "CANCELED",
+              leaseToken: null,
+              leaseExpiresAt: null,
+            },
+          });
+          return null;
+        }
+        this.active.get(jobId)?.abort();
+        return row as unknown as ClaimedRender;
+      });
+      if (claimed || attempt === 2) return claimed;
+    }
+    return null;
+  }
+
   private async start(
     context: WorkspaceContext,
     parentId: string | null,
@@ -239,20 +471,30 @@ export class CompositionService {
         );
       throw error;
     }
-    // Atomic claim prevents a concurrent retry from running the same render twice.
-    const claim = await this.db.renderJob.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        id: jobId,
-        status: { in: ["QUEUED", "FAILED_RETRYABLE"] },
-        cancelRequestedAt: null,
-      },
-      data: { status: "RUNNING", errorCode: null, errorMessage: null },
-    });
-    if (claim.count === 0) return this.present(context, jobId);
+    const claimed = await this.claim(jobId, 15 * 60 * 1000, false);
+    if (!claimed) return this.present(context, jobId);
+    await this.afterClaim(claimed.id);
+    return this.executeClaimed(claimed);
+  }
+
+  protected async afterClaim(jobId: string): Promise<void> {
+    void jobId;
+  }
+  private async executeClaimed(claimed: ClaimedRender): Promise<RenderJobView> {
+    const { id: jobId, input } = claimed;
+    const context: WorkspaceContext = {
+      workspaceId: claimed.workspaceId,
+      userId: claimed.createdByUserId,
+      role: "OWNER",
+    };
     const controller = new AbortController();
     this.active.set(jobId, controller);
     try {
+      const cancelRequested = await this.db.renderJob.findFirst({
+        where: { id: jobId, leaseToken: this.instanceId, cancelRequestedAt: { not: null } },
+        select: { id: true },
+      });
+      if (cancelRequested) throw canceled();
       const artifacts = await this.engine.execute(context, jobId, input, controller.signal);
       if (controller.signal.aborted) throw canceled();
       const manifest = artifacts.find((artifact) => artifact.kind === "MANIFEST");
@@ -265,7 +507,7 @@ export class CompositionService {
         artifacts.length !== input.coverFrames.length + 2
       )
         throw new Error("Validated render is missing video, cover, or manifest artifacts");
-      const retainedUntil = new Date(Date.now() + retentionDays * 86400000);
+      const retainedUntil = new Date(this.now().getTime() + claimed.retentionDays * 86400000);
       const insertResults: Array<{
         kind: "VIDEO" | "MANIFEST" | "COVER";
         id: string;
@@ -431,18 +673,29 @@ export class CompositionService {
                 context: { kind: audio.kind },
               },
             });
-          await tx.renderJob.update({
-            where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-            data: { status: "SUCCEEDED", errorCode: null, errorMessage: null },
+          const committed = await tx.renderJob.updateMany({
+            where: { id: jobId, leaseToken: this.instanceId, cancelRequestedAt: null },
+            data: {
+              status: "SUCCEEDED",
+              errorCode: null,
+              errorMessage: null,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            },
           });
+          if (committed.count !== 1) throw canceled();
         });
         return this.present(context, jobId);
       } finally {
         const successful = await this.db.renderJob.findUnique({
           where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-          select: { status: true },
+          select: { status: true, leaseToken: true },
         });
-        if (successful?.status !== "SUCCEEDED")
+        if (
+          successful !== null &&
+          successful.status !== "SUCCEEDED" &&
+          successful.leaseToken === this.instanceId
+        )
           await Promise.all(
             artifactByKind.map(({ result }) =>
               this.storage
@@ -452,18 +705,31 @@ export class CompositionService {
           );
       }
     } catch (error) {
-      await this.db.renderJob.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+      const terminal = isCancellation(error, controller.signal) || isPermanent(error);
+      const retryAllowed = !terminal && claimed.attempt <= claimed.maxRetries;
+      // attempt is 1-based for a worker claim, while the first retry uses the
+      // base delay (the synchronous initial execution is attempt zero).
+      const delayMs = renderRetryDelayMs(Math.max(0, claimed.attempt - 1), claimed.retryBackoffMs);
+      const terminalized = await this.db.renderJob.updateMany({
+        where: { id: jobId, leaseToken: this.instanceId },
         data: {
+          leaseToken: null,
+          leaseExpiresAt: null,
+          ...(retryAllowed ? { nextAttemptAt: new Date(this.now().getTime() + delayMs) } : {}),
           status: isCancellation(error, controller.signal)
             ? "CANCELED"
-            : isPermanent(error)
+            : isPermanent(error) || !retryAllowed
               ? "FAILED_FINAL"
               : "FAILED_RETRYABLE",
-          errorCode: isCancellation(error, controller.signal) ? "CANCELED" : errorCode(error),
+          errorCode: isCancellation(error, controller.signal)
+            ? "CANCELED"
+            : !retryAllowed && !terminal
+              ? "RETRY_EXHAUSTED"
+              : errorCode(error),
           errorMessage: safeMessage(error),
         },
       });
+      if (terminalized.count === 0) return this.present(context, jobId);
       throw isCancellation(error, controller.signal)
         ? new ConflictException("Render was canceled")
         : isPermanent(error)
@@ -589,6 +855,11 @@ export class CompositionService {
       include: { artifacts: { orderBy: { createdAt: "asc" } } },
     });
     if (!job) throw new NotFoundException("Render job not found");
+    const expired = job.artifacts.some(
+      (artifact) => artifact.retainedUntil !== null && artifact.retainedUntil <= this.now(),
+    );
+    if (expired || job.expiredAt !== null)
+      throw new ConflictException("Render artifacts have expired and are no longer available");
     if (job.schemaVersion !== "1.0")
       throw new ConflictException("Unsupported render schema version");
     const input = parse(createRenderSchema, {
@@ -631,6 +902,9 @@ export class CompositionService {
       retentionDays: job.retentionDays,
       parentJobId: job.parentJobId,
       artifacts,
+      nextRetryAt: job.nextAttemptAt.toISOString(),
+      leaseExpiresAt: job.leaseExpiresAt?.toISOString() ?? null,
+      expiredAt: (job as { expiredAt: Date | null }).expiredAt?.toISOString() ?? null,
     };
   }
   private async require(
@@ -644,6 +918,10 @@ export class CompositionService {
     idempotencyKey: string;
     retentionDays: number;
     attempt: number;
+    maxRetries: number;
+    retryBackoffMs: number;
+    nextAttemptAt: Date;
+    leaseExpiresAt: Date | null;
     input: Prisma.JsonValue;
   }> {
     const job = await this.db.renderJob.findUnique({
@@ -655,6 +933,10 @@ export class CompositionService {
         inputFingerprint: true,
         idempotencyKey: true,
         retentionDays: true,
+        nextAttemptAt: true,
+        leaseExpiresAt: true,
+        maxRetries: true,
+        retryBackoffMs: true,
         attempt: true,
         input: true,
       },
@@ -698,8 +980,8 @@ function checksum(body: Buffer): string {
 function canceled(): Error {
   return Object.assign(new Error("Render canceled"), { name: "AbortError" });
 }
-function isCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (error instanceof Error && error.name === "AbortError");
+function isCancellation(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
 }
 function errorCode(error: unknown): string {
   if (error instanceof MediaValidationError) return error.errorCode;
@@ -732,3 +1014,14 @@ function isUnique(error: unknown): boolean {
     (error as { code?: unknown }).code === "P2002"
   );
 }
+
+type ClaimedRender = Readonly<{
+  id: string;
+  workspaceId: string;
+  createdByUserId: string;
+  attempt: number;
+  maxRetries: number;
+  retryBackoffMs: number;
+  retentionDays: number;
+  input: RenderCompositionInput;
+}>;

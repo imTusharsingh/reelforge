@@ -84,7 +84,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 
 ## Open engineering follow-ups
 
-- **M10 pending Minu:** Inline API rendering (not durable worker execution), no automatic bounded retry/backoff, no scheduled `retainedUntil` object deletion, and FFmpeg absent in repo CI are explicit M10 review decisions. Metadata retention and fail-closed invalid output are implemented; automatic expiry/temporal recovery are not claimed.
+- **M10 pending Minu:** The API supports inline rendering and the built worker supports durable lease claims, bounded retry/backoff, stale-lease recovery, and explicit retention expiry/deletion; deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests. Metadata retention and fail-closed invalid output are implemented.
 
 
 - **Follow-up (post-M04) - Prisma Client / Nest ESM runtime:** Fix the post-build Node ESM runtime so `node dist/...` boots without manually patching compiled dist imports. Prisma-generated client output currently contains extensionless relative imports that plain Node ESM cannot resolve (observed on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` with Node 24.22.2; `--experimental-specifier-resolution=node` did not resolve it). Prefer a durable fix on `main` (for example generator, `package.json` `"type"`, module-resolution, or build-emit strategy), chosen by the implementer of a later fix after reading the current `packages/database` and `apps/api` build. Track as open until a product PR lands; not part of this closeout PR and not fixed here.

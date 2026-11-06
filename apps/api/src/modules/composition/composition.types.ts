@@ -52,6 +52,9 @@ export type RenderJobView = Readonly<{
   errorMessage: string | null;
   retentionDays: number;
   parentJobId: string | null;
+  nextRetryAt: string;
+  leaseExpiresAt: string | null;
+  expiredAt: string | null;
   artifacts: readonly RenderArtifactView[];
 }>;
 

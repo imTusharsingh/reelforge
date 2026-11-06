@@ -122,6 +122,12 @@ export function validateStoredManifest(
     (artifact) => artifact.kind === "VIDEO",
   );
   const covers = artifacts.filter((artifact) => artifact.kind === "COVER");
+  if (
+    artifacts.filter((artifact) => artifact.kind === "VIDEO").length !== 1 ||
+    artifacts.filter((artifact) => artifact.kind === "MANIFEST").length !== 1 ||
+    artifacts.length !== covers.length + 2
+  )
+    throw new BadRequestException("Stored render artifact cardinality is invalid");
   if (result.schemaVersion !== "1.0") invalid("schema version");
   if (result.jobId !== jobId) invalid("job");
   if (result.title !== input.title) invalid("title");
@@ -179,4 +185,29 @@ export function validateStoredManifest(
       throw new BadRequestException("Stored cover reference is not bound to its artifact");
   });
   return result;
+}
+
+export function validateManifestArtifactReferences(
+  jobId: string,
+  input: RenderCompositionInput,
+  artifacts: readonly RenderArtifactView[],
+): readonly RenderArtifactView[] {
+  const manifest = artifacts.find((artifact) => artifact.kind === "MANIFEST");
+  const video = artifacts.find((artifact) => artifact.kind === "VIDEO");
+  const covers = artifacts.filter((artifact) => artifact.kind === "COVER");
+  if (
+    artifacts.filter((artifact) => artifact.kind === "VIDEO").length !== 1 ||
+    artifacts.filter((artifact) => artifact.kind === "MANIFEST").length !== 1 ||
+    artifacts.length !== covers.length + 2
+  )
+    throw new BadRequestException("Stored render artifact cardinality is invalid");
+  if (
+    !manifest ||
+    !video ||
+    covers.length !== input.coverFrames.length ||
+    artifacts.length !== covers.length + 2 ||
+    !artifacts.every((artifact) => artifact.objectKey.startsWith(`render/${jobId}/`))
+  )
+    throw new BadRequestException("Stored render artifact identities do not match the render job");
+  return [...artifacts.filter((artifact) => artifact.kind !== "MANIFEST"), manifest];
 }
