@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConflictException, NotFoundException } from "@nestjs/common";
+import { jsonFingerprint } from "@reelforge/config-engine";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { ConfigService } from "./config.service.js";
 import { PromptService } from "./prompt.service.js";
@@ -11,7 +12,6 @@ const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const configSnapshotId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const bundleSnapshotId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const workspaceSnapshotId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-const checksum = "a".repeat(64);
 
 const context = (role: WorkspaceContext["role"] = "OWNER"): WorkspaceContext => ({
   workspaceId,
@@ -23,9 +23,13 @@ const now = new Date("2026-11-06T12:00:00.000Z");
 
 const templateBody = {
   sections: { instructions: "Write for {{audience}} about {{niche}}." },
-  variables: [{ name: "audience" }, { name: "niche" }],
+  variables: [
+    { name: "audience", required: true },
+    { name: "niche", required: true },
+  ],
   allowedAdditionSections: ["instructions"],
 };
+const checksum = jsonFingerprint(templateBody);
 
 function template(activeVersionId: string | null = versionId): {
   id: string;
@@ -118,6 +122,9 @@ describe("PromptService preview and version lifecycle", () => {
         workspaceValues: { identity: { tone: "Warm" } },
         template: { templateId },
       })) as {
+        config: {
+          resolved: { identity: { tone: string } };
+        };
         bundle: {
           sections: Record<string, string>;
           variables: Record<string, string>;
@@ -126,6 +133,7 @@ describe("PromptService preview and version lifecycle", () => {
         };
       };
 
+      expect(result.config.resolved.identity.tone).toBe("Warm");
       expect(result.bundle.template.versionId).toBe(versionId);
       expect(result.bundle.template.checksumSha256).toBe(checksum);
       expect(result.bundle.sections.system).toContain("Platform system policy");
@@ -203,6 +211,22 @@ describe("PromptService preview and version lifecycle", () => {
       service.getTemplate(
         { workspaceId: otherWorkspaceId, userId: "user-1", role: "OWNER" },
         templateId,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("denies a cross-workspace bundle snapshot lookup", async () => {
+    const db = {
+      promptBundleSnapshot: {
+        findFirst: async () => null,
+      },
+    } as unknown as Database;
+    const service = new PromptService(db, new ConfigService(db));
+
+    await expect(
+      service.getBundleSnapshot(
+        { workspaceId: otherWorkspaceId, userId: "user-1", role: "OWNER" },
+        bundleSnapshotId,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });

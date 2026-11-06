@@ -282,3 +282,25 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: Open post-M04 follow-up - fix Prisma Client / Nest ESM runtime so `node dist/...` boots without manually patching compiled-dist imports. Track until a later product PR lands; it is not fixed by this closeout.
 - Next exact action: Minu reviews and, if approved, merges this closeout; after that Minu assigns M05 (Configuration & Prompt Engine). Do not start M05 in this PR.
 - Related status/ADR: `docs/PROJECT_STATE.md`; M04 `STATUS.md`; PR #10; ADR-016; no ADR resolves the open Prisma ESM follow-up.
+
+## 2026-11-06 - REVIEW - M05 requested changes
+- Actor/session: Module Implementation Agent; branch `work/m05-configuration-and-prompt-engine`.
+- Work package: M05 - Configuration & Prompt Engine.
+- Starting state: Minu requested completion of preview, snapshot handoff, atomic capture, checksum,
+  retention, tenant-boundary coverage, and documentation contracts on PR #12.
+- Changes made: preview now includes the resolved configuration; config and prompt bundle snapshots
+  are captured in one transaction; published template checksums are recomputed before compile;
+  prompt history remains retained with no destructive delete route; and the handoff/retention policy
+  is documented in M05 status.
+- Files/areas changed: M05 config service/tests, prompt service/tests, M05 status, this work log.
+- Commands actually run and results: `pnpm test` — PASSED (17 files / 88 tests); `pnpm lint` —
+  PASSED; `pnpm format:check` — PASSED; `pnpm typecheck` — PASSED; `git diff --check` — PASSED.
+- External calls: GitHub PR review read only; no provider or social calls.
+- Tests/evidence: Preview response assertion covers the effective resolved configuration; capture
+  uses a single database transaction for both immutable snapshot rows; cross-workspace bundle
+  snapshot lookup is denied.
+- Decisions/approvals: Change request remains open; M05 is not approved or integrated.
+- Defects/risks/blockers: Expanded route and migrated-database lifecycle coverage remains part of
+  the final verification pass.
+- Next exact action: Run all checks, push the review-fix commit, and request Minu re-review.
+- Related status/ADR: `work-packages/M05-configuration-and-prompt-engine/STATUS.md`; PR #12.

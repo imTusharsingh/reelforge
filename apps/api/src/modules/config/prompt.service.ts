@@ -381,6 +381,7 @@ export class PromptService {
     const bundle = this.compile(context, resolved, selection, request);
     return {
       config: {
+        resolved: resolved.config,
         configSha256: resolved.configSha256,
         resolutionSha256: resolved.resolutionSha256,
         layers: resolved.layers,
@@ -413,8 +414,13 @@ export class PromptService {
       resolved.config.prompt.templateRefs,
     );
     const bundle = this.compile(context, resolved, selection, request);
-    const configSnapshot = await this.config.persistConfigSnapshot(context, resolved, sources);
-    const bundleSnapshot = await this.persistBundle(context, configSnapshot.id, selection, bundle);
+    const { configSnapshot, bundleSnapshot } = await this.persistCapture(
+      context,
+      resolved,
+      sources,
+      selection,
+      bundle,
+    );
     return {
       configSnapshot: {
         id: configSnapshot.id,
@@ -547,6 +553,11 @@ export class PromptService {
     } catch (error) {
       translateConfigError(error);
     }
+    const computedChecksum = jsonFingerprint(versionBodyJson(body));
+    if (computedChecksum !== version.checksumSha256)
+      throw new ConflictException(
+        "Prompt template version checksum does not match its body; create a new draft",
+      );
     return {
       templateId: template.id,
       templateKey: template.key,
@@ -556,6 +567,68 @@ export class PromptService {
       checksumSha256: version.checksumSha256,
       body,
     };
+  }
+
+  private async persistCapture(
+    context: WorkspaceContext,
+    resolved: import("@reelforge/config-engine").ResolvedConfig,
+    sources: import("./config.types.js").ResolvedConfigSources,
+    selection: PromptTemplateSelection,
+    bundle: CompiledPromptBundle,
+  ): Promise<{
+    configSnapshot: import("./config.types.js").ConfigSnapshotRow;
+    bundleSnapshot: PromptBundleSnapshotRow;
+  }> {
+    try {
+      return (await this.db.$transaction(async (tx) => {
+        const latestConfig = await tx.configSnapshot.findFirst({
+          where: { workspaceId: context.workspaceId },
+          orderBy: { version: "desc" },
+          select: { version: true },
+        });
+        const configSnapshot = await tx.configSnapshot.create({
+          data: {
+            workspaceId: context.workspaceId,
+            version: (latestConfig?.version ?? 0) + 1,
+            workspaceConfigSnapshotId: sources.workspaceConfigSnapshotId,
+            channelId: sources.channelId,
+            genreId: sources.genreId,
+            seriesId: sources.seriesId,
+            config: resolved.config as never,
+            fingerprintSha256: resolved.configSha256,
+            resolutionSha256: resolved.resolutionSha256,
+            layers: resolved.layers as never,
+            lockedFields: resolved.lockedFields as never,
+            createdByUserId: context.userId,
+          },
+        });
+        const latestBundle = await tx.promptBundleSnapshot.findFirst({
+          where: { workspaceId: context.workspaceId },
+          orderBy: { version: "desc" },
+          select: { version: true },
+        });
+        const bundleSnapshot = await tx.promptBundleSnapshot.create({
+          data: {
+            workspaceId: context.workspaceId,
+            version: (latestBundle?.version ?? 0) + 1,
+            configSnapshotId: configSnapshot.id,
+            templateId: selection.templateId,
+            templateVersionId: selection.versionId,
+            bundle: bundle as never,
+            fingerprintSha256: bundle.fingerprintSha256,
+            createdByUserId: context.userId,
+          },
+        });
+        return { configSnapshot, bundleSnapshot };
+      })) as {
+        configSnapshot: import("./config.types.js").ConfigSnapshotRow;
+        bundleSnapshot: PromptBundleSnapshotRow;
+      };
+    } catch (error) {
+      if (isUniqueViolation(error))
+        throw new ConflictException("Concurrent snapshot capture detected; retry the capture");
+      throw error;
+    }
   }
 
   private async persistBundle(

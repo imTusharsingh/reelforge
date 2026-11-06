@@ -49,6 +49,7 @@ Resolve hierarchical configuration and compile versioned prompts deterministical
 - `packages/database/prisma/migrations/20261106130000_configuration_and_prompt_engine/migration.sql`
 - `apps/api/package.json`, `packages/config-engine/package.json`, `packages/config-engine/tsconfig.json`, `packages/config-engine/src/index.ts`, `packages/config-engine/src/**`, `pnpm-lock.yaml`
 - `apps/api/src/app.module.ts`
+- `vitest.config.ts` (shared test resolution alias required because CI tests run before builds)
 - `work-packages/M05-configuration-and-prompt-engine/STATUS.md`
 
 ## Commands and evidence
@@ -63,7 +64,7 @@ Resolve hierarchical configuration and compile versioned prompts deterministical
 - `pnpm format:check` — **PASSED** — all files use Prettier style.
 - `pnpm typecheck` with disposable local PostgreSQL URL — **PASSED** — all workspaces.
 - `pnpm lint` — **PASSED**.
-- `pnpm test` — **PASSED** — 17 files / 87 tests.
+- `pnpm test` — **PASSED** — 17 files / 88 tests.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm build` — **PASSED** — all workspace builds.
 - `DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public' pnpm db:validate` — **PASSED** — Prisma schema valid.
 - `git diff --check` — **PASSED**.
@@ -73,8 +74,22 @@ Resolve hierarchical configuration and compile versioned prompts deterministical
   prompt template/version chain, generation config snapshots, and compiled prompt bundle snapshots.
 - No `packages/contracts` change.
 
+## Reviewer-requested contract notes
+
+- Preview returns the complete resolved configuration alongside hashes, layers, locks, template
+  metadata, and the compiled bundle.
+- Capture writes the generation configuration snapshot and prompt bundle snapshot in one database
+  transaction. Downstream jobs must persist both `configSnapshotId` and `promptBundleSnapshotId`,
+  retrieve them through workspace-scoped getters, and consume the frozen bundle/template-version
+  references even after later activation or rollback.
+- Prompt versions are retained indefinitely once referenced; there is no destructive delete route.
+  Future cleanup must use an explicit archive/retention policy that preserves referenced history.
+
 ## Blockers / risks / unknowns
-- None recorded at session start. Do not infer this means no risks exist; update after inspection.
+- Snapshot capture is atomic at the database transaction boundary; concurrent version allocation
+  returns a conflict for retry and does not leave a partial capture.
+- The generation handoff remains an API contract until a future workflow-job module owns the
+  `WorkflowRun` relation.
 
 ## Next exact action
 Core Architect/Reviewer should validate the acceptance criteria, schema/API boundaries, and test
