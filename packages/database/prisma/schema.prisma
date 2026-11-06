@@ -68,42 +68,55 @@ enum CharacterVersionStatus {
   PUBLISHED
 }
 
+enum PromptTemplateVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
 model User {
-  id          String               @id @default(uuid()) @db.Uuid
-  email       String               @unique
-  displayName String?              @map("display_name")
-  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  memberships WorkspaceMembership[]
-  credential   PasswordCredential?
-  sessions     Session[]
-  authEvents   AuthEvent[]
-  defaultWorkspaceId String?        @map("default_workspace_id") @db.Uuid
-  defaultWorkspace Workspace?       @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
+  id                 String                @id @default(uuid()) @db.Uuid
+  email              String                @unique
+  displayName        String?               @map("display_name")
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships        WorkspaceMembership[]
+  credential         PasswordCredential?
+  sessions           Session[]
+  authEvents         AuthEvent[]
+  defaultWorkspaceId String?               @map("default_workspace_id") @db.Uuid
+  defaultWorkspace   Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
 
 model Workspace {
-  id           String               @id @default(uuid()) @db.Uuid
-  name         String
-  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  archivedAt   DateTime?            @map("archived_at") @db.Timestamptz(6)
-  memberships  WorkspaceMembership[]
-  channels     Channel[]
-  genres       Genre[]
-  assets       Asset[]
-  characters   Character[]
-  characterVersions CharacterVersion[]
-  characterGroups CharacterGroup[]
-  characterGroupMembers CharacterGroupMember[]
+  id                        String                     @id @default(uuid()) @db.Uuid
+  name                      String
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt                DateTime?                  @map("archived_at") @db.Timestamptz(6)
+  memberships               WorkspaceMembership[]
+  channels                  Channel[]
+  genres                    Genre[]
+  assets                    Asset[]
+  characters                Character[]
+  characterVersions         CharacterVersion[]
+  characterGroups           CharacterGroup[]
+  characterGroupMembers     CharacterGroupMember[]
   characterGroupAssignments CharacterGroupAssignment[]
-  assetUsageReferences AssetUsageReference[]
-  workflowRuns WorkflowRun[]
-  outboxEvents OutboxEvent[]
-  defaultForUsers User[]            @relation("UserDefaultWorkspace")
+  assetUsageReferences      AssetUsageReference[]
+  workflowRuns              WorkflowRun[]
+  outboxEvents              OutboxEvent[]
+  defaultForUsers           User[]                     @relation("UserDefaultWorkspace")
+  activeConfigSnapshotId    String?                    @map("active_config_snapshot_id") @db.Uuid
+  configSnapshots           WorkspaceConfigSnapshot[]
+  generationConfigSnapshots ConfigSnapshot[]
+  promptTemplates           PromptTemplate[]
+  promptTemplateVersions    PromptTemplateVersion[]
+  promptBundleSnapshots     PromptBundleSnapshot[]
+  activeConfigSnapshot      WorkspaceConfigSnapshot?   @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
+  @@unique([activeConfigSnapshotId])
   @@map("workspaces")
 }
 
@@ -113,28 +126,31 @@ model PasswordCredential {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("password_credentials")
 }
 
 model Session {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  tokenHash  String    @unique @map("token_hash")
-  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId, revokedAt, expiresAt])
   @@map("sessions")
 }
 
 model AuthEvent {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String?  @map("user_id") @db.Uuid
-  eventType String   @map("event_type")
-  outcome   String
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  eventType  String   @map("event_type")
+  outcome    String
   occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   @@index([userId, occurredAt])
   @@map("auth_events")
 }
@@ -145,8 +161,8 @@ model WorkspaceMembership {
   userId      String        @map("user_id") @db.Uuid
   role        WorkspaceRole
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -154,31 +170,31 @@ model WorkspaceMembership {
 }
 
 model Channel {
-  id                String                @id @default(uuid()) @db.Uuid
-  workspaceId       String                @map("workspace_id") @db.Uuid
-  name              String
-  handle            String?
-  description       String?
-  niche             String?
-  language          String?
-  audience          String?
-  timezone          String                @default("UTC")
-  goals             Json?
-  schedule          Json?
-  automationDefaults Json?               @map("automation_defaults")
-  approvalPolicy    Json?                 @map("approval_policy")
-  publishingDestinations Json?            @map("publishing_destinations")
-  status            ChannelStatus         @default(ACTIVE)
-  activeSnapshotId  String?               @map("active_snapshot_id") @db.Uuid
-  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  series      ContentSeries[]
-  videos      Video[]
-  posts       Post[]
+  id                        String                     @id @default(uuid()) @db.Uuid
+  workspaceId               String                     @map("workspace_id") @db.Uuid
+  name                      String
+  handle                    String?
+  description               String?
+  niche                     String?
+  language                  String?
+  audience                  String?
+  timezone                  String                     @default("UTC")
+  goals                     Json?
+  schedule                  Json?
+  automationDefaults        Json?                      @map("automation_defaults")
+  approvalPolicy            Json?                      @map("approval_policy")
+  publishingDestinations    Json?                      @map("publishing_destinations")
+  status                    ChannelStatus              @default(ACTIVE)
+  activeSnapshotId          String?                    @map("active_snapshot_id") @db.Uuid
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                 Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  series                    ContentSeries[]
+  videos                    Video[]
+  posts                     Post[]
   characterGroupAssignments CharacterGroupAssignment[]
-  snapshots   ChannelConfigSnapshot[]
-  activeSnapshot ChannelConfigSnapshot? @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
+  snapshots                 ChannelConfigSnapshot[]
+  activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, activeSnapshotId])
@@ -203,20 +219,20 @@ model ChannelConfigSnapshot {
 }
 
 model ContentSeries {
-  id          String      @id @default(uuid()) @db.Uuid
-  workspaceId String      @map("workspace_id") @db.Uuid
-  channelId   String      @map("channel_id") @db.Uuid
-  name        String
-  genreId     String      @map("genre_id") @db.Uuid
-  format      String
-  frequency   String
-  characterGroupRefs Json @map("character_group_refs")
-  promptRefs  Json        @map("prompt_refs")
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  channel     Channel    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  genre       Genre      @relation(fields: [workspaceId, genreId], references: [workspaceId, id], onDelete: Restrict)
-  videos      Video[]
+  id                        String                     @id @default(uuid()) @db.Uuid
+  workspaceId               String                     @map("workspace_id") @db.Uuid
+  channelId                 String                     @map("channel_id") @db.Uuid
+  name                      String
+  genreId                   String                     @map("genre_id") @db.Uuid
+  format                    String
+  frequency                 String
+  characterGroupRefs        Json                       @map("character_group_refs")
+  promptRefs                Json                       @map("prompt_refs")
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel                   Channel                    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  genre                     Genre                      @relation(fields: [workspaceId, genreId], references: [workspaceId, id], onDelete: Restrict)
+  videos                    Video[]
   characterGroupAssignments CharacterGroupAssignment[]
 
   @@unique([workspaceId, id])
@@ -239,56 +255,58 @@ model GenreTemplate {
   safetyProfile      Json     @map("safety_profile")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   genres             Genre[]
+
   @@map("genre_templates")
 }
 
 model Genre {
-  id                 String         @id @default(uuid()) @db.Uuid
-  workspaceId        String         @map("workspace_id") @db.Uuid
-  templateId         String?        @map("template_id") @db.Uuid
+  id                 String          @id @default(uuid()) @db.Uuid
+  workspaceId        String          @map("workspace_id") @db.Uuid
+  templateId         String?         @map("template_id") @db.Uuid
   name               String
   audience           String
   tone               String
-  topicsAllowed      Json           @map("topics_allowed")
-  topicsBlocked      Json           @map("topics_blocked")
+  topicsAllowed      Json            @map("topics_allowed")
+  topicsBlocked      Json            @map("topics_blocked")
   language           String
   structure          Json
-  durationPreference Json           @map("duration_preference")
-  safetyProfile      Json           @map("safety_profile")
-  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  template           GenreTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  durationPreference Json            @map("duration_preference")
+  safetyProfile      Json            @map("safety_profile")
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template           GenreTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
   series             ContentSeries[]
+
   @@unique([workspaceId, id])
   @@index([workspaceId, createdAt])
   @@map("genres")
 }
 
 model Asset {
-  id               String         @id @default(uuid()) @db.Uuid
-  workspaceId      String         @map("workspace_id") @db.Uuid
-  objectKey        String         @map("object_key")
-  mediaType        String         @map("media_type")
-  filename         String?
-  byteSize         Int?           @map("byte_size")
-  checksumSha256   String?        @map("checksum_sha256")
-  version          Int            @default(1)
-  rootAssetId      String         @map("root_asset_id") @db.Uuid
-  supersedesAssetId String?       @map("supersedes_asset_id") @db.Uuid
-  ownership        AssetOwnership @default(USER_UPLOADED)
-  status           AssetStatus    @default(PENDING)
-  licenseType      String?        @map("license_type")
-  licenseTerms     String?        @map("license_terms")
-  rightsHolder     String?        @map("rights_holder")
-  rightsAttestedAt DateTime?      @map("rights_attested_at") @db.Timestamptz(6)
-  createdByUserId  String?        @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  supersedes       Asset?         @relation("AssetVersionChain", fields: [workspaceId, supersedesAssetId], references: [workspaceId, id], onDelete: Restrict)
-  versions         Asset[]        @relation("AssetVersionChain")
-  usageReferences  AssetUsageReference[]
+  id                String                @id @default(uuid()) @db.Uuid
+  workspaceId       String                @map("workspace_id") @db.Uuid
+  objectKey         String                @map("object_key")
+  mediaType         String                @map("media_type")
+  filename          String?
+  byteSize          Int?                  @map("byte_size")
+  checksumSha256    String?               @map("checksum_sha256")
+  version           Int                   @default(1)
+  rootAssetId       String                @map("root_asset_id") @db.Uuid
+  supersedesAssetId String?               @map("supersedes_asset_id") @db.Uuid
+  ownership         AssetOwnership        @default(USER_UPLOADED)
+  status            AssetStatus           @default(PENDING)
+  licenseType       String?               @map("license_type")
+  licenseTerms      String?               @map("license_terms")
+  rightsHolder      String?               @map("rights_holder")
+  rightsAttestedAt  DateTime?             @map("rights_attested_at") @db.Timestamptz(6)
+  createdByUserId   String?               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  supersedes        Asset?                @relation("AssetVersionChain", fields: [workspaceId, supersedesAssetId], references: [workspaceId, id], onDelete: Restrict)
+  versions          Asset[]               @relation("AssetVersionChain")
+  usageReferences   AssetUsageReference[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, objectKey])
@@ -299,15 +317,15 @@ model Asset {
 }
 
 model Video {
-  id          String        @id @default(uuid()) @db.Uuid
-  workspaceId String        @map("workspace_id") @db.Uuid
-  channelId   String        @map("channel_id") @db.Uuid
-  seriesId    String?       @map("series_id") @db.Uuid
+  id          String         @id @default(uuid()) @db.Uuid
+  workspaceId String         @map("workspace_id") @db.Uuid
+  channelId   String         @map("channel_id") @db.Uuid
+  seriesId    String?        @map("series_id") @db.Uuid
   // TODO(M10 composition): adopt the M10-owned video production status contract.
   status      String
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  channel     Channel      @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel     Channel        @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
   series      ContentSeries? @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Restrict)
   posts       Post[]
 
@@ -317,17 +335,17 @@ model Video {
 }
 
 model Post {
-  id          String     @id @default(uuid()) @db.Uuid
-  workspaceId String     @map("workspace_id") @db.Uuid
-  channelId   String     @map("channel_id") @db.Uuid
-  videoId     String     @map("video_id") @db.Uuid
-  platform    String
-  status      PublishStatus
-  remotePostId String?   @map("remote_post_id")
-  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
-  channel     Channel   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  video       Video     @relation(fields: [workspaceId, videoId], references: [workspaceId, id], onDelete: Cascade)
+  id           String        @id @default(uuid()) @db.Uuid
+  workspaceId  String        @map("workspace_id") @db.Uuid
+  channelId    String        @map("channel_id") @db.Uuid
+  videoId      String        @map("video_id") @db.Uuid
+  platform     String
+  status       PublishStatus
+  remotePostId String?       @map("remote_post_id")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel      Channel       @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  video        Video         @relation(fields: [workspaceId, videoId], references: [workspaceId, id], onDelete: Cascade)
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId, createdAt])
@@ -335,14 +353,14 @@ model Post {
 }
 
 model WorkflowRun {
-  id             String     @id @default(uuid()) @db.Uuid
-  workspaceId    String     @map("workspace_id") @db.Uuid
-  correlationId  String     @map("correlation_id") @db.Uuid
-  idempotencyKey String     @map("idempotency_key")
+  id             String        @id @default(uuid()) @db.Uuid
+  workspaceId    String        @map("workspace_id") @db.Uuid
+  correlationId  String        @map("correlation_id") @db.Uuid
+  idempotencyKey String        @map("idempotency_key")
   state          WorkflowState
-  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, idempotencyKey])
   @@unique([workspaceId, id])
@@ -351,19 +369,19 @@ model WorkflowRun {
 }
 
 model OutboxEvent {
-  id             String     @id @default(uuid()) @db.Uuid
-  workspaceId    String     @map("workspace_id") @db.Uuid
-  eventType      String     @map("event_type")
-  eventVersion   Int        @map("event_version")
-  correlationId  String     @map("correlation_id") @db.Uuid
-  channelId      String?    @map("channel_id") @db.Uuid
-  causationId    String?    @map("causation_id") @db.Uuid
-  aggregateType  String     @map("aggregate_type")
-  aggregateId    String     @map("aggregate_id") @db.Uuid
-  idempotencyKey String     @map("idempotency_key")
+  id             String    @id @default(uuid()) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  eventType      String    @map("event_type")
+  eventVersion   Int       @map("event_version")
+  correlationId  String    @map("correlation_id") @db.Uuid
+  channelId      String?   @map("channel_id") @db.Uuid
+  causationId    String?   @map("causation_id") @db.Uuid
+  aggregateType  String    @map("aggregate_type")
+  aggregateId    String    @map("aggregate_id") @db.Uuid
+  idempotencyKey String    @map("idempotency_key")
   payload        Json
-  occurredAt     DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  publishedAt    DateTime?  @map("published_at") @db.Timestamptz(6)
+  occurredAt     DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  publishedAt    DateTime? @map("published_at") @db.Timestamptz(6)
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, idempotencyKey])
@@ -389,43 +407,43 @@ model AssetUsageReference {
 }
 
 model CharacterTemplate {
-  id               String   @id @default(uuid()) @db.Uuid
-  key              String   @unique
+  id               String      @id @default(uuid()) @db.Uuid
+  key              String      @unique
   name             String
   description      String
   personality      Json
-  voicePreference  Json     @map("voice_preference")
-  visualInvariants Json     @map("visual_invariants")
-  variationRules   Json     @map("variation_rules")
-  starterAssetKey  String?  @map("starter_asset_key")
-  rightsHolder     String   @map("rights_holder")
-  licenseType      String   @map("license_type")
-  licenseTerms     String   @map("license_terms")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  voicePreference  Json        @map("voice_preference")
+  visualInvariants Json        @map("visual_invariants")
+  variationRules   Json        @map("variation_rules")
+  starterAssetKey  String?     @map("starter_asset_key")
+  rightsHolder     String      @map("rights_holder")
+  licenseType      String      @map("license_type")
+  licenseTerms     String      @map("license_terms")
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   characters       Character[]
 
   @@map("character_templates")
 }
 
 model Character {
-  id               String          @id @default(uuid()) @db.Uuid
-  workspaceId      String          @map("workspace_id") @db.Uuid
-  templateId       String?         @map("template_id") @db.Uuid
+  id               String                 @id @default(uuid()) @db.Uuid
+  workspaceId      String                 @map("workspace_id") @db.Uuid
+  templateId       String?                @map("template_id") @db.Uuid
   name             String
   description      String?
   personality      Json
-  voicePreference  Json            @map("voice_preference")
-  visualInvariants Json            @map("visual_invariants")
-  variationRules   Json            @map("variation_rules")
-  referenceAssets  Json            @default("[]") @map("reference_assets")
-  status           CharacterStatus @default(DRAFT)
-  activeVersionId  String?         @map("active_version_id") @db.Uuid
-  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  template         CharacterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  voicePreference  Json                   @map("voice_preference")
+  visualInvariants Json                   @map("visual_invariants")
+  variationRules   Json                   @map("variation_rules")
+  referenceAssets  Json                   @default("[]") @map("reference_assets")
+  status           CharacterStatus        @default(DRAFT)
+  activeVersionId  String?                @map("active_version_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template         CharacterTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
   versions         CharacterVersion[]
-  activeVersion    CharacterVersion? @relation("CharacterActiveVersion", fields: [workspaceId, activeVersionId], references: [workspaceId, id])
+  activeVersion    CharacterVersion?      @relation("CharacterActiveVersion", fields: [workspaceId, activeVersionId], references: [workspaceId, id])
   groupMemberships CharacterGroupMember[]
 
   @@unique([workspaceId, id])
@@ -459,13 +477,13 @@ model CharacterVersion {
 }
 
 model CharacterGroup {
-  id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
+  id          String                     @id @default(uuid()) @db.Uuid
+  workspaceId String                     @map("workspace_id") @db.Uuid
   name        String
   description String?
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace   Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   members     CharacterGroupMember[]
   assignments CharacterGroupAssignment[]
 
@@ -492,20 +510,131 @@ model CharacterGroupMember {
 }
 
 model CharacterGroupAssignment {
-  id          String          @id @default(uuid()) @db.Uuid
-  workspaceId String          @map("workspace_id") @db.Uuid
-  groupId     String          @map("group_id") @db.Uuid
-  channelId   String?         @map("channel_id") @db.Uuid
-  seriesId    String?         @map("series_id") @db.Uuid
-  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  group       CharacterGroup  @relation(fields: [workspaceId, groupId], references: [workspaceId, id], onDelete: Cascade)
-  channel     Channel?        @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  series      ContentSeries?  @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Cascade)
+  id          String         @id @default(uuid()) @db.Uuid
+  workspaceId String         @map("workspace_id") @db.Uuid
+  groupId     String         @map("group_id") @db.Uuid
+  channelId   String?        @map("channel_id") @db.Uuid
+  seriesId    String?        @map("series_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  group       CharacterGroup @relation(fields: [workspaceId, groupId], references: [workspaceId, id], onDelete: Cascade)
+  channel     Channel?       @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  series      ContentSeries? @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Cascade)
 
   @@unique([workspaceId, groupId, channelId])
   @@unique([workspaceId, groupId, seriesId])
   @@index([workspaceId, channelId])
   @@index([workspaceId, seriesId])
   @@map("character_group_assignments")
+}
+
+model WorkspaceConfigSnapshot {
+  id                  String           @id @default(uuid()) @db.Uuid
+  workspaceId         String           @map("workspace_id") @db.Uuid
+  version             Int
+  values              Json
+  lockedFields        Json             @map("locked_fields")
+  fingerprintSha256   String           @map("fingerprint_sha256")
+  createdByUserId     String?          @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  activeFor           Workspace?       @relation("WorkspaceActiveConfigSnapshot")
+  generationSnapshots ConfigSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, version])
+  @@index([workspaceId, createdAt])
+  @@map("workspace_config_snapshots")
+}
+
+model ConfigSnapshot {
+  id                        String                   @id @default(uuid()) @db.Uuid
+  workspaceId               String                   @map("workspace_id") @db.Uuid
+  version                   Int
+  workspaceConfigSnapshotId String?                  @map("workspace_config_snapshot_id") @db.Uuid
+  channelId                 String?                  @map("channel_id") @db.Uuid
+  genreId                   String?                  @map("genre_id") @db.Uuid
+  seriesId                  String?                  @map("series_id") @db.Uuid
+  config                    Json
+  fingerprintSha256         String                   @map("fingerprint_sha256")
+  resolutionSha256          String                   @map("resolution_sha256")
+  layers                    Json
+  lockedFields              Json                     @map("locked_fields")
+  createdByUserId           String?                  @map("created_by_user_id") @db.Uuid
+  createdAt                 DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace                 Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceConfigSnapshot   WorkspaceConfigSnapshot? @relation(fields: [workspaceId, workspaceConfigSnapshotId], references: [workspaceId, id], onDelete: Restrict)
+  promptBundleSnapshots     PromptBundleSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, version])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, seriesId])
+  @@map("generation_config_snapshots")
+}
+
+model PromptTemplate {
+  id              String                  @id @default(uuid()) @db.Uuid
+  workspaceId     String                  @map("workspace_id") @db.Uuid
+  key             String
+  name            String
+  description     String?
+  activeVersionId String?                 @map("active_version_id") @db.Uuid
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  versions        PromptTemplateVersion[]
+  activeVersion   PromptTemplateVersion?  @relation("PromptTemplateActiveVersion", fields: [workspaceId, activeVersionId], references: [workspaceId, id])
+  bundleSnapshots PromptBundleSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, key])
+  @@unique([workspaceId, activeVersionId])
+  @@index([workspaceId])
+  @@map("prompt_templates")
+}
+
+model PromptTemplateVersion {
+  id              String                      @id @default(uuid()) @db.Uuid
+  workspaceId     String                      @map("workspace_id") @db.Uuid
+  templateId      String                      @map("template_id") @db.Uuid
+  version         Int
+  status          PromptTemplateVersionStatus @default(DRAFT)
+  body            Json
+  checksumSha256  String                      @map("checksum_sha256")
+  createdByUserId String?                     @map("created_by_user_id") @db.Uuid
+  publishedAt     DateTime?                   @map("published_at") @db.Timestamptz(6)
+  createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace       Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template        PromptTemplate              @relation(fields: [workspaceId, templateId], references: [workspaceId, id], onDelete: Cascade)
+  activeFor       PromptTemplate?             @relation("PromptTemplateActiveVersion")
+  bundleSnapshots PromptBundleSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, templateId, version])
+  @@index([workspaceId, templateId, createdAt])
+  @@map("prompt_template_versions")
+}
+
+model PromptBundleSnapshot {
+  id                String                @id @default(uuid()) @db.Uuid
+  workspaceId       String                @map("workspace_id") @db.Uuid
+  version           Int
+  configSnapshotId  String                @map("config_snapshot_id") @db.Uuid
+  templateId        String                @map("template_id") @db.Uuid
+  templateVersionId String                @map("template_version_id") @db.Uuid
+  bundle            Json
+  fingerprintSha256 String                @map("fingerprint_sha256")
+  createdByUserId   String?               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  configSnapshot    ConfigSnapshot        @relation(fields: [workspaceId, configSnapshotId], references: [workspaceId, id], onDelete: Restrict)
+  template          PromptTemplate        @relation(fields: [workspaceId, templateId], references: [workspaceId, id], onDelete: Restrict)
+  templateVersion   PromptTemplateVersion @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, version])
+  @@index([workspaceId, configSnapshotId])
+  @@index([workspaceId, templateId])
+  @@map("prompt_bundle_snapshots")
 }
