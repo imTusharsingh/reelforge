@@ -41,6 +41,7 @@ Node `24.22.2`, pnpm `12.16.1`, local PostgreSQL `16.15` (CI image is `18.6-alpi
 - `pnpm test` — **PASSED**, 29 files / 161 tests.
 - `pnpm build` — **PASSED** (exit 0).
 - `git diff --check` — **PASSED** (exit 0).
+- GitHub Actions run [42220432709](https://github.com/imTusharsingh/reelforge/actions/runs/42220432709) on PR #17 — **PASSED** (`quality` job, PostgreSQL `18.6-alpine`).
 
 No live provider call was made. Scene-media tests inject fixture ports and local filesystem storage.
 
