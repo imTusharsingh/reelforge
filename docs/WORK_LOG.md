@@ -341,3 +341,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Applied Minu’s REQUEST_CHANGES: approval snapshots are created once and reused through scheduling; AI negative-path and canonical-series tests were added; Prisma tenant/FK integration coverage was added; and minimum diversity now uses an independent bounded three-item queue rule for both channel and series scope.
 - Verification: focused M06 tests passed (10 tests); full test suite passed (18 files / 98 tests, with 2 database integration tests skipped because no `DATABASE_URL` was supplied); typecheck passed with the documented local `DATABASE_URL`; formatting passed. Migration deployment remains unverified because local PostgreSQL credentials previously returned Prisma P1000.
 - Decision/approval: still pending Minu review; no merge or approval claimed.
+
+## 2026-11-06 - M06 PR #15 clean-checkout test resolution
+- CI exposed one remaining fresh-checkout test issue: the Prisma integration test imported `@reelforge/database` before its `dist` existed. Added the Vitest source alias alongside the existing config-engine and AI-provider aliases.
+- Verification: exact `pnpm test` passed — 18 files passed, 1 integration file skipped without `DATABASE_URL`; 98 tests passed and 2 skipped.

@@ -67,6 +67,6 @@ Implementation is complete pending Core Architect/Reviewer validation.
 
 ## Fix-forward verification
 - Plain `pnpm install --frozen-lockfile` — **NOT PASSED**: Node `24.16.0` vs pinned `24.22.2`.
-- Lint, format check, typecheck, full tests (18 files / 98 tests; 2 database integration tests skipped without `DATABASE_URL`), build, schema validation, and `git diff --check` — **PASSED**.
+- Lint, format check, typecheck, exact `pnpm test` (18 files / 98 tests; 2 database integration tests skipped without `DATABASE_URL`), build, schema validation, and `git diff --check` — **PASSED**.
 - Migration deploy — **FAILED** with Prisma `P1000`; local PostgreSQL rejected supplied credentials.
 - No approval, integration, merge, or PR creation is claimed.
