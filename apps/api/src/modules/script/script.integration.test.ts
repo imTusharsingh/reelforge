@@ -611,6 +611,77 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     ).toBe("1");
   });
 
+  it.each(["missing", "null"] as const)(
+    "persists a complete failed ledger with %s provider metadata",
+    async (metadataKind): Promise<void> => {
+      if (!db) return;
+      await db.providerBudget.update({
+        where: { id: budgetId },
+        data: { reserved: 0, spent: 0, periodStart: new Date() },
+      });
+      const malformedEnvelope: ScriptLlmPort = {
+        ...llm,
+        complete: async (): Promise<Awaited<ReturnType<ScriptLlmPort["complete"]>>> =>
+          ({
+            output: document,
+            providerRequestId: "external-request",
+            ...(metadataKind === "missing" ? {} : { metadata: null }),
+          }) as unknown as Awaited<ReturnType<ScriptLlmPort["complete"]>>,
+      };
+      const registry = new ProviderRegistry();
+      registry.register({
+        capability: llm.capability,
+        credential: { providerId: "fixture", environment: "development", secret: "fixture-secret" },
+      });
+      const correlationId = randomUUID();
+      await expect(
+        new ScriptService(db as Database, malformedEnvelope, registry).generate(context, {
+          approvedIdeaSnapshotId: snapshotId,
+          approvedIdeaChecksum: "checksum",
+          prompt: `metadata-${metadataKind}`,
+          channelId,
+          configSnapshotId,
+          promptSnapshotId,
+          correlationId,
+        }),
+      ).rejects.toThrow("invalid provenance");
+      const ledger = await db.providerRequest.findUniqueOrThrow({
+        where: { workspaceId_correlationId: { workspaceId, correlationId } },
+      });
+      expect(ledger).toMatchObject({
+        status: "FAILED",
+        channelId,
+        currency: "USD",
+        usage: null,
+        actualCost: null,
+        correlationId,
+        responseMetadata: {
+          dispatched: true,
+          providerRequestId: "external-request",
+          modelVersion: null,
+          promptVersion: null,
+          costKnown: false,
+        },
+        errorCode: "ConflictException",
+      });
+      expect(ledger.estimatedCost?.toString()).toBe("1");
+      expect(ledger.dispatchedPrompt).toContain(`metadata-${metadataKind}`);
+      expect(ledger.errorMessage).toContain("invalid provenance");
+      expect(ledger.latencyMs).toEqual(expect.any(Number));
+      const reservation = await db.providerBudgetReservation.findFirstOrThrow({
+        where: { correlationId },
+      });
+      expect(reservation.status).toBe("SETTLED");
+      expect(reservation.actualCost).toBeNull();
+      expect(reservation.chargedCost?.toString()).toBe("1");
+      expect(
+        await db.script.count({
+          where: { revisions: { some: { promptText: { contains: `metadata-${metadataKind}` } } } },
+        }),
+      ).toBe(0);
+    },
+  );
+
   it("retains a failed-dispatch ledger after a real script persistence error", async () => {
     if (!db) return;
     const correlationId = randomUUID();

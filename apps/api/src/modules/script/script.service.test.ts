@@ -122,3 +122,118 @@ describe("script tenant and authorization gates", () => {
     );
   });
 });
+
+describe("malformed provider envelopes", () => {
+  it.each(["missing", "null", "non-object", "null-envelope"] as const)(
+    "finalizes a failed ledger when the provider returns %s metadata",
+    async (envelopeKind): Promise<void> => {
+      let ledgerUpsert:
+        | {
+            where: { workspaceId_correlationId: { correlationId: string } };
+            create: Record<string, unknown>;
+            update: Record<string, unknown>;
+          }
+        | undefined;
+      const correlationId = randomUUID();
+      const malformedDb = {
+        ideaApprovalSnapshot: {
+          findUnique: async () => ({
+            id: randomUUID(),
+            checksumSha256: "checksum",
+            channelId: null,
+            topic: "topic",
+            hook: "hook",
+            angle: "angle",
+            references: [],
+            idea: { status: "APPROVED" },
+          }),
+        },
+        configSnapshot: { findUnique: async () => ({ id: "config", config: {} }) },
+        promptBundleSnapshot: {
+          findUnique: async () => ({
+            id: "prompt",
+            configSnapshotId: "config",
+            bundle: { renderedText: "rendered prompt", fingerprintSha256: "a".repeat(64) },
+            fingerprintSha256: "a".repeat(64),
+          }),
+        },
+        providerBudget: { findFirst: async () => ({ id: "budget" }) },
+        providerRequest: {
+          create: async () => ({}),
+          upsert: async (input: {
+            where: { workspaceId_correlationId: { correlationId: string } };
+            create: Record<string, unknown>;
+            update: Record<string, unknown>;
+          }) => {
+            ledgerUpsert = input;
+            return {};
+          },
+        },
+        $transaction: async (
+          callback: (tx: {
+            providerRequest: { create: () => Promise<unknown> };
+            $queryRaw: () => Promise<Array<{ id: string; period_start: string }>>;
+            $executeRaw: () => Promise<number>;
+            providerBudgetReservation: { update: () => Promise<unknown> };
+          }) => Promise<unknown>,
+        ) =>
+          callback({
+            providerRequest: { create: async () => ({}) },
+            $queryRaw: async () => [{ id: "reservation", period_start: new Date().toISOString() }],
+            $executeRaw: async () => 1,
+            providerBudgetReservation: { update: async () => ({}) },
+          }),
+        $executeRaw: async () => 1,
+      } as unknown as Database;
+      const registry = new ProviderRegistry();
+      registry.register({
+        capability: llm.capability,
+        credential: { providerId: "p", environment: "development", secret: "fixture-secret" },
+      });
+      const envelope =
+        envelopeKind === "null-envelope"
+          ? null
+          : {
+              output: {},
+              ...(envelopeKind === "missing"
+                ? {}
+                : { metadata: envelopeKind === "null" ? null : "invalid" }),
+            };
+      const malformedLlm: ScriptLlmPort = {
+        ...llm,
+        complete: async (): Promise<Awaited<ReturnType<ScriptLlmPort["complete"]>>> =>
+          envelope as unknown as Awaited<ReturnType<ScriptLlmPort["complete"]>>,
+      };
+      const service = new ScriptService(malformedDb, malformedLlm, registry);
+      await expect(
+        service.generate(context(), {
+          approvedIdeaSnapshotId: randomUUID(),
+          approvedIdeaChecksum: "checksum",
+          prompt: "malformed envelope",
+          configSnapshotId: randomUUID(),
+          promptSnapshotId: randomUUID(),
+          correlationId,
+        }),
+      ).rejects.toThrow(
+        envelopeKind === "null-envelope"
+          ? "Provider returned an invalid envelope"
+          : "Provider returned invalid provenance",
+      );
+      expect(ledgerUpsert?.where.workspaceId_correlationId.correlationId).toBe(correlationId);
+      expect(ledgerUpsert?.update).toMatchObject({
+        channelId: null,
+        status: "FAILED",
+        estimatedCost: 1,
+        actualCost: null,
+        currency: "USD",
+        dispatchedPrompt: expect.stringContaining("malformed envelope"),
+        latencyMs: expect.any(Number),
+        responseMetadata: { dispatched: true, costKnown: false },
+      });
+      expect(ledgerUpsert?.update.errorMessage).toContain(
+        envelopeKind === "null-envelope" ? "invalid envelope" : "invalid provenance",
+      );
+      expect(ledgerUpsert?.update.errorCode).toBe("ConflictException");
+    },
+  );
+});

@@ -24,19 +24,23 @@ const generateSchema = z.object({
   configSnapshotId: z.uuid(),
   promptSnapshotId: z.uuid(),
 });
+const providerEnvelopeSchema = z.looseObject({
+  output: z.unknown(),
+  metadata: z.unknown().optional(),
+  providerRequestId: z.unknown().optional(),
+});
+const providerUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  seconds: z.number().nonnegative().optional(),
+  characters: z.number().int().nonnegative().optional(),
+});
 const provenanceSchema = z.object({
   modelVersion: z.string().min(1),
   promptVersion: z.string().min(1),
   cost: z.number().finite().nonnegative().nullable(),
   currency: z.string().min(1).optional(),
-  usage: z
-    .object({
-      inputTokens: z.number().int().nonnegative().optional(),
-      outputTokens: z.number().int().nonnegative().optional(),
-      seconds: z.number().nonnegative().optional(),
-      characters: z.number().int().nonnegative().optional(),
-    })
-    .optional(),
+  usage: providerUsageSchema.optional(),
 });
 const promptBundleSchema = z.object({
   renderedText: z.string().min(1),
@@ -125,10 +129,14 @@ export class ScriptService {
       correlationId,
       dispatchedPrompt,
     );
-    let result: Awaited<ReturnType<ScriptLlmPort["complete"]>> | undefined;
+    let result: z.infer<typeof providerEnvelopeSchema> | undefined;
     let settled = false;
     try {
-      result = await this.llm.complete({ prompt: dispatchedPrompt, correlationId });
+      const envelope = providerEnvelopeSchema.safeParse(
+        await this.llm.complete({ prompt: dispatchedPrompt, correlationId }),
+      );
+      if (!envelope.success) throw new ConflictException("Provider returned an invalid envelope");
+      result = envelope.data;
       const provenance = provenanceSchema.safeParse(result.metadata);
       await this.settleBudget(
         context.workspaceId,
@@ -163,10 +171,10 @@ export class ScriptService {
             scriptId: script.id,
             revision: 1,
             document,
-            promptVersion: result!.metadata.promptVersion,
-            modelVersion: result!.metadata.modelVersion,
-            cost: result!.metadata.cost,
-            costCurrency: result!.metadata.currency ?? null,
+            promptVersion: provenance.data.promptVersion,
+            modelVersion: provenance.data.modelVersion,
+            cost: provenance.data.cost,
+            costCurrency: provenance.data.currency ?? null,
             configSnapshotId: config.id,
             promptSnapshotId: prompt.id,
             promptText: dispatchedPrompt,
@@ -361,7 +369,7 @@ export class ScriptService {
   }
 
   private providerResponse(
-    result: Awaited<ReturnType<ScriptLlmPort["complete"]>> | undefined,
+    result: z.infer<typeof providerEnvelopeSchema> | undefined,
   ): Record<string, unknown> {
     const metadata = z
       .object({ modelVersion: z.unknown(), promptVersion: z.unknown(), cost: z.unknown() })
@@ -390,24 +398,21 @@ export class ScriptService {
     estimationCurrency: string;
     dispatchedPrompt: string;
     latencyMs: number;
-    result?: Awaited<ReturnType<ScriptLlmPort["complete"]>>;
+    result?: z.infer<typeof providerEnvelopeSchema>;
     error?: unknown;
     response: Record<string, unknown>;
   }): Promise<void> {
-    const actualCost =
-      typeof input.result?.metadata.cost === "number" ? input.result.metadata.cost : null;
+    const provenance = provenanceSchema.safeParse(input.result?.metadata).data;
+    const actualCost = typeof provenance?.cost === "number" ? provenance.cost : null;
     const data = {
       channelId: input.channelId,
       providerId: this.llm.capability.providerId,
       capabilityId: this.llm.capability.capabilityId,
       status: (input.error === undefined ? "SUCCEEDED" : "FAILED") as "SUCCEEDED" | "FAILED",
-      usage: input.result?.metadata.usage ?? Prisma.JsonNull,
+      usage: provenance?.usage ?? Prisma.JsonNull,
       estimatedCost: input.estimate,
       actualCost,
-      currency:
-        typeof input.result?.metadata.currency === "string"
-          ? input.result.metadata.currency
-          : input.estimationCurrency,
+      currency: provenance?.currency ?? input.estimationCurrency,
       latencyMs: input.latencyMs,
       dispatchedPrompt: input.dispatchedPrompt,
       responseMetadata: input.response as Prisma.InputJsonValue,

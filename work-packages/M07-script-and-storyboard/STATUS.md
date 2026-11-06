@@ -28,11 +28,11 @@ Convert an approved idea into a structured script and scene plan.
 - Node `24.22.2`; `pnpm install --frozen-lockfile` — **PASSED**.
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate` — **PASSED**.
 - `pnpm db:migrate:deploy` — **PASSED** on a new local PostgreSQL database; 11 migrations applied in order, including the additive provenance/reservation migration.
-- `pnpm test` — **PASSED**, 25 test files / 132 tests. Focused script suites: 5 files / 30 tests.
+- `pnpm test` — **PASSED**, 25 test files / 138 tests. Focused script suites: 5 files / 36 tests.
 - `pnpm build` — **PASSED** for all packages/apps.
 - `git diff --check` — **PASSED**.
 - Actual HTTP integration verifies unauthenticated 401s, outsider 403s and viewer 403s for get/revise/approve/export/provider health; owner read is successful. Persisted concurrent approve/revise test yields exactly one lifecycle winner and exports the consistent approved revision.
-- Exact provider request prompt equals successful revision prompt; generated revisions reference the owned coherent config/prompt pair with tenant-scoped FKs.
+- Exact provider request prompt equals successful revision prompt; generated revisions reference the owned coherent config/prompt pair with tenant-scoped FKs. Runtime envelope/provenance normalization leaves a complete failed request row for malformed provider responses instead of a secondary recorder `TypeError` or `PENDING` ledger.
 
 ## Contract/schema proposals
 - The pending request initializes atomically with its budget reservation; reservations reference the tenant/correlation ledger row. This is additive and deployed in the migration above.

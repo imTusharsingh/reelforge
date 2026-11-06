@@ -28,10 +28,10 @@ Expose provider-neutral AI capabilities and record real provider use and costs.
 - Node `24.22.2`; `pnpm install --frozen-lockfile` — **PASSED**.
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate` — **PASSED**.
 - `pnpm db:migrate:deploy` — **PASSED** on a new local PostgreSQL database; 11 migrations applied in order, including the additive provenance/reservation migration.
-- `pnpm test` — **PASSED**, 25 test files / 132 tests. Focused script suites: 5 files / 30 tests.
+- `pnpm test` — **PASSED**, 25 test files / 138 tests. Focused script suites: 5 files / 36 tests.
 - `pnpm build` — **PASSED** for all packages/apps.
 - `git diff --check` — **PASSED**.
-- Persisted tests cover tenant isolation/FKs, atomic daily-cap concurrency, failure release, known actual-cost settlement, unknown-cost settlement, malformed output, invalid provenance, script persistence failure, and cross-day reservation behavior.
+- Persisted tests cover tenant isolation/FKs, atomic daily-cap concurrency, failure release, known actual-cost settlement, unknown-cost settlement, malformed output/envelopes (missing, null, and non-object metadata), invalid provenance, script persistence failure, and cross-day reservation behavior.
 
 ## Contract/schema proposals
 - Additive request/reservation correlation FK and persisted reservation state; no destructive migration or prior applied migration rewrite.
