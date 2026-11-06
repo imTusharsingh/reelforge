@@ -1,13 +1,14 @@
 # M04 Status - Characters & Asset Library
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
-- **Assigned session/editor:** Module Implementation Agent (this session)
+- **State:** INTEGRATED
+- **Assigned session/editor:** Module Implementation Agent (implementation session, complete)
 - **Branch/worktree:** `work/m04-characters-and-asset-library`
 - **Base commit:** `fba08da1dfc12a8a68bdd29610fd24469b514d58` (main; M03 closeout)
 - **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
-- **Completion estimate:** implementation and local verification complete; review pending. This is not an approval claim.
+- **Approved commit:** `110fbc0f0f4925f062815dbca68b6b9d666abd33` (prior approval at `a7a1069fb8e8ff41575521dde126df4ad54936e6`)
+- **Integrated commit:** `c0a408d9572011c3b0d66e6b6704d722477dc275` (merge of PR #10 into `main`)
+- **Completion estimate:** implementation, review, and integration complete. Integration state was recorded by this docs closeout from Minu's written approval and the verified merge; it is not a self-approval claim by the implementer.
 
 ## Current objective
 Maintain reusable characters and licensed media assets with versioned references.
@@ -122,6 +123,7 @@ All commands were run from the repository root unless noted. `DATABASE_URL` poin
 - Request review/approval for the starter-asset approach: project-authored deterministic PNG bytes embedded in code, seeded template rights metadata, no downloads or live provider calls.
 
 ## Risks and known gaps
+- **Follow-up (post-M04, out of scope here):** Fix Prisma Client / Nest ESM runtime so `node dist/...` boots without manually patching compiled-dist imports. Prisma-generated client output contains extensionless relative imports that plain Node ESM cannot resolve on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` (Node 24.22.2); the live smoke needed a local-only compiled-dist `.js` extension patch. This is out of scope for M04 product work (already merged) and out of scope for this docs closeout; no code is changed here and the follow-up is not fixed.
 - **No production object storage adapter.** Only `STORAGE_DRIVER=local` is implemented; `STORAGE_DRIVER=s3` fails loudly. Local files are not shared across API instances. M10/deployment must add an approved S3-compatible adapter.
 - **Node version mismatch in this environment.** The required `pnpm install --frozen-lockfile` command could not pass under Node 24.16.0; CI should run the pinned 24.22.2.
 - **Legacy assets remain non-referenceable.** Existing `assets` rows were backfilled with a root ID but have no checksum/rights/real bytes and stay `PENDING`.
@@ -132,17 +134,25 @@ All commands were run from the repository root unless noted. `DATABASE_URL` poin
 - **No UI.** M04 exposes the API only.
 
 ## Next exact action
-Core Reviewer (Minu) should review the branch/PR against the M04 acceptance criteria, especially storage honesty, workspace scoping, immutable versioning, and the starter-asset rights approach. If changes are requested, address them on `work/m04-characters-and-asset-library`; do not merge.
+Phase 1 continues with M05 (Configuration & Prompt Engine) after the M04 closeout chore is merged. No further M04 product work is planned in this chore; M05 is not started here.
 
 ## Handoff notes
-- Pull request: https://github.com/imTusharsingh/reelforge/pull/10 (open, not merged; CI `quality` passed).
+- Pull request: https://github.com/imTusharsingh/reelforge/pull/10 — **MERGED** into `main` at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` after owner-authorized PM merge; CI `quality` passed.
 - Branch is based on M03 closeout `fba08da1dfc12a8a68bdd29610fd24469b514d58`.
-- Do not mark APPROVED/INTEGRATED/DONE; only the reviewer/owner can do that.
+- M04 is INTEGRATED; only the reviewer/owner can change approval or integration state.
 - To reproduce database verification, run a disposable PostgreSQL instance and export `DATABASE_URL`, then run `pnpm db:migrate:deploy`.
 - Local storage defaults to `<os tmpdir>/reelforge-storage`; set `STORAGE_LOCAL_ROOT` for a stable path.
+- Post-build Node ESM startup currently needs a local-only compiled-dist patch; see the Prisma ESM follow-up under risks and gaps. Do not treat that patch as part of `main`.
 
 ## Reviewer decision
-- Pending.
+- **APPROVED** by Minu at head `110fbc0f0f4925f062815dbca68b6b9d666abd33` (written COMMENT approval, review 5791871548: https://github.com/imTusharsingh/reelforge/pull/10#pullrequestreview-5791871548); prior written approval at head `a7a1069fb8e8ff41575521dde126df4ad54936e6` (review 5791575742: https://github.com/imTusharsingh/reelforge/pull/10#pullrequestreview-5791575742).
+- Merged via PR #10 at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` (owner-authorized PM merge).
+- Verified in git: `origin/main` tip is `c0a408d9572011c3b0d66e6b6704d722477dc275`, and the merge commit's parents are `fba08da1dfc12a8a68bdd29610fd24469b514d58` and `110fbc0f0f4925f062815dbca68b6b9d666abd33`.
+
+## Integration note (2026-11-06)
+- Minu ran a live M01–M04 end-to-end API smoke on tip `c0a408d9572011c3b0d66e6b6704d722477dc275`: health -> auth -> workspace -> channel -> genre/series -> `starter-nova` publish -> reference package -> PNG upload -> cross-workspace 404 / other-user 403. Result: **PASS**.
+- Environment: portable PostgreSQL and local filesystem storage. Node 24.22.2 needed a local-only compiled-dist `.js` extension patch to boot; that gap is recorded as an open follow-up under risks and gaps, not as a smoke product failure and not as a CI-only proof.
+- This closeout changes documentation only. No application code, schema, migration, lockfile, CI, dependency, or `dist/` change is included.
 
 ## Follow-up review evidence (2026-11-06)
 - Added explicit cross-workspace denial coverage for character reads/publish and group reads/update/assignment; foreign rows are not returned or mutated.

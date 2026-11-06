@@ -119,6 +119,18 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
 - **Decision:** Channel configuration is persisted in immutable `ChannelConfigSnapshot` versions selected by the channel's `activeSnapshotId` pointer. Publishing destinations in M02 are stored as configuration references/intents only; OAuth credentials and live platform linking remain owned by M12.
 - **Consequence:** Downstream modules can select and inspect durable channel configuration without coupling M02 to social-provider credentials or live platform APIs.
 
+## ADR-016 - Immutable character/asset versions and the M04 storage boundary
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of M04 integration at `110fbc0f0f4925f062815dbca68b6b9d666abd33`, merged via PR #10 at `c0a408d9572011c3b0d66e6b6704d722477dc275`).
+- **Decision:** M04 delivers these durable boundaries:
+  1. Publishing a character creates an immutable `CharacterVersion`; reference packages resolve exact pinned character versions and exact asset versions with SHA-256 checksums. Published versions and reference packages are not rewritten in place.
+  2. Assets are append-only version chains with checksum, license/rights metadata, and usage references; a new version supersedes rather than mutates prior bytes.
+  3. Binary media goes through a storage port. M04 ships only the local filesystem adapter, and unimplemented drivers such as `s3` fail loudly. A production S3-compatible adapter remains owned by M10/`packages/media`.
+  4. Starter characters (`starter-nova`, `starter-atlas`) use project-authored CC0-1.0 placeholder PNG bytes embedded in code, with rights metadata seeded by migration; there are no downloads or provider-generated starter assets.
+  5. M03 `characterGroupRefs` remain opaque IDs; M04 does not automatically rewrite or sync them when M04 assignments change.
+- **Reason:** These choices are what M04 implemented and what Minu approved on PR #10. No earlier ADR recorded them.
+- **Consequence:** Generation jobs consume immutable references rather than mutable asset records. Changing versioning/rights semantics or adding production object storage requires a later ADR. The open Prisma Client / Nest ESM boot follow-up is an engineering gap, not a decision resolved by this ADR.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:
