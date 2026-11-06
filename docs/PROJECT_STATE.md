@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M01–M03 integrated; M04 next).
+- **Overall phase:** Phase 1 in progress (M01–M04 integrated; M05 next).
 - **Current release:** v1.
-- **Current integrated commit:** `408bae0af76b9a901cbf4066dec2af2e0f6e2526` (`git rev-parse origin/main`; owner merge of M03 PR #8).
+- **Current integrated commit:** `c0a408d9572011c3b0d66e6b6704d722477dc275` (`git rev-parse origin/main`; M04 PR #10 merge).
 - **Active implementation sessions:** none.
-- **Active work packages:** none (M03 integrated; M04 not yet assigned on a branch).
+- **Active work packages:** none after M04 closeout; M05 is not yet assigned.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M03 at `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merged via PR #8 at `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
+- **Latest core review:** Minu approved M04 at `110fbc0f0f4925f062815dbca68b6b9d666abd33` (prior approval at `a7a1069fb8e8ff41575521dde126df4ad54936e6`); PR #10 merged at `c0a408d9572011c3b0d66e6b6704d722477dc275` by `minu-the-reviewer` after owner-authorized PM merge.
 
 ## Frozen architecture summary
 
@@ -30,10 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M01–M03 integrated; M04 next**
+**Phase 1 in progress - M01–M04 integrated; M05 next**
 
 Next exact action:
-1. Assign and start M04 (Characters & Asset Library) after this closeout is merged.
+1. After this closeout is merged, Minu assigns M05 (Prompt Engine).
+2. Do not start M05 implementation in this closeout.
 
 ## Module status index
 
@@ -43,7 +44,7 @@ Next exact action:
 | M01 - Identity & Workspace | INTEGRATED | `main` (PR #4) | `519b3ab2bd6a81a516c66d21036051edb9c54894` | none |
 | M02 - Channel & Brand Management | INTEGRATED | `main` (PR #6) | `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` | none |
 | M03 - Genres, Formats & Content Series | INTEGRATED | `main` (PR #8) | `51fedc64fc655650ca345030d62934f8b16be1bc` | none |
-| M04 - Characters & Asset Library | NOT_STARTED | none | none | none recorded |
+| M04 - Characters & Asset Library | INTEGRATED | `main` (PR #10) | `110fbc0f0f4925f062815dbca68b6b9d666abd33` | none |
 | M05 - Configuration & Prompt Engine | NOT_STARTED | none | none | none recorded |
 | M06 - Idea & Topic Registry | NOT_STARTED | none | none | none recorded |
 | M07 - Script & Storyboard | NOT_STARTED | none | none | none recorded |
@@ -61,7 +62,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M04–M20 remain `NOT_STARTED`. M04 starts when Minu assigns it.
+M05–M20 remain `NOT_STARTED`. M05 starts only when Minu assigns it after this closeout is merged.
 
 
 ## Open decisions
@@ -75,6 +76,15 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-05/06: M01 integrated via PR #4. Minu approved head `519b3ab2bd6a81a516c66d21036051edb9c54894` (review 5789945311); owner merge `4944f5d74200c65cbcca99405cf680245946201a`.
 - 2026-11-05/06: M02 integrated via PR #6. Minu approved head `a9bb14b4b2519f5b66781f0cd8c00b955c38f983` (review 5790491616); owner merge `216de538c86915f6f590ba7401b7d4cfc4e8f05c`.
 - 2026-11-06: M03 integrated via PR #8. Minu approved head `51fedc64fc655650ca345030d62934f8b16be1bc` (review 5790935899); owner merge `408bae0af76b9a901cbf4066dec2af2e0f6e2526`.
+- 2026-11-06: M04 integrated via PR #10. Minu approved initial head `a7a1069fb8e8ff41575521dde126df4ad54936e6`, then approved merge head `110fbc0f0f4925f062815dbca68b6b9d666abd33`; merge `c0a408d9572011c3b0d66e6b6704d722477dc275` was performed by `minu-the-reviewer` after owner-authorized PM merge.
+
+## Open engineering follow-ups
+
+- **Follow-up (post-M04) - Prisma Client / Nest ESM runtime:** Fix the post-build Node ESM runtime so `node dist/...` boots without manually patching compiled dist imports. Prisma-generated client output currently contains extensionless relative imports that plain Node ESM cannot resolve (observed on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` with Node 24.22.2; `--experimental-specifier-resolution=node` did not resolve it). Prefer a durable fix on `main` (for example generator, `package.json` `"type"`, module-resolution, or build-emit strategy), chosen by the implementer of a later fix after reading the current `packages/database` and `apps/api` build. Track as open until a product PR lands; not part of this closeout PR and not fixed here.
+
+## Live verification
+
+- Minu ran a live M01–M04 end-to-end API smoke on tip `c0a408d9572011c3b0d66e6b6704d722477dc275`: health, auth, workspace, channel, genre/series, `starter-nova` publish, reference package, PNG upload, cross-workspace 404, and other-user 403. Result: **PASS**. Portable Postgres and local storage were used; Node required a local-only compiled-dist `.js` extension patch to boot, which is recorded above as an open follow-up and was not a product failure in the smoke.
 
 ## How a new session resumes
 
