@@ -1,9 +1,9 @@
 # M08 Status - AI Provider Registry & Cost Ledger
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
-- **Last updated:** 2026-11-05
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Module Implementation Agent
+- **Branch/worktree:** `work/m07-m08-combined`
+- **Last updated:** 2026-11-06
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -11,32 +11,42 @@
 Expose provider-neutral AI capabilities and record real provider use and costs.
 
 ## Task checklist
-- [ ] M08-T01: T01 Define provider-neutral interfaces for LLM, image, video, and TTS capabilities.
-- [ ] M08-T02: T02 Define capability metadata: supported input/output, reference-image support, duration/resolution limits, async/polling, region, and cost model.
-- [ ] M08-T03: T03 Implement approved provider registry and per-environment credentials.
-- [ ] M08-T04: T04 Implement request validation and normalized error taxonomy.
-- [ ] M08-T05: T05 Record each actual request, response metadata, usage, estimated/actual cost, latency, and correlation IDs.
-- [ ] M08-T06: T06 Implement workspace/channel budgets, daily caps, preflight estimate, and spend guard.
-- [ ] M08-T07: T07 Add real-provider health/capability checks that are explicitly invoked, never run automatically on startup or in CI.
+- [x] M08-T01: Provider-neutral LLM, image, video, and TTS interfaces.
+- [x] M08-T02: Capability and cost metadata.
+- [x] M08-T03: Registry and non-secret credential boundary.
+- [x] M08-T04: Normalized fail-closed error taxonomy.
+- [x] M08-T05: Persisted provider request ledger around script dispatch, including failure metadata.
+- [x] M08-T06: Persisted workspace/channel caps with atomic reservation before dispatch; missing budgets and over-capacity fail closed.
+- [x] M08-T07: Explicit authenticated provider-health operation; no startup/CI invocation and unconfigured adapters fail closed.
 
 
 ## Files changed
-- None yet.
+- `apps/api/src/modules/script/**`: preflight estimate, complete post-dispatch success/failure ledger, exact prompt, actual/unknown cost settlement, durable reservations.
+- `packages/database/prisma/**`: additive migration `20261106170000_m07_m08_provenance_and_reservations`.
 
 ## Commands and evidence
-- None run.
+- Node `24.22.2`; `pnpm install --frozen-lockfile` — **PASSED**.
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate` — **PASSED**.
+- `pnpm db:migrate:deploy` — **PASSED** on a new local PostgreSQL database; 11 migrations applied in order, including the additive provenance/reservation migration.
+- `pnpm test` — **PASSED**, 25 test files / 138 tests. Focused script suites: 5 files / 36 tests.
+- `pnpm build` — **PASSED** for all packages/apps.
+- `git diff --check` — **PASSED**.
+- Persisted tests cover tenant isolation/FKs, atomic daily-cap concurrency, failure release, known actual-cost settlement, unknown-cost settlement, malformed output/envelopes (missing, null, and non-object metadata), invalid provenance, script persistence failure, and cross-day reservation behavior.
 
 ## Contract/schema proposals
-- None.
+- Additive request/reservation correlation FK and persisted reservation state; no destructive migration or prior applied migration rewrite.
 
 ## Blockers / risks / unknowns
-- None recorded. Do not infer this means no risks exist; update after inspection.
+- Unknown provider cost is conservatively charged at the preflight estimate but remains `actualCost=null` and `costKnown=false`; it is not represented as a measured actual.
+- Cross-day settlement does not charge/reset two different daily windows; the original reservation retains cost and `budgetApplied=false` for reconciliation.
+- Final Minu/core review is pending; no approval, integration, merge, live provider call, or production readiness is claimed. Failure to persist the database ledger itself is an infrastructure limitation, not a silently claimed successful ledger write.
+- Prior documented Prisma compiled-dist ESM boot follow-up remains outside this fix-forward.
 
 ## Next exact action
-Read the work package and repository state, then report any conflict with existing code before implementation.
+Minu reviews the pushed fix-forward head on PR #16.
 
 ## Handoff notes
-No implementation session has started.
+Success `estimatedCost` is always the preflight estimate. Post-dispatch validation and persistence failures settle a received provider response; exceptions thrown by `complete()` release the reservation. Provider health remains explicit-only and the runtime registry remains fail-closed.
 
 ## Reviewer decision
 - Pending.

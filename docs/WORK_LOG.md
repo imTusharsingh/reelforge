@@ -354,3 +354,28 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-06 - M06 PR #15 local CI reproduction
 - Reproduced the complete CI order locally with Node `24.22.2` and a fresh PostgreSQL `18.6-alpine` container. The first migrated run exposed an incorrect integration assertion expecting an empty workspace-A list despite a workspace-A fixture idea; corrected it to assert workspace scoping.
 - Verification: `pnpm install --frozen-lockfile`, lint, format check, typecheck, schema validation, migration deployment, tests, and build all passed. Tests: 19 files / 100 tests.
+## 2026-11-06 - Combined M06 closeout + M07/M08 implementation experiment
+- Actor/session: Module Implementation Agent; branch `work/m07-m08-combined`, based on `origin/main` `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
+- M06 closeout: PR #14 product landed at `277525df559f00625c467e3e63dad638390e1556`; fix-forward PR #15 was approved by Minu at `ed52885c2341a0c676e251f9beef54f6d77661cd` and merged at `318d1f2dd7220233f9ca36a8b277a2257ebf8382`.
+- M08: added typed provider-neutral capability, credential, registry, error, provenance, ledger, and spend-guard contracts. Runtime remains fail-closed; no provider calls are made by startup or tests.
+- M07: added versioned script/scene schemas, validation, factual source requirements, and an injectable typed LLM generation boundary carrying snapshot/provenance inputs.
+- Verification: `pnpm typecheck` attempted and failed because Prisma generation could not resolve `DATABASE_URL`; package AI-provider typecheck passed before the workspace failure. Remaining required checks are not run and are not claimed.
+- Decision/approval: PR #16 exists and received Minu REQUEST_CHANGES review `5798838007`; M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`. This follow-up continues on the same branch and PR; no new PR or merge is created.
+## 2026-11-06 - PR #16 re-review fix-forward
+- Minu re-review `5798838007` identified B2/B3/B6/B7 gaps. Added atomic persisted budget reservation before provider dispatch, explicit authenticated provider-health operation, workspace genre lookup, per-claim source validation, config/prompt snapshot fields, race-safe revisions, shared character validation for manual revisions, and tenant/authorization unit negatives.
+- Corrected the remaining project-state footer and M06/#15 integrated history. The combined M06+M07+M08 workflow is recorded as a failed future process experiment; M09 resumes sequentially after PR #16.
+- M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, or new PR is claimed.
+
+## 2026-11-06 - PR #16 B2/B3/B5/B6/B7 fix-forward
+- On the existing `work/m07-m08-combined` branch, added actual authenticated HTTP negatives and persisted concurrent approve/revise coverage; paired required owned config/prompt snapshots and persisted the exact dispatch prompt; derived factual support from workspace genre policy.
+- Added durable reservation/ledger correlation FKs, complete post-dispatch ledger updates and actual-or-unknown-cost reconciliation. Reservations are independently persisted so cross-day completion cannot debit a new day or release it negative. Unknown cost remains null and conservatively charges the estimate.
+- Migration: additive `20261106170000_m07_m08_provenance_and_reservations`. No live provider was called; no runtime success adapter was added.
+- Verification on final program changes with Node 24.22.2 and fresh disposable PostgreSQL: frozen install, lint, format check, typecheck, schema validation, full 11-migration deploy, 25 test files / 132 tests, build, and `git diff --check` passed. Focused script suites: 5 files / 30 tests. Direct schema diff additionally showed pre-existing baseline drift, so no clean direct-diff result is claimed.
+- M07/M08 remain `IMPLEMENTED_PENDING_REVIEW`. No merge, approval, integration, or new PR is claimed. Minu re-review is the next action.
+
+## 2026-11-06 - PR #16 B5 malformed-envelope fix-forward
+- Addressed Minu REQUEST_CHANGES `5799970498` at `545d402946253db5778998abb604388f4b13a55f`. Runtime provider envelope validation now handles null/non-object responses; `recordRequest()` uses validated provenance for optional metadata reads so absent/null/invalid metadata cannot cause a secondary recorder exception or retain a synthetic `PENDING` error.
+- Added four unit envelope cases and two real PostgreSQL persisted missing/null metadata cases. Tests assert the original envelope/provenance error and complete failed ledger fields, conservative estimate-based settlement with null actual cost, and no script write. All other B1-B4/B6 behavior remains unchanged; no schema or provider contract change was made.
+- Test-first evidence on the unfixed program: the missing/null metadata unit and persisted cases failed with `TypeError` (`reading 'cost'`); the null response case failed reading `metadata`. After the fix, focused script suites passed (5 files / 36 tests).
+- Verification on fresh PostgreSQL `reelforge_pr16_b5` with Node `24.22.2`: all 11 migrations deployed; lint, format check, typecheck, schema validation, full test suite (25 files / 138 tests), and build passed.
+- M07/M08 remain `IMPLEMENTED_PENDING_REVIEW` with `Approved commit: none`. No merge, approval, integration, live-provider invocation, or independent reviewer execution is claimed. Minu should re-review the B5 fix-forward head.

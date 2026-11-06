@@ -8,6 +8,7 @@ import { AssetModule } from "./modules/asset/asset.module.js";
 import { CharacterModule } from "./modules/character/character.module.js";
 import { ConfigModule } from "./modules/config/config.module.js";
 import { IdeaModule } from "./modules/idea/idea.module.js";
+import { ScriptModule } from "./modules/script/script.module.js";
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { IdeaModule } from "./modules/idea/idea.module.js";
     CharacterModule,
     ConfigModule,
     IdeaModule,
+    ScriptModule,
   ],
   controllers: [HealthController],
 })
