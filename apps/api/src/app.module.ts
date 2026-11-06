@@ -6,6 +6,7 @@ import { ChannelModule } from "./modules/channel/channel.module.js";
 import { GenreModule } from "./modules/genre/genre.module.js";
 import { AssetModule } from "./modules/asset/asset.module.js";
 import { CharacterModule } from "./modules/character/character.module.js";
+import { ConfigModule } from "./modules/config/config.module.js";
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { CharacterModule } from "./modules/character/character.module.js";
     GenreModule,
     AssetModule,
     CharacterModule,
+    ConfigModule,
   ],
   controllers: [HealthController],
 })

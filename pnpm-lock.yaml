@@ -205,6 +205,9 @@ importers:
       '@nestjs/platform-express':
         specifier: 12.3.3
         version: 12.3.3(@nestjs/common@12.3.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.3.3)
+      '@reelforge/config-engine':
+        specifier: workspace:*
+        version: link:../../packages/config-engine
       '@reelforge/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -217,6 +220,9 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
 
   apps/web:
     dependencies:
@@ -245,7 +251,11 @@ importers:
 
   packages/ai-providers: {}
 
-  packages/config-engine: {}
+  packages/config-engine:
+    dependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
 
   packages/contracts:
     dependencies:
