@@ -1056,6 +1056,7 @@ model RenderJob {
   scheduledAttempts    Int             @default(0) @map("scheduled_attempts")
   retryBackoffMs       Int              @default(250) @map("retry_backoff_ms")
   cancelRequestedAt    DateTime?       @map("cancel_requested_at") @db.Timestamptz(6)
+  retrySupersededAt    DateTime?       @map("retry_superseded_at") @db.Timestamptz(6)
   errorCode            String?         @map("error_code")
   errorMessage         String?         @map("error_message")
   createdByUserId      String           @map("created_by_user_id") @db.Uuid
@@ -1067,6 +1068,7 @@ model RenderJob {
   children               RenderJob[]      @relation("RenderRenders")
   createdBy             User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   artifacts              RenderArtifact[]
+  pendingObjects         RenderPendingObject[]
   expiredAt              DateTime?        @map("expired_at") @db.Timestamptz(6)
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "render_jobs_idempotency_key")
@@ -1100,4 +1102,17 @@ model RenderArtifact {
   @@index([workspaceId, renderJobId, createdAt])
   @@index([retainedUntil])
   @@map("render_artifacts")
+}
+
+model RenderPendingObject {
+  workspaceId String   @map("workspace_id") @db.Uuid
+  objectKey   String   @map("object_key")
+  renderJobId String   @map("render_job_id") @db.Uuid
+  leaseToken  String   @map("lease_token") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  renderJob   RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  @@id([workspaceId, objectKey])
+  @@index([workspaceId, renderJobId])
+  @@index([leaseToken])
+  @@map("render_pending_objects")
 }

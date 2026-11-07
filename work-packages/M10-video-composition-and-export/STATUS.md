@@ -41,13 +41,21 @@ Minu's re-review at `cc6a8a7` confirmed B2/B5 pass and reopened B1, the B3 test 
 - **B4/4 worker poll outage:** the poller catches transient poll failures, reports them through an optional `onError` (falling back to `console.error`), and continues polling instead of stopping. Tested with a rejected poll followed by successful polls.
 - **Schema alignment:** `RenderJob.parent` now uses the compound tenant relation `fields: [workspaceId, parentJobId], references: [workspaceId, id]`, matching the compound FK created by migration `20261106190000_m10_video_composition_export`.
 
+## Third re-review fix-forward (2026-11-07)
+Minu's re-review at `0ab8eb7` confirmed B1/B2/B3/B5 and the earlier B4 fixes, but identified two remaining B4 gaps: canceled parents could branch into sibling retry chains, and partial uploads could leave untracked storage objects.
+
+- **B4.1 retry-family fencing:** each retryable or canceled parent can now produce at most one retry child. The transaction atomically consumes the shared attempt budget and records `retrySupersededAt`; canceled status, cancellation timestamp, and error history remain intact. Automatic claims honor the same fence. Descendant attempts inherit the family counter. Tests cover canceled-root descendants, concurrent fresh-key retries, and overlap between manual retry and automatic claims.
+- **B4.2 upload cleanup:** every claim-specific object key is persisted before the first upload. Failed, timed-out, and partial writes retain a durable cleanup record; failed immediate deletion is logged and retried by the worker cleanup sweep after the upload deadline and grace window. Cleanup claims fence against renewed live jobs and published artifacts. Tests cover write-then-throw, deletion outage/recovery, late writes, live claims, and published-object protection.
+- **Schema:** additive migration `20261107090000_m10_retry_supersession_and_pending_objects` adds the retry-family marker and tenant-scoped pending-object ledger.
+- **Verification:** with Node `24.22.2`, pnpm `12.16.1`, isolated PostgreSQL `18.6`, and local FFmpeg/ffprobe `7.0.2`, `pnpm db:validate`, `pnpm db:migrate:deploy` (15 migrations), API typecheck/build, focused ESLint/Prettier, and all composition tests passed (4 files / 46 tests). `git diff --check` passed. The two hosted PR quality checks were green at the checked PR head `0ab8eb7`; they do not include this local fix-forward until it is pushed.
+
 ## Files changed
 - `apps/api/src/app.module.ts`, `apps/api/package.json`: module registration and workspace media dependency.
 - `apps/api/src/modules/composition/composition.controller.ts`: authenticated, workspace-member-scoped render HTTP contract.
 - `composition.types.ts`, `composition.validation.ts`: schema 1.0 request contract, pinned profile, rendition semantics, captions and bounded edition operations.
 - `composition.module.ts`: injectable engine/process and existing asset/storage wiring.
 - `composition.engine.ts`: source identity/rights/checksum validation, safe argv-only child processes, cleanup/cancellation, deterministic CUT/FADE composition, exact timestamp covers, profile/ffprobe final validation and export manifest generation.
-- `composition.service.ts`: M09 exact active-scene/output and pin validation, music/SFX authorized asset resolution, deterministic canonical create/retry identity, cancellation, bounded replace/rerender, transactional artifacts and lifecycle finalization, durable bounded retry/recovery, and retention sweeping.
+- `composition.service.ts`: M09 exact active-scene/output and pin validation, music/SFX authorized asset resolution, deterministic canonical create/retry identity, cancellation, bounded replace/rerender, transactional artifacts and lifecycle finalization, durable bounded retry/recovery, retry-family fencing, pending-upload cleanup, and retention sweeping.
 - `composition.manifest.ts`: two-phase manifest validation before publish and stored retrieval checksum/input/artifact binding.
 - `composition.integration.test.ts`: persisted lifecycle, source pin/security, edit family, cancel-before-claim and cross-instance cancellation (transient and permanent errors), manifest tamper, bounded retry/exhaustion, concurrent fresh-key retries, stale live-executor fencing, stale-claim recovery, retention crash recovery, and retention cases.
 - `apps/worker/src/handlers/composition/**`, `apps/worker/src/main.ts`, `apps/worker/tsconfig*.json`, `apps/api/package.json`: durable composition poller wiring, explicit API subpath exports, and build-time declaration resolution. The temporary `apps/api/types/*` re-export scaffolding was removed.
@@ -56,7 +64,7 @@ Minu's re-review at `cc6a8a7` confirmed B2/B5 pass and reopened B1, the B3 test 
 - `composition.engine.integration.test.ts`: real local FFmpeg CUT/FADE renders, music/SFX, captions, two exact timestamp covers, H264/AAC output, manifest SHA-256/duration, byte-identical repeated render, and 880 Hz source-audio presence with 440 Hz narration-band absence.
 - `packages/media/src/index.ts`, `packages/media/src/media.test.ts`: pinned output specification, strict numeric FFprobe parser, argument builder with no shell, timed captions/audio, canonical fingerprint and validation error classes.
 - `packages/media/package.json`, `packages/media/tsconfig*.json`, `pnpm-lock.yaml`, `vitest.config.ts`: source/test package wiring; tests excluded from distributable declarations.
-- `packages/database/prisma/schema.prisma` + `prisma/migrations/20261106190000_m10_video_composition_export/migration.sql`: additive `RenderJob` / `RenderArtifact`, links to M09 and assets, constrained fingerprints/checksums/retention and idempotency.
+- `packages/database/prisma/schema.prisma` + migrations `20261106190000_m10_video_composition_export`, `20261106220000_m10_retry_recovery_retention`, and `20261107090000_m10_retry_supersession_and_pending_objects`: additive render lifecycle, retry/recovery, and pending-upload cleanup schema.
 - `docs/PROJECT_STATE.md`, `docs/WORK_LOG.md`, `work-packages/M09-scene-media-generation/STATUS.md`: closeout of integrated M09 plus this M10 pending-review snapshot.
 
 ## Commands and evidence
@@ -93,7 +101,7 @@ No live AI, social or other external provider was called. Video test assets are 
 - There is no user UI, social export or provider generation here. No change to M11 approval/status or M13 publication behavior.
 
 ## Next exact action
-Minu re-reviews PR #18 fix-forward head for B1–B5, reproduction evidence and security/tenant boundaries, and decides whether any architecture/scope change is required before approval. Do not merge/approve from the implementation agent.
+Commit and push the reviewed B4.1/B4.2 fix-forward on the existing branch, verify both hosted quality checks on the pushed PR #18 head, and hand it back to Minu for review of the retry family, upload cleanup, and security/tenant boundaries. Do not approve or merge from the implementation agent.
 
 ## Handoff notes
 Endpoint family: `POST /workspaces/:workspaceId/composition/jobs`, `GET /jobs/:jobId`, `GET /jobs/:jobId/manifest`, and editor-only `POST /jobs/:jobId/{retry,cancel,edit}`. AuthGuard obtains sessions; existing WorkspaceService resolves membership. Scene visual/narration, cover assets, and additional music/SFX must reference published, rights-aware current-workspace assets. Raw FFmpeg exit statuses sanitized; raw command/media paths not exposed in REST error mapping. Cancellation and no-successful-artifact cleanup fail closed.

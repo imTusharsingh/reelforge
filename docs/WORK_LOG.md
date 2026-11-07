@@ -474,3 +474,19 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
 - Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
 - Next exact action: commit and push the same branch, verify both hosted CI checks on the pushed head, and hand PR #18 back to Minu.
+
+## 2026-11-07 14:10 UTC - M10 PR #18 third re-review B4 fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`, local base commit `0ab8eb7`; no commit or push made for this fix-forward.
+- Scope: Minu's latest REQUEST_CHANGES review at `0ab8eb7` identified retry-family branching from canceled parents and orphaned partial uploads after storage failures.
+- Changes made:
+  - B4.1: atomically mark a retry parent superseded while consuming the shared attempt budget; preserve canceled parent status/history; prevent automatic claims and additional manual descendants from creating sibling branches. Added descendant, concurrent-retry, and manual/automatic overlap tests.
+  - B4.2: record all claim-specific upload keys before writing bytes; retain durable cleanup records for failed/late writes; retry failed deletion through the worker sweep; report cleanup failures explicitly. Added write-then-throw, immediate-delete outage, sweep recovery, late-write, live-claim, and published-object tests.
+  - Added migration `20261107090000_m10_retry_supersession_and_pending_objects` for the retry marker and tenant-scoped cleanup ledger.
+- Files/areas changed: `apps/api/src/modules/composition/composition.service.ts`, `apps/api/src/modules/composition/composition.integration.test.ts`, `packages/database/prisma/schema.prisma`, and the additive M10 migration; M10 status, project state, and this work log.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`. `pnpm db:validate` passed. `pnpm db:migrate:deploy` passed, applying all 15 migrations to a fresh local PostgreSQL `18.6` database. `pnpm --filter @reelforge/api typecheck` passed. `pnpm --filter @reelforge/api build` passed. Focused ESLint and Prettier checks passed. `pnpm exec vitest run apps/api/src/modules/composition` passed 4 files / 46 tests with local FFmpeg/ffprobe `7.0.2`. `git diff --check` and `git diff --cached --check` passed before the documentation update; both were rerun after it.
+- External calls: no AI, social, or provider calls. The test database and media fixtures/binaries were local.
+- Tests/evidence: all 46 composition unit, HTTP, engine, and lifecycle tests passed; the new failure-path tests exercised a write that stores bytes then throws, failed cleanup deletion, and successful later recovery. The API build generated no tracked `dist` changes.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Both hosted PR #18 quality checks were green on the checked remote head `0ab8eb7` before this local fix-forward; they do not validate these unpushed changes.
+- Defects/risks/blockers: PR #18 remains in REQUEST_CHANGES until Minu re-reviews the pushed fixes. The worktree also contains pre-existing untracked `.local-tools/` FFmpeg/ffprobe binaries and a probe fixture; they are not part of the patch.
+- Next exact action: commit/push the reviewed fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.

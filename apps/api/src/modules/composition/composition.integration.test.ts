@@ -8,6 +8,7 @@ import { createDatabaseClient } from "@reelforge/database";
 import { MediaValidationError, canonicalRenderFingerprint } from "@reelforge/media";
 import { AssetService } from "../asset/asset.service.js";
 import { LocalFilesystemStorageAdapter } from "../asset/storage/local-storage.adapter.js";
+import type { StoragePutResult } from "../asset/storage/storage.port.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionEnginePort, RenderedArtifact } from "./composition.engine.js";
 import { CompositionService } from "./composition.service.js";
@@ -368,6 +369,7 @@ suite("CompositionService persisted lifecycle", () => {
     if (!db) return;
     await db.renderJob.updateMany({ where: { workspaceId }, data: { parentJobId: null } });
     await db.renderArtifact.deleteMany({ where: { workspaceId } });
+    await db.renderPendingObject.deleteMany({ where: { workspaceId } });
     await db.$executeRaw`DELETE FROM render_jobs WHERE workspace_id = ${workspaceId}::uuid`;
     await db.sceneGenerationOutput.deleteMany({ where: { workspaceId } });
     await db.sceneGeneration.deleteMany({ where: { workspaceId } });
@@ -732,6 +734,177 @@ suite("CompositionService persisted lifecycle", () => {
     );
   });
 
+  it("fences a canceled parent to one child, preserves its cancellation, and replays the same key", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const key = `b4-canceled-fence-${randomUUID()}`;
+    const request = body(key);
+    const canceledAt = new Date("2026-01-01T00:00:00.000Z");
+    const parent = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "CANCELED",
+        attempt: 0,
+        cancelRequestedAt: canceledAt,
+        errorCode: "CANCELED",
+        errorMessage: "Canceled during execution",
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const retryKey = `${key}-retry`;
+    const first = await service.retry(context, parent.id, {
+      ...request,
+      idempotencyKey: retryKey,
+    });
+    expect(first).toMatchObject({ status: "SUCCEEDED", parentJobId: parent.id, attempt: 1 });
+    const replay = await service.retry(context, parent.id, {
+      ...request,
+      idempotencyKey: retryKey,
+    });
+    expect(replay.id).toBe(first.id);
+    await db.renderJob.update({
+      where: { id: first.id },
+      data: { status: "FAILED_RETRYABLE", attempt: 1 },
+    });
+    const descendant = await service.retry(context, first.id, {
+      ...request,
+      idempotencyKey: `${key}-descendant`,
+    });
+    expect(descendant).toMatchObject({
+      status: "SUCCEEDED",
+      parentJobId: first.id,
+      attempt: 2,
+    });
+    expect(await db.renderJob.count({ where: { parentJobId: parent.id } })).toBe(1);
+    expect(await db.renderJob.count({ where: { parentJobId: first.id } })).toBe(1);
+    await expect(
+      service.retry(context, first.id, {
+        ...request,
+        idempotencyKey: `${key}-other-descendant`,
+      }),
+    ).rejects.toThrow(/already been retried/i);
+    const storedParent = await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } });
+    expect(storedParent).toMatchObject({
+      status: "CANCELED",
+      errorCode: "CANCELED",
+      errorMessage: "Canceled during execution",
+      attempt: 1,
+    });
+    expect(storedParent.cancelRequestedAt?.toISOString()).toBe(canceledAt.toISOString());
+    expect(storedParent.retrySupersededAt).not.toBeNull();
+    expect(await db.renderJob.count({ where: { parentJobId: parent.id } })).toBe(1);
+    await expect(
+      service.retry(context, parent.id, {
+        ...request,
+        idempotencyKey: `${key}-other`,
+      }),
+    ).rejects.toThrow(/already been retried/i);
+    expect(await db.renderJob.count({ where: { parentJobId: parent.id } })).toBe(1);
+    // Automatic claims honor the same fence and cannot consume another attempt.
+    const worker = new CompositionService(db as Database, engine, storage, assetReference);
+    expect(await worker.runClaim(parent.id)).toBeNull();
+    expect((await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } })).attempt).toBe(1);
+  });
+
+  it("creates one child for concurrent fresh-key retries of a canceled parent", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const key = `b4-canceled-concurrent-${randomUUID()}`;
+    const request = body(key);
+    const canceledAt = new Date("2026-02-01T00:00:00.000Z");
+    const parent = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "CANCELED",
+        attempt: 0,
+        cancelRequestedAt: canceledAt,
+        errorCode: "CANCELED",
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 4 }, (_, index) =>
+        service.retry(context, parent.id, {
+          ...request,
+          idempotencyKey: `${key}-retry-${index}`,
+        }),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const children = await db.renderJob.findMany({ where: { parentJobId: parent.id } });
+    expect(children).toHaveLength(1);
+    expect(children[0]).toMatchObject({ attempt: 1, status: "SUCCEEDED" });
+    const storedParent = await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } });
+    expect(storedParent).toMatchObject({
+      status: "CANCELED",
+      errorCode: "CANCELED",
+      attempt: 1,
+    });
+    expect(storedParent.cancelRequestedAt?.toISOString()).toBe(canceledAt.toISOString());
+  });
+
+  it("serializes an automatic claim against a manual retry of the same family member", async () => {
+    if (!db || !service) return;
+    const key = `b4-manual-auto-overlap-${randomUUID()}`;
+    const request = body(key);
+    const parent = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-parent`,
+        status: "FAILED_RETRYABLE",
+        attempt: 1,
+        nextAttemptAt: new Date(Date.now() - 1000),
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    let executions = 0;
+    const countedEngine: CompositionEnginePort = {
+      execute: async (_context, id, input) => {
+        executions++;
+        return validArtifacts(input, id);
+      },
+    };
+    const manual = new CompositionService(db as Database, countedEngine, storage, assetReference);
+    const worker = new CompositionService(db as Database, countedEngine, storage, assetReference);
+    const outcomes = await Promise.allSettled([
+      manual.retry(context, parent.id, {
+        ...request,
+        idempotencyKey: `${key}-manual`,
+      }),
+      worker.runClaim(parent.id),
+    ]);
+    const storedParent = await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } });
+    const children = await db.renderJob.findMany({ where: { parentJobId: parent.id } });
+    expect(executions).toBe(1);
+    expect(children.length).toBeLessThanOrEqual(1);
+    if (children.length === 1) {
+      expect(storedParent).toMatchObject({
+        status: "FAILED_FINAL",
+        errorCode: "RETRY_SUPERSEDED",
+      });
+      expect(storedParent.retrySupersededAt).not.toBeNull();
+      expect(children[0]).toMatchObject({ status: "SUCCEEDED", attempt: 2 });
+      expect(outcomes[0]?.status).toBe("fulfilled");
+    } else {
+      expect(storedParent.status).toBe("SUCCEEDED");
+      expect(outcomes[0]?.status).toBe("rejected");
+      expect(outcomes[1]?.status).toBe("fulfilled");
+    }
+  });
+
   it("recovers a stale running job left during execution and publishes exactly once", async () => {
     if (!db || !service) return;
     fail = false;
@@ -1048,6 +1221,312 @@ suite("CompositionService persisted lifecycle", () => {
     expect(stored.equals(staleBody)).toBe(false);
     expect(createHash("sha256").update(stored).digest("hex")).toBe(videoArtifact.checksumSha256);
     expect((await service.getManifest(context, job.id)).jobId).toBe(job.id);
+  });
+
+  it("records every planned key before upload and cleans a write-then-throw orphan", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const request = body(`b4-write-then-throw-${randomUUID()}`);
+    const originalPut = storage.putObject.bind(storage);
+    const originalDelete = storage.deleteObject.bind(storage);
+    let plannedAtFirstUpload = -1;
+    let thrownKey = "";
+    let deleteFailed = false;
+    storage.putObject = async (input): Promise<StoragePutResult> => {
+      if (plannedAtFirstUpload < 0) {
+        const job = await db!.renderJob.findUniqueOrThrow({
+          where: {
+            workspaceId_idempotencyKey: {
+              workspaceId,
+              idempotencyKey: request.idempotencyKey,
+            },
+          },
+        });
+        plannedAtFirstUpload = await db!.renderPendingObject.count({
+          where: { workspaceId, renderJobId: job.id },
+        });
+      }
+      if (input.objectKey.endsWith("final.mp4")) {
+        thrownKey = input.objectKey;
+        await originalPut(input);
+        throw new Error("upload wrote bytes but the response was lost");
+      }
+      return originalPut(input);
+    };
+    storage.deleteObject = async (input): Promise<void> => {
+      if (input.objectKey === thrownKey && !deleteFailed) {
+        deleteFailed = true;
+        throw new Error("storage deletion failed during upload cleanup");
+      }
+      return originalDelete(input);
+    };
+    try {
+      await expect(service.create(context, request)).rejects.toThrow(
+        /no successful export|response was lost/i,
+      );
+    } finally {
+      storage.putObject = originalPut;
+      storage.deleteObject = originalDelete;
+    }
+    const job = await db.renderJob.findUniqueOrThrow({
+      where: {
+        workspaceId_idempotencyKey: {
+          workspaceId,
+          idempotencyKey: request.idempotencyKey,
+        },
+      },
+    });
+    expect(plannedAtFirstUpload).toBe(3);
+    expect(thrownKey).not.toBe("");
+    expect(deleteFailed).toBe(true);
+    const rows = await db.renderPendingObject.findMany({ where: { renderJobId: job.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.objectKey).toBe(thrownKey);
+    // The write completed despite its error and the immediate delete failed.
+    // The ledger row must retain it for the later cleanup pass.
+    await expect(storage.getObject({ workspaceId, objectKey: thrownKey })).resolves.toBeDefined();
+    const early = new CompositionService(db as Database, engine, storage, assetReference);
+    await early.cleanupPendingObjects();
+    expect(await db.renderPendingObject.count({ where: { renderJobId: job.id } })).toBe(1);
+    const advanced = new CompositionService(db as Database, engine, storage, assetReference, {
+      now: (): Date => new Date(Date.now() + 21 * 60 * 1000),
+    });
+    await advanced.cleanupPendingObjects();
+    expect(await db.renderPendingObject.count({ where: { renderJobId: job.id } })).toBe(0);
+    await expect(storage.getObject({ workspaceId, objectKey: thrownKey })).rejects.toThrow();
+  });
+
+  it("retains a cleanup record until a late upload can no longer race the sweep", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const request = body(`b4-late-upload-${randomUUID()}`);
+    const originalPut = storage.putObject.bind(storage);
+    // Stay ahead of the database clock so the fresh job is immediately claimable.
+    let clock = Date.now() + 60_000;
+    let lateKey = "";
+    let releaseLate = (): void => {};
+    const lateGate = new Promise<void>((resolve) => {
+      releaseLate = resolve;
+    });
+    let started = (): void => {};
+    const startedWriting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let lateWritten = (): void => {};
+    const lateWriteLanded = new Promise<void>((resolve) => {
+      lateWritten = resolve;
+    });
+    storage.putObject = async (input): Promise<StoragePutResult> => {
+      if (input.objectKey.endsWith("final.mp4")) {
+        lateKey = input.objectKey;
+        started();
+        await lateGate;
+        await originalPut(input);
+        lateWritten();
+        throw new Error("late write finished after the upload deadline");
+      }
+      return originalPut(input);
+    };
+    const bounded = new CompositionService(db as Database, engine, storage, assetReference, {
+      now: (): Date => new Date(clock),
+      uploadDeadlineMs: 30,
+      pendingObjectGraceMs: 50,
+    });
+    try {
+      const rendering = bounded.create(context, request);
+      await startedWriting;
+      await expect(rendering).rejects.toThrow(/deadline|no successful export/i);
+      const job = await db.renderJob.findUniqueOrThrow({
+        where: {
+          workspaceId_idempotencyKey: {
+            workspaceId,
+            idempotencyKey: request.idempotencyKey,
+          },
+        },
+      });
+      const row = await db.renderPendingObject.findFirst({
+        where: { renderJobId: job.id, objectKey: lateKey },
+      });
+      expect(row).not.toBeNull();
+      // The grace window has not elapsed, so the sweep must keep the record.
+      expect(await bounded.cleanupPendingObjects()).toBe(0);
+      expect(
+        await db.renderPendingObject.count({
+          where: { renderJobId: job.id, objectKey: lateKey },
+        }),
+      ).toBe(1);
+      // The old writer now completes after the executor already cleaned up.
+      releaseLate();
+      await lateWriteLanded;
+      await expect(storage.getObject({ workspaceId, objectKey: lateKey })).resolves.toBeDefined();
+      // Only after the upload deadline plus grace is the late write impossible.
+      clock += 30 + 50 + 1;
+      expect(await bounded.cleanupPendingObjects()).toBe(1);
+      await expect(storage.getObject({ workspaceId, objectKey: lateKey })).rejects.toThrow();
+      expect(
+        await db.renderPendingObject.count({
+          where: { renderJobId: job.id, objectKey: lateKey },
+        }),
+      ).toBe(0);
+    } finally {
+      releaseLate();
+      storage.putObject = originalPut;
+    }
+  });
+
+  it("keeps a pending cleanup record across a storage deletion outage", async () => {
+    if (!db || !service) return;
+    const key = `b4-cleanup-outage-${randomUUID()}`;
+    const request = body(key);
+    const job = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: key,
+        status: "FAILED_RETRYABLE",
+        attempt: 1,
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const objectKey = `render/${job.id}/orphan/final.mp4`;
+    await storage.putObject({
+      workspaceId,
+      objectKey,
+      body: Buffer.from("orphaned render bytes"),
+      contentType: "video/mp4",
+    });
+    await db.renderPendingObject.create({
+      data: {
+        workspaceId,
+        objectKey,
+        renderJobId: job.id,
+        leaseToken: randomUUID(),
+        createdAt: new Date(Date.now() - 25 * 60 * 1000),
+      },
+    });
+    const originalDelete = storage.deleteObject.bind(storage);
+    storage.deleteObject = async (): Promise<void> => {
+      throw new Error("simulated storage deletion outage");
+    };
+    try {
+      expect(await service.cleanupPendingObjects()).toBe(0);
+      expect(await db.renderPendingObject.count({ where: { workspaceId, objectKey } })).toBe(1);
+      await expect(storage.getObject({ workspaceId, objectKey })).resolves.toBeDefined();
+    } finally {
+      storage.deleteObject = originalDelete;
+    }
+    expect(await service.cleanupPendingObjects()).toBe(1);
+    expect(await db.renderPendingObject.count({ where: { workspaceId, objectKey } })).toBe(0);
+    await expect(storage.getObject({ workspaceId, objectKey })).rejects.toThrow();
+  });
+
+  it("never deletes a renewed live claim while sweeping pending objects", async () => {
+    if (!db || !service) return;
+    const key = `b4-live-cleanup-${randomUUID()}`;
+    const leaseToken = randomUUID();
+    const request = body(key);
+    const live = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "RUNNING",
+        attempt: 1,
+        leaseToken,
+        leaseExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        nextAttemptAt: new Date(Date.now() - 1000),
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const objectKey = `render/${live.id}/${leaseToken}/final.mp4`;
+    await storage.putObject({
+      workspaceId,
+      objectKey,
+      body: Buffer.from("live claim bytes"),
+      contentType: "video/mp4",
+    });
+    await db.renderPendingObject.create({
+      data: {
+        workspaceId,
+        objectKey,
+        renderJobId: live.id,
+        leaseToken,
+        createdAt: new Date(Date.now() - 25 * 60 * 1000),
+      },
+    });
+    await service.cleanupPendingObjects();
+    expect(await db.renderPendingObject.count({ where: { workspaceId, objectKey } })).toBe(1);
+    await expect(storage.getObject({ workspaceId, objectKey })).resolves.toBeDefined();
+    await db.renderJob.update({
+      where: { id: live.id },
+      data: { leaseExpiresAt: new Date(Date.now() - 1000) },
+    });
+    await service.cleanupPendingObjects();
+    expect(await db.renderPendingObject.count({ where: { workspaceId, objectKey } })).toBe(0);
+    await expect(storage.getObject({ workspaceId, objectKey })).rejects.toThrow();
+  });
+
+  it("never deletes a published artifact referenced by a stale cleanup record", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const created = await service.create(context, body(`b4-published-cleanup-${randomUUID()}`));
+    const video = created.artifacts.find((artifact) => artifact.kind === "VIDEO")!;
+    await db.renderPendingObject.create({
+      data: {
+        workspaceId,
+        objectKey: video.objectKey,
+        renderJobId: created.id,
+        leaseToken: randomUUID(),
+        createdAt: new Date(Date.now() - 25 * 60 * 1000),
+      },
+    });
+    await service.cleanupPendingObjects();
+    expect(
+      await db.renderPendingObject.count({ where: { workspaceId, objectKey: video.objectKey } }),
+    ).toBe(0);
+    await expect(
+      storage.getObject({ workspaceId, objectKey: video.objectKey }),
+    ).resolves.toBeDefined();
+    expect((await service.get(context, created.id)).status).toBe("SUCCEEDED");
+  });
+
+  it("restricts render job deletion while a pending cleanup record exists", async () => {
+    if (!db || !service) return;
+    const key = `b4-delete-safety-${randomUUID()}`;
+    const request = body(key);
+    const job = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "FAILED_RETRYABLE",
+        attempt: 1,
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const objectKey = `render/${job.id}/pending/orphan.mp4`;
+    await db.renderPendingObject.create({
+      data: {
+        workspaceId,
+        objectKey,
+        renderJobId: job.id,
+        leaseToken: randomUUID(),
+        createdAt: new Date(Date.now() - 25 * 60 * 1000),
+      },
+    });
+    await expect(db.renderJob.delete({ where: { id: job.id } })).rejects.toThrow();
+    await service.cleanupPendingObjects();
+    expect(await db.renderPendingObject.count({ where: { workspaceId, objectKey } })).toBe(0);
+    await db.renderJob.delete({ where: { id: job.id } });
   });
 
   it("deletes expired video covers and manifest bytes then denies subsequent access", async () => {

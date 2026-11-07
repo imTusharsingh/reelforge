@@ -15,7 +15,12 @@ import type { RenderManifest } from "./composition.manifest.js";
 
 import { canonicalRenderFingerprint, MediaValidationError } from "@reelforge/media";
 import { createHash } from "node:crypto";
-import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
+import {
+  STORAGE_PORT,
+  type StoragePort,
+  type StoragePutInput,
+  type StoragePutResult,
+} from "../asset/storage/storage.port.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionEnginePort } from "./composition.engine.js";
 import { AssetService } from "../asset/asset.service.js";
@@ -37,13 +42,22 @@ import {
   validateComposition,
 } from "./composition.validation.js";
 
-export type CompositionClock = { readonly now: () => Date };
+export type CompositionClock = {
+  readonly now: () => Date;
+  readonly pendingObjectGraceMs?: number;
+  readonly uploadDeadlineMs?: number;
+};
 export const COMPOSITION_CLOCK = "COMPOSITION_CLOCK";
+const DEFAULT_PENDING_OBJECT_GRACE_MS = 15 * 60 * 1000;
+const DEFAULT_UPLOAD_DEADLINE_MS = 5 * 60 * 1000;
+const CLEANUP_LEASE_MS = 60 * 1000;
 
 @Injectable()
 export class CompositionService {
   private readonly active = new Map<string, AbortController>();
   private readonly now: () => Date;
+  private readonly pendingObjectGraceMs: number;
+  private readonly uploadDeadlineMs: number;
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
     @Inject(COMPOSITION_ENGINE) private readonly engine: CompositionEnginePort,
@@ -56,6 +70,8 @@ export class CompositionService {
     },
   ) {
     this.now = options.now;
+    this.pendingObjectGraceMs = options.pendingObjectGraceMs ?? DEFAULT_PENDING_OBJECT_GRACE_MS;
+    this.uploadDeadlineMs = options.uploadDeadlineMs ?? DEFAULT_UPLOAD_DEADLINE_MS;
   }
   public async create(context: WorkspaceContext, body: unknown): Promise<RenderJobView> {
     this.editor(context);
@@ -173,6 +189,10 @@ export class CompositionService {
           id,
         ),
       );
+    if (job.retrySupersededAt !== null)
+      throw new ConflictException(
+        "This render has already been retried; continue from the child render",
+      );
     if (!["FAILED_RETRYABLE", "CANCELED"].includes(job.status))
       throw new ConflictException("Only a failed retryable or canceled render can be retried");
     if (job.attempt >= job.maxRetries)
@@ -184,21 +204,38 @@ export class CompositionService {
       await this.db.$transaction(async (tx) => {
         const parent = await tx.renderJob.findUnique({
           where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-          select: { status: true, attempt: true, maxRetries: true },
+          select: {
+            status: true,
+            attempt: true,
+            maxRetries: true,
+            retrySupersededAt: true,
+          },
         });
-        if (!parent || !["FAILED_RETRYABLE", "CANCELED"].includes(parent.status))
+        if (!parent) throw new ConflictException("The parent render is no longer retryable");
+        if (parent.retrySupersededAt !== null)
+          throw new ConflictException(
+            "This render has already been retried; continue from the child render",
+          );
+        if (!["FAILED_RETRYABLE", "CANCELED"].includes(parent.status))
           throw new ConflictException("The parent render is no longer retryable");
         if (parent.attempt >= parent.maxRetries)
           throw new ConflictException(
             "The render retry limit has been exhausted; start a new render",
           );
-        // Atomically consume the shared retry budget. A retryable parent is
-        // superseded so the worker cannot also auto-retry it; a canceled parent
-        // stays canceled but still consumes one attempt from the same budget.
+        // Atomically claim the single retry child and consume one attempt from
+        // the family budget. The supersession marker fences both further manual
+        // retries and automatic worker claims. A canceled parent keeps its
+        // status, cancellation timestamp and error code; only the fence changes.
         const consumed = await tx.renderJob.updateMany({
-          where: { id, status: parent.status, attempt: parent.attempt },
+          where: {
+            id,
+            status: parent.status,
+            attempt: parent.attempt,
+            retrySupersededAt: null,
+          },
           data: {
             attempt: { increment: 1 },
+            retrySupersededAt: this.now(),
             ...(parent.status === "FAILED_RETRYABLE"
               ? {
                   status: "FAILED_FINAL",
@@ -228,17 +265,29 @@ export class CompositionService {
         });
       });
     } catch (error) {
-      if (isUnique(error))
-        return this.present(
-          context,
-          await this.existingId(
-            context.workspaceId,
-            request.idempotencyKey,
-            fingerprint,
-            request.retentionDays,
-            id,
-          ),
-        );
+      // A concurrent replay of the same idempotency key may lose the child
+      // insert race. Return that existing child instead of surfacing the
+      // supersession conflict, and never consume another attempt.
+      const raced = await this.db.renderJob.findUnique({
+        where: {
+          workspaceId_idempotencyKey: {
+            workspaceId: context.workspaceId,
+            idempotencyKey: request.idempotencyKey,
+          },
+        },
+        select: { id: true, inputFingerprint: true, retentionDays: true, parentJobId: true },
+      });
+      if (raced) {
+        if (
+          raced.inputFingerprint !== fingerprint ||
+          raced.retentionDays !== request.retentionDays ||
+          raced.parentJobId !== id
+        )
+          throw new ConflictException(
+            "The same idempotency key requires identical render input and retention for the same workflow",
+          );
+        return this.present(context, raced.id);
+      }
       throw error;
     }
     const claimed = await this.claim(childId, 15 * 60 * 1000, false);
@@ -294,12 +343,14 @@ export class CompositionService {
         status: true,
         attempt: true,
         maxRetries: true,
+        retrySupersededAt: true,
         leaseToken: true,
         leaseExpiresAt: true,
         nextAttemptAt: true,
       },
     });
     if (!candidate) return null;
+    if (candidate.retrySupersededAt !== null) return null;
     const now = this.now();
     const leaseExpired =
       candidate.leaseToken === null ||
@@ -367,6 +418,7 @@ export class CompositionService {
             id: jobId,
             status: "QUEUED",
             cancelRequestedAt: null,
+            retrySupersededAt: null,
             nextAttemptAt: { lte: now },
             attempt: { lte: maxRetries },
             OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
@@ -389,6 +441,7 @@ export class CompositionService {
                   id: jobId,
                   status: { in: ["FAILED_RETRYABLE", "RUNNING"] },
                   cancelRequestedAt: null,
+                  retrySupersededAt: null,
                   attempt: { lt: maxRetries },
                   OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
                 },
@@ -464,17 +517,22 @@ export class CompositionService {
   public async runScheduled(
     batch = 10,
     jobId?: string,
-  ): Promise<{ claimed: number; retained: number }> {
+  ): Promise<{ claimed: number; retained: number; cleaned: number }> {
     const jobs = await this.db.renderJob.findMany({
       where: {
         expiredAt: null,
         OR: [
           {
             status: { in: ["QUEUED", "FAILED_RETRYABLE"] },
+            retrySupersededAt: null,
             nextAttemptAt: { lte: this.now() },
             OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }],
           },
-          { status: "RUNNING", OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }] },
+          {
+            status: "RUNNING",
+            retrySupersededAt: null,
+            OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }],
+          },
         ],
         ...(jobId === undefined ? {} : { id: jobId }),
       },
@@ -487,7 +545,106 @@ export class CompositionService {
       const view = await this.runClaim(job.id);
       if (view) claimed++;
     }
-    return { claimed, retained: await this.expireRetainedOutputs(batch) };
+    return {
+      claimed,
+      retained: await this.expireRetainedOutputs(batch),
+      cleaned: await this.cleanupPendingObjects(batch),
+    };
+  }
+
+  // Removes planned upload keys whose writing lease can no longer produce a
+  // late object. Cleanup ownership is serialized against publication by
+  // replacing the job's lease token; a renewed live claim is never touched.
+  public async cleanupPendingObjects(batch = 100): Promise<number> {
+    const cutoff = new Date(
+      this.now().getTime() - this.uploadDeadlineMs - this.pendingObjectGraceMs,
+    );
+    const candidates = await this.db.renderPendingObject.findMany({
+      where: { createdAt: { lte: cutoff } },
+      orderBy: { createdAt: "asc" },
+      take: batch,
+    });
+    const byJob = new Map<string, typeof candidates>();
+    for (const row of candidates) {
+      const rows = byJob.get(row.renderJobId) ?? [];
+      rows.push(row);
+      byJob.set(row.renderJobId, rows);
+    }
+    let removed = 0;
+    for (const [jobId, rows] of byJob) {
+      const job = await this.db.renderJob.findUnique({
+        where: { id: jobId },
+        select: { workspaceId: true, status: true },
+      });
+      if (!job) continue;
+      if (job.status === "SUCCEEDED") {
+        // Publication is terminal, so no upload can win now. Still never delete
+        // an object that a committed artifact references.
+        for (const row of rows) {
+          const published = await this.db.renderArtifact.findFirst({
+            where: { workspaceId: row.workspaceId, objectKey: row.objectKey },
+            select: { id: true },
+          });
+          if (!published) {
+            try {
+              await this.storage.deleteObject({
+                workspaceId: row.workspaceId,
+                objectKey: row.objectKey,
+              });
+            } catch (error) {
+              console.error("Failed to delete an orphaned render object; cleanup will retry", {
+                jobId,
+                objectKey: row.objectKey,
+                error,
+              });
+              continue;
+            }
+          }
+          await this.db.renderPendingObject.deleteMany({
+            where: { workspaceId: row.workspaceId, objectKey: row.objectKey },
+          });
+          removed++;
+        }
+        continue;
+      }
+      const cleanupToken = randomUUID();
+      const acquired = await this.db.renderJob.updateMany({
+        where: {
+          id: jobId,
+          status: { not: "SUCCEEDED" },
+          OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }],
+        },
+        data: {
+          leaseToken: cleanupToken,
+          leaseExpiresAt: new Date(this.now().getTime() + CLEANUP_LEASE_MS),
+        },
+      });
+      // A live renewed claim owns its uploads and publication; skip it.
+      if (acquired.count !== 1) continue;
+      for (const row of rows) {
+        try {
+          await this.storage.deleteObject({
+            workspaceId: row.workspaceId,
+            objectKey: row.objectKey,
+          });
+          await this.db.renderPendingObject.deleteMany({
+            where: { workspaceId: row.workspaceId, objectKey: row.objectKey },
+          });
+          removed++;
+        } catch (error) {
+          console.error("Failed to delete a pending render object; cleanup will retry", {
+            jobId,
+            objectKey: row.objectKey,
+            error,
+          });
+        }
+      }
+      await this.db.renderJob.updateMany({
+        where: { id: jobId, leaseToken: cleanupToken, status: { not: "SUCCEEDED" } },
+        data: { leaseToken: null, leaseExpiresAt: null },
+      });
+    }
+    return removed;
   }
 
   public async expireRetainedOutputs(batch = 100): Promise<number> {
@@ -565,6 +722,7 @@ export class CompositionService {
             id: jobId,
             status: { in: ["QUEUED", "RUNNING", "FAILED_RETRYABLE"] },
             cancelRequestedAt: null,
+            retrySupersededAt: null,
             nextAttemptAt: { lte: now },
             ...(scheduled ? { scheduledAttempts: { lte: 3 } } : {}),
             OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
@@ -689,6 +847,7 @@ export class CompositionService {
     };
     const controller = new AbortController();
     const outputKeys: string[] = [];
+    const uploadStates = new Map<string, "PLANNED" | "STORED" | "FAILED">();
     let committed = false;
     this.active.set(jobId, controller);
     const heartbeat = setInterval(
@@ -742,6 +901,7 @@ export class CompositionService {
         // artifacts published by the worker that recovered its expired lease.
         const objectKey = `render/${jobId}/${leaseToken}/${artifact.filename}`;
         outputKeys.push(objectKey);
+        uploadStates.set(objectKey, "PLANNED");
         insertResults.push({
           kind: artifact.kind,
           id: assetId,
@@ -749,6 +909,18 @@ export class CompositionService {
           objectKey,
         });
       }
+      // Record every planned key before the first byte is written. Even an
+      // upload that writes and then throws remains discoverable for cleanup.
+      await this.db.renderPendingObject.createMany({
+        data: outputKeys.map((objectKey) => ({
+          workspaceId: context.workspaceId,
+          objectKey,
+          renderJobId: jobId,
+          leaseToken,
+          createdAt: this.now(),
+        })),
+        skipDuplicates: true,
+      });
       const videoResult = insertResults.find((item) => item.kind === "VIDEO")!;
       const covers = insertResults.filter((item) => item.kind === "COVER");
       const manifestParsed = validateEngineManifest(
@@ -782,157 +954,160 @@ export class CompositionService {
       }));
       for (const { result, artifact } of artifactByKind) {
         const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
-        const verification = await this.storage.putObject({
-          workspaceId: context.workspaceId,
-          objectKey: result.objectKey,
-          body,
-          contentType: artifact.mediaType,
+        let verification: StoragePutResult;
+        try {
+          verification = await this.putObjectBounded({
+            workspaceId: context.workspaceId,
+            objectKey: result.objectKey,
+            body,
+            contentType: artifact.mediaType,
+          });
+        } catch (error) {
+          uploadStates.set(result.objectKey, "FAILED");
+          throw error;
+        }
+        uploadStates.set(result.objectKey, "STORED");
+        if (verification.checksumSha256 !== checksum(body) || verification.byteSize !== body.length)
+          throw new Error("Stored render checksum or size mismatch");
+      }
+      await this.db.$transaction(async (tx) => {
+        const current = await tx.renderJob.findUnique({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+          select: {
+            cancelRequestedAt: true,
+            status: true,
+            leaseToken: true,
+            leaseExpiresAt: true,
+          },
         });
         if (
-          verification.checksumSha256 !== checksum(body) ||
-          verification.byteSize !== body.length
-        ) {
-          for (const cleanup of artifactByKind)
-            await this.storage
-              .deleteObject({
-                workspaceId: context.workspaceId,
-                objectKey: cleanup.result.objectKey,
-              })
-              .catch(() => undefined);
-          throw new Error("Stored render checksum or size mismatch");
-        }
-      }
-      try {
-        await this.db.$transaction(async (tx) => {
-          const current = await tx.renderJob.findUnique({
-            where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-            select: { cancelRequestedAt: true, status: true, leaseToken: true },
-          });
-          if (
-            !current ||
-            current.cancelRequestedAt !== null ||
-            current.status !== "RUNNING" ||
-            current.leaseToken !== leaseToken ||
-            controller.signal.aborted
-          )
-            throw canceled();
-          for (const { result, artifact } of artifactByKind) {
-            const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
-            await tx.asset.create({
-              data: {
-                id: result.id,
-                workspaceId: context.workspaceId,
-                objectKey: result.objectKey,
-                mediaType: artifact.mediaType,
-                filename: artifact.filename,
-                byteSize: body.length,
-                checksumSha256: checksum(body),
-                version: 1,
-                rootAssetId: result.assetId,
-                ownership: "SYSTEM_GENERATED",
-                status: "PUBLISHED",
-                licenseType: "generated",
-                licenseTerms: "Generated composition output for this workspace",
-                rightsHolder: "ReelForge",
-                rightsAttestedAt: new Date(),
-                createdByUserId: context.userId,
-              },
-            });
-            await tx.renderArtifact.create({
-              data: {
-                id: result.id,
-                workspaceId: context.workspaceId,
-                renderJobId: jobId,
-                kind: result.kind,
-                assetId: result.id,
-                assetVersion: 1,
-                objectKey: result.objectKey,
-                mediaType: artifact.mediaType,
-                byteSize: body.length,
-                checksumSha256: checksum(body),
-                metadata:
-                  artifact.kind === "VIDEO"
-                    ? { durationMs: artifact.durationMs, outputProfile: input.profile }
-                    : artifact.selectedFrame
-                      ? { selectedFrame: artifact.selectedFrame }
-                      : Prisma.JsonNull,
-                retainedUntil,
-              },
-            });
-            await tx.assetUsageReference.create({
-              data: {
-                workspaceId: context.workspaceId,
-                assetId: result.id,
-                assetVersion: 1,
-                usedByType: "render_artifact",
-                usedById: result.id,
-                context: { jobId, kind: result.kind },
-              },
-            });
-          }
-          for (const scene of input.scenes) {
-            await tx.assetUsageReference.create({
-              data: {
-                workspaceId: context.workspaceId,
-                assetId: scene.assetId,
-                assetVersion: scene.assetVersion,
-                usedByType: "render_input",
-                usedById: jobId,
-                context: { sceneId: scene.sceneId, kind: "VISUAL" },
-              },
-            });
-            if (scene.narrationAssetId && scene.narrationAssetVersion)
-              await tx.assetUsageReference.create({
-                data: {
-                  workspaceId: context.workspaceId,
-                  assetId: scene.narrationAssetId,
-                  assetVersion: scene.narrationAssetVersion,
-                  usedByType: "render_input",
-                  usedById: jobId,
-                  context: { sceneId: scene.sceneId, kind: "NARRATION" },
-                },
-              });
-          }
-          for (const audio of input.audio)
-            await tx.assetUsageReference.create({
-              data: {
-                workspaceId: context.workspaceId,
-                assetId: audio.assetId,
-                assetVersion: audio.assetVersion,
-                usedByType: "render_input",
-                usedById: jobId,
-                context: { kind: audio.kind },
-              },
-            });
-          const published = await tx.renderJob.updateMany({
-            where: {
-              id: jobId,
-              leaseToken,
-              status: "RUNNING",
-              cancelRequestedAt: null,
-            },
+          !current ||
+          current.cancelRequestedAt !== null ||
+          current.status !== "RUNNING" ||
+          current.leaseToken !== leaseToken ||
+          current.leaseExpiresAt === null ||
+          current.leaseExpiresAt <= this.now() ||
+          controller.signal.aborted
+        )
+          throw canceled();
+        for (const { result, artifact } of artifactByKind) {
+          const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
+          await tx.asset.create({
             data: {
-              status: "SUCCEEDED",
-              errorCode: null,
-              errorMessage: null,
-              leaseToken: null,
-              leaseExpiresAt: null,
+              id: result.id,
+              workspaceId: context.workspaceId,
+              objectKey: result.objectKey,
+              mediaType: artifact.mediaType,
+              filename: artifact.filename,
+              byteSize: body.length,
+              checksumSha256: checksum(body),
+              version: 1,
+              rootAssetId: result.assetId,
+              ownership: "SYSTEM_GENERATED",
+              status: "PUBLISHED",
+              licenseType: "generated",
+              licenseTerms: "Generated composition output for this workspace",
+              rightsHolder: "ReelForge",
+              rightsAttestedAt: new Date(),
+              createdByUserId: context.userId,
             },
           });
-          if (published.count !== 1) throw canceled();
+          await tx.renderArtifact.create({
+            data: {
+              id: result.id,
+              workspaceId: context.workspaceId,
+              renderJobId: jobId,
+              kind: result.kind,
+              assetId: result.id,
+              assetVersion: 1,
+              objectKey: result.objectKey,
+              mediaType: artifact.mediaType,
+              byteSize: body.length,
+              checksumSha256: checksum(body),
+              metadata:
+                artifact.kind === "VIDEO"
+                  ? { durationMs: artifact.durationMs, outputProfile: input.profile }
+                  : artifact.selectedFrame
+                    ? { selectedFrame: artifact.selectedFrame }
+                    : Prisma.JsonNull,
+              retainedUntil,
+            },
+          });
+          await tx.assetUsageReference.create({
+            data: {
+              workspaceId: context.workspaceId,
+              assetId: result.id,
+              assetVersion: 1,
+              usedByType: "render_artifact",
+              usedById: result.id,
+              context: { jobId, kind: result.kind },
+            },
+          });
+        }
+        for (const scene of input.scenes) {
+          await tx.assetUsageReference.create({
+            data: {
+              workspaceId: context.workspaceId,
+              assetId: scene.assetId,
+              assetVersion: scene.assetVersion,
+              usedByType: "render_input",
+              usedById: jobId,
+              context: { sceneId: scene.sceneId, kind: "VISUAL" },
+            },
+          });
+          if (scene.narrationAssetId && scene.narrationAssetVersion)
+            await tx.assetUsageReference.create({
+              data: {
+                workspaceId: context.workspaceId,
+                assetId: scene.narrationAssetId,
+                assetVersion: scene.narrationAssetVersion,
+                usedByType: "render_input",
+                usedById: jobId,
+                context: { sceneId: scene.sceneId, kind: "NARRATION" },
+              },
+            });
+        }
+        for (const audio of input.audio)
+          await tx.assetUsageReference.create({
+            data: {
+              workspaceId: context.workspaceId,
+              assetId: audio.assetId,
+              assetVersion: audio.assetVersion,
+              usedByType: "render_input",
+              usedById: jobId,
+              context: { kind: audio.kind },
+            },
+          });
+        // Publication owns the planned keys from here on. Removing the
+        // ledger rows in this transaction makes cleanup unable to delete a
+        // published object.
+        await tx.renderPendingObject.deleteMany({
+          where: {
+            workspaceId: context.workspaceId,
+            renderJobId: jobId,
+            objectKey: { in: outputKeys },
+          },
         });
-        committed = true;
-        return this.present(context, jobId);
-      } finally {
-        if (!committed)
-          await Promise.all(
-            outputKeys.map((objectKey) =>
-              this.storage
-                .deleteObject({ workspaceId: context.workspaceId, objectKey })
-                .catch(() => undefined),
-            ),
-          );
-      }
+        const published = await tx.renderJob.updateMany({
+          where: {
+            id: jobId,
+            leaseToken,
+            status: "RUNNING",
+            cancelRequestedAt: null,
+            leaseExpiresAt: { gt: this.now() },
+          },
+          data: {
+            status: "SUCCEEDED",
+            errorCode: null,
+            errorMessage: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        if (published.count !== 1) throw canceled();
+      });
+      committed = true;
+      return this.present(context, jobId);
     } catch (error) {
       const persisted = await this.db.renderJob.findUnique({
         where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
@@ -984,8 +1159,76 @@ export class CompositionService {
     } finally {
       clearInterval(heartbeat);
       this.active.delete(jobId);
+      // Covers failures during the upload loop as well as the publish
+      // transaction, including a write that throws before returning metadata.
+      if (!committed) await this.cleanupUploads(context, jobId, outputKeys, uploadStates);
     }
   }
+  // Bounds the time the executor waits for one upload. The underlying write
+  // may still settle late; that is why the durable ledger row is retained until
+  // the upload deadline plus the grace window has elapsed.
+  private async putObjectBounded(input: StoragePutInput): Promise<StoragePutResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.storage.putObject(input),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new ServiceUnavailableException("Render upload exceeded its planned deadline"),
+              ),
+            Math.max(1, this.uploadDeadlineMs),
+          );
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async cleanupUploads(
+    context: WorkspaceContext,
+    jobId: string,
+    outputKeys: readonly string[],
+    uploadStates: ReadonlyMap<string, "PLANNED" | "STORED" | "FAILED">,
+  ): Promise<void> {
+    const removable: string[] = [];
+    await Promise.all(
+      outputKeys.map(async (objectKey) => {
+        try {
+          await this.storage.deleteObject({ workspaceId: context.workspaceId, objectKey });
+          // A failed or timed-out write may still land late. Retain its ledger
+          // row so the grace-period sweep can discover and delete it.
+          if (uploadStates.get(objectKey) !== "FAILED") removable.push(objectKey);
+        } catch (error) {
+          console.error("Failed to delete a render upload; durable cleanup will retry", {
+            jobId,
+            objectKey,
+            error,
+          });
+        }
+      }),
+    );
+    if (removable.length > 0)
+      await this.db.renderPendingObject
+        .deleteMany({
+          where: {
+            workspaceId: context.workspaceId,
+            renderJobId: jobId,
+            objectKey: { in: removable },
+          },
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to remove render upload cleanup records; cleanup will retry", {
+            jobId,
+            objectKeys: removable,
+            error,
+          });
+        });
+  }
+
   private async assertPackage(
     context: WorkspaceContext,
     input: RenderCompositionInput,
@@ -1167,6 +1410,7 @@ export class CompositionService {
     attempt: number;
     maxRetries: number;
     retryBackoffMs: number;
+    retrySupersededAt: Date | null;
     nextAttemptAt: Date;
     leaseExpiresAt: Date | null;
     input: Prisma.JsonValue;
@@ -1184,6 +1428,7 @@ export class CompositionService {
         leaseExpiresAt: true,
         maxRetries: true,
         retryBackoffMs: true,
+        retrySupersededAt: true,
         attempt: true,
         input: true,
       },

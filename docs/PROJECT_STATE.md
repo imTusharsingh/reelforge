@@ -33,7 +33,7 @@
 **Phase 1 in progress - M00–M09 integrated; M10 pending review**
 
 Next exact action:
-1. Minu reviews the M10 PR composition, export and security evidence; the implementation agent does not merge/approve.
+1. Push the latest M10 B4.1/B4.2 fix-forward to PR #18, verify hosted quality checks on that head, and hand it to Minu for composition, export, and security review; the implementation agent does not merge/approve.
 2. Resolve M10 orchestration/retention automation review decisions before merging into main.
 
 ## Module status index
@@ -84,7 +84,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 
 ## Open engineering follow-ups
 
-- **M10 pending Minu:** The API supports inline rendering and the built worker supports durable lease claims, bounded retry/backoff with durable exhaustion, stale-lease and queued-child recovery, and explicit retention expiry/deletion; deployment scheduling is still required to invoke the worker/retention pass. The 2026-11-07 fix-forward addresses review blockers B1–B5 (cancellation/claim races, stored artifact byte/SHA-256 verification, source-audio preservation, bounded retry/recovery/retention, and PNG dimension validation). The second re-review fix-forward additionally covers cross-instance cancellation preservation, the corrected 880/440 Hz source-audio test, claim-token fencing against stale live executors, atomic shared retry-budget consumption, crash-recoverable retention leases, poller outage resilience, and the compound tenant parent FK. FFmpeg remains an explicit local/runner dependency for real-render tests.
+- **M10 pending Minu:** The API supports inline rendering and the built worker supports durable lease claims, bounded retry/backoff with durable exhaustion, stale-lease and queued-child recovery, and explicit retention expiry/deletion; deployment scheduling is still required to invoke the worker/retention pass. The 2026-11-07 fix-forward addresses review blockers B1–B5 (cancellation/claim races, stored artifact byte/SHA-256 verification, source-audio preservation, bounded retry/recovery/retention, and PNG dimension validation). The second re-review fix-forward additionally covers cross-instance cancellation preservation, the corrected 880/440 Hz source-audio test, claim-token fencing against stale live executors, atomic shared retry-budget consumption, crash-recoverable retention leases, poller outage resilience, and the compound tenant parent FK. The third re-review fix-forward at `0ab8eb7` adds one-child retry-family fencing and a durable pending-upload cleanup ledger for partial writes/deletion outages; local verification passed 46 composition tests, but these changes are not yet pushed and hosted CI must rerun. FFmpeg remains an explicit local/runner dependency for real-render tests.
 
 
 - **Follow-up (post-M04) - Prisma Client / Nest ESM runtime:** Fix the post-build Node ESM runtime so `node dist/...` boots without manually patching compiled dist imports. Prisma-generated client output currently contains extensionless relative imports that plain Node ESM cannot resolve (observed on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` with Node 24.22.2; `--experimental-specifier-resolution=node` did not resolve it). Prefer a durable fix on `main` (for example generator, `package.json` `"type"`, module-resolution, or build-emit strategy), chosen by the implementer of a later fix after reading the current `packages/database` and `apps/api` build. Track as open until a product PR lands; not part of this closeout PR and not fixed here.
