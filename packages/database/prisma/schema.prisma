@@ -1111,6 +1111,8 @@ model RenderPendingObject {
   leaseToken  String   @map("lease_token") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   renderJob   RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  uploadStartedAt   DateTime? @map("upload_started_at") @db.Timestamptz(6)
+  uploadCompletedAt DateTime? @map("upload_completed_at") @db.Timestamptz(6)
   @@id([workspaceId, objectKey])
   @@index([workspaceId, renderJobId])
   @@index([leaseToken])

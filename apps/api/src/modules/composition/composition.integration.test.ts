@@ -947,31 +947,62 @@ suite("CompositionService persisted lifecycle", () => {
     expect((await db.renderJob.findUniqueOrThrow({ where: { id: stale.id } })).attempt).toBe(1);
   });
 
-  it("recovers a queued child render through the same durable scheduler", async () => {
+  it("recovers a queued retry child without consuming its reserved attempt twice", async () => {
     if (!db || !service) return;
     fail = false;
-    const parent = await service.create(context, body(`b4-child-parent-${randomUUID()}`));
     const key = `b4-queued-child-${randomUUID()}`;
-    const request = body(key);
-    const child = await db.renderJob.create({
+    const request = body(`${key}-retry`);
+    const parent = await db.renderJob.create({
       data: {
         workspaceId,
         sceneMediaJobId,
-        parentJobId: parent.id,
-        idempotencyKey: `${key}-${randomUUID()}`,
-        status: "QUEUED",
-        attempt: parent.attempt + 1,
+        idempotencyKey: `${key}-parent`,
+        status: "FAILED_RETRYABLE",
+        attempt: 0,
         input: request.input,
-        inputFingerprint: "2".repeat(64),
+        inputFingerprint: canonicalRenderFingerprint(request.input),
         createdByUserId: userId,
       },
+    });
+    class CrashingAfterRetryInsert extends CompositionService {
+      protected override async afterRetryChildCreated(childId: string): Promise<void> {
+        throw new Error(`Simulated crash after retry child ${childId} was persisted`);
+      }
+    }
+    const interrupted = new CrashingAfterRetryInsert(
+      db as Database,
+      engine,
+      storage,
+      assetReference,
+    );
+    await expect(interrupted.retry(context, parent.id, request)).rejects.toThrow(
+      /simulated crash after retry child/i,
+    );
+    const child = await db.renderJob.findFirstOrThrow({
+      where: { workspaceId, parentJobId: parent.id },
+    });
+    expect(child).toMatchObject({
+      status: "QUEUED",
+      attempt: 1,
+      idempotencyKey: request.idempotencyKey,
     });
     const recoveryEngine: CompositionEnginePort = {
       execute: async (_context, id, input) => validArtifacts(input, id),
     };
     const worker = new CompositionService(db as Database, recoveryEngine, storage, assetReference);
     expect((await worker.runScheduled(10, child.id)).claimed).toBe(1);
-    expect(await worker.get(context, child.id)).toMatchObject({ status: "SUCCEEDED", attempt: 2 });
+    expect(await worker.get(context, child.id)).toMatchObject({
+      status: "SUCCEEDED",
+      attempt: 1,
+    });
+    expect(await db.renderJob.findUniqueOrThrow({ where: { id: child.id } })).toMatchObject({
+      attempt: 1,
+      scheduledAttempts: 1,
+    });
+    expect(await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } })).toMatchObject({
+      attempt: 1,
+      retrySupersededAt: expect.any(Date),
+    });
   });
 
   it("allows an exact retry after cancellation without reusing terminal state", async () => {
@@ -1297,7 +1328,7 @@ suite("CompositionService persisted lifecycle", () => {
     await expect(storage.getObject({ workspaceId, objectKey: thrownKey })).rejects.toThrow();
   });
 
-  it("retains a cleanup record until a late upload can no longer race the sweep", async () => {
+  it("retains cleanup discoverability when a timed-out upload lands after a sweep", async () => {
     if (!db || !service) return;
     fail = false;
     wait = Promise.resolve();
@@ -1350,19 +1381,24 @@ suite("CompositionService persisted lifecycle", () => {
         where: { renderJobId: job.id, objectKey: lateKey },
       });
       expect(row).not.toBeNull();
-      // The grace window has not elapsed, so the sweep must keep the record.
+      // Sweep after the grace period while the writer is still in flight.
+      clock += 30 + 50 + 1;
       expect(await bounded.cleanupPendingObjects()).toBe(0);
       expect(
         await db.renderPendingObject.count({
           where: { renderJobId: job.id, objectKey: lateKey },
         }),
       ).toBe(1);
-      // The old writer now completes after the executor already cleaned up.
+      // The old writer completes after the sweep and recreates the deleted key.
       releaseLate();
       await lateWriteLanded;
       await expect(storage.getObject({ workspaceId, objectKey: lateKey })).resolves.toBeDefined();
-      // Only after the upload deadline plus grace is the late write impossible.
-      clock += 30 + 50 + 1;
+      await vi.waitFor(async () => {
+        const completed = await db!.renderPendingObject.findFirst({
+          where: { renderJobId: job.id, objectKey: lateKey },
+        });
+        expect(completed?.uploadCompletedAt).not.toBeNull();
+      });
       expect(await bounded.cleanupPendingObjects()).toBe(1);
       await expect(storage.getObject({ workspaceId, objectKey: lateKey })).rejects.toThrow();
       expect(

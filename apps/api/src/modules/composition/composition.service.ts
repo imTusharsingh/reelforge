@@ -290,6 +290,7 @@ export class CompositionService {
       }
       throw error;
     }
+    await this.afterRetryChildCreated(childId);
     const claimed = await this.claim(childId, 15 * 60 * 1000, false);
     if (!claimed) return this.present(context, childId);
     await this.afterClaim(childId);
@@ -413,6 +414,10 @@ export class CompositionService {
           },
         });
         if (canceled.count === 1) return null;
+        const queuedJob = await tx.renderJob.findUnique({
+          where: { id: jobId },
+          select: { parentJobId: true },
+        });
         const queued = await tx.renderJob.updateMany({
           where: {
             id: jobId,
@@ -429,8 +434,8 @@ export class CompositionService {
             leaseExpiresAt: new Date(now.getTime() + leaseMs),
             errorCode: null,
             errorMessage: null,
-            attempt: { increment: 1 },
             scheduledAttempts: { increment: 1 },
+            ...(queuedJob?.parentJobId === null ? { attempt: { increment: 1 } } : {}),
           },
         });
         const result =
@@ -552,9 +557,8 @@ export class CompositionService {
     };
   }
 
-  // Removes planned upload keys whose writing lease can no longer produce a
-  // late object. Cleanup ownership is serialized against publication by
-  // replacing the job's lease token; a renewed live claim is never touched.
+  // Keep old pending keys discoverable until their writes are known to have settled.
+  // Cleanup ownership is serialized against publication by replacing the job lease.
   public async cleanupPendingObjects(batch = 100): Promise<number> {
     const cutoff = new Date(
       this.now().getTime() - this.uploadDeadlineMs - this.pendingObjectGraceMs,
@@ -600,10 +604,15 @@ export class CompositionService {
               continue;
             }
           }
-          await this.db.renderPendingObject.deleteMany({
-            where: { workspaceId: row.workspaceId, objectKey: row.objectKey },
-          });
-          removed++;
+          if (
+            await this.removePendingObjectIfQuiescent(
+              row.workspaceId,
+              row.objectKey,
+              row.uploadStartedAt,
+              row.uploadCompletedAt,
+            )
+          )
+            removed++;
         }
         continue;
       }
@@ -627,10 +636,15 @@ export class CompositionService {
             workspaceId: row.workspaceId,
             objectKey: row.objectKey,
           });
-          await this.db.renderPendingObject.deleteMany({
-            where: { workspaceId: row.workspaceId, objectKey: row.objectKey },
-          });
-          removed++;
+          if (
+            await this.removePendingObjectIfQuiescent(
+              row.workspaceId,
+              row.objectKey,
+              row.uploadStartedAt,
+              row.uploadCompletedAt,
+            )
+          )
+            removed++;
         } catch (error) {
           console.error("Failed to delete a pending render object; cleanup will retry", {
             jobId,
@@ -645,6 +659,23 @@ export class CompositionService {
       });
     }
     return removed;
+  }
+
+  private async removePendingObjectIfQuiescent(
+    workspaceId: string,
+    objectKey: string,
+    uploadStartedAt: Date | null,
+    uploadCompletedAt: Date | null,
+  ): Promise<boolean> {
+    if (uploadStartedAt !== null && uploadCompletedAt === null) return false;
+    const removed = await this.db.renderPendingObject.deleteMany({
+      where: {
+        workspaceId,
+        objectKey,
+        OR: [{ uploadStartedAt: null }, { uploadCompletedAt: { not: null } }],
+      },
+    });
+    return removed.count === 1;
   }
 
   public async expireRetainedOutputs(batch = 100): Promise<number> {
@@ -831,6 +862,10 @@ export class CompositionService {
     return this.executeClaimed(claimed, 15 * 60 * 1000);
   }
 
+  protected async afterRetryChildCreated(childId: string): Promise<void> {
+    void childId;
+  }
+
   protected async afterClaim(jobId: string): Promise<void> {
     void jobId;
   }
@@ -847,7 +882,6 @@ export class CompositionService {
     };
     const controller = new AbortController();
     const outputKeys: string[] = [];
-    const uploadStates = new Map<string, "PLANNED" | "STORED" | "FAILED">();
     let committed = false;
     this.active.set(jobId, controller);
     const heartbeat = setInterval(
@@ -901,7 +935,6 @@ export class CompositionService {
         // artifacts published by the worker that recovered its expired lease.
         const objectKey = `render/${jobId}/${leaseToken}/${artifact.filename}`;
         outputKeys.push(objectKey);
-        uploadStates.set(objectKey, "PLANNED");
         insertResults.push({
           kind: artifact.kind,
           id: assetId,
@@ -954,19 +987,18 @@ export class CompositionService {
       }));
       for (const { result, artifact } of artifactByKind) {
         const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
-        let verification: StoragePutResult;
-        try {
-          verification = await this.putObjectBounded({
+        const verification: StoragePutResult = await this.putObjectBounded(
+          {
             workspaceId: context.workspaceId,
             objectKey: result.objectKey,
             body,
             contentType: artifact.mediaType,
-          });
-        } catch (error) {
-          uploadStates.set(result.objectKey, "FAILED");
-          throw error;
-        }
-        uploadStates.set(result.objectKey, "STORED");
+          },
+          jobId,
+          leaseToken,
+          leaseMs,
+          controller,
+        );
         if (verification.checksumSha256 !== checksum(body) || verification.byteSize !== body.length)
           throw new Error("Stored render checksum or size mismatch");
       }
@@ -1161,17 +1193,84 @@ export class CompositionService {
       this.active.delete(jobId);
       // Covers failures during the upload loop as well as the publish
       // transaction, including a write that throws before returning metadata.
-      if (!committed) await this.cleanupUploads(context, jobId, outputKeys, uploadStates);
+      if (!committed) await this.cleanupUploads(context, jobId, outputKeys);
     }
   }
-  // Bounds the time the executor waits for one upload. The underlying write
-  // may still settle late; that is why the durable ledger row is retained until
-  // the upload deadline plus the grace window has elapsed.
-  private async putObjectBounded(input: StoragePutInput): Promise<StoragePutResult> {
+  // Bound waiting for storage, but retain the pending-object record until the
+  // underlying write settles; a timeout alone does not fence a late write.
+  private async putObjectBounded(
+    input: StoragePutInput,
+    jobId: string,
+    leaseToken: string,
+    leaseMs: number,
+    controller: AbortController,
+  ): Promise<StoragePutResult> {
+    const now = this.now();
+    const started = await this.db.$transaction(async (tx) => {
+      const renewed = await tx.renderJob.updateMany({
+        where: {
+          id: jobId,
+          status: "RUNNING",
+          leaseToken,
+          cancelRequestedAt: null,
+          leaseExpiresAt: { gt: now },
+        },
+        data: { leaseExpiresAt: new Date(now.getTime() + leaseMs) },
+      });
+      if (renewed.count !== 1) return false;
+      const pending = await tx.renderPendingObject.updateMany({
+        where: {
+          workspaceId: input.workspaceId,
+          objectKey: input.objectKey,
+          uploadStartedAt: null,
+          uploadCompletedAt: null,
+        },
+        data: { uploadStartedAt: now },
+      });
+      if (pending.count !== 1)
+        throw new Error("Render upload is missing its pending cleanup record");
+      return true;
+    });
+    if (!started) {
+      controller.abort();
+      throw canceled();
+    }
+
+    const markCompleted = async (): Promise<void> => {
+      try {
+        await this.db.renderPendingObject.updateMany({
+          where: { workspaceId: input.workspaceId, objectKey: input.objectKey },
+          data: { uploadCompletedAt: this.now() },
+        });
+      } catch (error) {
+        console.error("Could not record render upload completion; cleanup record remains fenced", {
+          objectKey: input.objectKey,
+          error,
+        });
+        throw error;
+      }
+    };
+
+    let write: Promise<StoragePutResult>;
+    try {
+      write = this.storage.putObject(input);
+    } catch (error) {
+      throw error;
+    }
+    const settledWrite = Promise.resolve(write).then(
+      async (result) => {
+        await markCompleted();
+        return result;
+      },
+      async (error: unknown) => {
+        await markCompleted();
+        throw error;
+      },
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        this.storage.putObject(input),
+        settledWrite,
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () =>
@@ -1192,16 +1291,27 @@ export class CompositionService {
     context: WorkspaceContext,
     jobId: string,
     outputKeys: readonly string[],
-    uploadStates: ReadonlyMap<string, "PLANNED" | "STORED" | "FAILED">,
   ): Promise<void> {
-    const removable: string[] = [];
+    const deleted: Array<{
+      objectKey: string;
+      uploadStartedAt: Date | null;
+      uploadCompletedAt: Date | null;
+    }> = [];
     await Promise.all(
       outputKeys.map(async (objectKey) => {
         try {
+          const pending = await this.db.renderPendingObject.findUnique({
+            where: {
+              workspaceId_objectKey: { workspaceId: context.workspaceId, objectKey },
+            },
+            select: { uploadStartedAt: true, uploadCompletedAt: true },
+          });
           await this.storage.deleteObject({ workspaceId: context.workspaceId, objectKey });
-          // A failed or timed-out write may still land late. Retain its ledger
-          // row so the grace-period sweep can discover and delete it.
-          if (uploadStates.get(objectKey) !== "FAILED") removable.push(objectKey);
+          deleted.push({
+            objectKey,
+            uploadStartedAt: pending?.uploadStartedAt ?? null,
+            uploadCompletedAt: pending?.uploadCompletedAt ?? null,
+          });
         } catch (error) {
           console.error("Failed to delete a render upload; durable cleanup will retry", {
             jobId,
@@ -1211,22 +1321,22 @@ export class CompositionService {
         }
       }),
     );
-    if (removable.length > 0)
-      await this.db.renderPendingObject
-        .deleteMany({
-          where: {
-            workspaceId: context.workspaceId,
-            renderJobId: jobId,
-            objectKey: { in: removable },
-          },
-        })
-        .catch((error: unknown) => {
-          console.error("Failed to remove render upload cleanup records; cleanup will retry", {
-            jobId,
-            objectKeys: removable,
-            error,
-          });
+    for (const { objectKey, uploadStartedAt, uploadCompletedAt } of deleted) {
+      try {
+        await this.removePendingObjectIfQuiescent(
+          context.workspaceId,
+          objectKey,
+          uploadStartedAt,
+          uploadCompletedAt,
+        );
+      } catch (error) {
+        console.error("Failed to remove render upload cleanup record; cleanup will retry", {
+          jobId,
+          objectKey,
+          error,
         });
+      }
+    }
   }
 
   private async assertPackage(

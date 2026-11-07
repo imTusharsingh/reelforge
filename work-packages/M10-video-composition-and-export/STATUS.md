@@ -49,6 +49,14 @@ Minu's re-review at `0ab8eb7` confirmed B1/B2/B3/B5 and the earlier B4 fixes, bu
 - **Schema:** additive migration `20261107090000_m10_retry_supersession_and_pending_objects` adds the retry-family marker and tenant-scoped pending-object ledger.
 - **Verification:** with Node `24.22.2`, pnpm `12.16.1`, isolated PostgreSQL `18.6`, and local FFmpeg/ffprobe `7.0.2`, `pnpm db:validate`, `pnpm db:migrate:deploy` (15 migrations), API typecheck/build, focused ESLint/Prettier, and all composition tests passed (4 files / 46 tests). `git diff --check` passed. The two hosted PR quality checks were green at the checked PR head `0ab8eb7`; they do not include this local fix-forward until it is pushed.
 
+## Fourth re-review fix-forward (2026-11-07)
+Minu's re-review at `bee630a` identified an unbounded late-write race in cleanup and a double attempt increment when a reserved retry child was recovered from `QUEUED`.
+
+- **B4.1 upload quiescence:** pending-object rows now persist `uploadStartedAt` and `uploadCompletedAt`. A claim- and lease-guarded transaction marks an upload started before storage is called; the underlying storage promise records settlement whether it succeeds or fails. Sweeps may delete bytes for unresolved uploads but cannot remove their ledger row until a later sweep observes a settled writer and deletes again. Thus a write that lands after a sweep remains discoverable. Added a regression that deliberately sweeps before releasing the delayed writer, then verifies a later sweep removes the late object and tombstone.
+- **B4.2 reserved attempts:** scheduled claims increment the attempt for root jobs, but not for queued child jobs whose attempt was reserved transactionally when the child was inserted. Subsequent execution retries still consume attempts. Added a persisted crash simulation that throws immediately after the retry transaction commits, then recovers the queued child and asserts one reserved attempt and one scheduled execution.
+- **Schema:** additive migration `20261107100000_m10_pending_upload_quiescence` adds nullable upload-start and upload-completion timestamps to the pending-object ledger.
+- **Verification:** with Node `24.22.2`, pnpm `12.16.1`, isolated PostgreSQL `18.6`, and local FFmpeg/ffprobe `7.0.2`, `pnpm db:validate` and `pnpm db:migrate:deploy` (16 migrations) passed; API typecheck/build and focused ESLint/Prettier passed; all composition tests passed (4 files / 46 tests). Hosted checks have not yet run on this local fix-forward.
+
 ## Files changed
 - `apps/api/src/app.module.ts`, `apps/api/package.json`: module registration and workspace media dependency.
 - `apps/api/src/modules/composition/composition.controller.ts`: authenticated, workspace-member-scoped render HTTP contract.
@@ -64,7 +72,7 @@ Minu's re-review at `0ab8eb7` confirmed B1/B2/B3/B5 and the earlier B4 fixes, bu
 - `composition.engine.integration.test.ts`: real local FFmpeg CUT/FADE renders, music/SFX, captions, two exact timestamp covers, H264/AAC output, manifest SHA-256/duration, byte-identical repeated render, and 880 Hz source-audio presence with 440 Hz narration-band absence.
 - `packages/media/src/index.ts`, `packages/media/src/media.test.ts`: pinned output specification, strict numeric FFprobe parser, argument builder with no shell, timed captions/audio, canonical fingerprint and validation error classes.
 - `packages/media/package.json`, `packages/media/tsconfig*.json`, `pnpm-lock.yaml`, `vitest.config.ts`: source/test package wiring; tests excluded from distributable declarations.
-- `packages/database/prisma/schema.prisma` + migrations `20261106190000_m10_video_composition_export`, `20261106220000_m10_retry_recovery_retention`, and `20261107090000_m10_retry_supersession_and_pending_objects`: additive render lifecycle, retry/recovery, and pending-upload cleanup schema.
+- `packages/database/prisma/schema.prisma` + migrations `20261106190000_m10_video_composition_export`, `20261106220000_m10_retry_recovery_retention`, `20261107090000_m10_retry_supersession_and_pending_objects`, and `20261107100000_m10_pending_upload_quiescence`: additive render lifecycle, retry/recovery, and pending-upload cleanup schema.
 - `docs/PROJECT_STATE.md`, `docs/WORK_LOG.md`, `work-packages/M09-scene-media-generation/STATUS.md`: closeout of integrated M09 plus this M10 pending-review snapshot.
 
 ## Commands and evidence
@@ -101,7 +109,7 @@ No live AI, social or other external provider was called. Video test assets are 
 - There is no user UI, social export or provider generation here. No change to M11 approval/status or M13 publication behavior.
 
 ## Next exact action
-Commit and push the reviewed B4.1/B4.2 fix-forward on the existing branch, verify both hosted quality checks on the pushed PR #18 head, and hand it back to Minu for review of the retry family, upload cleanup, and security/tenant boundaries. Do not approve or merge from the implementation agent.
+Commit and push the reviewed B4.1/B4.2 fix-forward for PR #18, verify both hosted quality checks on the new head, and hand it back to Minu to review the late-upload tombstone and reserved-attempt recovery. Do not approve or merge from the implementation agent.
 
 ## Handoff notes
 Endpoint family: `POST /workspaces/:workspaceId/composition/jobs`, `GET /jobs/:jobId`, `GET /jobs/:jobId/manifest`, and editor-only `POST /jobs/:jobId/{retry,cancel,edit}`. AuthGuard obtains sessions; existing WorkspaceService resolves membership. Scene visual/narration, cover assets, and additional music/SFX must reference published, rights-aware current-workspace assets. Raw FFmpeg exit statuses sanitized; raw command/media paths not exposed in REST error mapping. Cancellation and no-successful-artifact cleanup fail closed.

@@ -490,3 +490,19 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: PR #18 remains in REQUEST_CHANGES until Minu re-reviews the pushed fixes. The worktree also contains pre-existing untracked `.local-tools/` FFmpeg/ffprobe binaries and a probe fixture; they are not part of the patch.
 - Next exact action: commit/push the reviewed fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
 - Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
+
+## 2026-11-07 14:41 UTC - M10 PR #18 fourth re-review B4 fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export` at `bee630a`; current fixes remain uncommitted and unpushed.
+- Scope: Minu's latest REQUEST_CHANGES review at `bee630a` found that a timed-out uploader could recreate an orphan after its cleanup row was removed, and queued retry-child recovery could increment an already-reserved attempt.
+- Changes made:
+  - B4.1: add upload-started/completed timestamps to pending-object rows; guard upload start with the current RUNNING lease in a transaction; record settlement of the underlying storage promise; and retain cleanup discoverability when a sweep races an unresolved writer. Cleanup deletes again after settlement before removing the tombstone. The regression sweeps before releasing the uploader, then verifies a later sweep removes its late write.
+  - B4.2: queued root claims increment the execution attempt, while queued child jobs retain the attempt already reserved by retry/edit creation. Added a persisted crash simulation that interrupts after the retry-child transaction and recovers the child with exactly one reserved attempt and scheduled execution.
+  - Added migration `20261107100000_m10_pending_upload_quiescence` for the pending upload state fields.
+- Files/areas changed: composition service/integration tests; Prisma schema and additive migration; M10 status, project state, and this work log.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`. `pnpm db:validate` passed. `pnpm db:migrate:deploy` applied all 16 migrations on a fresh PostgreSQL `18.6` container. API typecheck and build passed. Focused ESLint and Prettier checks passed. `pnpm exec vitest run apps/api/src/modules/composition` passed 4 files / 46 tests with local FFmpeg/ffprobe `7.0.2`.
+- External calls: no AI, social, or provider calls. PostgreSQL and media fixtures/binaries were local.
+- Tests/evidence: persisted late-upload test sweeps before the blocked write completes, verifies the tombstone remains, then observes the write settle and confirms a subsequent sweep deletes the object and record. Persisted child-retry crash simulation confirms recovered child attempt remains 1 with `scheduledAttempts` 1. Full repository suite was not run.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Current hosted checks were on `bee630a` and do not cover these local changes.
+- Defects/risks/blockers: Fixes require commit/push and hosted checks before Minu can review. Untracked local `.local-tools/` media binaries/fixture remain untouched.
+- Next exact action: commit/push this fix-forward, verify hosted quality checks on the updated PR head, and hand PR #18 back to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
