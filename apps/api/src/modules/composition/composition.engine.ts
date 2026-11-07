@@ -171,6 +171,9 @@ export class CompositionEngine implements CompositionEnginePort {
         sceneInputs.push({
           path: visualPath,
           ...(narrationPath ? { narrationPath } : {}),
+          // Explicit audio precedence: a pinned narration track replaces the
+          // source-video audio for that scene. Without narration, a single
+          // source-video audio stream is preserved instead of synthesized silence.
           sourceAudio: audios.length === 1 && narrationPath === undefined,
           image: scene.image,
           durationMs: scene.durationMs,

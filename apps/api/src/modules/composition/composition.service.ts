@@ -448,10 +448,9 @@ export class CompositionService {
       const artifacts = await this.db.renderArtifact.findMany({ where: { renderJobId: id } });
       try {
         for (const artifact of artifacts) {
-          await this.storage.getObject({
-            workspaceId: artifact.workspaceId,
-            objectKey: artifact.objectKey,
-          });
+          // Deletion is intentionally idempotent: a previous retention pass may
+          // have removed some objects before failing, and those rows must not
+          // make the expiry permanently unrecoverable.
           await this.storage.deleteObject({
             workspaceId: artifact.workspaceId,
             objectKey: artifact.objectKey,

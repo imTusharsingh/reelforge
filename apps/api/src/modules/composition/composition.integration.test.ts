@@ -933,7 +933,8 @@ suite("CompositionService persisted lifecycle", () => {
     const calls: string[] = [];
     storage.deleteObject = async (input): Promise<void> => {
       calls.push(input.objectKey);
-      if (injected) throw new Error("simulated storage outage");
+      // Fail after the first object so the retry covers already-deleted bytes.
+      if (injected && calls.length === 2) throw new Error("simulated storage outage");
       return originalDelete(input);
     };
     try {
@@ -941,10 +942,15 @@ suite("CompositionService persisted lifecycle", () => {
       const pending = await db.renderJob.findUniqueOrThrow({ where: { id: created.id } });
       expect(pending.expiredAt).toBeNull();
       expect(pending.leaseToken).toBeNull();
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(2);
+      await expect(storage.getObject({ workspaceId, objectKey: calls[0]! })).rejects.toThrow();
       await expect(service.get(context, created.id)).rejects.toThrow(/expired/);
       injected = false;
       expect(await service.expireRetainedOutputs()).toBe(3);
+      for (const artifact of created.artifacts)
+        await expect(
+          storage.getObject({ workspaceId, objectKey: artifact.objectKey }),
+        ).rejects.toThrow();
       await expect(service.getManifest(context, created.id)).rejects.toThrow(/expired/);
     } finally {
       storage.deleteObject = originalDelete;
