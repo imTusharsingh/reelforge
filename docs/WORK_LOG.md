@@ -441,3 +441,19 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - On the existing `work/m10-video-composition-and-export` branch, corrected worker claim accounting so persisted `attempt` is incremented with `scheduledAttempts` and remains 1-based for due/stale/concurrent worker claims. Retry backoff uses the base delay for the first retry and permits the configured bounded retry window before durable exhaustion.
 - Verification: local PostgreSQL received the additive M10 retry/recovery migration; focused composition/engine suites passed 2 files / 27 tests; full suite passed 35 files / 217 tests; lint, format check, typecheck, schema validation, and build passed with `DATABASE_URL`; built worker startup probe passed until intentional timeout. Local FFmpeg/ffprobe 7.0.2 exercised real CUT/FADE, multi-cover, and source-audio paths.
 - M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, new PR, or main push is claimed. The existing PR #18 is handed back to Minu for review.
+
+## 2026-11-07 - M10 PR #18 review blockers B1-B5 fix-forward
+
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`; no new PR, approval, merge or main push.
+- Scope: Re-verified and completed the fix-forward for Minu review `5803750731` (REQUEST_CHANGES at `7a0381d`): cancellation/claim atomicity, stored artifact integrity, source-audio policy, bounded retry/recovery/retention, and PNG dimensions.
+- Changes made:
+  - B1: kept cancel-before-claim and cancel-after-claim terminalization atomic; scheduled claims re-check cancellation and cannot execute canceled work.
+  - B2: manifest retrieval independently re-reads and verifies byte size and SHA-256 for the stored video, every cover, and the manifest; tampered or missing media fails closed.
+  - B3: accepted source-video audio is mapped when a scene has no separate narration; real FFmpeg tests assert audible output.
+  - B4: fixed retry accounting so `attempt < maxRetries` permits exactly the configured retries, backoff is 250/500/1000 ms, exhausted failures become `FAILED_FINAL`/`RETRY_EXHAUSTED`, stale exhausted `RUNNING` jobs are terminalized rather than stranded, queued child jobs are recoverable, and manual retry children are rejected after the retry budget. Retention deletion/access denial remains covered.
+  - B5: still sources must satisfy PNG minimum/profile-compatible dimensions; undersized PNGs are rejected before scaling.
+  - Worker wiring: added explicit API subpath exports and build-time declaration resolution; removed the temporary `apps/api/types/*` scaffolding; the built worker was started to verify runtime module resolution.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, fresh local PostgreSQL `reelforge_m10_final`. `pnpm db:validate` passed; `pnpm db:migrate:deploy` applied all 14 migrations; `pnpm lint` and `pnpm format:check` passed; `pnpm typecheck` passed for all workspaces with `DATABASE_URL`; focused composition lifecycle suite passed 26/26; focused engine/media suites with local FFmpeg 7.0.2 passed 16/16; full `pnpm test` passed 35 files / 220 tests with `CI=1`, DB and binary paths; `pnpm build` passed; built worker probe `timeout 3s node apps/worker/dist/main.js` had no runtime error and ended only by timeout (exit 124).
+- External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
+- Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
+- Next exact action: push the same branch and hand PR #18 back to Minu for B1-B5 review. Hosted CI must be checked on the pushed head.

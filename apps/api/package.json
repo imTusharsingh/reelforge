@@ -28,19 +28,19 @@
   },
   "exports": {
     "./asset-service": {
-      "types": "./types/asset.service.ts",
+      "types": "./dist/modules/asset/asset.service.d.ts",
       "import": "./dist/modules/asset/asset.service.js"
     },
     "./composition-service": {
-      "types": "./types/composition.service.ts",
+      "types": "./dist/modules/composition/composition.service.d.ts",
       "import": "./dist/modules/composition/composition.service.js"
     },
     "./composition-engine": {
-      "types": "./types/composition.engine.ts",
+      "types": "./dist/modules/composition/composition.engine.d.ts",
       "import": "./dist/modules/composition/composition.engine.js"
     },
     "./storage-factory": {
-      "types": "./types/storage.factory.ts",
+      "types": "./dist/modules/asset/storage/storage.factory.d.ts",
       "import": "./dist/modules/asset/storage/storage.factory.js"
     }
   }

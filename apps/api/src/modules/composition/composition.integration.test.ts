@@ -614,13 +614,82 @@ suite("CompositionService persisted lifecycle", () => {
       expect((await worker.runScheduled(10, stored.id)).claimed).toBe(1);
       const failed = await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } });
       expect(failed.scheduledAttempts).toBe(attempt + 1);
-      expect(failed.nextAttemptAt.getTime()).toBe(now + delay);
-      if (attempt < 3) expect(failed.status).toBe("FAILED_RETRYABLE");
-      else {
+      expect(failed.attempt).toBe(attempt + 1);
+      if (attempt < 2) {
+        expect(failed.status).toBe("FAILED_RETRYABLE");
+        expect(failed.nextAttemptAt.getTime()).toBe(now + [250, 500, 1000][attempt + 1]!);
+      } else {
         expect(failed).toMatchObject({ status: "FAILED_FINAL", errorCode: "RETRY_EXHAUSTED" });
-        expect(await worker.runClaim(failed.id)).toBeNull();
+        expect(failed.attempt).toBe(3);
       }
     }
+    expect((await worker.runScheduled(10, stored.id)).claimed).toBe(0);
+    expect(await worker.runClaim(stored.id)).toBeNull();
+    expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
+      status: "FAILED_FINAL",
+      errorCode: "RETRY_EXHAUSTED",
+      attempt: 3,
+    });
+  });
+
+  it("terminalizes an exhausted stale running claim instead of stranding it", async () => {
+    if (!db || !service) return;
+    const key = `b4-exhausted-recovery-${randomUUID()}`;
+    const request = body(key);
+    const created = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "RUNNING",
+        attempt: 3,
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() - 1000),
+        nextAttemptAt: new Date(Date.now() - 1000),
+        input: request.input,
+        inputFingerprint: "f".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const alwaysFails: CompositionEnginePort = {
+      execute: async () => {
+        throw new Error("should not execute an exhausted claim");
+      },
+    };
+    const worker = new CompositionService(db as Database, alwaysFails, storage, assetReference);
+    expect(await worker.runClaim(created.id)).toBeNull();
+    expect(await db.renderJob.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+      status: "FAILED_FINAL",
+      errorCode: "RETRY_EXHAUSTED",
+      leaseToken: null,
+      leaseExpiresAt: null,
+      attempt: 3,
+    });
+  });
+
+  it("rejects retry children once the retry limit is exhausted", async () => {
+    if (!db || !service) return;
+    const key = `b4-retry-limit-${randomUUID()}`;
+    const request = body(key);
+    const exhausted = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "CANCELED",
+        attempt: 3,
+        input: request.input,
+        inputFingerprint: "1".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    await expect(
+      service.retry(context, exhausted.id, {
+        idempotencyKey: `${key}-retry`,
+        retentionDays: request.retentionDays,
+        input: request.input,
+      }),
+    ).rejects.toThrow(/retry limit/i);
   });
 
   it("recovers a stale running job left during execution and publishes exactly once", async () => {
@@ -663,6 +732,33 @@ suite("CompositionService persisted lifecycle", () => {
     expect(done.artifacts).toHaveLength(3);
     expect((await restarted.getManifest(context, stale.id)).jobId).toBe(stale.id);
     expect((await db.renderJob.findUniqueOrThrow({ where: { id: stale.id } })).attempt).toBe(1);
+  });
+
+  it("recovers a queued child render through the same durable scheduler", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const parent = await service.create(context, body(`b4-child-parent-${randomUUID()}`));
+    const key = `b4-queued-child-${randomUUID()}`;
+    const request = body(key);
+    const child = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        parentJobId: parent.id,
+        idempotencyKey: `${key}-${randomUUID()}`,
+        status: "QUEUED",
+        attempt: parent.attempt + 1,
+        input: request.input,
+        inputFingerprint: "2".repeat(64),
+        createdByUserId: userId,
+      },
+    });
+    const recoveryEngine: CompositionEnginePort = {
+      execute: async (_context, id, input) => validArtifacts(input, id),
+    };
+    const worker = new CompositionService(db as Database, recoveryEngine, storage, assetReference);
+    expect((await worker.runScheduled(10, child.id)).claimed).toBe(1);
+    expect(await worker.get(context, child.id)).toMatchObject({ status: "SUCCEEDED", attempt: 2 });
   });
 
   it("allows an exact retry after cancellation without reusing terminal state", async () => {
