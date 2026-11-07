@@ -43,7 +43,6 @@ export const COMPOSITION_CLOCK = "COMPOSITION_CLOCK";
 @Injectable()
 export class CompositionService {
   private readonly active = new Map<string, AbortController>();
-  private readonly instanceId = randomUUID();
   private readonly now: () => Date;
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
@@ -145,45 +144,107 @@ export class CompositionService {
   public async retry(context: WorkspaceContext, id: string, body: unknown): Promise<RenderJobView> {
     this.editor(context);
     const job = await this.require(context, id);
-    if (!["FAILED_RETRYABLE", "CANCELED"].includes(job.status))
-      throw new ConflictException("Only a failed retryable or canceled render can be retried");
-    if (job.attempt >= job.maxRetries)
-      throw new ConflictException("The render retry limit has been exhausted; start a new render");
     const request = parse(createRenderSchema, body);
+    const fingerprint = canonicalRenderFingerprint(request.input);
     if (
-      canonicalRenderFingerprint(request.input) !== job.inputFingerprint ||
+      fingerprint !== job.inputFingerprint ||
       request.input.sourceMediaPackage.jobId !== job.sceneMediaJobId
     )
       throw new ConflictException(
         "Retry must exactly replay the failed pinned input and render profile",
       );
-    const parsed = parse(createRenderSchema, {
-      idempotencyKey: request.idempotencyKey,
-      retentionDays: request.retentionDays,
-      input: request.input,
+    const existing = await this.db.renderJob.findUnique({
+      where: {
+        workspaceId_idempotencyKey: {
+          workspaceId: context.workspaceId,
+          idempotencyKey: request.idempotencyKey,
+        },
+      },
+      select: { id: true },
     });
-    try {
-      return await this.start(
+    if (existing)
+      return this.present(
         context,
-        id,
-        parsed.idempotencyKey,
-        parsed.retentionDays,
-        parsed.input,
+        await this.existingId(
+          context.workspaceId,
+          request.idempotencyKey,
+          fingerprint,
+          request.retentionDays,
+          id,
+        ),
       );
+    if (!["FAILED_RETRYABLE", "CANCELED"].includes(job.status))
+      throw new ConflictException("Only a failed retryable or canceled render can be retried");
+    if (job.attempt >= job.maxRetries)
+      throw new ConflictException("The render retry limit has been exhausted; start a new render");
+    validateComposition(request.input);
+    await this.assertPackage(context, request.input);
+    const childId = randomUUID();
+    try {
+      await this.db.$transaction(async (tx) => {
+        const parent = await tx.renderJob.findUnique({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+          select: { status: true, attempt: true, maxRetries: true },
+        });
+        if (!parent || !["FAILED_RETRYABLE", "CANCELED"].includes(parent.status))
+          throw new ConflictException("The parent render is no longer retryable");
+        if (parent.attempt >= parent.maxRetries)
+          throw new ConflictException(
+            "The render retry limit has been exhausted; start a new render",
+          );
+        // Atomically consume the shared retry budget. A retryable parent is
+        // superseded so the worker cannot also auto-retry it; a canceled parent
+        // stays canceled but still consumes one attempt from the same budget.
+        const consumed = await tx.renderJob.updateMany({
+          where: { id, status: parent.status, attempt: parent.attempt },
+          data: {
+            attempt: { increment: 1 },
+            ...(parent.status === "FAILED_RETRYABLE"
+              ? {
+                  status: "FAILED_FINAL",
+                  errorCode: "RETRY_SUPERSEDED",
+                  errorMessage: "Superseded by an explicit retry child",
+                  nextAttemptAt: this.now(),
+                }
+              : {}),
+          },
+        });
+        if (consumed.count !== 1)
+          throw new ConflictException("The parent render was already retried or claimed");
+        await tx.renderJob.create({
+          data: {
+            id: childId,
+            workspaceId: context.workspaceId,
+            sceneMediaJobId: request.input.sourceMediaPackage.jobId,
+            parentJobId: id,
+            idempotencyKey: request.idempotencyKey,
+            status: "QUEUED",
+            attempt: parent.attempt + 1,
+            input: request.input as Prisma.InputJsonValue,
+            inputFingerprint: fingerprint,
+            retentionDays: request.retentionDays,
+            createdByUserId: context.userId,
+          },
+        });
+      });
     } catch (error) {
       if (isUnique(error))
         return this.present(
           context,
           await this.existingId(
             context.workspaceId,
-            parsed.idempotencyKey,
-            canonicalRenderFingerprint(parsed.input),
-            parsed.retentionDays,
+            request.idempotencyKey,
+            fingerprint,
+            request.retentionDays,
             id,
           ),
         );
       throw error;
     }
+    const claimed = await this.claim(childId, 15 * 60 * 1000, false);
+    if (!claimed) return this.present(context, childId);
+    await this.afterClaim(childId);
+    return this.executeClaimed(claimed, 15 * 60 * 1000);
   }
   public async edit(context: WorkspaceContext, id: string, body: unknown): Promise<RenderJobView> {
     this.editor(context);
@@ -262,7 +323,7 @@ export class CompositionService {
     if (!claim) return null;
     await this.afterClaim(jobId);
     try {
-      return await this.executeClaimed(claim);
+      return await this.executeClaimed(claim, leaseMs);
     } catch (error) {
       const state = await this.db.renderJob.findUnique({
         where: { id: claim.id },
@@ -284,6 +345,7 @@ export class CompositionService {
   ): Promise<ClaimedRender | null> {
     for (let attempt = 0; attempt < 3; attempt++) {
       const now = this.now();
+      const claimToken = randomUUID();
       const claimed = await this.db.$transaction(async (tx): Promise<ClaimedRender | null> => {
         const canceled = await tx.renderJob.updateMany({
           where: {
@@ -311,7 +373,7 @@ export class CompositionService {
           },
           data: {
             status: "RUNNING",
-            leaseToken: this.instanceId,
+            leaseToken: claimToken,
             leaseExpiresAt: new Date(now.getTime() + leaseMs),
             errorCode: null,
             errorMessage: null,
@@ -332,7 +394,7 @@ export class CompositionService {
                 },
                 data: {
                   status: "RUNNING",
-                  leaseToken: this.instanceId,
+                  leaseToken: claimToken,
                   leaseExpiresAt: new Date(now.getTime() + leaseMs),
                   errorCode: null,
                   errorMessage: null,
@@ -346,10 +408,10 @@ export class CompositionService {
           !row ||
           row.cancelRequestedAt ||
           row.status !== "RUNNING" ||
-          row.leaseToken !== this.instanceId
+          row.leaseToken !== claimToken
         ) {
           await tx.renderJob.updateMany({
-            where: { id: jobId, leaseToken: this.instanceId },
+            where: { id: jobId, leaseToken: claimToken },
             data: {
               status: "CANCELED",
               cancelRequestedAt: now,
@@ -438,7 +500,12 @@ export class CompositionService {
     for (const { id } of jobs) {
       const retentionToken = randomUUID();
       const claimed = await this.db.renderJob.updateMany({
-        where: { id, expiredAt: null, leaseToken: null, status: "SUCCEEDED" },
+        where: {
+          id,
+          expiredAt: null,
+          status: "SUCCEEDED",
+          OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: this.now() } }],
+        },
         data: {
           leaseToken: retentionToken,
           leaseExpiresAt: new Date(this.now().getTime() + 60000),
@@ -482,6 +549,7 @@ export class CompositionService {
   ): Promise<ClaimedRender | null> {
     for (let attempt = 0; attempt < 3; attempt++) {
       const now = this.now();
+      const claimToken = randomUUID();
       const claimed = await this.db.$transaction(async (tx): Promise<ClaimedRender | null> => {
         const terminal = await tx.renderJob.updateMany({
           where: { id: jobId, status: "QUEUED", cancelRequestedAt: { not: null } },
@@ -503,7 +571,7 @@ export class CompositionService {
           },
           data: {
             status: "RUNNING",
-            leaseToken: this.instanceId,
+            leaseToken: claimToken,
             leaseExpiresAt: new Date(now.getTime() + leaseMs),
             errorCode: null,
             errorMessage: null,
@@ -515,10 +583,10 @@ export class CompositionService {
           !row ||
           row.cancelRequestedAt ||
           row.status !== "RUNNING" ||
-          row.leaseToken !== this.instanceId
+          row.leaseToken !== claimToken
         ) {
           await tx.renderJob.updateMany({
-            where: { id: jobId, leaseToken: this.instanceId },
+            where: { id: jobId, leaseToken: claimToken },
             data: {
               status: "CANCELED",
               cancelRequestedAt: now,
@@ -602,24 +670,50 @@ export class CompositionService {
     const claimed = await this.claim(jobId, 15 * 60 * 1000, false);
     if (!claimed) return this.present(context, jobId);
     await this.afterClaim(claimed.id);
-    return this.executeClaimed(claimed);
+    return this.executeClaimed(claimed, 15 * 60 * 1000);
   }
 
   protected async afterClaim(jobId: string): Promise<void> {
     void jobId;
   }
-  private async executeClaimed(claimed: ClaimedRender): Promise<RenderJobView> {
+  private async executeClaimed(
+    claimed: ClaimedRender,
+    leaseMs = 15 * 60 * 1000,
+  ): Promise<RenderJobView> {
     const { id: jobId, input } = claimed;
+    const leaseToken = claimed.leaseToken;
     const context: WorkspaceContext = {
       workspaceId: claimed.workspaceId,
       userId: claimed.createdByUserId,
       role: "OWNER",
     };
     const controller = new AbortController();
+    const outputKeys: string[] = [];
+    let committed = false;
     this.active.set(jobId, controller);
+    const heartbeat = setInterval(
+      () => {
+        void this.db.renderJob
+          .updateMany({
+            where: {
+              id: jobId,
+              status: "RUNNING",
+              leaseToken,
+              cancelRequestedAt: null,
+            },
+            data: { leaseExpiresAt: new Date(this.now().getTime() + leaseMs) },
+          })
+          .then(({ count }) => {
+            if (count === 0) controller.abort();
+          })
+          .catch(() => undefined);
+      },
+      Math.max(1000, Math.floor(leaseMs / 3)),
+    );
+    heartbeat.unref();
     try {
       const cancelRequested = await this.db.renderJob.findFirst({
-        where: { id: jobId, leaseToken: this.instanceId, cancelRequestedAt: { not: null } },
+        where: { id: jobId, leaseToken, cancelRequestedAt: { not: null } },
         select: { id: true },
       });
       if (cancelRequested) throw canceled();
@@ -644,7 +738,10 @@ export class CompositionService {
       }> = [];
       for (const artifact of artifacts) {
         const assetId = randomUUID();
-        const objectKey = `render/${jobId}/${artifact.filename}`;
+        // Claim-specific keys ensure a superseded executor cannot overwrite
+        // artifacts published by the worker that recovered its expired lease.
+        const objectKey = `render/${jobId}/${leaseToken}/${artifact.filename}`;
+        outputKeys.push(objectKey);
         insertResults.push({
           kind: artifact.kind,
           id: assetId,
@@ -709,9 +806,15 @@ export class CompositionService {
         await this.db.$transaction(async (tx) => {
           const current = await tx.renderJob.findUnique({
             where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-            select: { cancelRequestedAt: true },
+            select: { cancelRequestedAt: true, status: true, leaseToken: true },
           });
-          if (!current || current.cancelRequestedAt !== null || controller.signal.aborted)
+          if (
+            !current ||
+            current.cancelRequestedAt !== null ||
+            current.status !== "RUNNING" ||
+            current.leaseToken !== leaseToken ||
+            controller.signal.aborted
+          )
             throw canceled();
           for (const { result, artifact } of artifactByKind) {
             const body = result.kind === "MANIFEST" ? manifestBytes : artifact.body;
@@ -801,8 +904,13 @@ export class CompositionService {
                 context: { kind: audio.kind },
               },
             });
-          const committed = await tx.renderJob.updateMany({
-            where: { id: jobId, leaseToken: this.instanceId, cancelRequestedAt: null },
+          const published = await tx.renderJob.updateMany({
+            where: {
+              id: jobId,
+              leaseToken,
+              status: "RUNNING",
+              cancelRequestedAt: null,
+            },
             data: {
               status: "SUCCEEDED",
               errorCode: null,
@@ -811,60 +919,70 @@ export class CompositionService {
               leaseExpiresAt: null,
             },
           });
-          if (committed.count !== 1) throw canceled();
+          if (published.count !== 1) throw canceled();
         });
+        committed = true;
         return this.present(context, jobId);
       } finally {
-        const successful = await this.db.renderJob.findUnique({
-          where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-          select: { status: true, leaseToken: true },
-        });
-        if (
-          successful !== null &&
-          successful.status !== "SUCCEEDED" &&
-          successful.leaseToken === this.instanceId
-        )
+        if (!committed)
           await Promise.all(
-            artifactByKind.map(({ result }) =>
+            outputKeys.map((objectKey) =>
               this.storage
-                .deleteObject({ workspaceId: context.workspaceId, objectKey: result.objectKey })
+                .deleteObject({ workspaceId: context.workspaceId, objectKey })
                 .catch(() => undefined),
             ),
           );
       }
     } catch (error) {
-      const terminal = isCancellation(error, controller.signal) || isPermanent(error);
+      const persisted = await this.db.renderJob.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+        select: { cancelRequestedAt: true, status: true },
+      });
+      const cancellationObserved =
+        isCancellation(error, controller.signal) ||
+        (persisted !== null &&
+          persisted !== undefined &&
+          (persisted.cancelRequestedAt !== null || persisted.status === "CANCELED"));
+      if (cancellationObserved) {
+        // Cancellation is terminal even when the canceling process is not the
+        // executor. Preserve it across transient and permanent renderer errors.
+        const terminalized = await this.db.renderJob.updateMany({
+          where: {
+            id: jobId,
+            OR: [{ cancelRequestedAt: { not: null } }, { status: "CANCELED" }],
+          },
+          data: {
+            status: "CANCELED",
+            errorCode: "CANCELED",
+            errorMessage: "Render was canceled",
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        if (terminalized.count === 0) return this.present(context, jobId);
+        throw new ConflictException("Render was canceled");
+      }
+      const terminal = isPermanent(error);
       const retryAllowed = !terminal && claimed.attempt < claimed.maxRetries;
       // attempt is the 1-based execution ordinal for a scheduled claim. The
       // initial in-request execution is attempt zero, so the first retry uses
       // the base delay and each later retry doubles it.
       const delayMs = renderRetryDelayMs(claimed.attempt, claimed.retryBackoffMs);
       const terminalized = await this.db.renderJob.updateMany({
-        where: { id: jobId, leaseToken: this.instanceId },
+        where: { id: jobId, leaseToken, cancelRequestedAt: null },
         data: {
           leaseToken: null,
           leaseExpiresAt: null,
           ...(retryAllowed ? { nextAttemptAt: new Date(this.now().getTime() + delayMs) } : {}),
-          status: isCancellation(error, controller.signal)
-            ? "CANCELED"
-            : isPermanent(error) || !retryAllowed
-              ? "FAILED_FINAL"
-              : "FAILED_RETRYABLE",
-          errorCode: isCancellation(error, controller.signal)
-            ? "CANCELED"
-            : !retryAllowed && !terminal
-              ? "RETRY_EXHAUSTED"
-              : errorCode(error),
+          status: terminal || !retryAllowed ? "FAILED_FINAL" : "FAILED_RETRYABLE",
+          errorCode: !retryAllowed && !terminal ? "RETRY_EXHAUSTED" : errorCode(error),
           errorMessage: safeMessage(error),
         },
       });
       if (terminalized.count === 0) return this.present(context, jobId);
-      throw isCancellation(error, controller.signal)
-        ? new ConflictException("Render was canceled")
-        : isPermanent(error)
-          ? new ConflictException(safeMessage(error), { cause: error })
-          : toHttp(error);
+      throw terminal ? new ConflictException(safeMessage(error), { cause: error }) : toHttp(error);
     } finally {
+      clearInterval(heartbeat);
       this.active.delete(jobId);
     }
   }
@@ -1148,6 +1266,7 @@ type ClaimedRender = Readonly<{
   id: string;
   workspaceId: string;
   createdByUserId: string;
+  leaseToken: string;
   attempt: number;
   maxRetries: number;
   retryBackoffMs: number;

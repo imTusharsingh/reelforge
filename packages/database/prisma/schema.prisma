@@ -1063,7 +1063,7 @@ model RenderJob {
   updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   sceneMediaJob         SceneMediaJob     @relation("SceneMediaRenderJobs", fields: [workspaceId, sceneMediaJobId], references: [workspaceId, id], onDelete: Restrict)
-  parent                 RenderJob?       @relation("RenderRenders", fields: [parentJobId], references: [id], onDelete: Restrict)
+  parent                 RenderJob?       @relation("RenderRenders", fields: [workspaceId, parentJobId], references: [workspaceId, id], onDelete: Restrict)
   children               RenderJob[]      @relation("RenderRenders")
   createdBy             User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   artifacts              RenderArtifact[]

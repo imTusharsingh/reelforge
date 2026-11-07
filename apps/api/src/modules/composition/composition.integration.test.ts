@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabaseClient } from "@reelforge/database";
-import { MediaValidationError } from "@reelforge/media";
+import { MediaValidationError, canonicalRenderFingerprint } from "@reelforge/media";
 import { AssetService } from "../asset/asset.service.js";
 import { LocalFilesystemStorageAdapter } from "../asset/storage/local-storage.adapter.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
@@ -79,8 +79,8 @@ function body(
 function validArtifacts(
   input: RenderCompositionInput,
   jobId = "fixture-job",
+  videoBody = Buffer.from("validated fixture video"),
 ): readonly RenderedArtifact[] {
-  const videoBody = Buffer.from("validated fixture video");
   const manifest = {
     schemaVersion: "1.0",
     jobId,
@@ -561,7 +561,11 @@ suite("CompositionService persisted lifecycle", () => {
     expect(retried).toMatchObject({ status: "SUCCEEDED", parentJobId: failed.id, attempt: 1 });
     expect(retried.inputFingerprint).toBe(failed.inputFingerprint);
     const retainedParent = await service.get(context, failed.id);
-    expect(retainedParent.status).toBe("FAILED_RETRYABLE");
+    expect(retainedParent).toMatchObject({
+      status: "FAILED_FINAL",
+      errorCode: "RETRY_SUPERSEDED",
+      attempt: 1,
+    });
     await expect(
       service.retry(context, failed.id, {
         ...request,
@@ -679,7 +683,7 @@ suite("CompositionService persisted lifecycle", () => {
         status: "CANCELED",
         attempt: 3,
         input: request.input,
-        inputFingerprint: "1".repeat(64),
+        inputFingerprint: canonicalRenderFingerprint(request.input),
         createdByUserId: userId,
       },
     });
@@ -690,6 +694,42 @@ suite("CompositionService persisted lifecycle", () => {
         input: request.input,
       }),
     ).rejects.toThrow(/retry limit/i);
+  });
+
+  it("consumes the shared retry budget under concurrent fresh-key retries", async () => {
+    if (!db || !service) return;
+    const key = `b4-concurrent-retry-${randomUUID()}`;
+    const request = body(key);
+    fail = true;
+    try {
+      await expect(service.create(context, request)).rejects.toThrow(/no successful export/);
+    } finally {
+      fail = false;
+    }
+    const parent = await db.renderJob.findUniqueOrThrow({
+      where: {
+        workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
+      },
+    });
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, index) =>
+        service.retry(context, parent.id, {
+          idempotencyKey: `${key}-retry-${index}`,
+          retentionDays: request.retentionDays,
+          input: request.input,
+        }),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const children = await db.renderJob.findMany({ where: { parentJobId: parent.id } });
+    expect(children).toHaveLength(1);
+    expect(children[0]).toMatchObject({ attempt: 1, status: "SUCCEEDED" });
+    // The parent is superseded, so automatic recovery cannot execute it too.
+    const worker = new CompositionService(db as Database, engine, storage, assetReference);
+    expect(await worker.runClaim(parent.id)).toBeNull();
+    expect((await db.renderJob.findUniqueOrThrow({ where: { id: parent.id } })).status).toBe(
+      "FAILED_FINAL",
+    );
   });
 
   it("recovers a stale running job left during execution and publishes exactly once", async () => {
@@ -831,6 +871,62 @@ suite("CompositionService persisted lifecycle", () => {
     expect(engineCalls).toBe(0);
   });
 
+  it("preserves cross-instance cancellation over transient and permanent execution errors", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const cases: Array<readonly [string, Error]> = [
+      ["transient", new Error("transient renderer failure")],
+      ["permanent", new MediaValidationError("Pinned source media failed technical validation")],
+    ];
+    for (const [label, engineError] of cases) {
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered = (): void => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const request = body(`b1-cross-instance-${label}-${randomUUID()}`);
+      const job = await db.renderJob.create({
+        data: {
+          workspaceId,
+          sceneMediaJobId,
+          idempotencyKey: `${request.idempotencyKey}-${randomUUID()}`,
+          status: "QUEUED",
+          input: request.input,
+          inputFingerprint: canonicalRenderFingerprint(request.input),
+          createdByUserId: userId,
+        },
+      });
+      const cancellingExecutor = new CompositionService(
+        db as Database,
+        {
+          execute: async (): Promise<readonly RenderedArtifact[]> => {
+            entered();
+            await gate;
+            throw engineError;
+          },
+        },
+        storage,
+        assetReference,
+      );
+      const running = cancellingExecutor.runClaim(job.id);
+      await started;
+      // A different service instance requests cancellation while this executor
+      // is running, so the executor does not own the in-memory abort controller.
+      await service.cancel(context, job.id);
+      release();
+      await running;
+      expect(await db.renderJob.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({
+        status: "CANCELED",
+        errorCode: "CANCELED",
+        leaseToken: null,
+        leaseExpiresAt: null,
+      });
+    }
+  });
+
   it("two due worker claims execute and publish only once", async () => {
     if (!db || !service) return;
     const key = `b1-concurrent-claims-${randomUUID()}`;
@@ -898,6 +994,62 @@ suite("CompositionService persisted lifecycle", () => {
     expect((await worker.getManifest(context, aborted.id)).jobId).toBe(aborted.id);
   });
 
+  it("prevents a superseded live executor from overwriting recovered success", async () => {
+    if (!db || !service) return;
+    fail = false;
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = (): void => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const staleBody = Buffer.from("stale executor video");
+    const staleExecutor = new CompositionService(
+      db as Database,
+      {
+        execute: async (_context, id, input): Promise<readonly RenderedArtifact[]> => {
+          entered();
+          await gate;
+          return validArtifacts(input, id, staleBody);
+        },
+      },
+      storage,
+      assetReference,
+    );
+    const request = body(`b4-live-stale-${randomUUID()}`);
+    const rendering = staleExecutor.create(context, request);
+    await started;
+    const job = await db.renderJob.findUniqueOrThrow({
+      where: {
+        workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
+      },
+    });
+    await db.renderJob.update({
+      where: { id: job.id },
+      data: { leaseExpiresAt: new Date(Date.now() - 1000) },
+    });
+    const recovered = await new CompositionService(
+      db as Database,
+      {
+        execute: async (_context, id, input): Promise<readonly RenderedArtifact[]> =>
+          validArtifacts(input, id),
+      },
+      storage,
+      assetReference,
+    ).runClaim(job.id);
+    expect(recovered).toMatchObject({ status: "SUCCEEDED", attempt: 1 });
+    release();
+    await expect(rendering).resolves.toMatchObject({ status: "SUCCEEDED" });
+    const final = await service.get(context, job.id);
+    const videoArtifact = final.artifacts.find((artifact) => artifact.kind === "VIDEO")!;
+    const stored = await storage.getObject({ workspaceId, objectKey: videoArtifact.objectKey });
+    expect(stored.equals(staleBody)).toBe(false);
+    expect(createHash("sha256").update(stored).digest("hex")).toBe(videoArtifact.checksumSha256);
+    expect((await service.getManifest(context, job.id)).jobId).toBe(job.id);
+  });
+
   it("deletes expired video covers and manifest bytes then denies subsequent access", async () => {
     if (!db || !service) return;
     fail = false;
@@ -955,6 +1107,38 @@ suite("CompositionService persisted lifecycle", () => {
     } finally {
       storage.deleteObject = originalDelete;
     }
+  });
+
+  it("reclaims an expired retention lease after a crash mid-deletion", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const created = await service.create(context, body(`b4-retention-crash-${randomUUID()}`));
+    await db.renderArtifact.updateMany({
+      where: { renderJobId: created.id },
+      data: { retainedUntil: new Date(Date.now() - 1000) },
+    });
+    // Simulate a process dying after one object was removed but before the
+    // expiry marker and lease were cleared.
+    await storage.deleteObject({
+      workspaceId,
+      objectKey: created.artifacts[0]!.objectKey,
+    });
+    await db.renderJob.update({
+      where: { id: created.id },
+      data: {
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() - 1000),
+      },
+    });
+    expect(await service.expireRetainedOutputs()).toBe(3);
+    const expired = await db.renderJob.findUniqueOrThrow({ where: { id: created.id } });
+    expect(expired.expiredAt).not.toBeNull();
+    expect(expired.leaseToken).toBeNull();
+    for (const artifact of created.artifacts)
+      await expect(
+        storage.getObject({ workspaceId, objectKey: artifact.objectKey }),
+      ).rejects.toThrow();
+    await expect(service.get(context, created.id)).rejects.toThrow(/expired/);
   });
 
   it("rejects a cross-scene cover selection before creating a render", async () => {

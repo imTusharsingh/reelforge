@@ -302,13 +302,32 @@ suite("CompositionEngine real FFmpeg export", () => {
     const local = new CompositionEngine(runner, storage, assets);
     const artifacts = await local.execute(context, randomUUID(), {
       ...input,
-      scenes: [{ ...input.scenes[0]!, assetId: audibleVideoId, image: false }],
+      scenes: [
+        {
+          ...input.scenes[0]!,
+          assetId: audibleVideoId,
+          image: false,
+          // Explicitly drop the fixture's narration refs: source audio must be
+          // the only audible signal in this render.
+          narrationAssetId: undefined,
+          narrationAssetVersion: undefined,
+        },
+      ],
       coverFrames: [{ assetId: audibleVideoId, assetVersion: 1, timestampMs: 400 }],
     });
     const video = artifacts.find((artifact) => artifact.kind === "VIDEO")!;
     const outputPath = join(root, "audible-output.mp4");
     await import("node:fs/promises").then(({ writeFile }) => writeFile(outputPath, video.body));
-    const measured = await runner.run({
+    const volume = async (filter: string): Promise<number> => {
+      const measured = await runner.run({
+        executable: "ffmpeg",
+        argv: ["-i", outputPath, "-af", filter, "-vn", "-sn", "-dn", "-f", "null", "/dev/null"],
+      });
+      if (measured.exitCode !== 0) throw new Error(measured.stderr);
+      return Number(/max_volume: (-?[0-9.]+) dB/.exec(measured.stderr)?.[1]);
+    };
+    const maxVolume = await volume("volumedetect");
+    const meanMeasured = await runner.run({
       executable: "ffmpeg",
       argv: [
         "-i",
@@ -323,13 +342,21 @@ suite("CompositionEngine real FFmpeg export", () => {
         "/dev/null",
       ],
     });
-    if (measured.exitCode !== 0) throw new Error(measured.stderr);
-    const maxVolume = Number(/max_volume: (-?[0-9.]+) dB/.exec(measured.stderr)?.[1]);
-    const meanVolume = Number(/mean_volume: (-?[0-9.]+) dB/.exec(measured.stderr)?.[1]);
+    if (meanMeasured.exitCode !== 0) throw new Error(meanMeasured.stderr);
+    const meanVolume = Number(/mean_volume: (-?[0-9.]+) dB/.exec(meanMeasured.stderr)?.[1]);
     expect(Number.isFinite(maxVolume)).toBe(true);
     expect(Number.isFinite(meanVolume)).toBe(true);
     expect(maxVolume).toBeGreaterThan(-40);
     expect(meanVolume).toBeGreaterThan(-40);
+    // The fixture tone is 880 Hz. Confirm the intended source signal is present
+    // and the narration fixture's 440 Hz tone is not.
+    expect(await volume("bandpass=f=880:width_type=h:w=50,volumedetect")).toBeGreaterThan(-40);
+    // Cascade the bandpass to suppress the 880 Hz source's skirt leakage; a
+    // genuine 440 Hz narration tone would still pass through at full level.
+    const only440 =
+      "bandpass=f=440:width_type=h:w=50,bandpass=f=440:width_type=h:w=50," +
+      "bandpass=f=440:width_type=h:w=50,bandpass=f=440:width_type=h:w=50";
+    expect(await volume(`${only440},volumedetect`)).toBeLessThan(-50);
     expect(
       (
         await runner.run({

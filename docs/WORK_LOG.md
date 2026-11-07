@@ -457,3 +457,20 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
 - Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
 - Next exact action: push the same branch and hand PR #18 back to Minu for B1-B5 review. Hosted CI must be checked on the pushed head.
+
+## 2026-11-07 - M10 PR #18 second re-review B1/B3/B4/schema fix-forward
+
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`; no new PR, approval, merge or main push.
+- Scope: second Minu re-review at `cc6a8a7` confirmed B2/B5 pass and reopened B1, the B3 test fixture, four B4 reliability gaps, and Prisma schema/migration alignment.
+- Changes made:
+  - B1: when any render error is raised, the executor re-reads persisted cancellation state. Cancellation requested by another instance (or an already-`CANCELED` job) wins over transient/permanent classification; the lease is cleared and the job terminalizes to `CANCELED`. Added cross-instance transient/permanent cancellation tests.
+  - B3: the no-narration engine test now explicitly clears inherited narration refs and asserts the 880 Hz source band is present while the 440 Hz narration band is absent (cascaded bandpass to suppress leakage).
+  - B4/1: claim tokens are unique per claim, artifact keys are claim-specific (`render/<jobId>/<leaseToken>/<filename>`), and a heartbeat renews the lease and aborts on a lost claim. A superseded executor cannot overwrite recovered artifacts; its own objects are cleaned up. Added a stale-live-executor interleaving test.
+  - B4/2: explicit retry atomically consumes the parent retry budget in the child-creation transaction; `FAILED_RETRYABLE` becomes `FAILED_FINAL`/`RETRY_SUPERSEDED`, `CANCELED` stays canceled while consuming an attempt, same-key retries remain idempotent, and concurrent fresh-key retries yield exactly one child.
+  - B4/3: retention claims can reclaim expired leases, making a crash mid-deletion recoverable. Added a retention crash-recovery test.
+  - B4/4: the worker poller catches transient poll failures (optional `onError`, else `console.error`) and keeps polling. Added an outage-continuation test.
+  - Schema: `RenderJob.parent` now uses the compound tenant relation `fields: [workspaceId, parentJobId], references: [workspaceId, id]`, matching migration `20261106190000_m10_video_composition_export`.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, newly created empty local PostgreSQL `reelforge_m10_rereview`. `pnpm db:validate` passed; `pnpm db:migrate:deploy` applied all 14 migrations from scratch including the compound parent FK; `pnpm lint` and `pnpm format:check` passed; `pnpm typecheck` passed for all workspaces with `DATABASE_URL`; focused composition lifecycle/engine/media/worker run passed 4 files / 48 tests with local FFmpeg 7.0.2; full `pnpm test` passed 35 files / 225 tests with `CI=1`, DB and binary paths; `pnpm build` passed; `git diff --check` passed.
+- External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
+- Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
+- Next exact action: commit and push the same branch, verify both hosted CI checks on the pushed head, and hand PR #18 back to Minu.

@@ -33,4 +33,24 @@ describe("CompositionWorkerHandler", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(render).toHaveBeenCalledTimes(calls);
   });
+
+  it("continues polling after transient outages", async () => {
+    const errors: unknown[] = [];
+    const render = vi
+      .fn<(batch?: number) => Promise<{ claimed: number; retained: number }>>()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValue({ claimed: 0, retained: 0 });
+    const handler = new CompositionWorkerHandler(render, {
+      pollIntervalMs: 5,
+      onError: (error): void => {
+        errors.push(error);
+      },
+    });
+    const running = handler.start();
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await handler.stop();
+    await expect(running).resolves.toBeUndefined();
+    expect(errors).toHaveLength(1);
+    expect(render.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
 });
