@@ -1328,6 +1328,45 @@ suite("CompositionService persisted lifecycle", () => {
     await expect(storage.getObject({ workspaceId, objectKey: thrownKey })).rejects.toThrow();
   });
 
+  it("records completion when storage throws synchronously", async () => {
+    if (!db || !service) return;
+    fail = false;
+    wait = Promise.resolve();
+    const request = body(`b4-sync-upload-throw-${randomUUID()}`);
+    const originalPut = storage.putObject.bind(storage);
+    const originalDelete = storage.deleteObject.bind(storage);
+    let thrownKey = "";
+    let completionObservedDuringCleanup = false;
+    storage.putObject = (input): Promise<StoragePutResult> => {
+      if (input.objectKey.endsWith("final.mp4")) {
+        thrownKey = input.objectKey;
+        throw new Error("synchronous storage failure");
+      }
+      return originalPut(input);
+    };
+    storage.deleteObject = async (input): Promise<void> => {
+      if (input.objectKey === thrownKey) {
+        const row = await db!.renderPendingObject.findFirst({
+          where: { workspaceId, objectKey: thrownKey },
+        });
+        completionObservedDuringCleanup = row?.uploadCompletedAt !== null;
+      }
+      return originalDelete(input);
+    };
+    try {
+      await expect(service.create(context, request)).rejects.toThrow();
+    } finally {
+      storage.putObject = originalPut;
+      storage.deleteObject = originalDelete;
+    }
+    expect(thrownKey).not.toBe("");
+    expect(completionObservedDuringCleanup).toBe(true);
+    expect(
+      await db.renderPendingObject.count({ where: { workspaceId, objectKey: thrownKey } }),
+    ).toBe(0);
+    await expect(storage.getObject({ workspaceId, objectKey: thrownKey })).rejects.toThrow();
+  });
+
   it("retains cleanup discoverability when a timed-out upload lands after a sweep", async () => {
     if (!db || !service) return;
     fail = false;
@@ -1410,6 +1449,76 @@ suite("CompositionService persisted lifecycle", () => {
       releaseLate();
       storage.putObject = originalPut;
     }
+  });
+
+  it("cleans finished uploads despite a full batch of stuck writers", async () => {
+    if (!db || !service) return;
+    const key = `b4-stuck-batch-${randomUUID()}`;
+    const request = body(key);
+    const job = await db.renderJob.create({
+      data: {
+        workspaceId,
+        sceneMediaJobId,
+        idempotencyKey: key,
+        status: "FAILED_RETRYABLE",
+        attempt: 1,
+        input: request.input,
+        inputFingerprint: canonicalRenderFingerprint(request.input),
+        createdByUserId: userId,
+      },
+    });
+    const now = Date.now();
+    const stuckAt = new Date(now - 30 * 60 * 1000);
+    const finishedAt = new Date(now - 25 * 60 * 1000);
+    const stuckKeys = Array.from(
+      { length: 10 },
+      (_, index) => `render/${job.id}/stuck-${index}.mp4`,
+    );
+    const finishedKey = `render/${job.id}/finished-orphan.mp4`;
+    await db.renderPendingObject.createMany({
+      data: [
+        ...stuckKeys.map((objectKey) => ({
+          workspaceId,
+          objectKey,
+          renderJobId: job.id,
+          leaseToken: randomUUID(),
+          createdAt: stuckAt,
+          uploadStartedAt: stuckAt,
+        })),
+        {
+          workspaceId,
+          objectKey: finishedKey,
+          renderJobId: job.id,
+          leaseToken: randomUUID(),
+          createdAt: finishedAt,
+          uploadStartedAt: finishedAt,
+          uploadCompletedAt: finishedAt,
+        },
+      ],
+    });
+    await storage.putObject({
+      workspaceId,
+      objectKey: finishedKey,
+      body: Buffer.from("finished orphan"),
+      contentType: "video/mp4",
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await service.cleanupPendingObjects(10)).toBe(1);
+      expect(warning).toHaveBeenCalledWith(
+        "Unfinished render uploads remain pending cleanup",
+        expect.objectContaining({ count: 10 }),
+      );
+    } finally {
+      warning.mockRestore();
+    }
+    expect(
+      await db.renderPendingObject.count({ where: { workspaceId, objectKey: { in: stuckKeys } } }),
+    ).toBe(10);
+    expect(
+      await db.renderPendingObject.count({ where: { workspaceId, objectKey: finishedKey } }),
+    ).toBe(0);
+    await expect(storage.getObject({ workspaceId, objectKey: finishedKey })).rejects.toThrow();
   });
 
   it("keeps a pending cleanup record across a storage deletion outage", async () => {

@@ -506,3 +506,18 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: Fixes require commit/push and hosted checks before Minu can review. Untracked local `.local-tools/` media binaries/fixture remain untouched.
 - Next exact action: commit/push this fix-forward, verify hosted quality checks on the updated PR head, and hand PR #18 back to Minu. Do not approve or merge from the implementation agent.
 - Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
+
+## 2026-11-09 - M10 PR #18 fifth re-review cleanup-liveness fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export` at `ffd4ea3`; changes are local and uncommitted.
+- Scope: Minu's latest REQUEST_CHANGES review at `ffd4ea3` found that stuck unfinished uploads could monopolize the bounded cleanup batch, blocking completed orphans and retaining their RESTRICT-linked rows. It also required recording completion when storage throws synchronously.
+- Changes made:
+  - Cleanup now counts and warns about aged started-but-unfinished uploads, while excluding them from the bounded deletion candidate query. Their durable ledger rows remain discoverable, but they no longer starve eligible objects.
+  - `putObjectBounded` records upload completion before rethrowing a synchronous `putObject` exception, allowing cleanup to remove the pending row once bytes are deleted.
+  - Added persisted regression tests with ten stuck records and a newer completed orphan at batch size 10, plus a synchronous storage throw that verifies completion was visible before cleanup.
+- Files/areas changed: `apps/api/src/modules/composition/composition.service.ts`, `apps/api/src/modules/composition/composition.integration.test.ts`, M10 `STATUS.md`, `docs/PROJECT_STATE.md`, and this work log. No schema or migration change.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`; on a fresh PostgreSQL `18.6` container, `pnpm db:migrate:deploy` applied all 16 migrations and `pnpm --filter @reelforge/database db:generate` passed. The first client-generation attempt omitted `DATABASE_URL` and failed; rerunning with the disposable database URL passed. `pnpm exec vitest run apps/api/src/modules/composition/composition.integration.test.ts` passed 1 file / 41 tests. `pnpm --filter @reelforge/api exec tsc --noEmit -p tsconfig.json`, `pnpm --filter @reelforge/api build`, focused ESLint, Prettier, and `git diff --check` passed. Hosted CI was not run.
+- External calls: no AI, social, or provider calls. PostgreSQL and storage fixtures were local. The temporary test database container was removed after verification; `.local-tools/` remains untouched.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Active PR #18 still points to `ffd4ea3`; hosted checks have not run on this fix-forward.
+- Defects/risks/blockers: persistent unfinished rows are intentionally retained and logged for operator diagnosis; they cannot block eligible cleanup records. This worktree contains the untracked `.local-tools/` binaries and fixture, not part of this patch.
+- Next exact action: commit and push this fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.

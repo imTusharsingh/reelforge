@@ -3,7 +3,7 @@
 - **State:** IMPLEMENTED_PENDING_REVIEW
 - **Assigned session/editor:** Module Implementation Agent
 - **Branch/worktree:** `work/m10-video-composition-and-export` (Desktop local execution, short branch prefix used by this repository).
-- **Last updated:** 2026-11-07
+- **Last updated:** 2026-11-09
 - **Reviewer:** Core Architect/Reviewer (Minu)
 - **Approved commit:** none
 
@@ -57,6 +57,14 @@ Minu's re-review at `bee630a` identified an unbounded late-write race in cleanup
 - **Schema:** additive migration `20261107100000_m10_pending_upload_quiescence` adds nullable upload-start and upload-completion timestamps to the pending-object ledger.
 - **Verification:** with Node `24.22.2`, pnpm `12.16.1`, isolated PostgreSQL `18.6`, and local FFmpeg/ffprobe `7.0.2`, `pnpm db:validate` and `pnpm db:migrate:deploy` (16 migrations) passed; API typecheck/build and focused ESLint/Prettier passed; all composition tests passed (4 files / 46 tests). Hosted checks have not yet run on this local fix-forward.
 
+## Fifth re-review fix-forward (2026-11-09)
+Minu's re-review at `ffd4ea3` confirmed reserved-attempt recovery and the late-write race fix, but found that aged unfinished uploads could fill the bounded cleanup batch and starve completed orphans. It also requested completion recording for synchronous storage errors.
+
+- **B4 unfinished-upload liveness:** the bounded cleanup query now selects only never-started or completed uploads. A separate count emits a warning for aged started-but-unfinished uploads; their ledger rows remain discoverable for diagnosis without blocking eligible cleanup records.
+- **B4 synchronous storage errors:** if `putObject` throws before returning a promise, the pending row is marked complete before the original storage error is rethrown, allowing immediate cleanup to retire it safely.
+- **Regression coverage:** with a batch size of 10, ten stale unfinished rows no longer block a newer completed orphan; the sweep deletes the orphan and warns with the stuck-row count. A synchronous `putObject` throw confirms completion was recorded before cleanup.
+- **Verification:** Node `24.22.2`, pnpm `12.16.1`; all 16 migrations applied to a fresh local PostgreSQL `18.6` database. `pnpm --filter @reelforge/database db:generate` passed with `DATABASE_URL`; API TypeScript check and API build passed; the persisted composition integration file passed (1 file / 41 tests); focused ESLint, Prettier, and `git diff --check` passed. Hosted CI was not run for this fix-forward.
+
 ## Files changed
 - `apps/api/src/app.module.ts`, `apps/api/package.json`: module registration and workspace media dependency.
 - `apps/api/src/modules/composition/composition.controller.ts`: authenticated, workspace-member-scoped render HTTP contract.
@@ -109,7 +117,7 @@ No live AI, social or other external provider was called. Video test assets are 
 - There is no user UI, social export or provider generation here. No change to M11 approval/status or M13 publication behavior.
 
 ## Next exact action
-Commit and push the reviewed B4.1/B4.2 fix-forward for PR #18, verify both hosted quality checks on the new head, and hand it back to Minu to review the late-upload tombstone and reserved-attempt recovery. Do not approve or merge from the implementation agent.
+Commit and push this B4 cleanup-liveness fix-forward for PR #18, verify hosted quality checks on the new head, and hand it back to Minu. Do not approve or merge from the implementation agent.
 
 ## Handoff notes
 Endpoint family: `POST /workspaces/:workspaceId/composition/jobs`, `GET /jobs/:jobId`, `GET /jobs/:jobId/manifest`, and editor-only `POST /jobs/:jobId/{retry,cancel,edit}`. AuthGuard obtains sessions; existing WorkspaceService resolves membership. Scene visual/narration, cover assets, and additional music/SFX must reference published, rights-aware current-workspace assets. Raw FFmpeg exit statuses sanitized; raw command/media paths not exposed in REST error mapping. Cancellation and no-successful-artifact cleanup fail closed.

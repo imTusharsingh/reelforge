@@ -33,7 +33,7 @@
 **Phase 1 in progress - M00–M09 integrated; M10 pending review**
 
 Next exact action:
-1. Commit and push the latest M10 retry/upload-cleanup fix-forward to PR #18, verify hosted quality checks on that head, and hand it to Minu for composition, export, and security review; the implementation agent does not merge/approve.
+1. Commit and push the latest M10 cleanup-liveness fix-forward to PR #18, verify hosted quality checks on that head, and hand it to Minu for composition, export, and security review; the implementation agent does not merge/approve.
 2. Resolve M10 orchestration/retention automation review decisions before merging into main.
 
 ## Module status index

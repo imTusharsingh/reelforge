@@ -563,8 +563,24 @@ export class CompositionService {
     const cutoff = new Date(
       this.now().getTime() - this.uploadDeadlineMs - this.pendingObjectGraceMs,
     );
+    const unfinishedCount = await this.db.renderPendingObject.count({
+      where: {
+        createdAt: { lte: cutoff },
+        uploadStartedAt: { not: null },
+        uploadCompletedAt: null,
+      },
+    });
+    if (unfinishedCount > 0) {
+      console.warn("Unfinished render uploads remain pending cleanup", {
+        count: unfinishedCount,
+        cutoff,
+      });
+    }
     const candidates = await this.db.renderPendingObject.findMany({
-      where: { createdAt: { lte: cutoff } },
+      where: {
+        createdAt: { lte: cutoff },
+        OR: [{ uploadStartedAt: null }, { uploadCompletedAt: { not: null } }],
+      },
       orderBy: { createdAt: "asc" },
       take: batch,
     });
@@ -1255,6 +1271,7 @@ export class CompositionService {
     try {
       write = this.storage.putObject(input);
     } catch (error) {
+      await markCompleted();
       throw error;
     }
     const settledWrite = Promise.resolve(write).then(
