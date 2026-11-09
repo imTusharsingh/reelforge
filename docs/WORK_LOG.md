@@ -571,3 +571,18 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: No real AI adapter is configured; AI scorecards remain unavailable and require human review. Disclosure flag semantics still need Core review before downstream legal/platform sufficiency is assumed. The known unrelated Prisma schema/migration drift and Prisma ESM dist-boot follow-up remain out of scope.
 - Next exact action: commit and push the fix-forward to PR #20, request Minu re-review, and stop. Do not approve or merge.
 - Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 unchanged.
+
+## 2026-11-09 19:05 UTC - REVIEW - M11 PostgreSQL null persistence fix
+- Actor/session: Module Implementation Agent, Desktop only. Continuing `work/m11-quality-assurance-and-approval` after Minu's B5 review on PR #20.
+- Work package: M11 quality persistence review fix-forward.
+- Branch and commit: `work/m11-quality-assurance-and-approval`, based on PR head `a652630749bb34a636ca6ccb242c99e2282a7b55`.
+- Starting state: Unscored runs persisted Prisma JSON `null`, violating the PostgreSQL check constraint that permits SQL `NULL` or a JSON object; the unit fixture had masked this distinction.
+- Changes made: Persist null scorecards with `Prisma.DbNull`; made the unit fixture reject `Prisma.JsonNull`; added a real PostgreSQL integration test for blocked and unconfigured-AI runs and their decisions; map Prisma serialization conflicts (`P2034`) from `create()` to HTTP 409; and assert the superseded-run-specific decision error.
+- Files/areas changed: M11 quality service and tests, M11 `STATUS.md`, and this work log. No schema or migration changes.
+- Commands actually run and results: `pnpm lint`, `pnpm format:check`, `git diff --check`, workspace typecheck, `pnpm test` (28 files / 175 tests passed, 9 files / 77 tests skipped), focused quality service tests (15 passed), full workspace build, and `pnpm db:validate` all **passed**. A fresh disposable PostgreSQL 18.6 database on port 55435 accepted all 18 migrations; the focused PostgreSQL integration test **passed** (1 test). The disposable database container was stopped and removed. `pnpm install --frozen-lockfile` was not run because no dependency manifest or lockfile changed.
+- External calls: GitHub metadata only; no AI, social, or provider calls. Existing databases on ports 5432, 55432, 55433, and 55434 were not used or stopped.
+- Tests/evidence: The integration test read the unscored scorecards back from PostgreSQL as SQL `NULL`, rejected the hard-gate-blocked run, and approved the unconfigured-AI run after gates passed.
+- Decisions/approvals: This resolves the requested persistence blocker and related follow-ups; Minu's review remains pending. No approval or merge is claimed.
+- Defects/risks/blockers: No real AI adapter is configured; unscored runs remain manual-review-only. Disclosure flag semantics still need Core review.
+- Next exact action: update PR #20 with the verified fix-forward, request Minu re-review, and stop. Do not approve or merge.
+- Related status/ADR: M11 `STATUS.md`; ADR-005, ADR-007, and ADR-010 unchanged.

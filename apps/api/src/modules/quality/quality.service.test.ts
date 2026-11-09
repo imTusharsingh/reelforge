@@ -266,9 +266,11 @@ class FixtureDatabase {
   };
   public readonly qualityReviewRun = {
     create: async (args: { data: Record<string, unknown> }): Promise<{ id: string }> => {
+      if (args.data.scorecard === Prisma.JsonNull)
+        throw new Error("JSON null is not SQL NULL for quality scorecards");
       const run = {
         ...args.data,
-        scorecard: args.data.scorecard === Prisma.JsonNull ? null : args.data.scorecard,
+        scorecard: args.data.scorecard === Prisma.DbNull ? null : args.data.scorecard,
         id: randomUUID(),
         createdAt: new Date("2026-01-01T00:00:00Z"),
         decisions: [],
@@ -709,7 +711,7 @@ describe("quality review service", () => {
         action: "APPROVE",
         reason: "Attempt stale approval",
       }),
-    ).rejects.toBeInstanceOf(ConflictException);
+    ).rejects.toThrow("Only a current pending review can receive a decision");
     await expect(quality.getRenderQualityStatus(context(), renderJobId)).resolves.toMatchObject({
       renderJobId,
       status: "BLOCKED",

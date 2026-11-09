@@ -484,37 +484,44 @@ export class QualityService {
       limitations.push("At least one hard gate failed; approval and auto-approval are blocked");
 
     const renderFamilyId = await this.renderFamilyId(context.workspaceId, job.id, job.parentJobId);
-    const created = await this.db.$transaction(
-      async (tx) => {
-        await tx.qualityReviewRun.updateMany({
-          where: {
-            workspaceId: context.workspaceId,
-            renderJobId: job.id,
-            status: { in: ["REVIEW_REQUIRED", "BLOCKED", "AI_REVIEW_UNAVAILABLE"] },
-            supersededAt: null,
-          },
-          data: { status: "SUPERSEDED", supersededAt: new Date() },
-        });
-        return tx.qualityReviewRun.create({
-          data: {
-            workspaceId: context.workspaceId,
-            renderJobId: job.id,
-            renderFamilyId,
-            createdByUserId: context.userId,
-            status,
-            gateSummary: gates as Prisma.InputJsonValue,
-            scorecard: scorecard === null ? Prisma.JsonNull : (scorecard as Prisma.InputJsonValue),
-            policySnapshot: approvalPolicy as Prisma.InputJsonValue,
-            disclosures: disclosures as Prisma.InputJsonValue,
-            limitations: limitations as Prisma.InputJsonValue,
-            modelVersion: scorecard?.metadata.modelVersion ?? null,
-            promptVersion: scorecard?.metadata.promptVersion ?? null,
-          },
-          select: { id: true },
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+    let created: { id: string };
+    try {
+      created = await this.db.$transaction(
+        async (tx) => {
+          await tx.qualityReviewRun.updateMany({
+            where: {
+              workspaceId: context.workspaceId,
+              renderJobId: job.id,
+              status: { in: ["REVIEW_REQUIRED", "BLOCKED", "AI_REVIEW_UNAVAILABLE"] },
+              supersededAt: null,
+            },
+            data: { status: "SUPERSEDED", supersededAt: new Date() },
+          });
+          return tx.qualityReviewRun.create({
+            data: {
+              workspaceId: context.workspaceId,
+              renderJobId: job.id,
+              renderFamilyId,
+              createdByUserId: context.userId,
+              status,
+              gateSummary: gates as Prisma.InputJsonValue,
+              scorecard: scorecard === null ? Prisma.DbNull : (scorecard as Prisma.InputJsonValue),
+              policySnapshot: approvalPolicy as Prisma.InputJsonValue,
+              disclosures: disclosures as Prisma.InputJsonValue,
+              limitations: limitations as Prisma.InputJsonValue,
+              modelVersion: scorecard?.metadata.modelVersion ?? null,
+              promptVersion: scorecard?.metadata.promptVersion ?? null,
+            },
+            select: { id: true },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")
+        throw new ConflictException("Concurrent quality review update; retry the request");
+      throw error;
+    }
     return this.get(context, created.id);
   }
 

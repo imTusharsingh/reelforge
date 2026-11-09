@@ -33,6 +33,7 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 - `apps/api/src/app.module.ts`
 - `apps/api/src/modules/quality/quality.controller.ts`
 - `apps/api/src/modules/quality/quality.module.ts`
+- `apps/api/src/modules/quality/quality.postgres.integration.test.ts`
 - `apps/api/src/modules/quality/quality.service.ts`
 - `apps/api/src/modules/quality/quality.service.test.ts`
 - `apps/api/src/modules/quality/quality.types.ts`
@@ -49,8 +50,9 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 - `pnpm lint` — **PASS**.
 - `pnpm format:check` — **PASS**.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm typecheck` — **PASS** across all workspaces.
-- `pnpm test` — **PASS**, 28 files passed / 8 skipped; 175 tests passed / 76 skipped.
+- `pnpm test` — **PASS**, 28 files passed / 9 skipped; 175 tests passed / 77 skipped.
 - `pnpm exec vitest run apps/api/src/modules/quality/quality.service.test.ts` — **PASS**, 1 file / 15 tests.
+- `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm exec vitest run apps/api/src/modules/quality/quality.postgres.integration.test.ts` — **PASS**, 1 integration test persisted a blocked run and an unconfigured-AI run with SQL `NULL` scorecards, then rejected and approved them respectively.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 NEXT_TELEMETRY_DISABLED=1 pnpm build` — **PASS** across all workspaces.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm db:validate` — **PASS**.
 - `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm db:migrate:deploy` — **PASS**, all 18 migrations applied to fresh disposable PostgreSQL 18.6; the container was stopped and removed. Existing databases on ports 5432, 55432, 55433, and 55434 were not used or stopped.
