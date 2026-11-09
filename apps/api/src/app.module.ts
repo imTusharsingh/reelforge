@@ -11,6 +11,7 @@ import { IdeaModule } from "./modules/idea/idea.module.js";
 import { ScriptModule } from "./modules/script/script.module.js";
 import { SceneMediaModule } from "./modules/scene-media/scene-media.module.js";
 import { CompositionModule } from "./modules/composition/composition.module.js";
+import { QualityModule } from "./modules/quality/quality.module.js";
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CompositionModule } from "./modules/composition/composition.module.js";
     ScriptModule,
     SceneMediaModule,
     CompositionModule,
+    QualityModule,
   ],
   controllers: [HealthController],
 })

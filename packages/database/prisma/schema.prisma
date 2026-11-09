@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client"
+  provider            = "prisma-client"
   output              = "../src/generated/prisma"
   moduleFormat        = "esm"
   importFileExtension = "js"
@@ -89,62 +89,67 @@ enum IdeaOrigin {
 }
 
 model User {
-  id                    String                @id @default(uuid()) @db.Uuid
-  email                 String                @unique
-  displayName           String?               @map("display_name")
-  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  memberships           WorkspaceMembership[]
-  credential            PasswordCredential?
-  sessions              Session[]
-  authEvents            AuthEvent[]
-  createdIdeas          Idea[]                @relation("IdeaCreator")
-  createdSceneMediaJobs SceneMediaJob[]
-  createdRenderJobs RenderJob[]
-  defaultWorkspaceId    String?               @map("default_workspace_id") @db.Uuid
-  defaultWorkspace      Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
+  id                       String                @id @default(uuid()) @db.Uuid
+  email                    String                @unique
+  displayName              String?               @map("display_name")
+  createdAt                DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships              WorkspaceMembership[]
+  credential               PasswordCredential?
+  sessions                 Session[]
+  authEvents               AuthEvent[]
+  createdIdeas             Idea[]                @relation("IdeaCreator")
+  createdSceneMediaJobs    SceneMediaJob[]
+  createdRenderJobs        RenderJob[]
+  createdQualityReviewRuns QualityReviewRun[]
+  qualityDecisions         QualityDecision[]
+  defaultWorkspaceId       String?               @map("default_workspace_id") @db.Uuid
+  defaultWorkspace         Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
 
 model Workspace {
-  id                         String                      @id @default(uuid()) @db.Uuid
-  name                       String
-  createdAt                  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  archivedAt                 DateTime?                   @map("archived_at") @db.Timestamptz(6)
-  memberships                WorkspaceMembership[]
-  channels                   Channel[]
-  genres                     Genre[]
-  assets                     Asset[]
-  characters                 Character[]
-  characterVersions          CharacterVersion[]
-  characterGroups            CharacterGroup[]
-  characterGroupMembers      CharacterGroupMember[]
-  characterGroupAssignments  CharacterGroupAssignment[]
-  assetUsageReferences       AssetUsageReference[]
-  workflowRuns               WorkflowRun[]
-  outboxEvents               OutboxEvent[]
-  defaultForUsers            User[]                      @relation("UserDefaultWorkspace")
-  activeConfigSnapshotId     String?                     @map("active_config_snapshot_id") @db.Uuid
-  configSnapshots            WorkspaceConfigSnapshot[]
-  generationConfigSnapshots  ConfigSnapshot[]
-  promptTemplates            PromptTemplate[]
-  promptTemplateVersions     PromptTemplateVersion[]
-  promptBundleSnapshots      PromptBundleSnapshot[]
-  ideas                      Idea[]
-  ideaDuplicates             IdeaDuplicate[]
-  ideaApprovalSnapshots      IdeaApprovalSnapshot[]
-  scripts                    Script[]
-  providerRequests           ProviderRequest[]
-  providerBudgets            ProviderBudget[]
-  providerBudgetReservations ProviderBudgetReservation[]
-  sceneMediaJobs             SceneMediaJob[]
-  sceneGenerations           SceneGeneration[]
-  sceneGenerationOutputs     SceneGenerationOutput[]
-  renderJobs                 RenderJob[]
-  renderArtifacts            RenderArtifact[]
-  activeConfigSnapshot       WorkspaceConfigSnapshot?    @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
+  id                          String                       @id @default(uuid()) @db.Uuid
+  name                        String
+  createdAt                   DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt                  DateTime?                    @map("archived_at") @db.Timestamptz(6)
+  memberships                 WorkspaceMembership[]
+  channels                    Channel[]
+  genres                      Genre[]
+  assets                      Asset[]
+  characters                  Character[]
+  characterVersions           CharacterVersion[]
+  characterGroups             CharacterGroup[]
+  characterGroupMembers       CharacterGroupMember[]
+  characterGroupAssignments   CharacterGroupAssignment[]
+  assetUsageReferences        AssetUsageReference[]
+  workflowRuns                WorkflowRun[]
+  outboxEvents                OutboxEvent[]
+  defaultForUsers             User[]                       @relation("UserDefaultWorkspace")
+  activeConfigSnapshotId      String?                      @map("active_config_snapshot_id") @db.Uuid
+  configSnapshots             WorkspaceConfigSnapshot[]
+  generationConfigSnapshots   ConfigSnapshot[]
+  promptTemplates             PromptTemplate[]
+  promptTemplateVersions      PromptTemplateVersion[]
+  promptBundleSnapshots       PromptBundleSnapshot[]
+  ideas                       Idea[]
+  ideaDuplicates              IdeaDuplicate[]
+  ideaApprovalSnapshots       IdeaApprovalSnapshot[]
+  scripts                     Script[]
+  providerRequests            ProviderRequest[]
+  providerBudgets             ProviderBudget[]
+  providerBudgetReservations  ProviderBudgetReservation[]
+  sceneMediaJobs              SceneMediaJob[]
+  sceneGenerations            SceneGeneration[]
+  sceneGenerationOutputs      SceneGenerationOutput[]
+  renderJobs                  RenderJob[]
+  renderArtifacts             RenderArtifact[]
+  qualityReviewRuns           QualityReviewRun[]
+  qualityDecisions            QualityDecision[]
+  qualityRegenerationRequests QualityRegenerationRequest[]
+  activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
   @@map("workspaces")
@@ -961,7 +966,7 @@ model SceneMediaJob {
   promptSnapshot   PromptBundleSnapshot @relation(fields: [workspaceId, promptSnapshotId], references: [workspaceId, id], onDelete: Restrict)
   createdBy        User                 @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   scenes           SceneGeneration[]
-  renderJobs       RenderJob[]      @relation("SceneMediaRenderJobs")
+  renderJobs       RenderJob[]          @relation("SceneMediaRenderJobs")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "scene_media_jobs_idempotency_key")
@@ -1038,38 +1043,43 @@ enum RenderJobStatus {
 }
 
 model RenderJob {
-  id                   String          @id @default(uuid()) @db.Uuid
-  workspaceId          String          @map("workspace_id") @db.Uuid
-  sceneMediaJobId      String          @map("scene_media_job_id") @db.Uuid
-  parentJobId          String?         @map("parent_job_id") @db.Uuid
-  idempotencyKey       String          @map("idempotency_key")
-  status               RenderJobStatus @default(QUEUED)
-  attempt              Int             @default(0)
-  schemaVersion        String          @default("1.0") @map("schema_version")
-  inputFingerprint     String          @map("input_fingerprint")
-  input                Json
-  retentionDays        Int             @default(90) @map("retention_days")
-  nextAttemptAt        DateTime         @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
-  leaseToken           String?          @map("lease_token") @db.Uuid
-  leaseExpiresAt       DateTime?        @map("lease_expires_at") @db.Timestamptz(6)
-  maxRetries           Int             @default(3) @map("max_retries")
-  scheduledAttempts    Int             @default(0) @map("scheduled_attempts")
-  retryBackoffMs       Int              @default(250) @map("retry_backoff_ms")
-  cancelRequestedAt    DateTime?       @map("cancel_requested_at") @db.Timestamptz(6)
-  retrySupersededAt    DateTime?       @map("retry_superseded_at") @db.Timestamptz(6)
-  errorCode            String?         @map("error_code")
-  errorMessage         String?         @map("error_message")
-  createdByUserId      String           @map("created_by_user_id") @db.Uuid
-  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sceneMediaJob         SceneMediaJob     @relation("SceneMediaRenderJobs", fields: [workspaceId, sceneMediaJobId], references: [workspaceId, id], onDelete: Restrict)
-  parent                 RenderJob?       @relation("RenderRenders", fields: [workspaceId, parentJobId], references: [workspaceId, id], onDelete: Restrict)
-  children               RenderJob[]      @relation("RenderRenders")
-  createdBy             User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
-  artifacts              RenderArtifact[]
-  pendingObjects         RenderPendingObject[]
-  expiredAt              DateTime?        @map("expired_at") @db.Timestamptz(6)
+  id                          String                       @id @default(uuid()) @db.Uuid
+  workspaceId                 String                       @map("workspace_id") @db.Uuid
+  sceneMediaJobId             String                       @map("scene_media_job_id") @db.Uuid
+  parentJobId                 String?                      @map("parent_job_id") @db.Uuid
+  idempotencyKey              String                       @map("idempotency_key")
+  status                      RenderJobStatus              @default(QUEUED)
+  attempt                     Int                          @default(0)
+  schemaVersion               String                       @default("1.0") @map("schema_version")
+  inputFingerprint            String                       @map("input_fingerprint")
+  input                       Json
+  retentionDays               Int                          @default(90) @map("retention_days")
+  nextAttemptAt               DateTime                     @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  leaseToken                  String?                      @map("lease_token") @db.Uuid
+  leaseExpiresAt              DateTime?                    @map("lease_expires_at") @db.Timestamptz(6)
+  maxRetries                  Int                          @default(3) @map("max_retries")
+  scheduledAttempts           Int                          @default(0) @map("scheduled_attempts")
+  retryBackoffMs              Int                          @default(250) @map("retry_backoff_ms")
+  cancelRequestedAt           DateTime?                    @map("cancel_requested_at") @db.Timestamptz(6)
+  retrySupersededAt           DateTime?                    @map("retry_superseded_at") @db.Timestamptz(6)
+  errorCode                   String?                      @map("error_code")
+  errorMessage                String?                      @map("error_message")
+  createdByUserId             String                       @map("created_by_user_id") @db.Uuid
+  createdAt                   DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sceneMediaJob               SceneMediaJob                @relation("SceneMediaRenderJobs", fields: [workspaceId, sceneMediaJobId], references: [workspaceId, id], onDelete: Restrict)
+  parent                      RenderJob?                   @relation("RenderRenders", fields: [workspaceId, parentJobId], references: [workspaceId, id], onDelete: Restrict)
+  children                    RenderJob[]                  @relation("RenderRenders")
+  createdBy                   User                         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  artifacts                   RenderArtifact[]
+  pendingObjects              RenderPendingObject[]
+  qualityReviewRuns           QualityReviewRun[]           @relation("QualityReviewSourceRender")
+  qualityReviewFamilies       QualityReviewRun[]           @relation("QualityReviewFamily")
+  qualityRegenerationRequests QualityRegenerationRequest[] @relation("QualityRegenerationSourceRender")
+  qualityRegenerationFamilies QualityRegenerationRequest[] @relation("QualityRegenerationFamily")
+  expiredAt                   DateTime?                    @map("expired_at") @db.Timestamptz(6)
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "render_jobs_idempotency_key")
   @@index([workspaceId, createdAt])
@@ -1080,22 +1090,23 @@ model RenderJob {
 }
 
 model RenderArtifact {
-  id               String             @id @default(uuid()) @db.Uuid
-  workspaceId      String             @map("workspace_id") @db.Uuid
-  renderJobId      String             @map("render_job_id") @db.Uuid
-  kind             String
-  assetId          String             @map("asset_id") @db.Uuid
-  assetVersion     Int                 @map("asset_version")
-  objectKey        String              @map("object_key")
-  mediaType        String              @map("media_type")
-  byteSize         Int                 @map("byte_size")
-  checksumSha256   String              @map("checksum_sha256")
-  metadata         Json?
-  retainedUntil    DateTime?           @map("retained_until") @db.Timestamptz(6)
-  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  job              RenderJob           @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Cascade)
-  asset            Asset                @relation(fields: [workspaceId, assetId], references: [workspaceId, id], onDelete: Restrict)
+  id             String    @id @default(uuid()) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  renderJobId    String    @map("render_job_id") @db.Uuid
+  kind           String
+  assetId        String    @map("asset_id") @db.Uuid
+  assetVersion   Int       @map("asset_version")
+  objectKey      String    @map("object_key")
+  mediaType      String    @map("media_type")
+  byteSize       Int       @map("byte_size")
+  checksumSha256 String    @map("checksum_sha256")
+  metadata       Json?
+  retainedUntil  DateTime? @map("retained_until") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job            RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Cascade)
+  asset          Asset     @relation(fields: [workspaceId, assetId], references: [workspaceId, id], onDelete: Restrict)
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, renderJobId, kind, assetId], map: "render_artifacts_unique_key")
   @@unique([workspaceId, objectKey], map: "render_artifacts_object_key")
@@ -1105,16 +1116,109 @@ model RenderArtifact {
 }
 
 model RenderPendingObject {
-  workspaceId String   @map("workspace_id") @db.Uuid
-  objectKey   String   @map("object_key")
-  renderJobId String   @map("render_job_id") @db.Uuid
-  leaseToken  String   @map("lease_token") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  renderJob   RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  workspaceId       String    @map("workspace_id") @db.Uuid
+  objectKey         String    @map("object_key")
+  renderJobId       String    @map("render_job_id") @db.Uuid
+  leaseToken        String    @map("lease_token") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  renderJob         RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
   uploadStartedAt   DateTime? @map("upload_started_at") @db.Timestamptz(6)
   uploadCompletedAt DateTime? @map("upload_completed_at") @db.Timestamptz(6)
+
   @@id([workspaceId, objectKey])
   @@index([workspaceId, renderJobId])
   @@index([leaseToken])
   @@map("render_pending_objects")
+}
+
+enum QualityReviewRunStatus {
+  BLOCKED
+  AI_REVIEW_UNAVAILABLE
+  REVIEW_REQUIRED
+  AUTO_APPROVED
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum QualityDecisionAction {
+  APPROVE
+  REJECT
+  REQUEST_CHANGES
+}
+
+enum QualityRegenerationStage {
+  SCENE
+  SCRIPT
+  RENDER
+}
+
+model QualityReviewRun {
+  id                   String                       @id @default(uuid()) @db.Uuid
+  workspaceId          String                       @map("workspace_id") @db.Uuid
+  renderJobId          String                       @map("render_job_id") @db.Uuid
+  renderFamilyId       String                       @map("render_family_id") @db.Uuid
+  createdByUserId      String                       @map("created_by_user_id") @db.Uuid
+  status               QualityReviewRunStatus
+  gateSummary          Json                         @map("gate_summary")
+  scorecard            Json?
+  policySnapshot       Json                         @map("policy_snapshot")
+  disclosures          Json
+  limitations          Json
+  modelVersion         String?                      @map("model_version")
+  promptVersion        String?                      @map("prompt_version")
+  createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace            Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  renderJob            RenderJob                    @relation("QualityReviewSourceRender", fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  renderFamily         RenderJob                    @relation("QualityReviewFamily", fields: [workspaceId, renderFamilyId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy            User                         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  decisions            QualityDecision[]
+  regenerationRequests QualityRegenerationRequest[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, renderJobId, createdAt])
+  @@map("quality_review_runs")
+}
+
+model QualityDecision {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  workspaceId         String                      @map("workspace_id") @db.Uuid
+  reviewRunId         String                      @map("review_run_id") @db.Uuid
+  actorUserId         String                      @map("actor_user_id") @db.Uuid
+  action              QualityDecisionAction
+  reason              String
+  createdAt           DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reviewRun           QualityReviewRun            @relation(fields: [workspaceId, reviewRunId], references: [workspaceId, id], onDelete: Cascade)
+  actor               User                        @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  regenerationRequest QualityRegenerationRequest?
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, reviewRunId, createdAt])
+  @@map("quality_decisions")
+}
+
+model QualityRegenerationRequest {
+  id             String                   @id @default(uuid()) @db.Uuid
+  workspaceId    String                   @map("workspace_id") @db.Uuid
+  reviewRunId    String                   @map("review_run_id") @db.Uuid
+  renderJobId    String                   @map("render_job_id") @db.Uuid
+  renderFamilyId String                   @map("render_family_id") @db.Uuid
+  decisionId     String                   @unique @map("decision_id") @db.Uuid
+  stage          QualityRegenerationStage
+  targetKey      String                   @map("target_key")
+  sceneId        String?                  @map("scene_id")
+  attempt        Int
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace      Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reviewRun      QualityReviewRun         @relation(fields: [workspaceId, reviewRunId], references: [workspaceId, id], onDelete: Cascade)
+  renderJob      RenderJob                @relation("QualityRegenerationSourceRender", fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  renderFamily   RenderJob                @relation("QualityRegenerationFamily", fields: [workspaceId, renderFamilyId], references: [workspaceId, id], onDelete: Restrict)
+  decision       QualityDecision          @relation(fields: [workspaceId, decisionId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, renderFamilyId, targetKey, attempt], map: "quality_regen_family_target_attempt_key")
+  @@unique([workspaceId, decisionId])
+  @@index([workspaceId, renderFamilyId, targetKey, createdAt], map: "quality_regen_family_target_created_idx")
+  @@map("quality_regeneration_requests")
 }
