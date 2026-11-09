@@ -10,6 +10,7 @@ import { ConfigModule } from "./modules/config/config.module.js";
 import { IdeaModule } from "./modules/idea/idea.module.js";
 import { ScriptModule } from "./modules/script/script.module.js";
 import { SceneMediaModule } from "./modules/scene-media/scene-media.module.js";
+import { CompositionModule } from "./modules/composition/composition.module.js";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SceneMediaModule } from "./modules/scene-media/scene-media.module.js";
     IdeaModule,
     ScriptModule,
     SceneMediaModule,
+    CompositionModule,
   ],
   controllers: [HealthController],
 })

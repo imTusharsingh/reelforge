@@ -413,3 +413,111 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: NONE.
 - Decisions/approvals: Still `IMPLEMENTED_PENDING_REVIEW`. No merge.
 - Next exact action: Minu re-reviews PR #17. Do not start M10.
+
+
+## 2026-11-06 16:36 UTC - INTEGRATION HISTORY / M10 - M09 integrated and M10 video composition implemented pending review
+- Actor/session: M10 implementation agent, entirely on owner Desktop `TRACXN-LP-784`; no cloud agent used.
+- Work package: M10 Video Composition & Export; historical M09 closeout from actual `origin/main` main integration.
+- Branch and commit: `work/m10-video-composition-and-export`, built on WIP `1b0dd96ddf9c40b55b99b9076862d63eca4b27c8`. M09 main is `589d28c86feaede46f516bf27555f02802882610` via PR #17, with technical review approval at `99b1972191038f5e4f839892bbbb196e554d6215`.
+- Starting state: M00–M09 integrated. M10 WIP existed but lifecycle/source/FFmpeg/media validation and closeout evidence were incomplete.
+- Changes made:
+  - Added M10 Nest API, render job/artifact lifecycle, idempotent create/retry, in-process cancellation, bounded scene/audio/subtitle/title/cover rerenders, and authorized M09 scene/output/audio pin resolution.
+  - Built `@reelforge/media` FFmpeg/ffprobe contracts and strict numeric/profile validators; used array argv + `shell:false`, independent safe per-input reads, canceled-child cleanup, delayed crossfade narration and distinct per-timestamp covers.
+  - Final H264/AAC/30fps/duration validation and two-phase manifest identity/checksum validation prevent invalid media, wrong fields, corrupt persisted JSON, or absent covers becoming a successful export.
+  - Added real PostgreSQL lifecycle/HTTP tenant-guard tests; actual locally supplied FFmpeg CUT/FADE renders include local PNG/WAV/music, subtitles, two cover frames, profile and deterministic SHA-256 evidence. No live provider calls.
+  - Added migration `20261106190000_m10_video_composition_export` for tenant-scoped render jobs, immutable parent chain, artifact identity/storage/size/SHA-256 checksum and retention fields. No previous migration edited.
+- Commands actually run and results:
+  - Node via nvm `24.22.2`, pnpm `12.16.1`, local Docker PostgreSQL `18.6-alpine`, fresh test DB, local FFmpeg `7.0.2-static` via env only.
+  - Fresh `pnpm db:migrate:deploy`: all 13 migrations applied; `pnpm db:validate`, `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, and strict workspace `pnpm typecheck` all passed.
+  - Full `pnpm test` with DATABASE_URL/FFMPEG_PATH/FFPROBE_PATH: **34 files / 200 tests passed**, no failed/skipped. Focused M10: **5 files / 26 tests**. `pnpm build` passed on final product tree; `git diff --check` passed.
+- External calls: provider generation **NONE**. Git/network used only for existing repo authentication/pull request metadata. Deterministic fixture engines used for persisted and HTTP tests; real FFmpeg exercised only local binary + generated fixtures.
+- Decision/approval: M10 only. No M10 approval/integration assigned to agent; M10 remains `IMPLEMENTED_PENDING_REVIEW`. M09 integration recorded from actual merge, not asserted from previous status.
+- Defects/risks/blockers: in-request renderer and cancellation lack durable worker/resume; retention expiry stored but there is no sweeping object lifecycle; no automatic bounded retry/backoff scheduler; FFmpeg needs supplying for hosted CI to run 3 opt-in real-render tests. Earlier Prisma ESM runtime follow-up is out of scope. Core reviewer must assess these boundaries before approving.
+- Next exact action: Minu reviews M10 PR product and tests, determines worker/retention/retry follow-ups, and decides merge. Never self-merge.
+- Related status/ADR: `work-packages/M10-video-composition-and-export/STATUS.md`, this M10 additive schema/engine validation evidence, and `docs/PROJECT_STATE.md`.
+
+## 2026-11-06 23:09 IST - M10 fix-forward lifecycle attempt semantics
+
+- On the existing `work/m10-video-composition-and-export` branch, corrected worker claim accounting so persisted `attempt` is incremented with `scheduledAttempts` and remains 1-based for due/stale/concurrent worker claims. Retry backoff uses the base delay for the first retry and permits the configured bounded retry window before durable exhaustion.
+- Verification: local PostgreSQL received the additive M10 retry/recovery migration; focused composition/engine suites passed 2 files / 27 tests; full suite passed 35 files / 217 tests; lint, format check, typecheck, schema validation, and build passed with `DATABASE_URL`; built worker startup probe passed until intentional timeout. Local FFmpeg/ffprobe 7.0.2 exercised real CUT/FADE, multi-cover, and source-audio paths.
+- M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, merge, new PR, or main push is claimed. The existing PR #18 is handed back to Minu for review.
+
+## 2026-11-07 - M10 PR #18 review blockers B1-B5 fix-forward
+
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`; no new PR, approval, merge or main push.
+- Scope: Re-verified and completed the fix-forward for Minu review `5803750731` (REQUEST_CHANGES at `7a0381d`): cancellation/claim atomicity, stored artifact integrity, source-audio policy, bounded retry/recovery/retention, and PNG dimensions.
+- Changes made:
+  - B1: kept cancel-before-claim and cancel-after-claim terminalization atomic; scheduled claims re-check cancellation and cannot execute canceled work.
+  - B2: manifest retrieval independently re-reads and verifies byte size and SHA-256 for the stored video, every cover, and the manifest; tampered or missing media fails closed.
+  - B3: accepted source-video audio is mapped when a scene has no separate narration; real FFmpeg tests assert audible output.
+  - B4: fixed retry accounting so `attempt < maxRetries` permits exactly the configured retries, backoff is 250/500/1000 ms, exhausted failures become `FAILED_FINAL`/`RETRY_EXHAUSTED`, stale exhausted `RUNNING` jobs are terminalized rather than stranded, queued child jobs are recoverable, and manual retry children are rejected after the retry budget. Retention deletion/access denial remains covered.
+  - B5: still sources must satisfy PNG minimum/profile-compatible dimensions; undersized PNGs are rejected before scaling.
+  - Worker wiring: added explicit API subpath exports and build-time declaration resolution; removed the temporary `apps/api/types/*` scaffolding; the built worker was started to verify runtime module resolution.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, fresh local PostgreSQL `reelforge_m10_final`. `pnpm db:validate` passed; `pnpm db:migrate:deploy` applied all 14 migrations; `pnpm lint` and `pnpm format:check` passed; `pnpm typecheck` passed for all workspaces with `DATABASE_URL`; focused composition lifecycle suite passed 26/26; focused engine/media suites with local FFmpeg 7.0.2 passed 16/16; full `pnpm test` passed 35 files / 220 tests with `CI=1`, DB and binary paths; `pnpm build` passed; built worker probe `timeout 3s node apps/worker/dist/main.js` had no runtime error and ended only by timeout (exit 124).
+- External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
+- Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
+- Next exact action: push the same branch and hand PR #18 back to Minu for B1-B5 review. Hosted CI must be checked on the pushed head.
+
+## 2026-11-07 - M10 PR #18 second re-review B1/B3/B4/schema fix-forward
+
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`; no new PR, approval, merge or main push.
+- Scope: second Minu re-review at `cc6a8a7` confirmed B2/B5 pass and reopened B1, the B3 test fixture, four B4 reliability gaps, and Prisma schema/migration alignment.
+- Changes made:
+  - B1: when any render error is raised, the executor re-reads persisted cancellation state. Cancellation requested by another instance (or an already-`CANCELED` job) wins over transient/permanent classification; the lease is cleared and the job terminalizes to `CANCELED`. Added cross-instance transient/permanent cancellation tests.
+  - B3: the no-narration engine test now explicitly clears inherited narration refs and asserts the 880 Hz source band is present while the 440 Hz narration band is absent (cascaded bandpass to suppress leakage).
+  - B4/1: claim tokens are unique per claim, artifact keys are claim-specific (`render/<jobId>/<leaseToken>/<filename>`), and a heartbeat renews the lease and aborts on a lost claim. A superseded executor cannot overwrite recovered artifacts; its own objects are cleaned up. Added a stale-live-executor interleaving test.
+  - B4/2: explicit retry atomically consumes the parent retry budget in the child-creation transaction; `FAILED_RETRYABLE` becomes `FAILED_FINAL`/`RETRY_SUPERSEDED`, `CANCELED` stays canceled while consuming an attempt, same-key retries remain idempotent, and concurrent fresh-key retries yield exactly one child.
+  - B4/3: retention claims can reclaim expired leases, making a crash mid-deletion recoverable. Added a retention crash-recovery test.
+  - B4/4: the worker poller catches transient poll failures (optional `onError`, else `console.error`) and keeps polling. Added an outage-continuation test.
+  - Schema: `RenderJob.parent` now uses the compound tenant relation `fields: [workspaceId, parentJobId], references: [workspaceId, id]`, matching migration `20261106190000_m10_video_composition_export`.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`, newly created empty local PostgreSQL `reelforge_m10_rereview`. `pnpm db:validate` passed; `pnpm db:migrate:deploy` applied all 14 migrations from scratch including the compound parent FK; `pnpm lint` and `pnpm format:check` passed; `pnpm typecheck` passed for all workspaces with `DATABASE_URL`; focused composition lifecycle/engine/media/worker run passed 4 files / 48 tests with local FFmpeg 7.0.2; full `pnpm test` passed 35 files / 225 tests with `CI=1`, DB and binary paths; `pnpm build` passed; `git diff --check` passed.
+- External calls: no live AI, social or provider calls. FFmpeg/ffprobe were local binaries; fixtures were generated deterministic media.
+- Decision/approval: M10 remains `IMPLEMENTED_PENDING_REVIEW`; the agent did not mark it APPROVED/INTEGRATED/DONE, did not merge, and did not create a PR.
+- Next exact action: commit and push the same branch, verify both hosted CI checks on the pushed head, and hand PR #18 back to Minu.
+
+## 2026-11-07 14:10 UTC - M10 PR #18 third re-review B4 fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export`, local base commit `0ab8eb7`; no commit or push made for this fix-forward.
+- Scope: Minu's latest REQUEST_CHANGES review at `0ab8eb7` identified retry-family branching from canceled parents and orphaned partial uploads after storage failures.
+- Changes made:
+  - B4.1: atomically mark a retry parent superseded while consuming the shared attempt budget; preserve canceled parent status/history; prevent automatic claims and additional manual descendants from creating sibling branches. Added descendant, concurrent-retry, and manual/automatic overlap tests.
+  - B4.2: record all claim-specific upload keys before writing bytes; retain durable cleanup records for failed/late writes; retry failed deletion through the worker sweep; report cleanup failures explicitly. Added write-then-throw, immediate-delete outage, sweep recovery, late-write, live-claim, and published-object tests.
+  - Added migration `20261107090000_m10_retry_supersession_and_pending_objects` for the retry marker and tenant-scoped cleanup ledger.
+- Files/areas changed: `apps/api/src/modules/composition/composition.service.ts`, `apps/api/src/modules/composition/composition.integration.test.ts`, `packages/database/prisma/schema.prisma`, and the additive M10 migration; M10 status, project state, and this work log.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`. `pnpm db:validate` passed. `pnpm db:migrate:deploy` passed, applying all 15 migrations to a fresh local PostgreSQL `18.6` database. `pnpm --filter @reelforge/api typecheck` passed. `pnpm --filter @reelforge/api build` passed. Focused ESLint and Prettier checks passed. `pnpm exec vitest run apps/api/src/modules/composition` passed 4 files / 46 tests with local FFmpeg/ffprobe `7.0.2`. `git diff --check` and `git diff --cached --check` passed before the documentation update; both were rerun after it.
+- External calls: no AI, social, or provider calls. The test database and media fixtures/binaries were local.
+- Tests/evidence: all 46 composition unit, HTTP, engine, and lifecycle tests passed; the new failure-path tests exercised a write that stores bytes then throws, failed cleanup deletion, and successful later recovery. The API build generated no tracked `dist` changes.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Both hosted PR #18 quality checks were green on the checked remote head `0ab8eb7` before this local fix-forward; they do not validate these unpushed changes.
+- Defects/risks/blockers: PR #18 remains in REQUEST_CHANGES until Minu re-reviews the pushed fixes. The worktree also contains pre-existing untracked `.local-tools/` FFmpeg/ffprobe binaries and a probe fixture; they are not part of the patch.
+- Next exact action: commit/push the reviewed fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
+
+## 2026-11-07 14:41 UTC - M10 PR #18 fourth re-review B4 fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export` at `bee630a`; current fixes remain uncommitted and unpushed.
+- Scope: Minu's latest REQUEST_CHANGES review at `bee630a` found that a timed-out uploader could recreate an orphan after its cleanup row was removed, and queued retry-child recovery could increment an already-reserved attempt.
+- Changes made:
+  - B4.1: add upload-started/completed timestamps to pending-object rows; guard upload start with the current RUNNING lease in a transaction; record settlement of the underlying storage promise; and retain cleanup discoverability when a sweep races an unresolved writer. Cleanup deletes again after settlement before removing the tombstone. The regression sweeps before releasing the uploader, then verifies a later sweep removes its late write.
+  - B4.2: queued root claims increment the execution attempt, while queued child jobs retain the attempt already reserved by retry/edit creation. Added a persisted crash simulation that interrupts after the retry-child transaction and recovers the child with exactly one reserved attempt and scheduled execution.
+  - Added migration `20261107100000_m10_pending_upload_quiescence` for the pending upload state fields.
+- Files/areas changed: composition service/integration tests; Prisma schema and additive migration; M10 status, project state, and this work log.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`. `pnpm db:validate` passed. `pnpm db:migrate:deploy` applied all 16 migrations on a fresh PostgreSQL `18.6` container. API typecheck and build passed. Focused ESLint and Prettier checks passed. `pnpm exec vitest run apps/api/src/modules/composition` passed 4 files / 46 tests with local FFmpeg/ffprobe `7.0.2`.
+- External calls: no AI, social, or provider calls. PostgreSQL and media fixtures/binaries were local.
+- Tests/evidence: persisted late-upload test sweeps before the blocked write completes, verifies the tombstone remains, then observes the write settle and confirms a subsequent sweep deletes the object and record. Persisted child-retry crash simulation confirms recovered child attempt remains 1 with `scheduledAttempts` 1. Full repository suite was not run.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Current hosted checks were on `bee630a` and do not cover these local changes.
+- Defects/risks/blockers: Fixes require commit/push and hosted checks before Minu can review. Untracked local `.local-tools/` media binaries/fixture remain untouched.
+- Next exact action: commit/push this fix-forward, verify hosted quality checks on the updated PR head, and hand PR #18 back to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
+
+## 2026-11-09 - M10 PR #18 fifth re-review cleanup-liveness fix-forward
+- Actor/session: Module Implementation Agent, local owner Desktop only. Branch `work/m10-video-composition-and-export` at `ffd4ea3`; changes are local and uncommitted.
+- Scope: Minu's latest REQUEST_CHANGES review at `ffd4ea3` found that stuck unfinished uploads could monopolize the bounded cleanup batch, blocking completed orphans and retaining their RESTRICT-linked rows. It also required recording completion when storage throws synchronously.
+- Changes made:
+  - Cleanup now counts and warns about aged started-but-unfinished uploads, while excluding them from the bounded deletion candidate query. Their durable ledger rows remain discoverable, but they no longer starve eligible objects.
+  - `putObjectBounded` records upload completion before rethrowing a synchronous `putObject` exception, allowing cleanup to remove the pending row once bytes are deleted.
+  - Added persisted regression tests with ten stuck records and a newer completed orphan at batch size 10, plus a synchronous storage throw that verifies completion was visible before cleanup.
+- Files/areas changed: `apps/api/src/modules/composition/composition.service.ts`, `apps/api/src/modules/composition/composition.integration.test.ts`, M10 `STATUS.md`, `docs/PROJECT_STATE.md`, and this work log. No schema or migration change.
+- Commands actually run and results: Node `24.22.2`, pnpm `12.16.1`; on a fresh PostgreSQL `18.6` container, `pnpm db:migrate:deploy` applied all 16 migrations and `pnpm --filter @reelforge/database db:generate` passed. The first client-generation attempt omitted `DATABASE_URL` and failed; rerunning with the disposable database URL passed. `pnpm exec vitest run apps/api/src/modules/composition/composition.integration.test.ts` passed 1 file / 41 tests. `pnpm --filter @reelforge/api exec tsc --noEmit -p tsconfig.json`, `pnpm --filter @reelforge/api build`, focused ESLint, Prettier, and `git diff --check` passed. Hosted CI was not run.
+- External calls: no AI, social, or provider calls. PostgreSQL and storage fixtures were local. The temporary test database container was removed after verification; `.local-tools/` remains untouched.
+- Decisions/approvals: M10 remains `IMPLEMENTED_PENDING_REVIEW`; no approval, integration, or merge is claimed. Active PR #18 still points to `ffd4ea3`; hosted checks have not run on this fix-forward.
+- Defects/risks/blockers: persistent unfinished rows are intentionally retained and logged for operator diagnosis; they cannot block eligible cleanup records. This worktree contains the untracked `.local-tools/` binaries and fixture, not part of this patch.
+- Next exact action: commit and push this fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
+- Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.

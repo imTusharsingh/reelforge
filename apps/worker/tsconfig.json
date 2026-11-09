@@ -1,5 +1,14 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
+  "extends": "../api/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@reelforge/media": ["../../packages/media/src/index.ts"],
+      "@reelforge/api/asset-service": ["../api/src/asset.service.ts"],
+      "@reelforge/api/composition-engine": ["../api/src/composition.engine.ts"],
+      "@reelforge/api/composition-service": ["../api/src/composition.service.ts"],
+      "@reelforge/api/storage-factory": ["../api/src/storage.factory.ts"]
+    }
+  },
   "include": ["src/**/*.ts"]
 }

@@ -1,7 +1,7 @@
 # M10 - Video Composition & Export
 
-**Status:** NOT_STARTED  
-**Assigned session:** Unassigned  
+**Status:** IMPLEMENTED_PENDING_REVIEW
+**Assigned session:** Module Implementation Agent (Desktop local execution).
 **Branch convention:** `work/m10-short-description`  
 **Dependencies:** M04, M07, M09, M08 (cost if applicable), M00.
 
@@ -19,14 +19,14 @@ Does not generate source footage or upload to social platforms.
 
 ## Tasks
 
-- [ ] **M10-T01:** T01 Define render profile and destination-neutral output specification.
-- [ ] **M10-T02:** T02 Validate source media, dimensions, codecs, frame rates, audio streams, and durations.
-- [ ] **M10-T03:** T03 Implement deterministic FFmpeg composition of scenes, transitions, narration, licensed music/SFX, and captions.
-- [ ] **M10-T04:** T04 Implement subtitles/caption timing and safe margins.
-- [ ] **M10-T05:** T05 Generate cover/thumbnail candidates from approved frames.
-- [ ] **M10-T06:** T06 Export final MP4 and metadata manifest; calculate checksum and duration.
-- [ ] **M10-T07:** T07 Implement render retry/cancel and output artifact retention.
-- [ ] **M10-T08:** T08 Support bounded edit operations: replace scene, audio, subtitle, title/cover, then rerender.
+- [x] **M10-T01:** T01 Define render profile and destination-neutral output specification.
+- [x] **M10-T02:** T02 Validate source media, dimensions, codecs, frame rates, audio streams, and durations.
+- [x] **M10-T03:** T03 Implement deterministic FFmpeg composition of scenes, transitions, narration, licensed music/SFX, and captions.
+- [x] **M10-T04:** T04 Implement subtitles/caption timing and safe margins.
+- [x] **M10-T05:** T05 Generate cover/thumbnail candidates from approved frames.
+- [x] **M10-T06:** T06 Export final MP4 and metadata manifest; calculate checksum and duration.
+- [x] **M10-T07:** T07 Implement render retry/cancel and output artifact retention.
+- [x] **M10-T08:** T08 Support bounded edit operations: replace scene, audio, subtitle, title/cover, then rerender.
 
 ## Public interface / output contract
 
@@ -34,10 +34,10 @@ Exports final media manifest for M11/M13.
 
 ## Acceptance criteria
 
-- [ ] A render is reproducible from pinned input asset IDs and render profile.
-- [ ] Final artifact passes technical validation and has checksum/metadata.
-- [ ] FFmpeg arguments are safely constructed; no shell injection.
-- [ ] A failed scene/render cannot be reported as a successful final video.
+- [x] A render is reproducible from pinned input asset IDs and render profile.
+- [x] Final artifact passes technical validation and has checksum/metadata.
+- [x] FFmpeg arguments are safely constructed; no shell injection.
+- [x] A failed scene/render cannot be reported as a successful final video.
 
 
 ## Files owned (proposed)

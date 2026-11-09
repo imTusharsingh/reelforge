@@ -1,6 +1,8 @@
 generator client {
   provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
 datasource db {
@@ -98,6 +100,7 @@ model User {
   authEvents            AuthEvent[]
   createdIdeas          Idea[]                @relation("IdeaCreator")
   createdSceneMediaJobs SceneMediaJob[]
+  createdRenderJobs RenderJob[]
   defaultWorkspaceId    String?               @map("default_workspace_id") @db.Uuid
   defaultWorkspace      Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
 
@@ -139,6 +142,8 @@ model Workspace {
   sceneMediaJobs             SceneMediaJob[]
   sceneGenerations           SceneGeneration[]
   sceneGenerationOutputs     SceneGenerationOutput[]
+  renderJobs                 RenderJob[]
+  renderArtifacts            RenderArtifact[]
   activeConfigSnapshot       WorkspaceConfigSnapshot?    @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -338,6 +343,7 @@ model Asset {
   versions          Asset[]                 @relation("AssetVersionChain")
   usageReferences   AssetUsageReference[]
   sceneOutputs      SceneGenerationOutput[]
+  renderArtifacts   RenderArtifact[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, objectKey])
@@ -955,6 +961,7 @@ model SceneMediaJob {
   promptSnapshot   PromptBundleSnapshot @relation(fields: [workspaceId, promptSnapshotId], references: [workspaceId, id], onDelete: Restrict)
   createdBy        User                 @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   scenes           SceneGeneration[]
+  renderJobs       RenderJob[]      @relation("SceneMediaRenderJobs")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "scene_media_jobs_idempotency_key")
@@ -1019,4 +1026,95 @@ model SceneGenerationOutput {
   @@unique([workspaceId, sceneGenerationId, kind], map: "scene_outputs_generation_kind_key")
   @@index([workspaceId, assetId])
   @@map("scene_generation_outputs")
+}
+
+enum RenderJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  CANCELED
+}
+
+model RenderJob {
+  id                   String          @id @default(uuid()) @db.Uuid
+  workspaceId          String          @map("workspace_id") @db.Uuid
+  sceneMediaJobId      String          @map("scene_media_job_id") @db.Uuid
+  parentJobId          String?         @map("parent_job_id") @db.Uuid
+  idempotencyKey       String          @map("idempotency_key")
+  status               RenderJobStatus @default(QUEUED)
+  attempt              Int             @default(0)
+  schemaVersion        String          @default("1.0") @map("schema_version")
+  inputFingerprint     String          @map("input_fingerprint")
+  input                Json
+  retentionDays        Int             @default(90) @map("retention_days")
+  nextAttemptAt        DateTime         @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  leaseToken           String?          @map("lease_token") @db.Uuid
+  leaseExpiresAt       DateTime?        @map("lease_expires_at") @db.Timestamptz(6)
+  maxRetries           Int             @default(3) @map("max_retries")
+  scheduledAttempts    Int             @default(0) @map("scheduled_attempts")
+  retryBackoffMs       Int              @default(250) @map("retry_backoff_ms")
+  cancelRequestedAt    DateTime?       @map("cancel_requested_at") @db.Timestamptz(6)
+  retrySupersededAt    DateTime?       @map("retry_superseded_at") @db.Timestamptz(6)
+  errorCode            String?         @map("error_code")
+  errorMessage         String?         @map("error_message")
+  createdByUserId      String           @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sceneMediaJob         SceneMediaJob     @relation("SceneMediaRenderJobs", fields: [workspaceId, sceneMediaJobId], references: [workspaceId, id], onDelete: Restrict)
+  parent                 RenderJob?       @relation("RenderRenders", fields: [workspaceId, parentJobId], references: [workspaceId, id], onDelete: Restrict)
+  children               RenderJob[]      @relation("RenderRenders")
+  createdBy             User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  artifacts              RenderArtifact[]
+  pendingObjects         RenderPendingObject[]
+  expiredAt              DateTime?        @map("expired_at") @db.Timestamptz(6)
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey], map: "render_jobs_idempotency_key")
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([leaseExpiresAt])
+  @@map("render_jobs")
+}
+
+model RenderArtifact {
+  id               String             @id @default(uuid()) @db.Uuid
+  workspaceId      String             @map("workspace_id") @db.Uuid
+  renderJobId      String             @map("render_job_id") @db.Uuid
+  kind             String
+  assetId          String             @map("asset_id") @db.Uuid
+  assetVersion     Int                 @map("asset_version")
+  objectKey        String              @map("object_key")
+  mediaType        String              @map("media_type")
+  byteSize         Int                 @map("byte_size")
+  checksumSha256   String              @map("checksum_sha256")
+  metadata         Json?
+  retainedUntil    DateTime?           @map("retained_until") @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job              RenderJob           @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Cascade)
+  asset            Asset                @relation(fields: [workspaceId, assetId], references: [workspaceId, id], onDelete: Restrict)
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, renderJobId, kind, assetId], map: "render_artifacts_unique_key")
+  @@unique([workspaceId, objectKey], map: "render_artifacts_object_key")
+  @@index([workspaceId, renderJobId, createdAt])
+  @@index([retainedUntil])
+  @@map("render_artifacts")
+}
+
+model RenderPendingObject {
+  workspaceId String   @map("workspace_id") @db.Uuid
+  objectKey   String   @map("object_key")
+  renderJobId String   @map("render_job_id") @db.Uuid
+  leaseToken  String   @map("lease_token") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  renderJob   RenderJob @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  uploadStartedAt   DateTime? @map("upload_started_at") @db.Timestamptz(6)
+  uploadCompletedAt DateTime? @map("upload_completed_at") @db.Timestamptz(6)
+  @@id([workspaceId, objectKey])
+  @@index([workspaceId, renderJobId])
+  @@index([leaseToken])
+  @@map("render_pending_objects")
 }
