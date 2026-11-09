@@ -1139,6 +1139,7 @@ enum QualityReviewRunStatus {
   APPROVED
   REJECTED
   CHANGES_REQUESTED
+  SUPERSEDED
 }
 
 enum QualityDecisionAction {
@@ -1168,6 +1169,7 @@ model QualityReviewRun {
   modelVersion         String?                      @map("model_version")
   promptVersion        String?                      @map("prompt_version")
   createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  supersededAt         DateTime?                    @map("superseded_at") @db.Timestamptz(6)
   workspace            Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   renderJob            RenderJob                    @relation("QualityReviewSourceRender", fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
   renderFamily         RenderJob                    @relation("QualityReviewFamily", fields: [workspaceId, renderFamilyId], references: [workspaceId, id], onDelete: Restrict)
@@ -1188,6 +1190,7 @@ model QualityDecision {
   actorUserId         String                      @map("actor_user_id") @db.Uuid
   action              QualityDecisionAction
   reason              String
+  overrideReason      String?                     @map("override_reason")
   createdAt           DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
   workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   reviewRun           QualityReviewRun            @relation(fields: [workspaceId, reviewRunId], references: [workspaceId, id], onDelete: Cascade)
@@ -1205,6 +1208,7 @@ model QualityRegenerationRequest {
   reviewRunId    String                   @map("review_run_id") @db.Uuid
   renderJobId    String                   @map("render_job_id") @db.Uuid
   renderFamilyId String                   @map("render_family_id") @db.Uuid
+  lineageKey     String                   @map("lineage_key")
   decisionId     String                   @unique @map("decision_id") @db.Uuid
   stage          QualityRegenerationStage
   targetKey      String                   @map("target_key")
@@ -1217,8 +1221,8 @@ model QualityRegenerationRequest {
   renderFamily   RenderJob                @relation("QualityRegenerationFamily", fields: [workspaceId, renderFamilyId], references: [workspaceId, id], onDelete: Restrict)
   decision       QualityDecision          @relation(fields: [workspaceId, decisionId], references: [workspaceId, id], onDelete: Cascade)
 
-  @@unique([workspaceId, renderFamilyId, targetKey, attempt], map: "quality_regen_family_target_attempt_key")
+  @@unique([workspaceId, lineageKey, targetKey, attempt], map: "quality_regen_lineage_target_attempt_key")
   @@unique([workspaceId, decisionId])
-  @@index([workspaceId, renderFamilyId, targetKey, createdAt], map: "quality_regen_family_target_created_idx")
+  @@index([workspaceId, lineageKey, targetKey, createdAt], map: "quality_regen_lineage_target_created_idx")
   @@map("quality_regeneration_requests")
 }

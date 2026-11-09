@@ -554,3 +554,20 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: No real AI quality-review adapter is configured, so new evaluations explicitly become `AI_REVIEW_UNAVAILABLE` and cannot be approved. The disclosure flag taxonomy needs Core review before downstream use as a legal/platform disclosure guarantee. The pre-existing non-M11 schema/migration diff and Prisma ESM dist-boot follow-up remain out of scope.
 - Next exact action: commit and push this M11 branch, open `M11: quality assurance and approval`, request Minu review, and stop. Do not approve or merge.
 - Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 remain unchanged.
+
+## 2026-11-10 - M11 PR #20 review fix-forward
+- Actor/session: Module Implementation Agent, Desktop only. Continuing `work/m11-quality-assurance-and-approval` after Minu's changes-requested review on PR #20.
+- Scope: Addressed Minu's B1–B4 review blockers only; no approval or merge.
+- Changes made:
+  - Runs whose AI-review port returns `NOT_CONFIGURED` now enter `REVIEW_REQUIRED` with a null scorecard and an explicit limitation. They are queueable and manually decidable; automatic approval requires a validated scorecard.
+  - The queue includes blocked runs. `REJECT` and `REQUEST_CHANGES` work for blocked runs, while `APPROVE` remains forbidden. Hard-gate failures map to render/script/offending-scene routes; mismatched routes require a separately audited override reason. The regeneration limit is now keyed to script lineage and target, so new render jobs do not reset it.
+  - A new evaluation transaction supersedes earlier pending runs for that render. Superseded runs cannot be decided. Approval transactions recheck current script provenance, genre/blocked-topic policy, asset rights, and asset provenance.
+  - Added a workspace-scoped render status endpoint for M13 that returns the latest non-superseded status and gate summary.
+  - Added regression coverage for B1–B4 and an additive migration for supersession timestamps/status, audited route overrides, and script-lineage regeneration limits.
+- Files/areas changed: M11 quality service/controller/types/validation/tests; Prisma schema and additive `20261110000000_m11_review_hardening` migration; M11 status, project state, and this work log.
+- Commands actually run and results: `pnpm lint` **passed**; `pnpm format:check` **passed**; `git diff --check` **passed**; `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm typecheck` **passed** across all workspaces; `pnpm test` **passed** (28 files / 175 tests passed, 8 files / 76 tests skipped); focused M11 service tests **passed** (1 file / 15 tests); `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm db:validate` **passed**; `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 NEXT_TELEMETRY_DISABLED=1 pnpm build` **passed**; `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm db:migrate:deploy` **passed** (all 18 migrations on fresh disposable PostgreSQL 18.6). `pnpm install --frozen-lockfile` was not run because no dependency manifest or lockfile changed.
+- External calls: No AI, social, or provider calls. The dedicated PostgreSQL container on port 55435 was stopped and removed; existing databases were untouched.
+- Decisions/approvals: Additive M11 persistence changes remain within the Core Architect's written M11-only schema/migration approval. Minu's PR #20 changes request is not an approval.
+- Defects/risks/blockers: No real AI adapter is configured; AI scorecards remain unavailable and require human review. Disclosure flag semantics still need Core review before downstream legal/platform sufficiency is assumed. The known unrelated Prisma schema/migration drift and Prisma ESM dist-boot follow-up remain out of scope.
+- Next exact action: commit and push the fix-forward to PR #20, request Minu re-review, and stop. Do not approve or merge.
+- Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 unchanged.

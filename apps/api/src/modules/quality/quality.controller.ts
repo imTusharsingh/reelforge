@@ -3,7 +3,7 @@ import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js"
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { QualityService } from "./quality.service.js";
-import type { QualityRunView } from "./quality.types.js";
+import type { QualityRenderStatusView, QualityRunView } from "./quality.types.js";
 
 @Controller("workspaces/:workspaceId/quality")
 @UseGuards(AuthGuard)
@@ -37,6 +37,18 @@ export class QualityController {
     @Param("runId") runId: string,
   ): Promise<QualityRunView> {
     return this.quality.get(await this.context(request, workspaceId), runId);
+  }
+
+  @Get("renders/:renderJobId/status")
+  public async getRenderStatus(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("renderJobId") renderJobId: string,
+  ): Promise<QualityRenderStatusView> {
+    return this.quality.getRenderQualityStatus(
+      await this.context(request, workspaceId),
+      renderJobId,
+    );
   }
 
   @Post("runs/:runId/decision")

@@ -1,10 +1,10 @@
 # M11 Status - Quality Assurance & Approval
 
 - **State:** IMPLEMENTED_PENDING_REVIEW
-- **Completion:** 100% implementation; independent review pending
+- **Completion:** 100% implementation; reviewer re-review pending
 - **Assigned session/editor:** Module Implementation Agent (Desktop)
 - **Branch/worktree:** `work/m11-quality-assurance-and-approval`
-- **Last updated:** 2026-11-09
+- **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
 - **Approved commit:** none
 
@@ -16,17 +16,18 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 - [x] M11-T02: M10 manifest/integrity consumption and aspect, duration, codec, audio, and subtitle checks.
 - [x] M11-T03: Script/genre/factuality policy checks and typed AI review with criterion evidence and limitations.
 - [x] M11-T04: Pinned asset rights/provenance checks and required disclosure flags.
-- [x] M11-T05: Workspace-scoped review queue and audited approve/reject/request-changes decisions.
+- [x] M11-T05: Workspace-scoped queue includes blocked runs; decisions are audited, current-run only, and revalidate rights/genre gates before approval.
 - [x] M11-T06: Channel-configured score thresholds; failed hard gates always block approval and auto-approval.
-- [x] M11-T07: Route-only scene/script/render regeneration requests, limited to three per target across a render retry family.
+- [x] M11-T07: Route-only scene/script/render requests constrained by failed gates; limits of three persist per script lineage and target across renders.
 
 ## API contract
 - `POST /workspaces/:workspaceId/quality/runs` — evaluate a successful render job.
-- `GET /workspaces/:workspaceId/quality/queue` — oldest 50 `REVIEW_REQUIRED` results.
+- `GET /workspaces/:workspaceId/quality/queue` — oldest 50 pending `REVIEW_REQUIRED`, `BLOCKED`, or legacy `AI_REVIEW_UNAVAILABLE` results.
 - `GET /workspaces/:workspaceId/quality/runs/:runId` — retrieve the review result, gate summary, decision audit, and regeneration requests.
-- `POST /workspaces/:workspaceId/quality/runs/:runId/decision` — approve, reject, or request changes with a reason; request-changes requires a scene, script, or render route.
+- `GET /workspaces/:workspaceId/quality/renders/:renderJobId/status` — latest non-superseded status and gate summary for M13.
+- `POST /workspaces/:workspaceId/quality/runs/:runId/decision` — approve, reject, or request changes with a reason; hard-gate failures cannot be approved and mismatched regeneration routes require an audited override reason.
 - Channel `approvalPolicy` accepts `mode` (`MANUAL` or `AUTO`), `scoreThreshold` (integer 0–100), and optional per-criterion thresholds. Missing policy defaults to manual review and a threshold of 80.
-- Responses expose `BLOCKED`, `AI_REVIEW_UNAVAILABLE`, `REVIEW_REQUIRED`, `AUTO_APPROVED`, `APPROVED`, `REJECTED`, or `CHANGES_REQUESTED`, with the complete gate summary for M13.
+- Responses expose `BLOCKED`, `REVIEW_REQUIRED`, `AUTO_APPROVED`, `APPROVED`, `REJECTED`, `CHANGES_REQUESTED`, or `SUPERSEDED`, with the complete gate summary for M13. New runs without an AI adapter enter manual review with no scorecard.
 
 ## Files changed
 - `apps/api/src/app.module.ts`
@@ -39,6 +40,7 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 - `packages/ai-providers/src/index.ts`
 - `packages/database/prisma/schema.prisma`
 - `packages/database/prisma/migrations/20261109130000_m11_quality_review/migration.sql`
+- `packages/database/prisma/migrations/20261110000000_m11_review_hardening/migration.sql`
 - `docs/PROJECT_STATE.md`
 - `docs/WORK_LOG.md`
 - This status file
@@ -47,29 +49,29 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 - `pnpm lint` — **PASS**.
 - `pnpm format:check` — **PASS**.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm typecheck` — **PASS** across all workspaces.
-- `pnpm test` — **PASS**, 28 files passed / 8 skipped; 170 tests passed / 76 skipped.
-- `pnpm exec vitest run apps/api/src/modules/quality/quality.service.test.ts` — **PASS**, 1 file / 10 tests.
+- `pnpm test` — **PASS**, 28 files passed / 8 skipped; 175 tests passed / 76 skipped.
+- `pnpm exec vitest run apps/api/src/modules/quality/quality.service.test.ts` — **PASS**, 1 file / 15 tests.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 NEXT_TELEMETRY_DISABLED=1 pnpm build` — **PASS** across all workspaces.
 - `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm db:validate` — **PASS**.
-- `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm db:migrate:deploy` — **PASS**, all 17 migrations applied to a fresh disposable database. The first attempt exposed an M11 index-name collision; it was corrected before the successful fresh deployment. The container was removed afterward. Existing databases on ports 5432, 55432, 55433, and 55434 were not used or stopped.
+- `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm db:migrate:deploy` — **PASS**, all 18 migrations applied to fresh disposable PostgreSQL 18.6; the container was stopped and removed. Existing databases on ports 5432, 55432, 55433, and 55434 were not used or stopped.
 - `git diff --check` — **PASS**.
 - `pnpm install --frozen-lockfile` — **NOT RUN**; no dependency manifest or lockfile changed, and dependencies were already available.
-- A supplementary Prisma diff found no M11-specific schema changes remaining; the full diff also reported pre-existing non-M11 migration/schema drift, left outside this work package.
+- A supplementary Prisma diff reported pre-existing non-M11 migration/schema drift, left outside this work package.
 
 ## Contract/schema authorization
 - Core Architect provided written approval for M11-only additive Prisma schema and migration changes.
-- Added durable review-run, decision-audit, and regeneration-request tables with tenant-compound references and a maximum of three requests per render-family target.
+- Added durable review-run, decision-audit, and regeneration-request tables with tenant-compound references, run supersession, route-override audit, and a maximum of three requests per script lineage and target.
 - Added a typed injectable quality-review port under `packages/ai-providers`; no shared contracts package, root tooling, or other module implementation was changed.
 
 ## Blockers, risks, and known gaps
-- The runtime binds a `NOT_CONFIGURED` provider by default. An evaluation without a real adapter is recorded as `AI_REVIEW_UNAVAILABLE`, with no score or approval path; no fake adapter or live provider call was added.
+- The runtime binds a `NOT_CONFIGURED` provider by default. An evaluation without a real adapter enters manual review with no scorecard; it cannot auto-approve, and no fake adapter or live provider call was added.
 - Disclosure flags currently distinguish `AI_GENERATED_ASSET` and `STARTER_LIBRARY_ASSET`. Their product/platform semantics need Core review before M13 treats them as legally sufficient disclosure.
 - Codec/audio evidence relies on M10’s validated manifest and output profile; M11 does not re-probe media or duplicate composition.
 - The supplementary Prisma diff reports pre-existing non-M11 schema/migration differences; no unrelated migration or schema repair was made.
 - The separately tracked Prisma ESM dist-boot follow-up remains open and untouched.
 
 ## Next exact action
-Commit and push this branch, open `M11: quality assurance and approval`, request Minu review, and stop. Do not approve or merge.
+Commit and push the verified fix-forward to PR #20, request Minu re-review, and stop. Do not approve or merge.
 
 ## Reviewer decision
-- Pending.
+- Minu requested changes on PR #20; fix-forward implemented and awaiting re-review.

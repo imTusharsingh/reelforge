@@ -131,6 +131,7 @@ type StoredDecision = {
   id: string;
   action: "APPROVE" | "REJECT" | "REQUEST_CHANGES";
   reason: string;
+  overrideReason: string | null;
   actorUserId: string;
   createdAt: Date;
 };
@@ -143,6 +144,7 @@ type StoredRegeneration = {
   createdAt: Date;
   workspaceId: string;
   renderFamilyId: string;
+  lineageKey: string;
   targetKey: string;
 };
 
@@ -153,6 +155,7 @@ type StoredRun = {
   renderFamilyId: string;
   createdByUserId: string;
   status: QualityRunStatus;
+  supersededAt: Date | null;
   gateSummary: unknown;
   scorecard: unknown;
   policySnapshot: unknown;
@@ -163,7 +166,10 @@ type StoredRun = {
   createdAt: Date;
   decisions: StoredDecision[];
   regenerationRequests: StoredRegeneration[];
-  renderJob: { input: RenderCompositionInput };
+  renderJob: {
+    input: RenderCompositionInput;
+    sceneMediaJob: { id: string; scriptId: string; scriptRevision: number };
+  };
 };
 
 class FixtureDatabase {
@@ -269,7 +275,13 @@ class FixtureDatabase {
         regenerationRequests: [],
         renderJob: {
           input: this.jobs.get(args.data["renderJobId"] as string)?.input ?? input(),
+          sceneMediaJob: {
+            id: sceneMediaJobId,
+            scriptId,
+            scriptRevision: 1,
+          },
         },
+        supersededAt: null,
       } as unknown as StoredRun;
       this.runs.set(run.id, run);
       return { id: run.id };
@@ -281,20 +293,57 @@ class FixtureDatabase {
       return run?.workspaceId === args.where.workspaceId_id.workspaceId ? run : null;
     },
     findMany: async (args: {
-      where: { workspaceId: string; status: QualityRunStatus };
+      where: {
+        workspaceId: string;
+        status: QualityRunStatus | { in: QualityRunStatus[] };
+        supersededAt?: null;
+      };
     }): Promise<StoredRun[]> =>
       [...this.runs.values()].filter(
-        (run) => run.workspaceId === args.where.workspaceId && run.status === args.where.status,
+        (run) =>
+          run.workspaceId === args.where.workspaceId &&
+          (typeof args.where.status === "string"
+            ? run.status === args.where.status
+            : args.where.status.in.includes(run.status)) &&
+          (args.where.supersededAt !== null || run.supersededAt === null),
       ),
+    findFirst: async (args: {
+      where: { workspaceId: string; renderJobId: string };
+    }): Promise<StoredRun | null> =>
+      [...this.runs.values()]
+        .reverse()
+        .find(
+          (run) =>
+            run.workspaceId === args.where.workspaceId &&
+            run.renderJobId === args.where.renderJobId &&
+            run.status !== "SUPERSEDED" &&
+            run.supersededAt === null,
+        ) ?? null,
     updateMany: async (args: {
-      where: { workspaceId: string; id: string; status: QualityRunStatus };
-      data: { status: QualityRunStatus };
+      where: {
+        workspaceId: string;
+        id?: string;
+        renderJobId?: string;
+        status: QualityRunStatus | { in: QualityRunStatus[] };
+        supersededAt?: null;
+      };
+      data: { status: QualityRunStatus; supersededAt?: Date };
     }): Promise<{ count: number }> => {
-      const run = this.runs.get(args.where.id);
-      if (!run || run.workspaceId !== args.where.workspaceId || run.status !== args.where.status)
-        return { count: 0 };
-      run.status = args.data.status;
-      return { count: 1 };
+      const candidates = [...this.runs.values()].filter(
+        (run) =>
+          run.workspaceId === args.where.workspaceId &&
+          (args.where.id === undefined || run.id === args.where.id) &&
+          (args.where.renderJobId === undefined || run.renderJobId === args.where.renderJobId) &&
+          (typeof args.where.status === "string"
+            ? run.status === args.where.status
+            : args.where.status.in.includes(run.status)) &&
+          (args.where.supersededAt !== null || run.supersededAt === null),
+      );
+      for (const run of candidates) {
+        run.status = args.data.status;
+        if (args.data.supersededAt !== undefined) run.supersededAt = args.data.supersededAt;
+      }
+      return { count: candidates.length };
     },
   };
   public readonly qualityDecision = {
@@ -305,12 +354,14 @@ class FixtureDatabase {
         actorUserId: string;
         action: StoredDecision["action"];
         reason: string;
+        overrideReason: string | null;
       };
     }): Promise<{ id: string }> => {
       const decision = {
         id: randomUUID(),
         action: args.data.action,
         reason: args.data.reason,
+        overrideReason: args.data.overrideReason,
         actorUserId: args.data.actorUserId,
         createdAt: new Date("2026-01-02T00:00:00Z"),
       };
@@ -320,12 +371,12 @@ class FixtureDatabase {
   };
   public readonly qualityRegenerationRequest = {
     count: async (args: {
-      where: { workspaceId: string; renderFamilyId: string; targetKey: string };
+      where: { workspaceId: string; lineageKey: string; targetKey: string };
     }): Promise<number> =>
       this.regenerations.filter(
         (request) =>
           request.workspaceId === args.where.workspaceId &&
-          request.renderFamilyId === args.where.renderFamilyId &&
+          request.lineageKey === args.where.lineageKey &&
           request.targetKey === args.where.targetKey,
       ).length,
     create: async (args: {
@@ -333,6 +384,7 @@ class FixtureDatabase {
         workspaceId: string;
         renderJobId: string;
         renderFamilyId: string;
+        lineageKey: string;
         targetKey: string;
         stage: StoredRegeneration["stage"];
         sceneId: string | null;
@@ -348,6 +400,7 @@ class FixtureDatabase {
         createdAt: new Date("2026-01-02T00:00:00Z"),
         workspaceId: args.data.workspaceId,
         renderFamilyId: args.data.renderFamilyId,
+        lineageKey: args.data.lineageKey,
         targetKey: args.data.targetKey,
       };
       this.regenerations.push(request);
@@ -361,6 +414,10 @@ class FixtureDatabase {
       qualityReviewRun: this.qualityReviewRun,
       qualityDecision: this.qualityDecision,
       qualityRegenerationRequest: this.qualityRegenerationRequest,
+      scriptRevision: this.scriptRevision,
+      genre: this.genre,
+      asset: this.asset,
+      assetUsageReference: this.assetUsageReference,
     });
   }
 }
@@ -394,7 +451,7 @@ describe("quality review service", () => {
     expect((await service(db).queue(context())).map((run) => run.id)).toContain(response.id);
   });
 
-  it("does not allow a failed hard gate to be approved", async () => {
+  it("rejects a blocked run and routes genre-policy failures to script regeneration", async () => {
     const db = new FixtureDatabase();
     db.blockedTopics = ["short clear story"];
     const quality = service(db);
@@ -402,9 +459,69 @@ describe("quality review service", () => {
 
     expect(response.status).toBe("BLOCKED");
     expect(response.gateSummary.find((result) => result.id === "GENRE_POLICY")?.passed).toBe(false);
+    expect((await quality.queue(context())).map((run) => run.id)).toContain(response.id);
     await expect(
       quality.decide(context(), response.id, { action: "APPROVE", reason: "Looks good" }),
     ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      quality.decide(context(), response.id, {
+        action: "REQUEST_CHANGES",
+        reason: "Fix the blocked topic",
+        regeneration: { stage: "RENDER" },
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const routed = await quality.decide(context(), response.id, {
+      action: "REQUEST_CHANGES",
+      reason: "Revise the script to remove the blocked topic",
+      regeneration: { stage: "SCRIPT" },
+    });
+    expect(routed.status).toBe("CHANGES_REQUESTED");
+    expect(routed.regenerationRequests[0]).toMatchObject({ stage: "SCRIPT", attempt: 1 });
+  });
+
+  it("allows rejecting a blocked run and records a reason for a route override", async () => {
+    const blockedDb = new FixtureDatabase();
+    blockedDb.rightsAttestedAt = null;
+    const rejectQuality = service(blockedDb);
+    const rejectedRun = await rejectQuality.create(context(), { renderJobId });
+    const rejected = await rejectQuality.decide(context(), rejectedRun.id, {
+      action: "REJECT",
+      reason: "Rights attestation is missing",
+    });
+    expect(rejected.status).toBe("REJECTED");
+
+    const overrideDb = new FixtureDatabase();
+    overrideDb.blockedTopics = ["short clear story"];
+    const overrideQuality = service(overrideDb);
+    const blocked = await overrideQuality.create(context(), { renderJobId });
+    const overridden = await overrideQuality.decide(context(), blocked.id, {
+      action: "REQUEST_CHANGES",
+      reason: "Request a render despite the script gate",
+      overrideReason: "The script was corrected outside this render workflow",
+      regeneration: { stage: "RENDER" },
+    });
+    expect(overridden.decisions[0]?.overrideReason).toBe(
+      "The script was corrected outside this render workflow",
+    );
+  });
+
+  it("routes an asset-rights failure to the scene using the offending asset", async () => {
+    const db = new FixtureDatabase();
+    db.rightsAttestedAt = null;
+    const quality = service(db);
+    const blocked = await quality.create(context(), { renderJobId });
+    const routed = await quality.decide(context(), blocked.id, {
+      action: "REQUEST_CHANGES",
+      reason: "Replace the unverified scene asset",
+      regeneration: { stage: "SCENE", sceneId: "scene-1" },
+    });
+
+    expect(routed.status).toBe("CHANGES_REQUESTED");
+    expect(routed.regenerationRequests[0]).toMatchObject({
+      stage: "SCENE",
+      sceneId: "scene-1",
+      attempt: 1,
+    });
   });
 
   it("checks blocked topics in claims, camera directions, and audio cues", async () => {
@@ -472,6 +589,19 @@ describe("quality review service", () => {
     expect(response.gateSummary.every((result) => result.passed)).toBe(true);
   });
 
+  it("never auto-approves a high score when a hard gate fails", async () => {
+    const db = new FixtureDatabase();
+    db.approvalPolicy = { mode: "AUTO", scoreThreshold: 80 };
+    db.blockedTopics = ["short clear story"];
+    const reviewer: QualityReviewPort = { review: vi.fn(async () => fixtureResult(100)) };
+
+    const response = await service(db, reviewer).create(context(), { renderJobId });
+
+    expect(response.status).toBe("BLOCKED");
+    expect(response.scorecard).toBeNull();
+    expect(reviewer.review).not.toHaveBeenCalled();
+  });
+
   it("exports required disclosure flags and blocks incomplete rights provenance", async () => {
     const disclosedDb = new FixtureDatabase();
     disclosedDb.assetOwnership = "SYSTEM_GENERATED";
@@ -485,8 +615,9 @@ describe("quality review service", () => {
     expect(blocked.gateSummary.find((result) => result.id === "ASSET_RIGHTS")?.passed).toBe(false);
   });
 
-  it("fails closed with an explicit unavailable status when no AI adapter is configured", async () => {
+  it("queues unconfigured AI results for human review and never auto-approves them", async () => {
     const db = new FixtureDatabase();
+    db.approvalPolicy = { mode: "AUTO", scoreThreshold: 80 };
     const unconfigured: QualityReviewPort = {
       review: async (request: QualityReviewRequest): Promise<QualityReviewResult> => {
         throw new ProviderError(
@@ -498,23 +629,32 @@ describe("quality review service", () => {
     };
     const response = await service(db, unconfigured).create(context(), { renderJobId });
 
-    expect(response.status).toBe("AI_REVIEW_UNAVAILABLE");
+    expect(response.status).toBe("REVIEW_REQUIRED");
     expect(response.scorecard).toBeNull();
-    await expect(
-      service(db, unconfigured).decide(context(), response.id, {
-        action: "APPROVE",
-        reason: "No AI result",
-      }),
-    ).rejects.toBeInstanceOf(ConflictException);
+    expect(response.limitations).toContain(
+      "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
+    );
+    expect((await service(db, unconfigured).queue(context())).map((run) => run.id)).toContain(
+      response.id,
+    );
+    const approved = await service(db, unconfigured).decide(context(), response.id, {
+      action: "APPROVE",
+      reason: "Manual review completed; all hard gates pass",
+    });
+    expect(approved.status).toBe("APPROVED");
+    expect(approved.scorecard).toBeNull();
   });
 
-  it("denies viewer mutations and cross-workspace reads", async () => {
+  it("denies viewer mutations and cross-workspace create, read, and decision access", async () => {
     const db = new FixtureDatabase();
     const quality = service(db);
 
     await expect(quality.create(context("VIEWER"), { renderJobId })).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+    await expect(
+      quality.create(context("OWNER", otherWorkspaceId), { renderJobId }),
+    ).rejects.toBeInstanceOf(NotFoundException);
     const pending = await quality.create(context(), { renderJobId });
     await expect(
       quality.decide(context("VIEWER"), pending.id, {
@@ -524,6 +664,12 @@ describe("quality review service", () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
       quality.get(context("OWNER", otherWorkspaceId), pending.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      quality.decide(context("OWNER", otherWorkspaceId), pending.id, {
+        action: "REJECT",
+        reason: "Cross-workspace decision",
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -541,13 +687,61 @@ describe("quality review service", () => {
       {
         action: "APPROVE",
         reason: "All gates pass and the script is acceptable",
+        overrideReason: null,
         actorUserId: userId,
         createdAt: "2026-01-02T00:00:00.000Z",
       },
     ]);
   });
 
-  it("stores reviewer decisions and caps regeneration requests across render retries", async () => {
+  it("supersedes earlier pending runs and exports the latest render status", async () => {
+    const db = new FixtureDatabase();
+    const quality = service(db);
+    const first = await quality.create(context(), { renderJobId });
+    db.blockedTopics = ["short clear story"];
+    const latest = await quality.create(context(), { renderJobId });
+
+    expect(latest.status).toBe("BLOCKED");
+    expect((await quality.get(context(), first.id)).status).toBe("SUPERSEDED");
+    expect((await quality.get(context(), first.id)).supersededAt).not.toBeNull();
+    await expect(
+      quality.decide(context(), first.id, {
+        action: "APPROVE",
+        reason: "Attempt stale approval",
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(quality.getRenderQualityStatus(context(), renderJobId)).resolves.toMatchObject({
+      renderJobId,
+      status: "BLOCKED",
+      gateSummary: latest.gateSummary,
+    });
+  });
+
+  it("rechecks current rights and genre gates inside approval", async () => {
+    const rightsDb = new FixtureDatabase();
+    const rightsQuality = service(rightsDb);
+    const rightsPending = await rightsQuality.create(context(), { renderJobId });
+    rightsDb.rightsAttestedAt = null;
+    await expect(
+      rightsQuality.decide(context(), rightsPending.id, {
+        action: "APPROVE",
+        reason: "Rights changed after evaluation",
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const genreDb = new FixtureDatabase();
+    const genreQuality = service(genreDb);
+    const genrePending = await genreQuality.create(context(), { renderJobId });
+    genreDb.blockedTopics = ["short clear story"];
+    await expect(
+      genreQuality.decide(context(), genrePending.id, {
+        action: "APPROVE",
+        reason: "Policy changed after evaluation",
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("stores reviewer decisions and caps regeneration across renders in one script lineage", async () => {
     const db = new FixtureDatabase();
     const quality = service(db);
     const first = await quality.create(context(), { renderJobId });
@@ -562,7 +756,7 @@ describe("quality review service", () => {
 
     for (let attempt = 2; attempt <= 3; attempt += 1) {
       const retryId = randomUUID();
-      db.addJob(retryId, renderJobId);
+      db.addJob(retryId, null);
       const run = await quality.create(context(), { renderJobId: retryId });
       await quality.decide(context(), run.id, {
         action: "REQUEST_CHANGES",
@@ -572,7 +766,7 @@ describe("quality review service", () => {
     }
 
     const fourthRetryId = randomUUID();
-    db.addJob(fourthRetryId, renderJobId);
+    db.addJob(fourthRetryId, null);
     const fourth = await quality.create(context(), { renderJobId: fourthRetryId });
     await expect(
       quality.decide(context(), fourth.id, {

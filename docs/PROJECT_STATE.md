@@ -12,7 +12,7 @@
 - **Overall phase:** Phase 1 in progress (M00–M10 integrated; M11 implementation active).
 - **Current release:** v1.
 - **Current integrated commit:** `9935435aa03e959417b65ebeb7fac8da0e4aa87c` (`origin/main` after M10 closeout PR #19).
-- **Active implementation sessions:** `work/m11-quality-assurance-and-approval` (Desktop).
+- **Active implementation sessions:** `work/m11-quality-assurance-and-approval` (Desktop; fix-forward ready for re-review).
 - **Active work packages:** M11 quality assurance and approval.
 - **Blocked work packages:** none recorded.
 - **Latest core review:** Minu approved M10 PR #18 head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`) and merged it at `7d00ced8be55bf9569fa699ff23a120a8a853bae`; Minu merged the docs-only M10 closeout PR #19 at `9935435aa03e959417b65ebeb7fac8da0e4aa87c`.
@@ -30,10 +30,10 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M10 integrated; M11 active**
+**Phase 1 in progress - M00–M10 integrated; M11 pending re-review**
 
 Next exact action:
-1. Finish M11 verification and hand off `work/m11-quality-assurance-and-approval` in a separate PR for Minu review; do not approve or merge.
+1. Push the verified M11 PR #20 fix-forward and request Minu's re-review; do not approve or merge.
 
 ## Module status index
 
@@ -50,7 +50,7 @@ Next exact action:
 | M08 - AI Provider Registry & Cost Ledger | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
 | M09 - Scene Media Generation | INTEGRATED | `main` (PR #17) | `589d28c86feaede46f516bf27555f02802882610` | none |
 | M10 - Video Composition & Export | INTEGRATED | `main` (PR #18) | `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` | Operational note below; no product blocker |
-| M11 - Quality Assurance & Approval | IN_PROGRESS | `work/m11-quality-assurance-and-approval` | none | No real AI quality-review adapter is configured; runtime fails closed |
+| M11 - Quality Assurance & Approval | IMPLEMENTED_PENDING_REVIEW | `work/m11-quality-assurance-and-approval` | none | No real AI adapter; runs require manual review without a scorecard |
 | M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
 | M13 - Publishing Calendar & Delivery | NOT_STARTED | none | none | none recorded |
 | M14 - Analytics Collection & Metric Store | NOT_STARTED | none | none | none recorded |

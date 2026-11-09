@@ -30,7 +30,8 @@ export type QualityRunStatus =
   | "AUTO_APPROVED"
   | "APPROVED"
   | "REJECTED"
-  | "CHANGES_REQUESTED";
+  | "CHANGES_REQUESTED"
+  | "SUPERSEDED";
 export type QualityDecisionAction = "APPROVE" | "REJECT" | "REQUEST_CHANGES";
 
 export type QualityScorecard = Readonly<{
@@ -64,6 +65,7 @@ export type QualityRunView = Readonly<{
       id: string;
       action: QualityDecisionAction;
       reason: string;
+      overrideReason: string | null;
       actorUserId: string;
       createdAt: string;
     }>
@@ -78,4 +80,11 @@ export type QualityRunView = Readonly<{
     }>
   >;
   createdAt: string;
+  supersededAt: string | null;
+}>;
+
+export type QualityRenderStatusView = Readonly<{
+  renderJobId: string;
+  status: QualityRunStatus | null;
+  gateSummary: ReadonlyArray<HardGateResult> | null;
 }>;

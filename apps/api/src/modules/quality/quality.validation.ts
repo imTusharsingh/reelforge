@@ -107,6 +107,7 @@ export const decisionSchema = z
   .object({
     action: z.enum(["APPROVE", "REJECT", "REQUEST_CHANGES"]),
     reason: z.string().trim().min(1).max(4000),
+    overrideReason: z.string().trim().min(1).max(1000).optional(),
     regeneration: z
       .discriminatedUnion("stage", [
         z
