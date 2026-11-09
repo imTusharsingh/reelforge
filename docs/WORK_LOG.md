@@ -647,3 +647,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Handoff: Commit `c63d6f82da47760a2aceff4af0cdcd251a7553a4` was pushed to `work/m13-publishing-calendar-and-delivery`; PR #24 is open against `main` and review was requested from `minu-the-reviewer`. No merge was performed.
 - Next exact action: await Minu's review and address requested feedback; do not merge.
 - Related status/ADR: `work-packages/M13-publishing-calendar-and-delivery/STATUS.md`; no ADR changed.
+
+## 2026-11-10 - M13 PR #24 review fixes
+- Review: Minu requested stronger service-level coverage and durable resumable-session persistence. Changes remain limited to M13 publishing orchestration/tests and the M13 status/work log.
+- Changes: Added fixture-only coverage for stale/rejected M11 reviews, missing disclosure text, Instagram fail-closed behavior, viewer and cross-workspace denial across publish/retry/reconcile, session persistence retries, completed-upload remote-ID recording without another upload initiation, and workspace-scoped published-record export. New upload-session ciphertext is persisted immediately after initiation with bounded write retries; reconciliation-required is only used after persistence succeeds. Retry attempts atomically copy the existing session into the new attempt. Published-record pagination now uses a stable `(publishedAt, id)` cursor.
+- Verification with Node `24.22.2` and pnpm `12.16.1`: `pnpm lint`, `pnpm format:check`, workspace `pnpm typecheck`, API typecheck, `pnpm build`, and `pnpm db:validate` all **passed**. `pnpm db:migrate:deploy` against disposable PostgreSQL on `127.0.0.1:55435` **passed** and found no pending migrations.
+- Full `pnpm test`, with `DATABASE_URL` set only to disposable PostgreSQL on port `55435`, **passed**: 45 test files passed, 1 skipped; 297 tests passed, 5 skipped. The skips are one `SpawnProcessRunner` case in `apps/api/src/modules/composition/composition.unit.test.ts` requiring `FFPROBE_PATH`, and four real-FFmpeg export cases in `apps/api/src/modules/composition/composition.engine.integration.test.ts` requiring `FFMPEG_PATH` and `FFPROBE_PATH`.
+- `git diff --check` passed. No live YouTube/Instagram calls were made; tests use fixtures. No M14 worktree was accessed.
+- Handoff: review fixes are ready to push to `work/m13-publishing-calendar-and-delivery` and request Minu's re-review. No merge or push to `main`.
+- Related status/ADR: `work-packages/M13-publishing-calendar-and-delivery/STATUS.md`; no ADR changed.

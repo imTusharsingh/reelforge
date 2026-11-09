@@ -140,6 +140,7 @@ export class PublishingController {
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Query("after") after?: string,
+    @Query("afterId") afterId?: string,
     @Query("limit") limitText?: string,
   ): Promise<PublishedPostExport[]> {
     const limit = limitText === undefined ? 100 : Number(limitText);
@@ -147,6 +148,7 @@ export class PublishingController {
       await this.context(request, workspaceId),
       after ?? null,
       limit,
+      afterId ?? null,
     );
   }
 

@@ -17,6 +17,7 @@ import {
   YouTubeDestinationMetadataSchema,
   type YouTubeDestinationMetadata,
 } from "@reelforge/contracts";
+import { z } from "zod";
 import { Prisma, type PrismaClient } from "@reelforge/database";
 import {
   SocialProviderError,
@@ -319,24 +320,24 @@ export class PublishingService {
       hardGateEvidence = hardGatePass
         ? "The selected M11 review reports every hard gate passing."
         : "The selected M11 review has missing or failed hard gates.";
-      if (approvalPassed && hardGatePass) {
-        try {
-          hardGates = await this.quality.assertPublishable(
-            context,
-            post.renderJobId,
-            post.qualityReviewRunId,
-          );
-          approvalPassed = true;
-          hardGatePass = true;
-          approvalEvidence = "M11 approval is current and belongs to the latest review.";
-          hardGateEvidence = "M11 revalidated current rights, provenance, policy, and hard gates.";
-        } catch (error) {
-          if (!isExpectedPreflightError(error)) throw error;
-          approvalPassed = false;
-          hardGatePass = false;
-          approvalEvidence = errorMessage(error);
-          hardGateEvidence = errorMessage(error);
-        }
+      try {
+        hardGates = await this.quality.assertPublishable(
+          context,
+          post.renderJobId,
+          post.qualityReviewRunId,
+        );
+        approvalPassed = true;
+        hardGatePass = hardGates.length > 0 && hardGates.every((item) => item.passed);
+        approvalEvidence = "M11 approval is current and belongs to the latest review.";
+        hardGateEvidence = hardGatePass
+          ? "M11 revalidated current rights, provenance, policy, and hard gates."
+          : "M11 publish-time hard gates are incomplete or failed.";
+      } catch (error) {
+        if (!isExpectedPreflightError(error)) throw error;
+        approvalPassed = false;
+        hardGatePass = false;
+        approvalEvidence = errorMessage(error);
+        hardGateEvidence = errorMessage(error);
       }
     } else {
       approvalEvidence = "The selected M11 review is unavailable in this workspace.";
@@ -612,18 +613,31 @@ export class PublishingService {
     context: WorkspaceContext,
     after: string | null = null,
     limit = 100,
+    afterId: string | null = null,
   ): Promise<PublishedPostExport[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new BadRequestException("limit must be an integer between 1 and 100");
     const afterDate = after === null ? null : new Date(after);
     if (afterDate !== null && Number.isNaN(afterDate.getTime()))
       throw new BadRequestException("after must be a valid ISO timestamp");
+    if ((afterDate === null) !== (afterId === null))
+      throw new BadRequestException("after and afterId must be provided together");
+    if (afterId !== null && !z.uuid().safeParse(afterId).success)
+      throw new BadRequestException("afterId must be a valid UUID");
     const destinations = await this.db.publishingDestination.findMany({
       where: {
         workspaceId: context.workspaceId,
         status: "PUBLISHED",
         remotePostId: { not: null },
-        ...(afterDate === null ? {} : { publishedAt: { gt: afterDate } }),
+        publishedAt: { not: null },
+        ...(afterDate === null || afterId === null
+          ? {}
+          : {
+              OR: [
+                { publishedAt: { gt: afterDate } },
+                { publishedAt: afterDate, id: { gt: afterId } },
+              ],
+            }),
       },
       include: { scheduledPost: true, publishJob: true, socialAccount: true },
       orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
@@ -671,12 +685,18 @@ export class PublishingService {
         video.length,
         manifest.video.mediaType,
       );
-      sessionCreated = true;
       const encrypted = this.sessionVault.encrypt(
         sessionUri,
         this.sessionContext(context.workspaceId, job.id, attempt.id),
       );
-      await this.saveSession(context.workspaceId, attempt.id, encrypted, BigInt(video.length));
+      await this.saveSessionWithRetry(
+        context.workspaceId,
+        job.id,
+        attempt.id,
+        encrypted,
+        BigInt(video.length),
+      );
+      sessionCreated = true;
       await this.transferUpload(
         context,
         destination,
@@ -699,7 +719,6 @@ export class PublishingService {
             safeErrorCode(error),
             "Upload started; reconcile the persisted session before retrying.",
           );
-          await this.budgetPolicy.settle(reservation);
         } else {
           await this.markAttemptFailure(
             context.workspaceId,
@@ -715,8 +734,13 @@ export class PublishingService {
       }
       throw error;
     }
-    await this.budgetPolicy.settle(reservation);
-    return this.getScheduledPost(context, destination.scheduledPostId);
+    const result = await this.getScheduledPost(context, destination.scheduledPostId);
+    const destinationStatus = result.destinations.find(
+      (item) => item.id === destination.id,
+    )?.status;
+    if (destinationStatus === "PUBLISHED" || destinationStatus === "FAILED_FINAL")
+      await this.budgetPolicy.settle(reservation);
+    return result;
   }
 
   private async resumeUpload(
@@ -732,17 +756,14 @@ export class PublishingService {
     const reservation = await this.budgetPolicy.reserve(this.policyContext(destination));
     let attempt: Awaited<ReturnType<PublishingService["claimAttempt"]>> | null = null;
     try {
-      attempt = await this.claimAttempt(context, destination, job.id, BigInt(video.length), null);
-      const sessionUri = oldSession;
-      await this.saveSession(
-        context.workspaceId,
-        attempt.id,
-        this.sessionVault.encrypt(
-          sessionUri,
-          this.sessionContext(context.workspaceId, job.id, attempt.id),
-        ),
+      attempt = await this.claimAttempt(
+        context,
+        destination,
+        job.id,
         BigInt(video.length),
+        oldSession,
       );
+      const sessionUri = oldSession;
       const client = await this.socialAccounts.authenticatedClient(
         context,
         destination.socialAccountId,
@@ -768,14 +789,18 @@ export class PublishingService {
           safeErrorCode(error),
           "Upload resumed; reconcile the persisted session before another retry.",
         );
-        await this.budgetPolicy.settle(reservation);
       } else {
         await this.budgetPolicy.release(reservation);
       }
       throw error;
     }
-    await this.budgetPolicy.settle(reservation);
-    return this.getScheduledPost(context, destination.scheduledPostId);
+    const result = await this.getScheduledPost(context, destination.scheduledPostId);
+    const destinationStatus = result.destinations.find(
+      (item) => item.id === destination.id,
+    )?.status;
+    if (destinationStatus === "PUBLISHED" || destinationStatus === "FAILED_FINAL")
+      await this.budgetPolicy.settle(reservation);
+    return result;
   }
 
   private async transferUpload(
@@ -825,7 +850,7 @@ export class PublishingService {
         "INVALID_UPLOAD_OFFSET",
         "YouTube reported an invalid resumable upload offset.",
       );
-      return;
+      throw new ConflictException("The YouTube resumable upload offset is invalid");
     }
     let noProgressCount = 0;
     while (offset < video.length) {
@@ -873,7 +898,7 @@ export class PublishingService {
           "INVALID_UPLOAD_OFFSET",
           "YouTube reported an invalid resumable upload offset.",
         );
-        return;
+        throw new ConflictException("The resumable upload made no progress");
       }
       if (progress.nextByte === offset) {
         noProgressCount++;
@@ -905,6 +930,7 @@ export class PublishingService {
       "UPLOAD_COMPLETION_UNCONFIRMED",
       "All bytes were sent but YouTube did not confirm the video; reconcile before retrying.",
     );
+    throw new ConflictException("The upload completion is unconfirmed; reconcile before retrying");
   }
 
   private async verifyAndRecord(
@@ -1065,7 +1091,7 @@ export class PublishingService {
     destination: DestinationRecord,
     jobId: string,
     totalBytes: bigint,
-    encryptedSession: EncryptedPublishingSession | null,
+    sessionUri: string | null,
   ): Promise<PublishAttemptRecord> {
     return this.db.$transaction(async (tx) => {
       const job = await tx.publishJob.findUnique({
@@ -1088,6 +1114,13 @@ export class PublishingService {
       });
       const attemptId = randomUUID();
       const attemptKey = `${destination.idempotencyKey}:attempt:${count + 1}`;
+      const encryptedSession =
+        sessionUri === null
+          ? null
+          : this.sessionVault.encrypt(
+              sessionUri,
+              this.sessionContext(context.workspaceId, jobId, attemptId),
+            );
       const attempt = await tx.publishAttempt.create({
         data: {
           id: attemptId,
@@ -1147,6 +1180,28 @@ export class PublishingService {
     });
   }
 
+  private async saveSessionWithRetry(
+    workspaceId: string,
+    jobId: string,
+    attemptId: string,
+    encrypted: EncryptedPublishingSession,
+    totalBytes: bigint,
+  ): Promise<void> {
+    let lastError: unknown;
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        await this.saveSession(workspaceId, attemptId, encrypted, totalBytes);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(
+      `Could not persist resumable upload session for job ${jobId} after three attempts`,
+      { cause: lastError },
+    );
+  }
+
   private async markAttemptFailure(
     workspaceId: string,
     destination: DestinationRecord,
@@ -1156,6 +1211,7 @@ export class PublishingService {
   ): Promise<void> {
     const retryable =
       error instanceof SocialProviderError &&
+      error.detail.code !== "UPLOAD_OUTCOME_UNKNOWN" &&
       (error.detail.kind === "RATE_LIMITED" || error.detail.kind === "TRANSIENT");
     const status = retryable ? "FAILED_RETRYABLE" : "FAILED_FINAL";
     const code = safeErrorCode(error);
