@@ -97,7 +97,7 @@ Toolchain: Node `24.22.2`, pnpm `12.16.1`.
 - No scheduler/worker execution or web UI is included; this package exposes manual API actions only.
 
 ## Handoff notes
-- PR #24 is open at https://github.com/imTusharsingh/reelforge/pull/24; review fixes are being prepared for Minu's requested re-review.
+- PR #24 is open at https://github.com/imTusharsingh/reelforge/pull/24 at review-fix commit `18eebd88714ea993f5c4503ccdcaba221fe0eba4`; Minu has been requested for re-review.
 - Implementation remains pending Minu's independent review; this session has not approved, merged, or pushed to `main`.
 - M13's published-record contract/service above is ready for Bot 2 to wire after M13 integrates.
-- Exact next action: push the review fixes and request Minu's re-review; do not merge.
+- Exact next action: await Minu's re-review; do not merge.
