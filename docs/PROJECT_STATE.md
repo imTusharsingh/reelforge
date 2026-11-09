@@ -2,20 +2,20 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-09
+**Last updated:** 2026-11-10
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M10 integrated; M11 implementation active).
+- **Overall phase:** Phase 1 in progress (M00–M11 integrated).
 - **Current release:** v1.
-- **Current integrated commit:** `9935435aa03e959417b65ebeb7fac8da0e4aa87c` (`origin/main` after M10 closeout PR #19).
-- **Active implementation sessions:** `work/m11-quality-assurance-and-approval` (Desktop; fix-forward ready for re-review).
-- **Active work packages:** M11 quality assurance and approval.
+- **Current integrated commit:** `42e33c5476ca2f392db199c2db70569c899213d8` (`origin/main` after M11 PR #20).
+- **Active implementation sessions:** none.
+- **Active work packages:** none; M12 starts after this M11 closeout merges.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M10 PR #18 head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`) and merged it at `7d00ced8be55bf9569fa699ff23a120a8a853bae`; Minu merged the docs-only M10 closeout PR #19 at `9935435aa03e959417b65ebeb7fac8da0e4aa87c`.
+- **Latest core review:** Minu approved M11 PR #20 head `e61af2b92dd553faf96bb96850dcf37864a57a40` (review `5831183493`) and merged it at `42e33c5476ca2f392db199c2db70569c899213d8`.
 
 ## Frozen architecture summary
 
@@ -30,10 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M10 integrated; M11 pending re-review**
+**Phase 1 in progress - M00–M11 integrated**
 
 Next exact action:
-1. Push the verified M11 PR #20 fix-forward and request Minu's re-review; do not approve or merge.
+1. Complete and submit this docs-only M11 closeout PR for Minu's review; do not approve or merge.
+2. After this closeout merges, start M12 from the new `origin/main` tip on `work/m12-social-accounts-and-platform-adapters`.
 
 ## Module status index
 
@@ -50,7 +51,7 @@ Next exact action:
 | M08 - AI Provider Registry & Cost Ledger | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
 | M09 - Scene Media Generation | INTEGRATED | `main` (PR #17) | `589d28c86feaede46f516bf27555f02802882610` | none |
 | M10 - Video Composition & Export | INTEGRATED | `main` (PR #18) | `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` | Operational note below; no product blocker |
-| M11 - Quality Assurance & Approval | IMPLEMENTED_PENDING_REVIEW | `work/m11-quality-assurance-and-approval` | none | No real AI adapter; runs require manual review without a scorecard |
+| M11 - Quality Assurance & Approval | INTEGRATED | `main` (PR #20) | `e61af2b92dd553faf96bb96850dcf37864a57a40` | Residual notes below; no product blocker |
 | M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
 | M13 - Publishing Calendar & Delivery | NOT_STARTED | none | none | none recorded |
 | M14 - Analytics Collection & Metric Store | NOT_STARTED | none | none | none recorded |
@@ -82,8 +83,11 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-06: M09 integrated via PR #17. Minu technically approved head `99b1972191038f5e4f839892bbbb196e554d6215` with hosted run `42222606082`, job `127908073738`, green; official self-approval was unavailable because reviewer Minu authored PR #17. Minu performed the squash merge at `589d28c86feaede46f516bf27555f02802882610` (18:41 IST).
 - 2026-11-09: M10 integrated via PR #18. Minu approved head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); Minu squash-merged at `7d00ced8be55bf9569fa699ff23a120a8a853bae` (22:54 IST).
 - 2026-11-09: M10 status closeout documentation merged by Minu via PR #19 at `9935435aa03e959417b65ebeb7fac8da0e4aa87c`.
+- 2026-11-10: M11 integrated via PR #20. Minu approved head `e61af2b92dd553faf96bb96850dcf37864a57a40` (review `5831183493`); Minu squash-merged at `42e33c5476ca2f392db199c2db70569c899213d8`.
 
 ## Open engineering follow-ups
+
+- **M11 residual notes (not product blockers):** No real AI quality adapter is configured; unconfigured evaluations enter manual review with an SQL `NULL` scorecard and cannot auto-approve. Disclosure flags are an ownership-derived stub and are not legally sufficient for M13. An `APPROVED` quality status can become stale after rights change; M13 must re-check gates at publish time. The regeneration cap holds only when script regeneration uses M07 `revise()` on the same script ID.
 
 - **M10 operational note (not a product blocker):** A pending-upload row can remain when its writer dies before reporting completion. Cleanup keeps the row discoverable and warns about it; its tenant-scoped `RESTRICT` relation prevents deleting the render job until the row is resolved manually. Deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests.
 
