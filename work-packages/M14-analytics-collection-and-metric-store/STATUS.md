@@ -7,7 +7,7 @@
 - **Base:** `75eee789921948a1d19427c4b2994a88a8766bbe` (M13 on `origin/main`)
 - **Phase 1 commit:** `dc092c3` (pushed)
 - **Phase 2 commit:** `679fcea` (pushed; PR #25)
-- **Review-fix commit:** `822ae44` (pushed; PR #25)
+- **Review-fix commit:** `0bfc4c8` (pushed; PR #25)
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
 - **Approved commit:** none
