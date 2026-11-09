@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M11 integrated).
+- **Overall phase:** Phase 1 in progress (M00–M12 integrated).
 - **Current release:** v1.
-- **Current integrated commit:** `42e33c5476ca2f392db199c2db70569c899213d8` (`origin/main` after M11 PR #20).
-- **Active implementation sessions:** none.
-- **Active work packages:** none; M12 starts after this M11 closeout merges.
+- **Current integrated commit:** `a83132b9064a04e3b92266aa9ec4748551299062` (`origin/main` after M12 PR #22).
+- **Active implementation sessions:** M13 (Bot 1) and M14 (Bot 2), in parallel worktrees.
+- **Active work packages:** M13 and M14; M13 merges first.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M11 PR #20 head `e61af2b92dd553faf96bb96850dcf37864a57a40` (review `5831183493`) and merged it at `42e33c5476ca2f392db199c2db70569c899213d8`.
+- **Latest core review:** Minu approved M12 PR #22 implementation head `16a3f0a4d03b8fff13ac7f8932f8ada9a458db10` (review `5832180458`) and docs-only head `61e4d2f51712be387785464648bd4cf1fb6ca9c4` (review `5832197458`); Minu squash-merged it at `a83132b9064a04e3b92266aa9ec4748551299062`.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M11 integrated**
+**Phase 1 in progress - M00–M12 integrated**
 
 Next exact action:
-1. Complete and submit this docs-only M11 closeout PR for Minu's review; do not approve or merge.
-2. After this closeout merges, start M12 from the new `origin/main` tip on `work/m12-social-accounts-and-platform-adapters`.
+1. Complete and submit this docs-only M12 closeout PR for Minu's review; do not approve or merge.
+2. After this closeout merges, implement M13 T01–T08 from the new `origin/main` tip; M13 merges before M14 rebases.
 
 ## Module status index
 
@@ -52,7 +52,7 @@ Next exact action:
 | M09 - Scene Media Generation | INTEGRATED | `main` (PR #17) | `589d28c86feaede46f516bf27555f02802882610` | none |
 | M10 - Video Composition & Export | INTEGRATED | `main` (PR #18) | `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` | Operational note below; no product blocker |
 | M11 - Quality Assurance & Approval | INTEGRATED | `main` (PR #20) | `e61af2b92dd553faf96bb96850dcf37864a57a40` | Residual notes below; no product blocker |
-| M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
+| M12 - Social Accounts & Platform Adapters | INTEGRATED | `main` (PR #22) | `61e4d2f51712be387785464648bd4cf1fb6ca9c4` | residual notes below |
 | M13 - Publishing Calendar & Delivery | NOT_STARTED | none | none | none recorded |
 | M14 - Analytics Collection & Metric Store | NOT_STARTED | none | none | none recorded |
 | M15 - Performance Intelligence & Learning | NOT_STARTED | none | none | none recorded |
@@ -62,7 +62,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12–M20 remain `NOT_STARTED`.
+M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -84,10 +84,13 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-09: M10 integrated via PR #18. Minu approved head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); Minu squash-merged at `7d00ced8be55bf9569fa699ff23a120a8a853bae` (22:54 IST).
 - 2026-11-09: M10 status closeout documentation merged by Minu via PR #19 at `9935435aa03e959417b65ebeb7fac8da0e4aa87c`.
 - 2026-11-10: M11 integrated via PR #20. Minu approved head `e61af2b92dd553faf96bb96850dcf37864a57a40` (review `5831183493`); Minu squash-merged at `42e33c5476ca2f392db199c2db70569c899213d8`.
+- 2026-11-10: M12 integrated via PR #22. Minu approved implementation head `16a3f0a4d03b8fff13ac7f8932f8ada9a458db10` (review `5832180458`) and docs-only head `61e4d2f51712be387785464648bd4cf1fb6ca9c4` (review `5832197458`); Minu squash-merged at `a83132b9064a04e3b92266aa9ec4748551299062`.
 
 ## Open engineering follow-ups
 
 - **M11 residual notes (not product blockers):** No real AI quality adapter is configured; unconfigured evaluations enter manual review with an SQL `NULL` scorecard and cannot auto-approve. Disclosure flags are an ownership-derived stub and are not legally sufficient for M13. An `APPROVED` quality status can become stale after rights change; M13 must re-check gates at publish time. The regeneration cap holds only when script regeneration uses M07 `revise()` on the same script ID.
+
+- **M12 residual notes (not product blockers):** Instagram remains fail-closed while the Unified Login/product integration decision is open. Production KMS, key delivery, and rotation remain open. On successful reconnect after `REAUTH_REQUIRED`, the old Google refresh grant is overwritten without best-effort revocation. YouTube `channels.list` uses a maximum of 50 results without pagination. The callback URL is normalized with `new URL(...).toString()`, which can differ from the exact Google-console redirect URI.
 
 - **M10 operational note (not a product blocker):** A pending-upload row can remain when its writer dies before reporting completion. Cleanup keeps the row discoverable and warns about it; its tenant-scoped `RESTRICT` relation prevents deleting the render job until the row is resolved manually. Deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests.
 

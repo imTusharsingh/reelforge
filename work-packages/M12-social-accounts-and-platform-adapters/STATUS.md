@@ -1,12 +1,13 @@
 # M12 Status - Social Accounts & Platform Adapters
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
-- **Completion:** 100% of the assigned implementation; T05 intentionally ships a documented fail-closed Instagram connector rather than an unverified integration.
+- **State:** INTEGRATED
+- **Completion:** 100% of the assigned implementation; integrated after Minu's approval. T05 intentionally ships a documented fail-closed Instagram connector rather than an unverified integration.
 - **Assigned session/editor:** Module Implementation Agent (Desktop)
-- **Branch/worktree:** `work/m12-social-accounts-and-platform-adapters`, PR #22; based on post-closeout `main` at `a0c12974c0f98f1041729bf7c3f1f4e5f33a4e73`
+- **Branch/worktree:** `main` (PR #22)
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
-- **Approved commit:** none; implementation review is pending.
+- **Approved commit:** `16a3f0a4d03b8fff13ac7f8932f8ada9a458db10` (review `5832180458`); docs-only head `61e4d2f51712be387785464648bd4cf1fb6ca9c4` approved in review `5832197458`.
+- **Merge commit:** `a83132b9064a04e3b92266aa9ec4748551299062` (Minu squash-merge).
 
 ## Current objective
 Provide workspace-scoped social-account connections, OAuth credential lifecycle, verified account identity, platform permissions/capabilities, and provider error normalization. No calendar, post approval, analytics, or publishing/upload execution is included.
@@ -94,12 +95,14 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - Minu's B1/B2 review blockers on PR #22 have been addressed in the current fix-forward: reconnect reuses the unique account row and rotates credentials/permissions/capabilities; P2002 is mapped to HTTP 409; failures after exchange best-effort revoke the newly issued grant, log revocation failure without token material, and preserve the original error.
 - Instagram is deliberately `NOT_CONFIGURED`. Although current Meta documentation was verified, Unified Login's business-portfolio/app setup and the product's login/access-level choice require an explicit integration decision before a connector is implemented. No fake-success path or Meta API call exists.
 - Production KMS, key delivery, and rotation remain open; the env key strategy is for local/development only.
+- On a successful reconnect where previous tokens still exist (`REAUTH_REQUIRED`), the old Google refresh grant is overwritten without a best-effort revoke of that prior grant. After `REVOKED`, tokens are already deleted and the provider was already revoked.
+- `channels.list` still uses `maxResults=50` with no pagination. `requireCallbackUrl()` returns `new URL(...).toString()`, which can differ from the exact Google-console redirect URI.
 - YouTube account connection requests `youtube.upload` to advertise future upload capability; M12 does not implement upload/session creation or publishing. Reviewer should confirm this scope is acceptable for the future M13 use case.
 - Health checks do not upload. No live Google/Meta calls or real provider tokens were used in tests.
 - No calendar, approval flow, analytics, dashboard, Prisma ESM fix, or M13 publishing was added.
 
 ## Next exact action
-Await Minu's re-review of PR #22 at fix-forward `16a3f0a`. The two B1/B2 review threads are resolved. Address any additional requested changes on this branch; do not approve or merge.
+No M12 implementation action remains. This closeout records Minu's approval and merge; M13 begins after this closeout documentation merges.
 
 ## Reviewer decision
-- Minu requested changes on PR #22; B1 and B2 were fixed in `16a3f0a`, pushed, and the review threads resolved. Minu's re-review is pending; no approval or merge is claimed.
+- Minu approved PR #22 at implementation head `16a3f0a4d03b8fff13ac7f8932f8ada9a458db10` (review `5832180458`) and docs-only head `61e4d2f51712be387785464648bd4cf1fb6ca9c4` (review `5832197458`), then squash-merged at `a83132b9064a04e3b92266aa9ec4748551299062`.
