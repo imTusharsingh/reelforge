@@ -644,5 +644,6 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Isolation/external calls: Only the explicitly authorized disposable database on host port 55435 was used. No live YouTube/Instagram calls occurred; provider tests use fixtures. M14 was not touched.
 - Decisions/approvals: M12's YouTube upload operations are limited to authenticated-client calls with fresh account status/health, upload-scope, and executable-capability checks. No OAuth scope change, M16/M18 implementation, Instagram execution, approval/merge, or push to `main`.
 - Risks/gaps: Default M16 schedule and M18 budget ports deny publishing until configured; Instagram remains fail-closed; production KMS/key rotation is open; connected accounts with stale M12 capability snapshots block until refreshed; `StoragePort.getObject()` buffers the full video; there is no scheduler/worker or web UI in M13.
-- Next exact action: Review the final worktree, push the M13 feature branch, open the M13 PR, request Minu, and stop without merging.
+- Handoff: Commit `c63d6f82da47760a2aceff4af0cdcd251a7553a4` was pushed to `work/m13-publishing-calendar-and-delivery`; PR #24 is open against `main` and review was requested from `minu-the-reviewer`. No merge was performed.
+- Next exact action: await Minu's review and address requested feedback; do not merge.
 - Related status/ADR: `work-packages/M13-publishing-calendar-and-delivery/STATUS.md`; no ADR changed.
