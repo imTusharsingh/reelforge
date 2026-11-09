@@ -211,12 +211,18 @@ importers:
       '@reelforge/config-engine':
         specifier: workspace:*
         version: link:../../packages/config-engine
+      '@reelforge/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@reelforge/database':
         specifier: workspace:*
         version: link:../../packages/database
       '@reelforge/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@reelforge/social-providers':
+        specifier: workspace:*
+        version: link:../../packages/social-providers
       express:
         specifier: 5.3.0
         version: 5.3.0
@@ -332,7 +338,11 @@ importers:
 
   packages/shared: {}
 
-  packages/social-providers: {}
+  packages/social-providers:
+    dependencies:
+      '@reelforge/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
 packages:
 

@@ -14,8 +14,10 @@
     "@nestjs/platform-express": "12.3.3",
     "@reelforge/ai-providers": "workspace:*",
     "@reelforge/config-engine": "workspace:*",
+    "@reelforge/contracts": "workspace:*",
     "@reelforge/database": "workspace:*",
     "@reelforge/media": "workspace:*",
+    "@reelforge/social-providers": "workspace:*",
     "express": "5.3.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
@@ -38,6 +40,10 @@
     "./composition-engine": {
       "types": "./dist/modules/composition/composition.engine.d.ts",
       "import": "./dist/modules/composition/composition.engine.js"
+    },
+    "./social-accounts-service": {
+      "types": "./dist/modules/social-accounts/social-accounts.service.d.ts",
+      "import": "./dist/modules/social-accounts/social-accounts.service.js"
     },
     "./storage-factory": {
       "types": "./dist/modules/asset/storage/storage.factory.d.ts",
