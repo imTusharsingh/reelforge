@@ -521,3 +521,18 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: persistent unfinished rows are intentionally retained and logged for operator diagnosis; they cannot block eligible cleanup records. This worktree contains the untracked `.local-tools/` binaries and fixture, not part of this patch.
 - Next exact action: commit and push this fix-forward, verify hosted quality checks on the updated PR head, and return PR #18 to Minu. Do not approve or merge from the implementation agent.
 - Related status/ADR: M10 `STATUS.md`; `docs/PROJECT_STATE.md`; no ADR change.
+
+## 2026-11-09 17:40 UTC - M10 integrated closeout documentation
+- Actor/session: Module Implementation Agent, Desktop only; no cloud agent used.
+- Work package: M10 closeout, documentation-only; M11 is not started in this PR.
+- Branch and commit: `chore/m10-integrated-closeout`, based on verified `origin/main` `7d00ced8be55bf9569fa699ff23a120a8a853bae`; closeout commit is recorded in this branch's Git history.
+- Starting state: M10 PR #18 was merged at `7d00ced8be55bf9569fa699ff23a120a8a853bae`. Verified Minu's approval of head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` as review `5829841015`; the approved tree matches the squash-merge tree.
+- Changes made: updated project snapshot and M10 status to INTEGRATED; recorded approval/merge evidence and the residual dead-writer cleanup behavior as an operational note, not a product blocker; set M11 as the next work package after this docs-only closeout PR merges.
+- Files/areas changed: `docs/PROJECT_STATE.md`, `work-packages/M10-video-composition-and-export/STATUS.md`, and this work log only. No app, schema, CI, lockfile, generated output, or product changes.
+- Commands actually run and results: `git fetch origin main` passed; `git rev-parse origin/main` returned `7d00ced8be55bf9569fa699ff23a120a8a853bae`; `git show --no-patch` confirmed the M10 squash merge; GitHub PR metadata confirmed the approval and merge, and Git tree IDs for the approved head and merge commit matched. `git diff --check` and Prettier checks were run for the documentation changes. Application tests/builds were not run because this PR is documentation-only.
+- External calls: Git/GitHub metadata only; no provider calls.
+- Tests/evidence: M10's previously recorded product verification remains in this log and M10 status. This closeout adds no code.
+- Decisions/approvals: M10 is integrated by Minu's prior approval and merge, not by this implementation session. This docs PR still requires Minu's review; no merge is claimed.
+- Defects/risks/blockers: Dead-writer pending-upload rows remain discoverable and trigger cleanup warnings, but their tenant-scoped RESTRICT relation blocks render-job deletion until manual resolution. This is operational follow-up, not a product blocker. Prisma ESM runtime follow-up remains open as documented.
+- Next exact action: open this documentation-only PR, request Minu review, and stop. After it merges, start M11 from the new `origin/main` tip on its own branch.
+- Related status/ADR: `docs/PROJECT_STATE.md`; M10 `STATUS.md`; ADR-005, ADR-007, and ADR-010 unchanged.

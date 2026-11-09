@@ -2,20 +2,20 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-06
+**Last updated:** 2026-11-09
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M09 integrated; M10 pending review).
+- **Overall phase:** Phase 1 in progress (M00–M10 integrated; M11 next).
 - **Current release:** v1.
-- **Current integrated commit:** `589d28c86feaede46f516bf27555f02802882610` (`origin/main` at this branch base; M09 PR #17 squash merge).
-- **Active implementation sessions:** `work/m10-video-composition-and-export` (M10 pending Minu review).
-- **Active work packages:** M10 video composition and export.
+- **Current integrated commit:** `7d00ced8be55bf9569fa699ff23a120a8a853bae` (`origin/main` after M10 PR #18 squash merge).
+- **Active implementation sessions:** none.
+- **Active work packages:** none; M11 starts after this M10 closeout PR merges.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu technically approved M09 head `99b1972191038f5e4f839892bbbb196e554d6215` (official self-approval was unavailable on reviewer-authored PR #17); Minu squash-merged PR #17 at `589d28c86feaede46f516bf27555f02802882610`. Hosted exact-head quality run `42222606082` job `127908073738` passed.
+- **Latest core review:** Minu approved M10 PR #18 head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); Minu squash-merged it at `7d00ced8be55bf9569fa699ff23a120a8a853bae`.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,10 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M09 integrated; M10 pending review**
+**Phase 1 in progress - M00–M10 integrated; M11 next**
 
 Next exact action:
-1. Commit and push the latest M10 cleanup-liveness fix-forward to PR #18, verify hosted quality checks on that head, and hand it to Minu for composition, export, and security review; the implementation agent does not merge/approve.
-2. Resolve M10 orchestration/retention automation review decisions before merging into main.
+1. After this docs-only M10 closeout PR merges, start M11 from the new `origin/main` tip on `work/m11-quality-assurance-and-approval`; keep it in a separate PR and request Minu review without merging/approving.
 
 ## Module status index
 
@@ -50,7 +49,7 @@ Next exact action:
 | M07 - Script & Storyboard | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
 | M08 - AI Provider Registry & Cost Ledger | INTEGRATED | `main` (PR #16) | `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896` | none |
 | M09 - Scene Media Generation | INTEGRATED | `main` (PR #17) | `589d28c86feaede46f516bf27555f02802882610` | none |
-| M10 - Video Composition & Export | IMPLEMENTED_PENDING_REVIEW | `work/m10-video-composition-and-export` | none | Minu review |
+| M10 - Video Composition & Export | INTEGRATED | `main` (PR #18) | `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` | Operational note below; no product blocker |
 | M11 - Quality Assurance & Approval | NOT_STARTED | none | none | none recorded |
 | M12 - Social Accounts & Platform Adapters | NOT_STARTED | none | none | none recorded |
 | M13 - Publishing Calendar & Delivery | NOT_STARTED | none | none | none recorded |
@@ -62,7 +61,7 @@ Next exact action:
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is `IMPLEMENTED_PENDING_REVIEW`; M11–M20 remain `NOT_STARTED`.
+M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18. M11–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -81,10 +80,11 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-06: M06 integrated via PR #15. Minu approved head `ed52885c2341a0c676e251f9beef54f6d77661cd`; merge `318d1f2dd7220233f9ca36a8b277a2257ebf8382` was performed by `minu-the-reviewer`.
 - 2026-11-06: M07 and M08 integrated via PR #16. Minu approved head `e1f20d34e13f3f9d00cc6d43f8c9e046f8af2896`; squash merge `2d6d70379bf197d4db06c947077fa951b94d739f`.
 - 2026-11-06: M09 integrated via PR #17. Minu technically approved head `99b1972191038f5e4f839892bbbb196e554d6215` with hosted run `42222606082`, job `127908073738`, green; official self-approval was unavailable because reviewer Minu authored PR #17. Minu performed the squash merge at `589d28c86feaede46f516bf27555f02802882610` (18:41 IST).
+- 2026-11-09: M10 integrated via PR #18. Minu approved head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); Minu squash-merged at `7d00ced8be55bf9569fa699ff23a120a8a853bae` (22:54 IST).
 
 ## Open engineering follow-ups
 
-- **M10 pending Minu:** The API supports inline rendering and the built worker supports durable lease claims, bounded retry/backoff with durable exhaustion, stale-lease and queued-child recovery, and explicit retention expiry/deletion; deployment scheduling is still required to invoke the worker/retention pass. The 2026-11-07 fix-forward addresses review blockers B1–B5 (cancellation/claim races, stored artifact byte/SHA-256 verification, source-audio preservation, bounded retry/recovery/retention, and PNG dimension validation). The second re-review fix-forward additionally covers cross-instance cancellation preservation, the corrected 880/440 Hz source-audio test, claim-token fencing against stale live executors, atomic shared retry-budget consumption, crash-recoverable retention leases, poller outage resilience, and the compound tenant parent FK. The third re-review fix-forward at `0ab8eb7` adds one-child retry-family fencing and a durable pending-upload cleanup ledger. The fourth local fix-forward addresses the `bee630a` late-upload tombstone and queued retry attempt accounting findings; 46 composition tests, API typecheck/build, schema validation, and all 16 migrations pass locally. These newest changes are not pushed; hosted CI must rerun. FFmpeg remains an explicit local/runner dependency for real-render tests.
+- **M10 operational note (not a product blocker):** A pending-upload row can remain when its writer dies before reporting completion. Cleanup keeps the row discoverable and warns about it; its tenant-scoped `RESTRICT` relation prevents deleting the render job until the row is resolved manually. Deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests.
 
 
 - **Follow-up (post-M04) - Prisma Client / Nest ESM runtime:** Fix the post-build Node ESM runtime so `node dist/...` boots without manually patching compiled dist imports. Prisma-generated client output currently contains extensionless relative imports that plain Node ESM cannot resolve (observed on tip `c0a408d9572011c3b0d66e6b6704d722477dc275` with Node 24.22.2; `--experimental-specifier-resolution=node` did not resolve it). Prefer a durable fix on `main` (for example generator, `package.json` `"type"`, module-resolution, or build-emit strategy), chosen by the implementer of a later fix after reading the current `packages/database` and `apps/api` build. Track as open until a product PR lands; not part of this closeout PR and not fixed here.

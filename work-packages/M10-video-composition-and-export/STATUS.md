@@ -1,11 +1,12 @@
 # M10 Status - Video Composition & Export
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Module Implementation Agent
-- **Branch/worktree:** `work/m10-video-composition-and-export` (Desktop local execution, short branch prefix used by this repository).
+- **Branch/worktree:** `main` via PR #18
 - **Last updated:** 2026-11-09
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`)
+- **Merge commit:** `7d00ced8be55bf9569fa699ff23a120a8a853bae`
 
 ## Current objective
 Compose generated scene assets into a validated vertical video.
@@ -21,7 +22,12 @@ Compose generated scene assets into a validated vertical video.
 - [x] M10-T08: T08 Support bounded edit operations: replace scene, audio, subtitle, title/cover, then rerender.
 
 
-All assigned T01–T08 tasks are implemented (100% implementation scope estimate, not approval). The module is ready for Minu review, not for maintainer/API adoption without that review.
+All assigned T01–T08 tasks were implemented and reviewed before PR #18 was integrated. This closeout records the verified approval and merge; no product rework is included.
+
+## Integration closeout (2026-11-09)
+- PR #18 was approved by Minu at head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`) and squash-merged at `7d00ced8be55bf9569fa699ff23a120a8a853bae`.
+- **Operational note, not a product blocker:** if an upload writer dies before recording completion, its pending-upload row remains discoverable and cleanup warns about it. The tenant-scoped `RESTRICT` relation blocks deletion of the associated render job until the row is resolved manually.
+- Deployment still needs to schedule the worker's retry/recovery and retention passes. No product rework is included in this documentation closeout.
 
 ## Review blocker fix-forward (2026-11-07)
 - **B1 cancellation/claim race:** cancel-before-claim and cancel-after-claim-before-controller-registration now terminalize to `CANCELED`; the claim path is atomic and a lost/canceled claim cannot execute the engine. Covered by the persisted cancellation/claim regression tests.
@@ -81,7 +87,7 @@ Minu's re-review at `ffd4ea3` confirmed reserved-attempt recovery and the late-w
 - `packages/media/src/index.ts`, `packages/media/src/media.test.ts`: pinned output specification, strict numeric FFprobe parser, argument builder with no shell, timed captions/audio, canonical fingerprint and validation error classes.
 - `packages/media/package.json`, `packages/media/tsconfig*.json`, `pnpm-lock.yaml`, `vitest.config.ts`: source/test package wiring; tests excluded from distributable declarations.
 - `packages/database/prisma/schema.prisma` + migrations `20261106190000_m10_video_composition_export`, `20261106220000_m10_retry_recovery_retention`, `20261107090000_m10_retry_supersession_and_pending_objects`, and `20261107100000_m10_pending_upload_quiescence`: additive render lifecycle, retry/recovery, and pending-upload cleanup schema.
-- `docs/PROJECT_STATE.md`, `docs/WORK_LOG.md`, `work-packages/M09-scene-media-generation/STATUS.md`: closeout of integrated M09 plus this M10 pending-review snapshot.
+- `docs/PROJECT_STATE.md`, `docs/WORK_LOG.md`, `work-packages/M09-scene-media-generation/STATUS.md`: historical M09 closeout and M10 implementation-era project snapshot; current M10 integration is recorded above.
 
 ## Commands and evidence
 Environment on TRACXN-LP-784: Node `24.22.2` via nvm, pnpm `12.16.1`, Docker PostgreSQL on localhost `55433`, fresh `reelforge_m10_rereview` created for this rerun, local filesystem asset storage. Real FFmpeg used only through `FFMPEG_PATH="$PWD/.local-tools/ffmpeg"` and `FFPROBE_PATH="$PWD/.local-tools/ffprobe"` at `7.0.2-static`; these tools are not committed.
@@ -107,7 +113,7 @@ No live AI, social or other external provider was called. Video test assets are 
 - Manifest schema remains `1.0`; generated pre-persist manifest includes title/seed/profile, M09 package pin, exact scenes/audio/covers, MP4 byte size/checksum/duration and artifact order. The service rebinds server-created video/cover artifact ids/object keys/checksums/size and rejects mismatch/tampered JSON. The preferred M11/M13 consumer reads the validated manifest from the same-workspace render job.
 
 ## Blockers / risks / unknowns
-- **Still open for review:** M10 is not approved, merged or production-complete until Minu independently checks T01–T08 and boundaries.
+- **Integrated:** M10 has Minu's approval and is merged through PR #18. The operational dead-writer cleanup note above remains for operator handling; it is not a product blocker.
 - Render composition currently runs inline in the API service call. The built worker separately polls and claims queued, retryable, and stale-running render jobs, so a process restart can recover durable work; deployment still needs to run the worker process. An injected queue abstraction was not introduced because it would be an architecture change requiring Core review.
 - Retry permits only failed retryable/canceled parents and attempts the same pinned input with a fresh idempotency key. Explicit retry atomically consumes the shared retry budget; a retryable parent is superseded as `FAILED_FINAL`/`RETRY_SUPERSEDED`, while a canceled parent stays canceled but still consumes one attempt. Worker claims persist a 1-based execution attempt, enforce `attempt < maxRetries`, recover expired leases, and exhaust to `FAILED_FINAL`/`RETRY_EXHAUSTED` without stranding `RUNNING` jobs. Manual retry children are rejected once the retry budget is exhausted. New input/parent/retention combinations fail as conflicts.
 - `retentionDays` (1–3650) and `retainedUntil` are persisted on every successful artifact. The worker retention pass claims due outputs, reclaims leases left by a crashed retention process, deletes every stored artifact idempotently, marks expiry, and denies later access; failed deletion releases the claim for a later retry. Deployment still needs to schedule this pass.
@@ -117,10 +123,10 @@ No live AI, social or other external provider was called. Video test assets are 
 - There is no user UI, social export or provider generation here. No change to M11 approval/status or M13 publication behavior.
 
 ## Next exact action
-Commit and push this B4 cleanup-liveness fix-forward for PR #18, verify hosted quality checks on the new head, and hand it back to Minu. Do not approve or merge from the implementation agent.
+No further M10 product work is assigned. Continue with M11 only after this docs-only closeout PR merges, starting from the new `origin/main` tip.
 
 ## Handoff notes
 Endpoint family: `POST /workspaces/:workspaceId/composition/jobs`, `GET /jobs/:jobId`, `GET /jobs/:jobId/manifest`, and editor-only `POST /jobs/:jobId/{retry,cancel,edit}`. AuthGuard obtains sessions; existing WorkspaceService resolves membership. Scene visual/narration, cover assets, and additional music/SFX must reference published, rights-aware current-workspace assets. Raw FFmpeg exit statuses sanitized; raw command/media paths not exposed in REST error mapping. Cancellation and no-successful-artifact cleanup fail closed.
 
 ## Reviewer decision
-- Pending Minu review. Not approved, not integrated, no merged commit claimed. See M10 STATUS/WORK_PACKAGE for completion estimate rather than self-approval.
+- **INTEGRATED:** Minu approved PR #18 head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); squash merge `7d00ced8be55bf9569fa699ff23a120a8a853bae`. This status records reviewer/merge evidence, not self-approval.
