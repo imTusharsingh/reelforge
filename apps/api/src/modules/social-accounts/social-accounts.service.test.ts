@@ -4,8 +4,9 @@ import {
   ForbiddenException,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from "@nestjs/common";
-import type { PrismaClient } from "@reelforge/database";
+import { Prisma, type PrismaClient } from "@reelforge/database";
 import {
   InstagramNotConfiguredConnector,
   YouTubeConnector,
@@ -67,12 +68,30 @@ type FakeAccount = {
 
 type MockCall = { mock: { calls: unknown[][] } };
 
+type AccountWhere = {
+  workspaceId_id?: { workspaceId: string; id: string };
+  workspaceId_channelId_platform_remoteAccountId?: {
+    workspaceId: string;
+    channelId: string;
+    platform: "YOUTUBE" | "INSTAGRAM";
+    remoteAccountId: string;
+  };
+};
+
 type SocialAccountsHarness = {
   db: {
     socialOAuthState: { create: MockCall };
-    socialAccount: { create: MockCall; findUnique: MockCall };
+    socialAccount: { create: MockCall; findUnique: MockCall; update: MockCall };
+    $transaction: MockCall;
   };
-  tx: { socialAccountToken: { create: MockCall; deleteMany: MockCall } };
+  tx: {
+    socialAccount: { create: MockCall; update: MockCall };
+    socialAccountToken: {
+      create: MockCall;
+      deleteMany: MockCall;
+      upsert: MockCall;
+    };
+  };
   request: Mock<typeof fetch>;
   service: SocialAccountsService;
   getState: () => FakeState | null;
@@ -106,7 +125,10 @@ function fixtureFetch(identityId = "UC-fixture"): Mock<typeof fetch> {
   });
 }
 
-function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
+function createHarness(
+  identityId = "UC-fixture",
+  persistFailure: boolean | Error = false,
+): SocialAccountsHarness {
   let state: FakeState | null = null;
   let account: FakeAccount | null = null;
   let token: Record<string, unknown> | null = null;
@@ -145,6 +167,19 @@ function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
         account = { ...account, ...data };
         return account;
       }),
+      findUnique: vi.fn(async ({ where }: { where: AccountWhere }) => {
+        const key = where.workspaceId_channelId_platform_remoteAccountId;
+        if (
+          key &&
+          account?.workspaceId === key.workspaceId &&
+          account.channelId === key.channelId &&
+          account.platform === key.platform &&
+          account.remoteAccountId === key.remoteAccountId
+        ) {
+          return account;
+        }
+        return null;
+      }),
       findUniqueOrThrow: vi.fn(async () => account),
     },
     socialAccountToken: {
@@ -157,8 +192,24 @@ function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
         token = null;
         return { count };
       }),
+      upsert: vi.fn(
+        async ({
+          create,
+          update,
+        }: {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          token = token === null ? create : { ...token, ...update };
+          return token;
+        },
+      ),
     },
     socialAccountPermission: {
+      deleteMany: vi.fn(async () => {
+        if (account !== null) account = { ...account, permissions: [] };
+        return { count: 1 };
+      }),
       createMany: vi.fn(async ({ data }: { data: FakeAccount["permissions"] }) => {
         if (account === null) throw new Error("Missing account fixture");
         account = { ...account, permissions: data };
@@ -186,6 +237,10 @@ function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
       ),
     },
     socialAccountCapability: {
+      deleteMany: vi.fn(async () => {
+        if (account !== null) account = { ...account, capabilities: [] };
+        return { count: 1 };
+      }),
       createMany: vi.fn(async ({ data }: { data: Array<FakeAccount["capabilities"][number]> }) => {
         if (account === null) throw new Error("Missing account fixture");
         account = { ...account, capabilities: data };
@@ -219,13 +274,21 @@ function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
     },
     socialAccount: {
       create: vi.fn(),
-      findUnique: vi.fn(
-        async ({ where }: { where: { workspaceId_id: { workspaceId: string; id: string } } }) =>
-          account?.workspaceId === where.workspaceId_id.workspaceId &&
-          account.id === where.workspaceId_id.id
-            ? account
-            : null,
-      ),
+      findUnique: vi.fn(async ({ where }: { where: AccountWhere }) => {
+        const byId = where.workspaceId_id;
+        const byIdentity = where.workspaceId_channelId_platform_remoteAccountId;
+        return account !== null &&
+          ((byId !== undefined &&
+            account.workspaceId === byId.workspaceId &&
+            account.id === byId.id) ||
+            (byIdentity !== undefined &&
+              account.workspaceId === byIdentity.workspaceId &&
+              account.channelId === byIdentity.channelId &&
+              account.platform === byIdentity.platform &&
+              account.remoteAccountId === byIdentity.remoteAccountId))
+          ? account
+          : null;
+      }),
       findMany: vi.fn(async () => (account ? [account] : [])),
       update: vi.fn(async ({ data }: { data: Partial<FakeAccount> }) => {
         if (account === null) throw new Error("Missing account fixture");
@@ -269,9 +332,13 @@ function createHarness(identityId = "UC-fixture"): SocialAccountsHarness {
       createMany: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
-    $transaction: vi.fn(async <T>(callback: (transaction: typeof tx) => Promise<T>) =>
-      callback(tx),
-    ),
+    $transaction: vi.fn(async <T>(callback: (transaction: typeof tx) => Promise<T>) => {
+      if (persistFailure) {
+        if (persistFailure instanceof Error) throw persistFailure;
+        throw new Error("fixture persistence failure");
+      }
+      return callback(tx);
+    }),
   };
   const request = fixtureFetch(identityId);
   const connector = new YouTubeConnector(
@@ -339,7 +406,7 @@ describe("SocialAccountsService", () => {
       health: "HEALTHY",
     });
     expect(JSON.stringify(account)).not.toContain("fixture-access-token");
-    expect(JSON.stringify(tx.socialAccountToken.create.mock.calls[0]?.[0])).not.toContain(
+    expect(JSON.stringify(tx.socialAccountToken.upsert.mock.calls[0]?.[0])).not.toContain(
       "fixture-refresh-token",
     );
     expect(request).toHaveBeenCalledTimes(2);
@@ -368,7 +435,40 @@ describe("SocialAccountsService", () => {
       service.completeOAuth("YOUTUBE", { state, code: "fixture-authorization-code" }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(db.socialAccount.create).not.toHaveBeenCalled();
-    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(String(request.mock.calls[1]?.[0])).toContain("/revoke");
+    const revokeBody = request.mock.calls[1]?.[1]?.body;
+    expect(revokeBody).toBeInstanceOf(URLSearchParams);
+    expect((revokeBody as URLSearchParams).get("token")).toBe("fixture-refresh-token");
+  });
+
+  it("revokes the access token when the provider omits offline refresh access", async () => {
+    const { service, request } = createHarness();
+    const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state") ?? "";
+    request.mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "fixture-access-only",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: YOUTUBE_MINIMUM_SCOPES.join(" "),
+          }),
+          { status: 200 },
+        ),
+    );
+
+    await expect(
+      service.completeOAuth("YOUTUBE", { state, code: "fixture-authorization-code" }),
+    ).rejects.toThrow("did not issue offline refresh access");
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(String(request.mock.calls[1]?.[0])).toContain("/revoke");
+    const revokeBody = request.mock.calls[1]?.[1]?.body;
+    expect(revokeBody).toBeInstanceOf(URLSearchParams);
+    expect((revokeBody as URLSearchParams).get("token")).toBe("fixture-access-only");
   });
 
   it("refreshes expiring credentials without persisting or returning plaintext tokens", async () => {
@@ -453,8 +553,127 @@ describe("SocialAccountsService", () => {
     expect(getToken()).toBeNull();
   });
 
+  it("reconnects a revoked account using its original account id", async () => {
+    const { service, request, getToken } = createHarness();
+    const firstStart = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const firstState = new URL(firstStart.authorizationUrl).searchParams.get("state") ?? "";
+    const firstAccount = await service.completeOAuth("YOUTUBE", {
+      state: firstState,
+      code: "fixture-authorization-code",
+    });
+    const oldCiphertext = getToken()?.["accessTokenCiphertext"];
+    request.mockImplementationOnce(async () => new Response(null, { status: 200 }));
+    await service.revoke(ownerContext, firstAccount.id);
+
+    request
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              access_token: "fixture-reconnected-access",
+              refresh_token: "fixture-reconnected-refresh",
+              token_type: "Bearer",
+              expires_in: 3600,
+              refresh_token_expires_in: 7200,
+              scope: YOUTUBE_MINIMUM_SCOPES.join(" "),
+            }),
+            { status: 200 },
+          ),
+      )
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              items: [
+                { id: "UC-fixture", snippet: { title: "Reconnected channel", customUrl: "@new" } },
+              ],
+            }),
+            { status: 200 },
+          ),
+      );
+    const secondStart = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const secondState = new URL(secondStart.authorizationUrl).searchParams.get("state") ?? "";
+    const reconnected = await service.completeOAuth("YOUTUBE", {
+      state: secondState,
+      code: "fixture-reconnect-authorization-code",
+    });
+
+    expect(reconnected.id).toBe(firstAccount.id);
+    expect(reconnected).toMatchObject({
+      status: "CONNECTED",
+      health: "HEALTHY",
+      displayName: "Reconnected channel",
+      username: "@new",
+    });
+    expect(getToken()?.["accessTokenCiphertext"]).not.toBe(oldCiphertext);
+  });
+
+  it("reconnects an account in REAUTH_REQUIRED using its original account id", async () => {
+    const { service, request, getToken } = createHarness();
+    const firstStart = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const firstState = new URL(firstStart.authorizationUrl).searchParams.get("state") ?? "";
+    const firstAccount = await service.completeOAuth("YOUTUBE", {
+      state: firstState,
+      code: "fixture-authorization-code",
+    });
+    const oldCiphertext = getToken()?.["accessTokenCiphertext"];
+    request.mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({ items: [{ id: "UC-changed", snippet: { title: "Other channel" } }] }),
+          { status: 200 },
+        ),
+    );
+    await expect(service.checkHealth(ownerContext, firstAccount.id)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+
+    request
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              access_token: "fixture-reauth-access",
+              refresh_token: "fixture-reauth-refresh",
+              token_type: "Bearer",
+              expires_in: 3600,
+              refresh_token_expires_in: 7200,
+              scope: YOUTUBE_MINIMUM_SCOPES.join(" "),
+            }),
+            { status: 200 },
+          ),
+      )
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              items: [{ id: "UC-fixture", snippet: { title: "Reauthorized channel" } }],
+            }),
+            { status: 200 },
+          ),
+      );
+    const secondStart = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const secondState = new URL(secondStart.authorizationUrl).searchParams.get("state") ?? "";
+    const reconnected = await service.completeOAuth("YOUTUBE", {
+      state: secondState,
+      code: "fixture-reauth-authorization-code",
+    });
+
+    expect(reconnected.id).toBe(firstAccount.id);
+    expect(reconnected).toMatchObject({ status: "CONNECTED", health: "HEALTHY" });
+    expect(getToken()?.["accessTokenCiphertext"]).not.toBe(oldCiphertext);
+  });
+
   it("rejects account identity mismatch and replayed OAuth state", async () => {
-    const { db, service } = createHarness("UC-not-selected");
+    const { db, service, request } = createHarness("UC-not-selected");
     const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
       remoteAccountId: "UC-fixture",
     });
@@ -467,6 +686,46 @@ describe("SocialAccountsService", () => {
       service.completeOAuth("YOUTUBE", { state, code: "fixture-authorization-code" }),
     ).rejects.toThrow("invalid, expired, or already used");
     expect(db.socialAccount.create).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(String(request.mock.calls[2]?.[0])).toContain("/revoke");
+    const revokeBody = request.mock.calls[2]?.[1]?.body;
+    expect(revokeBody).toBeInstanceOf(URLSearchParams);
+    expect((revokeBody as URLSearchParams).get("token")).toBe("fixture-refresh-token");
+  });
+
+  it("revokes issued credentials when account persistence fails", async () => {
+    const { service, request } = createHarness("UC-fixture", true);
+    const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state") ?? "";
+
+    await expect(
+      service.completeOAuth("YOUTUBE", { state, code: "fixture-authorization-code" }),
+    ).rejects.toThrow("fixture persistence failure");
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(String(request.mock.calls[2]?.[0])).toContain("/revoke");
+    const revokeBody = request.mock.calls[2]?.[1]?.body;
+    expect(revokeBody).toBeInstanceOf(URLSearchParams);
+    expect((revokeBody as URLSearchParams).get("token")).toBe("fixture-refresh-token");
+  });
+
+  it("maps a concurrent unique-account conflict to 409 and revokes the issued grant", async () => {
+    const conflict = new Prisma.PrismaClientKnownRequestError("Unique constraint conflict", {
+      code: "P2002",
+      clientVersion: "7.10.1",
+    });
+    const { service, request } = createHarness("UC-fixture", conflict);
+    const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state") ?? "";
+
+    await expect(
+      service.completeOAuth("YOUTUBE", { state, code: "fixture-authorization-code" }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(String(request.mock.calls[2]?.[0])).toContain("/revoke");
   });
 
   it("denies viewers mutations and scopes account retrieval to the workspace", async () => {

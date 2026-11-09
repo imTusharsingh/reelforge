@@ -6,6 +6,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -59,6 +60,8 @@ type EncryptedTokenFields = Pick<
 
 @Injectable()
 export class SocialAccountsService {
+  private readonly logger = new Logger(SocialAccountsService.name);
+
   public constructor(
     @Inject("DATABASE") private readonly db: PrismaClient,
     private readonly workspaces: WorkspaceService,
@@ -155,58 +158,107 @@ export class SocialAccountsService {
     const tokenSet = await this.callProvider(() =>
       connector.exchangeCode(query.code ?? "", verifier, this.requireCallbackUrl()),
     );
-    this.requireScopes(connector, tokenSet.scopes);
-    if (tokenSet.refreshToken === null)
-      throw new BadGatewayException("YouTube did not issue offline refresh access");
-    const identities = await this.callProvider(() =>
-      connector.identifyAccounts(tokenSet.accessToken),
-    );
-    const identity = identities.find(
-      (candidate) => candidate.remoteAccountId === state.expectedRemoteAccountId,
-    );
-    if (!identity)
-      throw new ConflictException("Authenticated account did not match the selected account");
+    try {
+      this.requireScopes(connector, tokenSet.scopes);
+      if (tokenSet.refreshToken === null)
+        throw new BadGatewayException("YouTube did not issue offline refresh access");
+      const identities = await this.callProvider(() =>
+        connector.identifyAccounts(tokenSet.accessToken),
+      );
+      const identity = identities.find(
+        (candidate) => candidate.remoteAccountId === state.expectedRemoteAccountId,
+      );
+      if (!identity)
+        throw new ConflictException("Authenticated account did not match the selected account");
 
-    const id = randomUUID();
-    const account = await this.db.$transaction(async (tx) => {
-      await tx.socialAccount.create({
-        data: {
-          id,
-          workspaceId: state.workspaceId,
-          channelId: state.channelId,
-          platform,
-          remoteAccountId: identity.remoteAccountId,
+      const accessTokenId = randomUUID();
+      const account = await this.db.$transaction(async (tx) => {
+        const existing = await tx.socialAccount.findUnique({
+          where: {
+            workspaceId_channelId_platform_remoteAccountId: {
+              workspaceId: state.workspaceId,
+              channelId: state.channelId,
+              platform,
+              remoteAccountId: identity.remoteAccountId,
+            },
+          },
+          include: { permissions: true, capabilities: true },
+        });
+        const id = existing?.id ?? accessTokenId;
+        const accountData = {
           displayName: identity.displayName,
           username: identity.username,
-          status: "CONNECTED",
-          health: "HEALTHY",
+          status: "CONNECTED" as const,
+          health: "HEALTHY" as const,
+          connectedAt: now,
           lastHealthCheckAt: now,
-        },
+        };
+        if (existing) {
+          await tx.socialAccount.update({
+            where: { workspaceId_id: { workspaceId: state.workspaceId, id } },
+            data: accountData,
+          });
+        } else {
+          await tx.socialAccount.create({
+            data: {
+              id,
+              workspaceId: state.workspaceId,
+              channelId: state.channelId,
+              platform,
+              remoteAccountId: identity.remoteAccountId,
+              ...accountData,
+            },
+          });
+        }
+        await tx.socialAccountToken.upsert({
+          where: { socialAccountId: id },
+          create: {
+            workspaceId: state.workspaceId,
+            socialAccountId: id,
+            ...this.encryptTokens(tokenSet, state.workspaceId, id),
+          },
+          update: this.encryptTokens(tokenSet, state.workspaceId, id),
+        });
+        await tx.socialAccountPermission.deleteMany({
+          where: { workspaceId: state.workspaceId, socialAccountId: id },
+        });
+        await tx.socialAccountPermission.createMany({
+          data: connector.minimumScopes.map((permission) => ({
+            workspaceId: state.workspaceId,
+            socialAccountId: id,
+            permission,
+            status: tokenSet.scopes.includes(permission) ? "GRANTED" : "NOT_GRANTED",
+          })),
+        });
+        await tx.socialAccountCapability.deleteMany({
+          where: { workspaceId: state.workspaceId, socialAccountId: id },
+        });
+        await tx.socialAccountCapability.createMany({
+          data: this.capabilityRows(state.workspaceId, id, tokenSet.scopes, now),
+        });
+        return this.toView(
+          await tx.socialAccount.findUniqueOrThrow({
+            where: { workspaceId_id: { workspaceId: state.workspaceId, id } },
+            include: { permissions: true, capabilities: true },
+          }),
+        );
       });
-      await tx.socialAccountToken.create({
-        data: {
-          workspaceId: state.workspaceId,
-          socialAccountId: id,
-          ...this.encryptTokens(tokenSet, state.workspaceId, id),
-        },
-      });
-      await tx.socialAccountPermission.createMany({
-        data: connector.minimumScopes.map((permission) => ({
-          workspaceId: state.workspaceId,
-          socialAccountId: id,
-          permission,
-          status: tokenSet.scopes.includes(permission) ? "GRANTED" : "NOT_GRANTED",
-        })),
-      });
-      await tx.socialAccountCapability.createMany({
-        data: this.capabilityRows(state.workspaceId, id, tokenSet.scopes, now),
-      });
-      return tx.socialAccount.findUniqueOrThrow({
-        where: { workspaceId_id: { workspaceId: state.workspaceId, id } },
-        include: { permissions: true, capabilities: true },
-      });
-    });
-    return this.toView(account);
+      return account;
+    } catch (error) {
+      try {
+        await connector.revokeToken(tokenSet.refreshToken ?? tokenSet.accessToken);
+      } catch {
+        this.logger.error(
+          `Best-effort ${platform} token revocation failed after OAuth completion failure.`,
+        );
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new ConflictException(
+          "Social account connection conflicted with an existing account",
+        );
+      }
+      throw error;
+    }
   }
 
   public async list(context: WorkspaceContext): Promise<SocialAccount[]> {

@@ -78,7 +78,7 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - `pnpm lint` — **PASS**.
 - `pnpm format:check` — **PASS**.
 - `DATABASE_URL=<disposable PostgreSQL URL on localhost:55435> pnpm typecheck` — **PASS** across all workspaces.
-- `DATABASE_URL=<disposable PostgreSQL URL on localhost:55435> pnpm test` — **PASS**, 41 files passed / 1 skipped; 268 tests passed / 5 skipped. The M12 PostgreSQL persistence tests were included. The run emitted a non-fatal `pg` concurrent-query deprecation warning.
+- `DATABASE_URL=<disposable PostgreSQL URL on localhost:55435> pnpm test` — **PASS**, 41 files passed / 1 skipped; 273 tests passed / 5 skipped. M12 reconnect and OAuth grant-cleanup regressions plus PostgreSQL persistence tests were included. The run emitted a non-fatal `pg` concurrent-query deprecation warning.
 - `DATABASE_URL=<disposable PostgreSQL URL on localhost:55435> pnpm build` — **PASS** across all workspaces.
 - `DATABASE_URL=<disposable PostgreSQL URL on localhost:55435> pnpm db:validate` — **PASS**.
 - `DATABASE_URL=<fresh disposable PostgreSQL URL on localhost:55435> pnpm db:migrate:deploy` — **PASS**, all 19 migrations applied to a clean database; a subsequent deploy reported no pending migrations.
@@ -91,6 +91,7 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - No previously applied migration was rewritten or reordered. No M00–M11 model was changed.
 
 ## Blockers, risks, and known gaps
+- Minu's B1/B2 review blockers on PR #22 have been addressed in the current fix-forward: reconnect reuses the unique account row and rotates credentials/permissions/capabilities; P2002 is mapped to HTTP 409; failures after exchange best-effort revoke the newly issued grant, log revocation failure without token material, and preserve the original error.
 - Instagram is deliberately `NOT_CONFIGURED`. Although current Meta documentation was verified, Unified Login's business-portfolio/app setup and the product's login/access-level choice require an explicit integration decision before a connector is implemented. No fake-success path or Meta API call exists.
 - Production KMS, key delivery, and rotation remain open; the env key strategy is for local/development only.
 - YouTube account connection requests `youtube.upload` to advertise future upload capability; M12 does not implement upload/session creation or publishing. Reviewer should confirm this scope is acceptable for the future M13 use case.
@@ -98,7 +99,7 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - No calendar, approval flow, analytics, dashboard, Prisma ESM fix, or M13 publishing was added.
 
 ## Next exact action
-Await Minu's review on PR #22. Address any requested changes on this branch, then stop for Minu. Do not approve or merge.
+Push the B1/B2 fix-forward to PR #22 and request Minu's re-review. Stop for Minu; do not approve or merge.
 
 ## Reviewer decision
-- Review requested from Minu on PR #22. Pending; no approval or merge is claimed.
+- Minu requested changes on PR #22; B1 and B2 are addressed locally and await re-review. No approval or merge is claimed.
