@@ -13,6 +13,7 @@ import { SceneMediaModule } from "./modules/scene-media/scene-media.module.js";
 import { CompositionModule } from "./modules/composition/composition.module.js";
 import { QualityModule } from "./modules/quality/quality.module.js";
 import { SocialAccountsModule } from "./modules/social-accounts/social-accounts.module.js";
+import { PublishingModule } from "./modules/publishing/publishing.module.js";
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SocialAccountsModule } from "./modules/social-accounts/social-accounts.
     CompositionModule,
     QualityModule,
     SocialAccountsModule,
+    PublishingModule,
   ],
   controllers: [HealthController],
 })

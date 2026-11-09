@@ -430,7 +430,66 @@ export class SocialAccountsService {
       account,
       checkHealth: () => this.checkHealth(context, accountId),
       refresh: () => this.refresh(context, accountId),
+      startVideoUpload: (metadata, totalBytes, contentType) =>
+        this.withYouTubeUpload(context, accountId, "RESUMABLE_UPLOAD", (connector, accessToken) =>
+          connector.startVideoUpload(accessToken, metadata, totalBytes, contentType),
+        ),
+      checkVideoUpload: (sessionUri, totalBytes) =>
+        this.withYouTubeUpload(context, accountId, "RESUMABLE_UPLOAD", (connector, accessToken) =>
+          connector.checkVideoUpload(accessToken, sessionUri, totalBytes),
+        ),
+      uploadVideoChunk: (sessionUri, startByte, totalBytes, chunk) =>
+        this.withYouTubeUpload(context, accountId, "RESUMABLE_UPLOAD", (connector, accessToken) =>
+          connector.uploadVideoChunk(accessToken, sessionUri, startByte, totalBytes, chunk),
+        ),
+      verifyUploadedVideo: (videoId, metadata) =>
+        this.withYouTubeUpload(context, accountId, "VIDEO_UPLOAD", (connector, accessToken) =>
+          connector.verifyUploadedVideo(accessToken, videoId, account.remoteAccountId, metadata),
+        ),
     };
+  }
+
+  private async withYouTubeUpload<T>(
+    context: WorkspaceContext,
+    accountId: string,
+    capability: "VIDEO_UPLOAD" | "RESUMABLE_UPLOAD",
+    operation: (connector: YouTubeConnector, accessToken: string) => Promise<T>,
+  ): Promise<T> {
+    const account = await this.findAccount(context.workspaceId, accountId);
+    if (account.platform !== "YOUTUBE")
+      throw new ConflictException("Video uploads are only supported for YouTube accounts");
+    if (account.status !== "CONNECTED")
+      throw new ConflictException("YouTube account is not connected");
+    if (account.health !== "HEALTHY")
+      throw new ConflictException("YouTube account health must be healthy to publish");
+    const uploadScope = "https://www.googleapis.com/auth/youtube.upload";
+    if (
+      !account.permissions.some(
+        (permission) => permission.permission === uploadScope && permission.status === "GRANTED",
+      )
+    )
+      throw new ForbiddenException("The YouTube account does not grant the upload scope");
+    const allowed = account.capabilities.some((item) => {
+      if (item.capability !== capability || !item.enabled || item.details === null) return false;
+      return (
+        typeof item.details === "object" &&
+        !Array.isArray(item.details) &&
+        item.details["executionImplemented"] === true
+      );
+    });
+    if (!allowed)
+      throw new ServiceUnavailableException(`YouTube capability ${capability} is unavailable`);
+    const connector = this.youtube;
+    if (!connector.isConfigured())
+      this.throwProvider({
+        kind: "NOT_CONFIGURED",
+        code: "YOUTUBE_NOT_CONFIGURED",
+        message: "YouTube publishing is not configured.",
+        retryAfterSeconds: null,
+      });
+    const credentials = await this.findToken(context.workspaceId, accountId);
+    const accessToken = await this.validAccessToken(context, account, credentials);
+    return this.callProvider(() => operation(connector, accessToken));
   }
 
   private async validAccessToken(
@@ -562,7 +621,7 @@ export class SocialAccountsService {
         capability === "VIDEO_UPLOAD" || capability === "RESUMABLE_UPLOAD" ? uploadGranted : true,
       details: {
         platformOperation: capability === "VIDEO_UPLOAD" ? "YouTube Data API videos.insert" : null,
-        executionImplemented: false,
+        executionImplemented: capability === "VIDEO_UPLOAD" || capability === "RESUMABLE_UPLOAD",
         checkedAt: checkedAt.toISOString(),
       },
       checkedAt,

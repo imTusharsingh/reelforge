@@ -574,6 +574,73 @@ export class QualityService {
     return { renderJobId, status: run.status, gateSummary: gates.data };
   }
 
+  public async assertPublishable(
+    context: WorkspaceContext,
+    renderJobId: string,
+    reviewRunId: string,
+  ): Promise<HardGateResult[]> {
+    const run = await this.db.qualityReviewRun.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: reviewRunId } },
+      include: {
+        decisions: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1 },
+        renderJob: {
+          include: {
+            sceneMediaJob: { include: { channel: { select: { approvalPolicy: true } } } },
+          },
+        },
+      },
+    });
+    if (!run || run.renderJobId !== renderJobId)
+      throw new ConflictException("The selected quality review does not belong to this render");
+    if ((run.status !== "APPROVED" && run.status !== "AUTO_APPROVED") || run.supersededAt !== null)
+      throw new ConflictException("The current quality review is not approved for publishing");
+    const currentRun = await this.db.qualityReviewRun.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        renderJobId,
+        status: { not: "SUPERSEDED" },
+        supersededAt: null,
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { id: true },
+    });
+    if (currentRun?.id !== run.id)
+      throw new ConflictException("The quality approval is stale; use the current review");
+    const parsedGates = hardGateSummarySchema.safeParse(run.gateSummary);
+    if (!parsedGates.success)
+      throw new InternalServerErrorException("Stored quality gate summary is invalid");
+    if (parsedGates.data.some((result) => !result.passed))
+      throw new ConflictException("A failed quality hard gate blocks publishing");
+
+    if (run.status === "APPROVED" && run.decisions[0]?.action !== "APPROVE")
+      throw new ConflictException("A current human approval decision is required to publish");
+    if (run.status === "AUTO_APPROVED") {
+      const currentPolicy = parseApprovalPolicy(
+        run.renderJob.sceneMediaJob.channel?.approvalPolicy,
+      );
+      const scorecard = qualityScorecardSchema.safeParse(run.scorecard);
+      if (
+        currentPolicy.mode !== "AUTO" ||
+        !scorecard.success ||
+        scorecard.data.score < currentPolicy.scoreThreshold ||
+        QUALITY_CRITERIA.some(
+          (criterion) =>
+            currentPolicy.criterionThresholds[criterion] !== undefined &&
+            scorecard.data.criteria[criterion].score <
+              (currentPolicy.criterionThresholds[criterion] ?? 0),
+        )
+      )
+        throw new ConflictException(
+          "Current channel approval policy no longer permits this auto-approval",
+        );
+    }
+
+    await this.db.$transaction((tx) =>
+      this.assertCurrentApprovalGates(tx, context.workspaceId, run),
+    );
+    return parsedGates.data;
+  }
+
   public async decide(
     context: WorkspaceContext,
     runId: string,

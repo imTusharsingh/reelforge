@@ -1,4 +1,10 @@
-import type { SocialAccount, SocialPlatform, SocialPlatformError } from "@reelforge/contracts";
+import type {
+  SocialAccount,
+  SocialPlatform,
+  SocialPlatformError,
+  YouTubeDestinationMetadata,
+  YouTubePrivacyStatus,
+} from "@reelforge/contracts";
 
 export type OAuthAuthorizationRequest = Readonly<{
   state: string;
@@ -31,10 +37,66 @@ export interface SocialPlatformConnector {
   revokeToken(token: string): Promise<void>;
 }
 
+export type YouTubeUploadProgress =
+  | Readonly<{ completed: false; nextByte: number; videoId: null }>
+  | Readonly<{ completed: true; nextByte: number; videoId: string }>;
+
+export type VerifiedYouTubeVideo = Readonly<{
+  videoId: string;
+  channelId: string;
+  title: string;
+  privacyStatus: YouTubePrivacyStatus;
+  uploadStatus: string;
+  processingStatus: string | null;
+}>;
+
+export interface YouTubePublishingConnector extends SocialPlatformConnector {
+  startVideoUpload(
+    accessToken: string,
+    metadata: YouTubeDestinationMetadata,
+    totalBytes: number,
+    contentType: string,
+  ): Promise<string>;
+  checkVideoUpload(
+    accessToken: string,
+    sessionUri: string,
+    totalBytes: number,
+  ): Promise<YouTubeUploadProgress>;
+  uploadVideoChunk(
+    accessToken: string,
+    sessionUri: string,
+    startByte: number,
+    totalBytes: number,
+    chunk: Uint8Array,
+  ): Promise<YouTubeUploadProgress>;
+  verifyUploadedVideo(
+    accessToken: string,
+    videoId: string,
+    channelId: string,
+    metadata: YouTubeDestinationMetadata,
+  ): Promise<VerifiedYouTubeVideo>;
+}
+
 export type AuthenticatedPlatformClient = Readonly<{
   account: SocialAccount;
   checkHealth(): Promise<SocialAccount>;
   refresh(): Promise<SocialAccount>;
+  startVideoUpload(
+    metadata: YouTubeDestinationMetadata,
+    totalBytes: number,
+    contentType: string,
+  ): Promise<string>;
+  checkVideoUpload(sessionUri: string, totalBytes: number): Promise<YouTubeUploadProgress>;
+  uploadVideoChunk(
+    sessionUri: string,
+    startByte: number,
+    totalBytes: number,
+    chunk: Uint8Array,
+  ): Promise<YouTubeUploadProgress>;
+  verifyUploadedVideo(
+    videoId: string,
+    metadata: YouTubeDestinationMetadata,
+  ): Promise<VerifiedYouTubeVideo>;
 }>;
 
 export class SocialProviderError extends Error {
