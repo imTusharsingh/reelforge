@@ -88,6 +88,30 @@ enum IdeaOrigin {
   AI
 }
 
+enum SocialPlatform {
+  YOUTUBE
+  INSTAGRAM
+}
+
+enum SocialAccountStatus {
+  CONNECTED
+  REAUTH_REQUIRED
+  REVOCATION_PENDING
+  REVOCATION_FAILED
+  REVOKED
+}
+
+enum SocialAccountHealth {
+  HEALTHY
+  AUTH_REQUIRED
+  UNAVAILABLE
+}
+
+enum SocialPermissionStatus {
+  GRANTED
+  NOT_GRANTED
+}
+
 model User {
   id                       String                @id @default(uuid()) @db.Uuid
   email                    String                @unique
@@ -103,6 +127,7 @@ model User {
   createdRenderJobs        RenderJob[]
   createdQualityReviewRuns QualityReviewRun[]
   qualityDecisions         QualityDecision[]
+  socialOAuthStates        SocialOAuthState[]
   defaultWorkspaceId       String?               @map("default_workspace_id") @db.Uuid
   defaultWorkspace         Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
 
@@ -149,6 +174,8 @@ model Workspace {
   qualityReviewRuns           QualityReviewRun[]
   qualityDecisions            QualityDecision[]
   qualityRegenerationRequests QualityRegenerationRequest[]
+  socialAccounts              SocialAccount[]
+  socialOAuthStates           SocialOAuthState[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -232,6 +259,8 @@ model Channel {
   ideaApprovalSnapshots     IdeaApprovalSnapshot[]
   sceneMediaJobs            SceneMediaJob[]
   snapshots                 ChannelConfigSnapshot[]
+  socialAccounts            SocialAccount[]
+  socialOAuthStates         SocialOAuthState[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -254,6 +283,105 @@ model ChannelConfigSnapshot {
   @@unique([workspaceId, channelId, version])
   @@index([workspaceId, channelId, createdAt])
   @@map("channel_config_snapshots")
+}
+
+model SocialAccount {
+  id                String                    @id @default(uuid()) @db.Uuid
+  workspaceId       String                    @map("workspace_id") @db.Uuid
+  channelId         String                    @map("channel_id") @db.Uuid
+  platform          SocialPlatform
+  remoteAccountId   String                    @map("remote_account_id")
+  displayName       String                    @map("display_name")
+  username          String?
+  status            SocialAccountStatus       @default(CONNECTED)
+  health            SocialAccountHealth       @default(UNAVAILABLE)
+  connectedAt       DateTime                  @default(now()) @map("connected_at") @db.Timestamptz(6)
+  lastHealthCheckAt DateTime?                 @map("last_health_check_at") @db.Timestamptz(6)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel                   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  tokens            SocialAccountToken?
+  permissions       SocialAccountPermission[]
+  capabilities      SocialAccountCapability[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, channelId, platform, remoteAccountId])
+  @@index([workspaceId, channelId, platform, status])
+  @@map("social_accounts")
+}
+
+model SocialAccountToken {
+  id                     String        @id @default(uuid()) @db.Uuid
+  workspaceId            String        @map("workspace_id") @db.Uuid
+  socialAccountId        String        @unique @map("social_account_id") @db.Uuid
+  accessTokenCiphertext  String        @map("access_token_ciphertext")
+  accessTokenNonce       String        @map("access_token_nonce")
+  accessTokenTag         String        @map("access_token_tag")
+  refreshTokenCiphertext String?       @map("refresh_token_ciphertext")
+  refreshTokenNonce      String?       @map("refresh_token_nonce")
+  refreshTokenTag        String?       @map("refresh_token_tag")
+  encryptionKeyVersion   String        @map("encryption_key_version")
+  accessTokenExpiresAt   DateTime      @map("access_token_expires_at") @db.Timestamptz(6)
+  refreshTokenExpiresAt  DateTime?     @map("refresh_token_expires_at") @db.Timestamptz(6)
+  updatedAt              DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  socialAccount          SocialAccount @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, socialAccountId])
+  @@index([workspaceId, accessTokenExpiresAt])
+  @@map("social_account_tokens")
+}
+
+model SocialAccountPermission {
+  id              String                 @id @default(uuid()) @db.Uuid
+  workspaceId     String                 @map("workspace_id") @db.Uuid
+  socialAccountId String                 @map("social_account_id") @db.Uuid
+  permission      String
+  status          SocialPermissionStatus
+  recordedAt      DateTime               @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  socialAccount   SocialAccount          @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([socialAccountId, permission])
+  @@index([workspaceId, socialAccountId])
+  @@map("social_account_permissions")
+}
+
+model SocialAccountCapability {
+  id              String        @id @default(uuid()) @db.Uuid
+  workspaceId     String        @map("workspace_id") @db.Uuid
+  socialAccountId String        @map("social_account_id") @db.Uuid
+  capability      String
+  enabled         Boolean
+  details         Json?
+  checkedAt       DateTime      @default(now()) @map("checked_at") @db.Timestamptz(6)
+  socialAccount   SocialAccount @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([socialAccountId, capability])
+  @@index([workspaceId, socialAccountId])
+  @@map("social_account_capabilities")
+}
+
+model SocialOAuthState {
+  id                      String         @id @default(uuid()) @db.Uuid
+  workspaceId             String         @map("workspace_id") @db.Uuid
+  channelId               String         @map("channel_id") @db.Uuid
+  userId                  String         @map("user_id") @db.Uuid
+  platform                SocialPlatform
+  expectedRemoteAccountId String         @map("expected_remote_account_id")
+  stateHash               String         @unique @map("state_hash")
+  codeVerifierCiphertext  String         @map("code_verifier_ciphertext")
+  codeVerifierNonce       String         @map("code_verifier_nonce")
+  codeVerifierTag         String         @map("code_verifier_tag")
+  expiresAt               DateTime       @map("expires_at") @db.Timestamptz(6)
+  consumedAt              DateTime?      @map("consumed_at") @db.Timestamptz(6)
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace               Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel                 Channel        @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  user                    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, expiresAt])
+  @@index([expiresAt, consumedAt])
+  @@map("social_oauth_states")
 }
 
 model ContentSeries {
