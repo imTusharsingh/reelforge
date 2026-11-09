@@ -1,12 +1,13 @@
 # M11 Status - Quality Assurance & Approval
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
-- **Completion:** 100% implementation; reviewer re-review pending
+- **State:** INTEGRATED
+- **Completion:** 100% implementation; integrated after reviewer approval
 - **Assigned session/editor:** Module Implementation Agent (Desktop)
-- **Branch/worktree:** `work/m11-quality-assurance-and-approval`
+- **Branch/worktree:** `main` (PR #20)
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
-- **Approved commit:** none
+- **Approved commit:** `e61af2b92dd553faf96bb96850dcf37864a57a40` (review `5831183493`)
+- **Merge commit:** `42e33c5476ca2f392db199c2db70569c899213d8` (Minu)
 
 ## Current objective
 Provide workspace-scoped quality gates, structured review results, human decisions, and bounded regeneration requests. No publishing or provider-result mutation is implemented.
@@ -68,12 +69,13 @@ Provide workspace-scoped quality gates, structured review results, human decisio
 ## Blockers, risks, and known gaps
 - The runtime binds a `NOT_CONFIGURED` provider by default. An evaluation without a real adapter enters manual review with no scorecard; it cannot auto-approve, and no fake adapter or live provider call was added.
 - Disclosure flags currently distinguish `AI_GENERATED_ASSET` and `STARTER_LIBRARY_ASSET`. Their product/platform semantics need Core review before M13 treats them as legally sufficient disclosure.
+- An `APPROVED` quality status can become stale after rights change; M13 must re-check quality gates at publish time. The regeneration cap relies on script regeneration using M07 `revise()` on the same script ID.
 - Codec/audio evidence relies on M10’s validated manifest and output profile; M11 does not re-probe media or duplicate composition.
 - The supplementary Prisma diff reports pre-existing non-M11 schema/migration differences; no unrelated migration or schema repair was made.
 - The separately tracked Prisma ESM dist-boot follow-up remains open and untouched.
 
 ## Next exact action
-Commit and push the verified fix-forward to PR #20, request Minu re-review, and stop. Do not approve or merge.
+No M11 product rework is required. The implementation is integrated on `main`; this docs-only closeout records the approval, merge, and residual follow-ups.
 
 ## Reviewer decision
-- Minu requested changes on PR #20; fix-forward implemented and awaiting re-review.
+- Minu approved PR #20 head `e61af2b92dd553faf96bb96850dcf37864a57a40` in review `5831183493`; Minu merged PR #20 at `42e33c5476ca2f392db199c2db70569c899213d8`.

@@ -586,3 +586,16 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: No real AI adapter is configured; unscored runs remain manual-review-only. Disclosure flag semantics still need Core review.
 - Next exact action: update PR #20 with the verified fix-forward, request Minu re-review, and stop. Do not approve or merge.
 - Related status/ADR: M11 `STATUS.md`; ADR-005, ADR-007, and ADR-010 unchanged.
+
+## 2026-11-10 - M11 integrated closeout documentation
+- Actor/session: Module Implementation Agent, Desktop only; docs-only closeout.
+- Work package: M11 integrated closeout; no M12 product work in this PR.
+- Branch and base: `chore/m11-integrated-closeout`, created from verified `origin/main` at `42e33c5476ca2f392db199c2db70569c899213d8`.
+- Starting state: M11 PR #20 was merged by Minu at `42e33c5476ca2f392db199c2db70569c899213d8`. GitHub PR metadata confirms Minu approved head `e61af2b92dd553faf96bb96850dcf37864a57a40` in review `5831183493`. The stale commit `3d08f8eee846e92204cebd33dbc52c2091184e14` is not an ancestor of `origin/main` and was not reused or cherry-picked.
+- Changes made: updated `PROJECT_STATE.md` and M11 `STATUS.md` to record M00–M11 as integrated, no active implementation sessions, M12 as next after this closeout merges, and the approval/merge evidence. Carried forward M11's AI-review, disclosure, rights-staleness, and regeneration-lineage residual notes; retained the existing M10 stuck-upload and Prisma ESM follow-ups.
+- Files changed: `docs/PROJECT_STATE.md`, `work-packages/M11-quality-assurance-and-approval/STATUS.md`, and this work log only. No app, schema, CI, lockfile, generated output, or product changes.
+- Verification evidence: `git fetch origin` succeeded; `git rev-parse origin/main` returned `42e33c5476ca2f392db199c2db70569c899213d8`; `git show` confirmed the M11 squash merge; GitHub PR metadata confirmed the approved head, review ID, and merge commit; `git merge-base --is-ancestor 3d08f8eee846e92204cebd33dbc52c2091184e14 origin/main` returned exit code 1 (not an ancestor). Application tests/builds were not run because this change is documentation-only.
+- External calls: Git and GitHub metadata only; no AI or social provider calls.
+- Decisions/approvals: M11 is integrated by Minu's approval and merge, not by this implementation session. This closeout PR still requires Minu's review; no merge is claimed.
+- Next exact action: open the docs-only closeout PR, request Minu review, and stop. After it merges, start M12 on a separate branch from the new `origin/main` tip.
+- Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 unchanged.
