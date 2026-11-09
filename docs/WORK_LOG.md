@@ -676,3 +676,16 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: `origin/main` is still `1a3436d`, one commit beyond this branch, and does not contain M13. The M14 migration timestamp must be rechecked after M13 merges. Branch remains uncommitted pending branch handoff.
 - Next exact action: Commit and push only this M14 branch while M13 is outstanding; do not rebase until M13 merges. Then complete Phase 2 integration and request Minu's review.
 - Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 Phase 1 branch handoff
+- Actor/session: Module Implementation Agent, Desktop.
+- Work package: M14 analytics collection and metric store, Phase 1 only.
+- Branch and commit: `work/m14-analytics-collection-and-metric-store`, `9adfa421ffd5d21c5b6d50a4aca71c33d8191e65`, pushed to `origin`.
+- Starting state: Final Phase 1 verification complete; latest fetched `origin/main` is `1a3436db300d34e23810d2e17992921f488d478c`, which does not include M13.
+- Changes made: Committed and pushed the M14 Phase 1 implementation and evidence. No rebase or M13 worktree access was performed.
+- Commands actually run and results: `git diff --cached --check` passed before commit; push to the M14 feature branch succeeded. The worktree was clean after push.
+- External calls: Git push only; no live Google/Meta or AI/social provider calls.
+- Decisions/approvals: M14 remains `Phase 1 done, waiting on M13`; no approval, integration, or review is claimed.
+- Defects/risks/blockers: M12 Analytics scope/client approval, M13 published-post integration, Core API registration, scheduled worker/retry integration, and migration timestamp recheck remain pending. No PR was opened because M13 has not merged.
+- Next exact action: Wait for M13 to merge, then rebase this branch on the updated `origin/main` and complete Phase 2 before requesting Minu's review.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
