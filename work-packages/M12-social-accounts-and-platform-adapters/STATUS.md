@@ -3,7 +3,7 @@
 - **State:** IMPLEMENTED_PENDING_REVIEW
 - **Completion:** 100% of the assigned implementation; T05 intentionally ships a documented fail-closed Instagram connector rather than an unverified integration.
 - **Assigned session/editor:** Module Implementation Agent (Desktop)
-- **Branch/worktree:** `work/m12-social-accounts-and-platform-adapters`, based on post-closeout `main` at `a0c12974c0f98f1041729bf7c3f1f4e5f33a4e73`
+- **Branch/worktree:** `work/m12-social-accounts-and-platform-adapters`, PR #22; based on post-closeout `main` at `a0c12974c0f98f1041729bf7c3f1f4e5f33a4e73`
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
 - **Approved commit:** none; implementation review is pending.
@@ -98,7 +98,7 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - No calendar, approval flow, analytics, dashboard, Prisma ESM fix, or M13 publishing was added.
 
 ## Next exact action
-Run the final scope review, commit and push only this M12 branch, open a PR titled `M12: social accounts and platform adapters`, request Minu review, and stop. Do not merge.
+Await Minu's review on PR #22. Address any requested changes on this branch, then stop for Minu. Do not approve or merge.
 
 ## Reviewer decision
-- Pending Minu review. No approval or merge is claimed.
+- Review requested from Minu on PR #22. Pending; no approval or merge is claimed.
