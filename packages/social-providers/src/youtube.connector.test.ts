@@ -97,6 +97,53 @@ describe("YouTubeConnector", () => {
     expect(init?.headers).toEqual({ authorization: "Bearer fixture-access-token" });
   });
 
+  it("treats omitted or null Analytics rows as an empty report", async () => {
+    const omittedRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          kind: "youtubeAnalytics#resultTable",
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+            { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const omittedConnector = new YouTubeConnector(configuration, omittedRequest);
+    await expect(
+      omittedConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [] });
+
+    const nullRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          kind: "youtubeAnalytics#resultTable",
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+            { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+          ],
+          rows: null,
+        }),
+        { status: 200 },
+      ),
+    );
+    const nullConnector = new YouTubeConnector(configuration, nullRequest);
+    await expect(
+      nullConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [] });
+  });
+
   it("fails closed on invalid Analytics responses and rate limits", async () => {
     const invalidRequest = vi
       .fn<typeof fetch>()

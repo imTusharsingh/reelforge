@@ -715,3 +715,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Risks/gaps: Collection is editor-triggered, not scheduled; Instagram remains fail-closed; live collection requires production OAuth/client configuration.
 - Next exact action: Await Minu's review and address feedback; do not merge.
 - Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 PR #25 review fixes
+- Review: Minu requested changes on PR #25 at `dad6a30`. B1 required that omitted Analytics `rows` be treated as an empty report, not a permanent invalid response.
+- Changes: Made `YouTubeAnalyticsReportSchema.rows` nullable and optional; normalized omitted/null rows to `[]` in `YouTubeConnector.queryAnalytics`; kept `normalizeReport` treating omitted/null/empty rows as unavailable report days. Added connector coverage for omitted and null rows and a collection test asserting `SUCCEEDED` with `UNAVAILABLE` / `NO_REPORT_ROW` snapshots and `PARTIAL` completeness. Also added an atomic compare-and-swap job claim inside a transaction so concurrent `/run` calls cannot create two runs, and dropped the unused `NOT_CONFIGURED` job status from the Prisma schema and unapplied M14 migration. `appendSnapshots` remains public because the PostgreSQL integration test uses it directly.
+- Deferred residual: `startIndex`/`maxResults` pagination for very large `video`+`day` reports; truncated tables are currently stored as unavailable days. `yt-analytics.readonly` was left unchanged.
+- Verification with Node `24.22.2` and pnpm `12.16.1` against disposable PostgreSQL on `127.0.0.1:55436`: `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, `DATABASE_URL=... pnpm typecheck`, `DATABASE_URL=... pnpm test`, `DATABASE_URL=... pnpm build`, `DATABASE_URL=... pnpm db:validate`, and a fresh `DATABASE_URL=... pnpm db:migrate:deploy` all **passed**. Full `pnpm test` passed with 49 files passed / 1 skipped and 319 tests passed / 5 skipped; the skips remain the existing FFmpeg/ffprobe suites. Focused M14/M12 tests passed (6 files / 46 tests). A first build attempt without `DATABASE_URL` failed because `prisma.config.ts` requires it; the rerun with the disposable URL passed.
+- External calls: NONE to Google, Meta, AI, or social providers. Tests use fixtures; no API server was started.
+- Decisions/approvals: No self-approval, integration, or merge is claimed.
+- Next exact action: Push the review-fix commit, request Minu re-review on PR #25, and stop without merging.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.

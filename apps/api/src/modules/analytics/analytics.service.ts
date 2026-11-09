@@ -296,28 +296,37 @@ export class AnalyticsService {
 
     const startDate = dateOnly(job.startDate);
     const endDate = dateOnly(job.endDate);
-    const previousRun = await this.db.metricCollectionRun.findFirst({
-      where: { workspaceId: context.workspaceId, jobId: job.id },
-      orderBy: { attempt: "desc" },
-      select: { attempt: true },
+    const run = await this.db.$transaction(async (transaction) => {
+      const claimed = await transaction.metricCollectionJob.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          id: job.id,
+          status: job.status,
+          ...(job.status === "RETRY_WAIT" ? { nextAttemptAt: { lte: now } } : {}),
+        },
+        data: { status: "RUNNING", lastErrorCode: null },
+      });
+      if (claimed.count === 0) return null;
+      const previousRun = await transaction.metricCollectionRun.findFirst({
+        where: { workspaceId: context.workspaceId, jobId: job.id },
+        orderBy: { attempt: "desc" },
+        select: { attempt: true },
+      });
+      return transaction.metricCollectionRun.create({
+        data: {
+          workspaceId: context.workspaceId,
+          jobId: job.id,
+          attempt: (previousRun?.attempt ?? 0) + 1,
+          status: "RUNNING",
+          sourceApi: YOUTUBE_ANALYTICS_SOURCE_API,
+          startDate: job.startDate,
+          endDate: job.endDate,
+          startedAt: now,
+        },
+        select: { id: true },
+      });
     });
-    const run = await this.db.metricCollectionRun.create({
-      data: {
-        workspaceId: context.workspaceId,
-        jobId: job.id,
-        attempt: (previousRun?.attempt ?? 0) + 1,
-        status: "RUNNING",
-        sourceApi: YOUTUBE_ANALYTICS_SOURCE_API,
-        startDate: job.startDate,
-        endDate: job.endDate,
-        startedAt: now,
-      },
-      select: { id: true },
-    });
-    await this.db.metricCollectionJob.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: job.id } },
-      data: { status: "RUNNING", lastErrorCode: null },
-    });
+    if (run === null) throw new ConflictException("Metric collection job is already running");
 
     try {
       const collectedAt = new Date();
@@ -599,7 +608,8 @@ export class AnalyticsService {
     const dayIndex = headerIndex.get("day");
     const entityIndex = granularity === "VIDEO" ? headerIndex.get("video") : undefined;
     const rows = new Map<string, readonly (string | number | null)[]>();
-    for (const row of report.rows ?? []) {
+    const reportRows = report.rows ?? [];
+    for (const row of reportRows) {
       if (dayIndex === undefined) break;
       const day = row[dayIndex];
       if (typeof day !== "string") continue;

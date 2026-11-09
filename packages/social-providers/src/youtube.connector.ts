@@ -370,7 +370,7 @@ export class YouTubeConnector implements YouTubePublishingConnector {
         retryAfterSeconds: null,
       });
     }
-    return parsed.data;
+    return { ...parsed.data, rows: parsed.data.rows ?? [] };
   }
 
   public async startVideoUpload(

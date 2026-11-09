@@ -142,7 +142,11 @@ export const YouTubeAnalyticsReportSchema = z
         })
         .strict(),
     ),
-    rows: z.array(z.array(z.union([z.string(), z.number(), z.null()]))).nullable(),
+    // Official reports.query omits `rows` when a query has no data.
+    rows: z
+      .array(z.array(z.union([z.string(), z.number(), z.null()])))
+      .nullable()
+      .optional(),
   })
   .strict();
 export type YouTubeAnalyticsReport = z.infer<typeof YouTubeAnalyticsReportSchema>;

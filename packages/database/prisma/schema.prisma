@@ -149,7 +149,6 @@ enum MetricCollectionJobStatus {
   RETRY_WAIT
   SUCCEEDED
   FAILED_FINAL
-  NOT_CONFIGURED
 }
 
 enum MetricCollectionRunStatus {

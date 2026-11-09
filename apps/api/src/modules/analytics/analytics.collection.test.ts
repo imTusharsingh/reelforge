@@ -1,4 +1,5 @@
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { YouTubeAnalyticsReportSchema } from "@reelforge/contracts";
 import { SocialProviderError } from "@reelforge/social-providers";
 import { describe, expect, it, vi } from "vitest";
 import { YOUTUBE_ANALYTICS_READ_SCOPE, YOUTUBE_ANALYTICS_SOURCE_API } from "./analytics.catalog.js";
@@ -36,25 +37,32 @@ const publishedPost = {
   publishedAt: "2026-11-01T10:00:00.000Z",
 };
 
-function database(): {
-  metricCollectionJob: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
-  metricCollectionRun: {
-    findFirst: ReturnType<typeof vi.fn>;
-    create: ReturnType<typeof vi.fn>;
-    update: ReturnType<typeof vi.fn>;
-  };
-} {
-  return {
+type Mock = ReturnType<typeof vi.fn>;
+
+type MockDatabase = {
+  metricCollectionJob: { findUnique: Mock; update: Mock; updateMany: Mock };
+  metricCollectionRun: { findFirst: Mock; create: Mock; update: Mock };
+  $transaction: Mock;
+};
+
+function database(): MockDatabase {
+  const db: MockDatabase = {
     metricCollectionJob: {
       findUnique: vi.fn().mockResolvedValue(job),
       update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     metricCollectionRun: {
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: runId }),
       update: vi.fn().mockResolvedValue({}),
     },
+    $transaction: vi.fn(),
   };
+  db.$transaction.mockImplementation(async (callback: (tx: MockDatabase) => Promise<unknown>) =>
+    callback(db),
+  );
+  return db;
 }
 
 function channelReport(): unknown {
@@ -152,6 +160,14 @@ describe("AnalyticsService collection execution", () => {
     );
   });
 
+  it("rejects a run when another request has already claimed the job", async () => {
+    const { analytics, db } = harness();
+    db.metricCollectionJob.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(analytics.collect(ownerContext, jobId)).rejects.toBeInstanceOf(ConflictException);
+    expect(db.metricCollectionRun.create).not.toHaveBeenCalled();
+  });
+
   it("stores provenance-bearing channel and published-video metric days", async () => {
     const { analytics, db, youtube, publishedPosts } = harness();
     const append = vi.spyOn(analytics, "appendSnapshots").mockResolvedValue(12);
@@ -204,6 +220,56 @@ describe("AnalyticsService collection execution", () => {
     expect(db.metricCollectionJob.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "SUCCEEDED", retryCount: 0 }),
+      }),
+    );
+  });
+
+  it("stores unavailable days instead of failing when the provider omits rows", async () => {
+    const { analytics, db, youtube } = harness();
+    youtube.query.mockImplementation(
+      async ({ granularity }: { granularity: "CHANNEL" | "VIDEO" }) =>
+        YouTubeAnalyticsReportSchema.parse(
+          granularity === "CHANNEL"
+            ? {
+                kind: "youtubeAnalytics#resultTable",
+                columnHeaders: [
+                  { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+                  { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+                  { name: "likes", columnType: "METRIC", dataType: "INTEGER" },
+                  { name: "comments", columnType: "METRIC", dataType: "INTEGER" },
+                  { name: "shares", columnType: "METRIC", dataType: "INTEGER" },
+                  { name: "estimatedMinutesWatched", columnType: "METRIC", dataType: "FLOAT" },
+                  { name: "subscribersGained", columnType: "METRIC", dataType: "INTEGER" },
+                  { name: "subscribersLost", columnType: "METRIC", dataType: "INTEGER" },
+                ],
+              }
+            : videoReport(),
+        ),
+    );
+    const append = vi.spyOn(analytics, "appendSnapshots").mockResolvedValue(12);
+
+    const result = await analytics.collect(ownerContext, jobId);
+
+    expect(result).toMatchObject({
+      status: "SUCCEEDED",
+      snapshotCount: 12,
+      completeness: "PARTIAL",
+      retryCount: 0,
+    });
+    const values = append.mock.calls[0]?.[4] as Array<Record<string, unknown>>;
+    const channelValues = values.filter((value) => value["entityGranularity"] === "CHANNEL");
+    expect(channelValues).toHaveLength(7);
+    for (const value of channelValues) {
+      expect(value).toMatchObject({
+        value: null,
+        availability: "UNAVAILABLE",
+        unavailableReason: "NO_REPORT_ROW",
+        completeness: "UNAVAILABLE",
+      });
+    }
+    expect(db.metricCollectionJob.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "SUCCEEDED", lastErrorCode: null }),
       }),
     );
   });
