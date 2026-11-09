@@ -6,10 +6,20 @@ import {
   YouTubeConnector,
   YOUTUBE_MINIMUM_SCOPES,
 } from "./index.js";
+import type { YouTubeDestinationMetadata } from "@reelforge/contracts";
 
 const configuration = {
   clientId: "fixture-client",
   clientSecret: "fixture-secret",
+};
+const uploadMetadata: YouTubeDestinationMetadata = {
+  platform: "YOUTUBE",
+  title: "Fixture upload",
+  description: "Fixture description",
+  tags: ["fixture"],
+  categoryId: "22",
+  privacyStatus: "private",
+  selfDeclaredMadeForKids: false,
 };
 
 describe("YouTubeConnector", () => {
@@ -134,5 +144,163 @@ describe("YouTubeConnector", () => {
     ).toThrow(SocialProviderError);
     expect(normalizeRemoteMediaId("video-fixture")).toBe("video-fixture");
     expect(() => normalizeRemoteMediaId("")).toThrow(SocialProviderError);
+  });
+
+  it("starts a private resumable upload and validates the returned session origin", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: {
+          location: "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=fixture",
+        },
+      }),
+    );
+    const connector = new YouTubeConnector(configuration, request);
+
+    await expect(
+      connector.startVideoUpload("fixture-token", uploadMetadata, 1024, "video/mp4"),
+    ).resolves.toBe("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=fixture");
+    const [url, init] = request.mock.calls[0] ?? [];
+    expect(String(url)).toContain("uploadType=resumable");
+    expect(String(url)).toContain("part=snippet%2Cstatus");
+    expect(init?.headers).toMatchObject({
+      "x-upload-content-length": "1024",
+      "x-upload-content-type": "video/mp4",
+    });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      snippet: {
+        title: "Fixture upload",
+        description: "Fixture description",
+        tags: ["fixture"],
+        categoryId: "22",
+      },
+      status: { privacyStatus: "private", selfDeclaredMadeForKids: false },
+    });
+  });
+
+  it("reconciles an interrupted session and returns the acknowledged upload offset", async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 308, headers: { range: "bytes=0-524287" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "fixture-video" }), { status: 201 }),
+      );
+    const connector = new YouTubeConnector(configuration, request);
+    const sessionUri = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=fixture";
+
+    await expect(
+      connector.checkVideoUpload("fixture-token", sessionUri, 1_048_576),
+    ).resolves.toEqual({ completed: false, nextByte: 524_288, videoId: null });
+    await expect(
+      connector.uploadVideoChunk(
+        "fixture-token",
+        sessionUri,
+        524_288,
+        1_048_576,
+        new Uint8Array(524_288),
+      ),
+    ).resolves.toEqual({ completed: true, nextByte: 0, videoId: "fixture-video" });
+    expect(request.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "content-range": "bytes */1048576",
+    });
+    expect(request.mock.calls[1]?.[1]?.headers).toMatchObject({
+      "content-range": "bytes 524288-1048575/1048576",
+    });
+  });
+
+  it("verifies the inserted video against the selected channel and destination metadata", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "fixture-video",
+              snippet: {
+                channelId: "UC-fixture",
+                title: uploadMetadata.title,
+                description: uploadMetadata.description,
+                tags: uploadMetadata.tags,
+                categoryId: uploadMetadata.categoryId,
+              },
+              status: {
+                privacyStatus: "private",
+                uploadStatus: "uploaded",
+                selfDeclaredMadeForKids: uploadMetadata.selfDeclaredMadeForKids,
+              },
+              processingDetails: { processingStatus: "processing" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const connector = new YouTubeConnector(configuration, request);
+
+    await expect(
+      connector.verifyUploadedVideo("fixture-token", "fixture-video", "UC-fixture", uploadMetadata),
+    ).resolves.toEqual({
+      videoId: "fixture-video",
+      channelId: "UC-fixture",
+      title: uploadMetadata.title,
+      privacyStatus: "private",
+      uploadStatus: "uploaded",
+      processingStatus: "processing",
+    });
+    expect(String(request.mock.calls[0]?.[0])).toContain(
+      "part=id%2Csnippet%2Cstatus%2CprocessingDetails",
+    );
+  });
+
+  it("fails closed on an unknown upload outcome and mismatched verified video", async () => {
+    const failedRequest = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("fixture network error"));
+    const failedConnector = new YouTubeConnector(configuration, failedRequest);
+    await expect(
+      failedConnector.startVideoUpload("fixture-token", uploadMetadata, 1024, "video/mp4"),
+    ).rejects.toMatchObject({
+      detail: {
+        kind: "TRANSIENT",
+        code: "UPLOAD_OUTCOME_UNKNOWN",
+      },
+    });
+
+    const mismatchRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "fixture-video",
+              snippet: {
+                channelId: "UC-other",
+                title: uploadMetadata.title,
+                description: uploadMetadata.description,
+                tags: uploadMetadata.tags,
+                categoryId: uploadMetadata.categoryId,
+              },
+              status: {
+                privacyStatus: "public",
+                uploadStatus: "uploaded",
+                selfDeclaredMadeForKids: uploadMetadata.selfDeclaredMadeForKids,
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const mismatchConnector = new YouTubeConnector(configuration, mismatchRequest);
+    await expect(
+      mismatchConnector.verifyUploadedVideo(
+        "fixture-token",
+        "fixture-video",
+        "UC-fixture",
+        uploadMetadata,
+      ),
+    ).rejects.toMatchObject({
+      detail: { kind: "PERMANENT", code: "UPLOAD_RESULT_MISMATCH" },
+    });
   });
 });

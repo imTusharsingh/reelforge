@@ -45,6 +45,10 @@
       "types": "./dist/modules/social-accounts/social-accounts.service.d.ts",
       "import": "./dist/modules/social-accounts/social-accounts.service.js"
     },
+    "./publishing-service": {
+      "types": "./dist/modules/publishing/publishing.service.d.ts",
+      "import": "./dist/modules/publishing/publishing.service.js"
+    },
     "./storage-factory": {
       "types": "./dist/modules/asset/storage/storage.factory.d.ts",
       "import": "./dist/modules/asset/storage/storage.factory.js"
