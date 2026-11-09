@@ -412,6 +412,45 @@ describe("SocialAccountsService", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("queries YouTube Analytics through the same authenticated token boundary", async () => {
+    const { service, request } = createHarness();
+    const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {
+      remoteAccountId: "UC-fixture",
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state") ?? "";
+    const account = await service.completeOAuth("YOUTUBE", {
+      state,
+      code: "fixture-authorization-code",
+    });
+    request.mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            columnHeaders: [
+              { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+              { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+            ],
+            rows: [["2026-11-01", 7]],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const client = await service.authenticatedClient(ownerContext, account.id);
+    await expect(
+      client.queryAnalytics({
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [["2026-11-01", 7]] });
+    const [url, init] = request.mock.calls[2] ?? [];
+    expect(String(url)).toContain("youtubeanalytics.googleapis.com/v2/reports");
+    expect(String(url)).toContain("ids=channel%3D%3DUC-fixture");
+    expect(init?.headers).toEqual({ authorization: "Bearer fixture-access-token" });
+  });
+
   it("rejects OAuth when the provider does not prove the minimum scopes", async () => {
     const { db, service, request } = createHarness();
     const started = await service.startConnection(ownerContext, channelId, "YOUTUBE", {

@@ -66,6 +66,117 @@ describe("YouTubeConnector", () => {
     expect(requestInit?.headers).toEqual({ authorization: "Bearer fixture-access-token" });
   });
 
+  it("queries authenticated YouTube Analytics reports for the selected channel", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          kind: "youtubeAnalytics#resultTable",
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+            { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+          ],
+          rows: [["2026-11-01", 12]],
+        }),
+        { status: 200 },
+      ),
+    );
+    const connector = new YouTubeConnector(configuration, request);
+
+    await expect(
+      connector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [["2026-11-01", 12]] });
+    const [url, init] = request.mock.calls[0] ?? [];
+    expect(String(url)).toContain("youtubeanalytics.googleapis.com/v2/reports");
+    expect(String(url)).toContain("ids=channel%3D%3DUC-fixture");
+    expect(String(url)).toContain("metrics=views");
+    expect(init?.headers).toEqual({ authorization: "Bearer fixture-access-token" });
+  });
+
+  it("treats omitted or null Analytics rows as an empty report", async () => {
+    const omittedRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          kind: "youtubeAnalytics#resultTable",
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+            { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const omittedConnector = new YouTubeConnector(configuration, omittedRequest);
+    await expect(
+      omittedConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [] });
+
+    const nullRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          kind: "youtubeAnalytics#resultTable",
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+            { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+          ],
+          rows: null,
+        }),
+        { status: 200 },
+      ),
+    );
+    const nullConnector = new YouTubeConnector(configuration, nullRequest);
+    await expect(
+      nullConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+        dimensions: ["day"],
+      }),
+    ).resolves.toMatchObject({ rows: [] });
+  });
+
+  it("fails closed on invalid Analytics responses and rate limits", async () => {
+    const invalidRequest = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ unexpected: true }), { status: 200 }));
+    const invalidConnector = new YouTubeConnector(configuration, invalidRequest);
+    await expect(
+      invalidConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+      }),
+    ).rejects.toMatchObject({
+      detail: { kind: "PERMANENT", code: "INVALID_ANALYTICS_RESPONSE" },
+    });
+
+    const limitedRequest = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: { errors: [{ reason: "quotaExceeded" }] } }), {
+        status: 403,
+        headers: { "retry-after": "45" },
+      }),
+    );
+    const limitedConnector = new YouTubeConnector(configuration, limitedRequest);
+    await expect(
+      limitedConnector.queryAnalytics("fixture-access-token", "UC-fixture", {
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        metrics: ["views"],
+      }),
+    ).rejects.toMatchObject({
+      detail: { kind: "RATE_LIMITED", code: "quotaExceeded", retryAfterSeconds: 45 },
+    });
+  });
+
   it("does not infer granted scopes when Google omits them from the token response", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

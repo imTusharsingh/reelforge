@@ -127,6 +127,36 @@ enum SocialPermissionStatus {
   NOT_GRANTED
 }
 
+enum AnalyticsGranularity {
+  CHANNEL
+  VIDEO
+}
+
+enum MetricCompleteness {
+  COMPLETE
+  PARTIAL
+  UNAVAILABLE
+}
+
+enum MetricAvailability {
+  AVAILABLE
+  UNAVAILABLE
+}
+
+enum MetricCollectionJobStatus {
+  QUEUED
+  RUNNING
+  RETRY_WAIT
+  SUCCEEDED
+  FAILED_FINAL
+}
+
+enum MetricCollectionRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 model User {
   id                       String                @id @default(uuid()) @db.Uuid
   email                    String                @unique
@@ -197,6 +227,9 @@ model Workspace {
   publishingDestinations      PublishingDestination[]
   publishJobs                 PublishJob[]
   publishAttempts             PublishAttempt[]
+  metricCollectionJobs        MetricCollectionJob[]
+  metricCollectionRuns        MetricCollectionRun[]
+  metricSnapshots             AnalyticsMetricSnapshot[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -246,6 +279,7 @@ model WorkspaceMembership {
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metricJobs  MetricCollectionJob[] @relation("MetricJobRequester")
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -283,6 +317,8 @@ model Channel {
   socialAccounts            SocialAccount[]
   socialOAuthStates         SocialOAuthState[]
   scheduledPosts            ScheduledPost[]
+  metricCollectionJobs      MetricCollectionJob[]
+  metricSnapshots           AnalyticsMetricSnapshot[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -327,6 +363,8 @@ model SocialAccount {
   permissions       SocialAccountPermission[]
   capabilities      SocialAccountCapability[]
   publishingDestinations PublishingDestination[]
+  metricCollectionJobs MetricCollectionJob[]
+  metricSnapshots   AnalyticsMetricSnapshot[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, channelId, platform, remoteAccountId])
@@ -1486,4 +1524,108 @@ model QualityRegenerationRequest {
   @@unique([workspaceId, decisionId])
   @@index([workspaceId, lineageKey, targetKey, createdAt], map: "quality_regen_lineage_target_created_idx")
   @@map("quality_regeneration_requests")
+}
+
+model AnalyticsMetricDefinition {
+  id                 String               @id @default(uuid()) @db.Uuid
+  platform           SocialPlatform
+  key                String
+  label              String
+  description        String
+  accountEligibility String               @map("account_eligibility")
+  requiredScopes     String[]             @map("required_scopes")
+  granularities      AnalyticsGranularity[]
+  sourceApi          String               @map("source_api")
+  documentationUrl   String               @map("documentation_url")
+  availabilityNotes  String               @map("availability_notes")
+  verifiedAt         DateTime             @map("verified_at") @db.Date
+  isActive           Boolean              @default(true) @map("is_active")
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  snapshots          AnalyticsMetricSnapshot[]
+
+  @@unique([platform, key])
+  @@map("analytics_metric_definitions")
+}
+
+model MetricCollectionJob {
+  id                String                    @id @default(uuid()) @db.Uuid
+  workspaceId       String                    @map("workspace_id") @db.Uuid
+  channelId         String                    @map("channel_id") @db.Uuid
+  socialAccountId   String                    @map("social_account_id") @db.Uuid
+  requestedByUserId String                    @map("requested_by_user_id") @db.Uuid
+  startDate         DateTime                  @map("start_date") @db.Date
+  endDate           DateTime                  @map("end_date") @db.Date
+  status            MetricCollectionJobStatus @default(QUEUED)
+  retryCount        Int                       @default(0) @map("retry_count")
+  nextAttemptAt     DateTime                  @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  lastErrorCode     String?                   @map("last_error_code")
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel                   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  socialAccount     SocialAccount             @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade)
+  requester         WorkspaceMembership       @relation("MetricJobRequester", fields: [workspaceId, requestedByUserId], references: [workspaceId, userId], onDelete: Restrict)
+  runs              MetricCollectionRun[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, nextAttemptAt])
+  @@index([workspaceId, channelId, createdAt])
+  @@map("metric_collection_jobs")
+}
+
+model MetricCollectionRun {
+  id             String                     @id @default(uuid()) @db.Uuid
+  workspaceId    String                     @map("workspace_id") @db.Uuid
+  jobId          String                     @map("job_id") @db.Uuid
+  attempt        Int
+  status         MetricCollectionRunStatus
+  sourceApi      String                     @map("source_api")
+  startDate      DateTime                   @map("start_date") @db.Date
+  endDate        DateTime                   @map("end_date") @db.Date
+  completeness   MetricCompleteness?
+  snapshotCount  Int                        @default(0) @map("snapshot_count")
+  errorCode      String?                    @map("error_code")
+  startedAt      DateTime                   @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime?                  @map("finished_at") @db.Timestamptz(6)
+  workspace      Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job            MetricCollectionJob        @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+  snapshots      AnalyticsMetricSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([jobId, attempt])
+  @@index([workspaceId, startedAt])
+  @@map("metric_collection_runs")
+}
+
+model AnalyticsMetricSnapshot {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  workspaceId          String                    @map("workspace_id") @db.Uuid
+  channelId            String                    @map("channel_id") @db.Uuid
+  socialAccountId      String                    @map("social_account_id") @db.Uuid
+  runId                String                    @map("run_id") @db.Uuid
+  metricDefinitionId   String                    @map("metric_definition_id") @db.Uuid
+  entityGranularity    AnalyticsGranularity      @map("entity_granularity")
+  remoteEntityId       String?                   @map("remote_entity_id")
+  periodStart          DateTime                  @map("period_start") @db.Date
+  periodEnd            DateTime                  @map("period_end") @db.Date
+  collectedAt          DateTime                  @map("collected_at") @db.Timestamptz(6)
+  sourceApi            String                    @map("source_api")
+  completeness         MetricCompleteness
+  availability         MetricAvailability
+  unavailableReason    String?                   @map("unavailable_reason")
+  value                Decimal?                  @db.Decimal(30, 10)
+  supersedesSnapshotId String?                   @map("supersedes_snapshot_id") @db.Uuid
+  workspace            Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel              Channel                   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  socialAccount        SocialAccount             @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade)
+  run                  MetricCollectionRun       @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  definition           AnalyticsMetricDefinition @relation(fields: [metricDefinitionId], references: [id], onDelete: Restrict)
+  supersedes           AnalyticsMetricSnapshot?  @relation("MetricSnapshotRevision", fields: [workspaceId, supersedesSnapshotId], references: [workspaceId, id], onDelete: Restrict)
+  revisions            AnalyticsMetricSnapshot[] @relation("MetricSnapshotRevision")
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, periodStart, periodEnd, collectedAt])
+  @@index([workspaceId, socialAccountId, metricDefinitionId, periodStart, periodEnd])
+  @@index([workspaceId, entityGranularity, remoteEntityId, periodStart, periodEnd])
+  @@map("analytics_metric_snapshots")
 }

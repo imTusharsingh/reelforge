@@ -446,7 +446,43 @@ export class SocialAccountsService {
         this.withYouTubeUpload(context, accountId, "VIDEO_UPLOAD", (connector, accessToken) =>
           connector.verifyUploadedVideo(accessToken, videoId, account.remoteAccountId, metadata),
         ),
+      queryAnalytics: (request) =>
+        this.withYouTubeAnalytics(context, accountId, (connector, accessToken) =>
+          connector.queryAnalytics(accessToken, account.remoteAccountId, request),
+        ),
     };
+  }
+
+  private async withYouTubeAnalytics<T>(
+    context: WorkspaceContext,
+    accountId: string,
+    operation: (connector: YouTubeConnector, accessToken: string) => Promise<T>,
+  ): Promise<T> {
+    const account = await this.findAccount(context.workspaceId, accountId);
+    if (account.platform !== "YOUTUBE")
+      throw new ConflictException("YouTube Analytics is only supported for YouTube accounts");
+    if (account.status !== "CONNECTED")
+      throw new ConflictException("YouTube account is not connected");
+    if (account.health !== "HEALTHY")
+      throw new ConflictException("YouTube account health must be healthy to read Analytics");
+    const readScope = "https://www.googleapis.com/auth/youtube.readonly";
+    if (
+      !account.permissions.some(
+        (permission) => permission.permission === readScope && permission.status === "GRANTED",
+      )
+    )
+      throw new ForbiddenException("The YouTube account does not grant the read-only scope");
+    const connector = this.youtube;
+    if (!connector.isConfigured())
+      this.throwProvider({
+        kind: "NOT_CONFIGURED",
+        code: "YOUTUBE_NOT_CONFIGURED",
+        message: "YouTube Analytics is not configured.",
+        retryAfterSeconds: null,
+      });
+    const credentials = await this.findToken(context.workspaceId, accountId);
+    const accessToken = await this.validAccessToken(context, account, credentials);
+    return this.callProvider(() => operation(connector, accessToken));
   }
 
   private async withYouTubeUpload<T>(

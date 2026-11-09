@@ -656,3 +656,72 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - `git diff --check` passed. No live YouTube/Instagram calls were made; tests use fixtures. No M14 worktree was accessed.
 - Handoff: commit `18eebd88714ea993f5c4503ccdcaba221fe0eba4` was pushed to `work/m13-publishing-calendar-and-delivery`; PR #24 was updated and Minu was requested for re-review. No merge or push to `main`.
 - Related status/ADR: `work-packages/M13-publishing-calendar-and-delivery/STATUS.md`; no ADR changed.
+
+## 2026-11-10 - M14 Phase 1 implementation handoff
+- Actor/session: Module Implementation Agent, Desktop; branch `work/m14-analytics-collection-and-metric-store` in `../reelforge-m14`.
+- Work package: M14 analytics collection and metric store, Phase 1 only. Base commit: `a83132b9064a04e3b92266aa9ec4748551299062`.
+- Changes: Added a verified YouTube metric catalog and normalized analytics contracts; additive Prisma catalog/job/run/snapshot models and migration; tenant-scoped collection request and aggregate API module; immutable snapshot enforcement; explicit missing/partial aggregate behavior; typed M13 `PublishedPostSource` and M12 Analytics client ports; fail-closed YouTube/Instagram paths; and retry/backoff policy tests. No M13 FK or provider runtime adapter was added.
+- Provider evidence: Official YouTube Analytics API v2 docs reviewed on 2026-11-10: reports query, channel reports, metrics, and dimensions. `reports.query` has a current `youtube.readonly` notice while its authorization table lists `yt-analytics.readonly`; M12 currently grants neither Analytics query capability in its authenticated client nor the requested `yt-analytics.readonly` scope. This needs Minu's decision; M12 was not edited.
+- Verification: Frozen install passed with Node 24.22.2 / pnpm 12.16.1 after the initial Node 24.16.0 engine mismatch. `pnpm lint`, `pnpm format:check`, workspace `pnpm typecheck`, `pnpm build`, and `pnpm db:validate` passed. Full `pnpm test` passed (44 files passed / 1 skipped; 282 tests passed / 5 skipped). M14 unit tests passed (2 files / 7 tests); M14 PostgreSQL integration tests passed (1 file / 2 tests) on the disposable PostgreSQL 18.6 service at host port 55436. `pnpm db:migrate:deploy` applied all 20 migrations to a fresh database on port 55436. No live Google/Meta calls were made.
+- Boundary: `apps/api/src/app.module.ts` was not edited because root route registration is Core-owned; M14 routes are not active until approved registration. The scheduled worker/provider integration remains pending M12 and M13 contracts.
+- Handoff: Latest fetched `origin/main` is `1a3436d` (M12 closeout); M13 is not merged. STATUS is `Phase 1 done, waiting on M13`. Rebase only after M13 merges, preserve both work-log appends, verify the migration timestamp against M13, wire approved M12/M13 ports and Core route registration, complete scheduled retry execution, then rerun all gates and request Minu's review. No approval or integration is claimed.
+
+## 2026-11-10 - M14 Phase 1 final verification
+- Actor/session: Module Implementation Agent, Desktop; branch `work/m14-analytics-collection-and-metric-store` in `../reelforge-m14`.
+- Work package: M14 Phase 1 final verification; M13 remains unmerged.
+- Changes made: Completed the append-only snapshot writer and regression coverage that retains a prior valid metric when a later collection is unavailable and records revisions as new snapshots. Refreshed M14 status evidence.
+- Commands actually run and results: With Node 24.22.2 and pnpm 12.16.1, `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:validate`, and `git diff --check` passed. A first typecheck attempt without `DATABASE_URL` failed because Prisma config requires it; rerunning with the disposable database URL on host port 55436 passed. The full suite passed (44 files passed / 1 skipped; 283 tests passed / 5 skipped). Focused M14 tests passed (3 files / 10 tests). Prior fresh-database `pnpm db:migrate:deploy` remains valid because the migration was not changed; it applied all 20 migrations on port 55436.
+- External calls: NONE to Google, Meta, AI, or social providers. Database work used only disposable PostgreSQL on host port 55436.
+- Decisions/approvals: None requested or claimed; M12 scope/client and M13 integration remain blockers.
+- Defects/risks/blockers: `origin/main` is still `1a3436d`, one commit beyond this branch, and does not contain M13. The M14 migration timestamp must be rechecked after M13 merges. Branch remains uncommitted pending branch handoff.
+- Next exact action: Commit and push only this M14 branch while M13 is outstanding; do not rebase until M13 merges. Then complete Phase 2 integration and request Minu's review.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 Phase 1 branch handoff
+- Actor/session: Module Implementation Agent, Desktop.
+- Work package: M14 analytics collection and metric store, Phase 1 only.
+- Branch and commit: `work/m14-analytics-collection-and-metric-store`, `9adfa421ffd5d21c5b6d50a4aca71c33d8191e65`, pushed to `origin`.
+- Starting state: Final Phase 1 verification complete; latest fetched `origin/main` is `1a3436db300d34e23810d2e17992921f488d478c`, which does not include M13.
+- Changes made: Committed and pushed the M14 Phase 1 implementation and evidence. No rebase or M13 worktree access was performed.
+- Commands actually run and results: `git diff --cached --check` passed before commit; push to the M14 feature branch succeeded. The worktree was clean after push.
+- External calls: Git push only; no live Google/Meta or AI/social provider calls.
+- Decisions/approvals: M14 remains `Phase 1 done, waiting on M13`; no approval, integration, or review is claimed.
+- Defects/risks/blockers: M12 Analytics scope/client approval, M13 published-post integration, Core API registration, scheduled worker/retry integration, and migration timestamp recheck remain pending. No PR was opened because M13 has not merged.
+- Next exact action: Wait for M13 to merge, then rebase this branch on the updated `origin/main` and complete Phase 2 before requesting Minu's review.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 Phase 2 collection wiring
+- Actor/session: Module Implementation Agent, Desktop; branch `work/m14-analytics-collection-and-metric-store` in `../reelforge-m14`.
+- Work package: M14 analytics collection and metric store, Phase 2, rebased on post-M13 `origin/main` at `75eee789921948a1d19427c4b2994a88a8766bbe`. Both prior M14 work-log entries were retained.
+- Changes: Wired `PublishedPostSource` to M13 `PublishingService.listPublishedRecords` using the `(publishedAt, destinationId)` cursor; added an M12 authenticated `queryAnalytics` operation over the existing token/scope boundary; added editor-triggered synchronous collection through `POST /workspaces/:workspaceId/analytics/collection-jobs/:jobId/run`; normalized channel and published-video report days with source, period, collection time, availability, and completeness; persisted retry/backoff state without a scheduler; registered `AnalyticsModule` additively in the API root module. Instagram remains fail-closed. No recommendations or content-setting changes were made.
+- Scope/contract decision: Current official `reports.query` documentation requires `https://www.googleapis.com/auth/youtube.readonly`, which M12 already requests. The M14 catalog and migration seed now use that scope; no new OAuth scope was added and M12 upload/refresh/health behavior is unchanged.
+- Migration review: Kept `20261112010000_m14_metric_store`; it remains strictly later than M13 `20261110120000`. Only its seeded `required_scopes` values changed. No applied migration was reordered, no M13 FK was added, and M13 behavior was not modified.
+- Verification: With Node `24.22.2` and pnpm `12.16.1`, `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, workspace `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm db:validate` all **passed** against disposable PostgreSQL on `127.0.0.1:55436`. Full `pnpm test` passed with 49 files passed / 1 skipped and 316 tests passed / 5 skipped; the skips are the existing FFmpeg/ffprobe-dependent suites. Focused M14/M12 tests passed (6 files / 43 tests). A first build attempt without `DATABASE_URL` failed because `prisma.config.ts` requires it; the rerun with the disposable URL passed. A fresh database on port 55436 applied all 21 migrations including M14 via `pnpm db:migrate:deploy`.
+- Acceptance evidence: Every snapshot has source API, reporting period, and collection timestamp; unavailable rows are null with a reason; a failed provider call writes no snapshots and leaves prior snapshots unchanged; cross-tenant reads/job references and viewer collection are denied; no content settings change.
+- External calls: NONE to Google, Meta, AI, or social providers. Tests use fixtures; no API server was started.
+- Decisions/approvals: M12 change is additive only. No self-approval, integration, or merge is claimed; Minu's review is required.
+- Risks/gaps: Collection is editor-triggered, not scheduled; Instagram collection is unimplemented and fail-closed; production OAuth/client configuration is required before live collection.
+- Next exact action: Commit and push this branch, open the M14 PR against `main`, request `minu-the-reviewer`, and stop without merging.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 Phase 2 branch handoff
+- Actor/session: Module Implementation Agent, Desktop.
+- Work package: M14 analytics collection and metric store, Phase 2.
+- Branch and commit: `work/m14-analytics-collection-and-metric-store`, `679fcea`, force-with-lease pushed to `origin` after the authorized rebase onto `origin/main` `75eee78`. The remote branch previously held the pre-M13 Phase 1 history (`9947ba8`); no other branch was touched.
+- Handoff: PR [#25](https://github.com/imTusharsingh/reelforge/pull/25) is open against `main` and review was requested from `minu-the-reviewer`. M14 `STATUS.md` is `IMPLEMENTED_PENDING_REVIEW`.
+- Commands actually run and results: `git diff --cached --check` passed before commit; `pnpm format:check` passed after the documentation update; push and PR creation succeeded.
+- External calls: Git/GitHub only; no live Google/Meta or AI/social provider calls.
+- Decisions/approvals: No self-approval, integration, or merge is claimed.
+- Risks/gaps: Collection is editor-triggered, not scheduled; Instagram remains fail-closed; live collection requires production OAuth/client configuration.
+- Next exact action: Await Minu's review and address feedback; do not merge.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M14 PR #25 review fixes
+- Review: Minu requested changes on PR #25 at `dad6a30`. B1 required that omitted Analytics `rows` be treated as an empty report, not a permanent invalid response.
+- Changes: Made `YouTubeAnalyticsReportSchema.rows` nullable and optional; normalized omitted/null rows to `[]` in `YouTubeConnector.queryAnalytics`; kept `normalizeReport` treating omitted/null/empty rows as unavailable report days. Added connector coverage for omitted and null rows and a collection test asserting `SUCCEEDED` with `UNAVAILABLE` / `NO_REPORT_ROW` snapshots and `PARTIAL` completeness. Also added an atomic compare-and-swap job claim inside a transaction so concurrent `/run` calls cannot create two runs, and dropped the unused `NOT_CONFIGURED` job status from the Prisma schema and unapplied M14 migration. `appendSnapshots` remains public because the PostgreSQL integration test uses it directly.
+- Deferred residual: `startIndex`/`maxResults` pagination for very large `video`+`day` reports; truncated tables are currently stored as unavailable days. `yt-analytics.readonly` was left unchanged.
+- Verification with Node `24.22.2` and pnpm `12.16.1` against disposable PostgreSQL on `127.0.0.1:55436`: `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, `DATABASE_URL=... pnpm typecheck`, `DATABASE_URL=... pnpm test`, `DATABASE_URL=... pnpm build`, `DATABASE_URL=... pnpm db:validate`, and a fresh `DATABASE_URL=... pnpm db:migrate:deploy` all **passed**. Full `pnpm test` passed with 49 files passed / 1 skipped and 319 tests passed / 5 skipped; the skips remain the existing FFmpeg/ffprobe suites. Focused M14/M12 tests passed (6 files / 46 tests). A first build attempt without `DATABASE_URL` failed because `prisma.config.ts` requires it; the rerun with the disposable URL passed.
+- External calls: NONE to Google, Meta, AI, or social providers. Tests use fixtures; no API server was started.
+- Decisions/approvals: No self-approval, integration, or merge is claimed.
+- Next exact action: Push the review-fix commit, request Minu re-review on PR #25, and stop without merging.
+- Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.

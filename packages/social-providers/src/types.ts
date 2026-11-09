@@ -2,6 +2,7 @@ import type {
   SocialAccount,
   SocialPlatform,
   SocialPlatformError,
+  YouTubeAnalyticsReport,
   YouTubeDestinationMetadata,
   YouTubePrivacyStatus,
 } from "@reelforge/contracts";
@@ -50,7 +51,25 @@ export type VerifiedYouTubeVideo = Readonly<{
   processingStatus: string | null;
 }>;
 
-export interface YouTubePublishingConnector extends SocialPlatformConnector {
+export type YouTubeAnalyticsQueryRequest = Readonly<{
+  startDate: string;
+  endDate: string;
+  metrics: readonly string[];
+  dimensions?: readonly string[];
+  filters?: readonly string[];
+  maxResults?: number;
+}>;
+
+export interface YouTubeAnalyticsConnector {
+  queryAnalytics(
+    accessToken: string,
+    remoteAccountId: string,
+    request: YouTubeAnalyticsQueryRequest,
+  ): Promise<YouTubeAnalyticsReport>;
+}
+
+export interface YouTubePublishingConnector
+  extends SocialPlatformConnector, YouTubeAnalyticsConnector {
   startVideoUpload(
     accessToken: string,
     metadata: YouTubeDestinationMetadata,
@@ -97,6 +116,7 @@ export type AuthenticatedPlatformClient = Readonly<{
     videoId: string,
     metadata: YouTubeDestinationMetadata,
   ): Promise<VerifiedYouTubeVideo>;
+  queryAnalytics(request: YouTubeAnalyticsQueryRequest): Promise<YouTubeAnalyticsReport>;
 }>;
 
 export class SocialProviderError extends Error {
