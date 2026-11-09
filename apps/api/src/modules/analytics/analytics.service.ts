@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException,
@@ -10,28 +12,124 @@ import {
   AnalyticsMetricDefinitionSchema,
   MetricAggregateSchema,
   NormalizedMetricValueSchema,
+  SocialPlatformErrorSchema,
   type AnalyticsMetricDefinition,
+  type AnalyticsMetricKey,
   type MetricAggregate,
   type MetricCompleteness,
+  type NormalizedMetricValue,
+  type PublishedPostRecord,
+  type SocialPlatformError,
+  type YouTubeAnalyticsReport,
 } from "@reelforge/contracts";
+import { SocialProviderError } from "@reelforge/social-providers";
 import type { Database } from "../identity/identity.types.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
 import {
   YOUTUBE_ANALYTICS_READ_SCOPE,
+  YOUTUBE_ANALYTICS_SOURCE_API,
   youtubeMetricCatalog,
+  youtubeMetricKeysFor,
   youtubeMetricUnit,
 } from "./analytics.catalog.js";
 import {
   ANALYTICS_YOUTUBE_CLIENT,
+  AnalyticsConnectorUnavailableError,
   PUBLISHED_POST_SOURCE,
   type PublishedPostSource,
   type YouTubeAnalyticsClient,
 } from "./analytics.tokens.js";
+import { retryDecision } from "./analytics.retry.js";
 import type { MetricAggregateQuery } from "./analytics.validation.js";
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const dayMilliseconds = 24 * 60 * 60 * 1000;
+const publishedPostPageSize = 100;
+const maximumPublishedPostPages = 1_000;
+const maximumCollectionRetries = 5;
+const videoFilterBatchSize = 500;
+
+type CollectionFailure = Readonly<{
+  code: string;
+  message: string;
+  retryable: boolean;
+  retryAfterSeconds: number | null;
+}>;
+
+type CollectionEntity = Readonly<{
+  remoteEntityId: string | null;
+  startDate: string;
+}>;
+
+export type MetricCollectionResult = Readonly<{
+  jobId: string;
+  runId: string;
+  status: "SUCCEEDED" | "RETRY_WAIT" | "FAILED_FINAL";
+  snapshotCount: number;
+  completeness: MetricCompleteness | null;
+  retryCount: number;
+  nextAttemptAt: string | null;
+  lastErrorCode: string | null;
+}>;
+
+function numericMetricValue(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+}
+
+function collectionFailure(error: unknown): CollectionFailure {
+  if (error instanceof SocialProviderError) return providerFailure(error.detail);
+  if (error instanceof HttpException) {
+    const parsed = SocialPlatformErrorSchema.safeParse(error.getResponse());
+    if (parsed.success) return providerFailure(parsed.data);
+    return {
+      code: `HTTP_${error.getStatus()}`,
+      message: error.message,
+      retryable: false,
+      retryAfterSeconds: null,
+    };
+  }
+  if (error instanceof AnalyticsConnectorUnavailableError)
+    return {
+      code: "ANALYTICS_NOT_CONFIGURED",
+      message: error.message,
+      retryable: false,
+      retryAfterSeconds: null,
+    };
+  return {
+    code: "COLLECTION_FAILED",
+    message: "Metric collection failed.",
+    retryable: false,
+    retryAfterSeconds: null,
+  };
+}
+
+function providerFailure(detail: SocialPlatformError): CollectionFailure {
+  const code = detail.code.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80) || "PROVIDER_FAILURE";
+  return {
+    code,
+    message: detail.message,
+    retryable: detail.kind === "RATE_LIMITED" || detail.kind === "TRANSIENT",
+    retryAfterSeconds: detail.retryAfterSeconds,
+  };
+}
+
+function calendarDates(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const end = Date.parse(`${endDate}T00:00:00.000Z`);
+  for (
+    let current = Date.parse(`${startDate}T00:00:00.000Z`);
+    current <= end;
+    current += dayMilliseconds
+  )
+    dates.push(dateOnly(new Date(current)));
+  return dates;
+}
 
 function dateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -152,6 +250,214 @@ export class AnalyticsService {
     };
   }
 
+  public async collect(context: WorkspaceContext, jobId: string): Promise<MetricCollectionResult> {
+    if (!editableRoles.has(context.role))
+      throw new ForbiddenException("Editor permission required to collect metrics");
+
+    const job = await this.db.metricCollectionJob.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+      select: {
+        id: true,
+        channelId: true,
+        socialAccountId: true,
+        startDate: true,
+        endDate: true,
+        status: true,
+        retryCount: true,
+        nextAttemptAt: true,
+      },
+    });
+    if (!job) throw new NotFoundException("Metric collection job not found");
+    const now = new Date();
+    if (job.status === "RUNNING")
+      throw new ConflictException("Metric collection job is already running");
+    if (job.status === "RETRY_WAIT" && job.nextAttemptAt > now)
+      throw new ConflictException("Metric collection job is waiting for its retry window");
+
+    const authenticatedClient = await this.socialAccounts.authenticatedClient(
+      context,
+      job.socialAccountId,
+    );
+    if (
+      authenticatedClient.account.channelId !== job.channelId ||
+      authenticatedClient.account.platform !== "YOUTUBE"
+    )
+      throw new NotFoundException("YouTube account not found for channel");
+    const hasReadScope = authenticatedClient.account.permissions.some(
+      (permission) =>
+        permission.permission === YOUTUBE_ANALYTICS_READ_SCOPE && permission.status === "GRANTED",
+    );
+    if (!hasReadScope)
+      throw new ForbiddenException("The YouTube account does not grant YouTube Analytics access");
+    if (!this.youtube.isConfigured())
+      throw new ServiceUnavailableException("YouTube Analytics connector is not configured");
+    if (!this.publishedPosts.isConfigured())
+      throw new ServiceUnavailableException("Published-post source is not configured");
+
+    const startDate = dateOnly(job.startDate);
+    const endDate = dateOnly(job.endDate);
+    const previousRun = await this.db.metricCollectionRun.findFirst({
+      where: { workspaceId: context.workspaceId, jobId: job.id },
+      orderBy: { attempt: "desc" },
+      select: { attempt: true },
+    });
+    const run = await this.db.metricCollectionRun.create({
+      data: {
+        workspaceId: context.workspaceId,
+        jobId: job.id,
+        attempt: (previousRun?.attempt ?? 0) + 1,
+        status: "RUNNING",
+        sourceApi: YOUTUBE_ANALYTICS_SOURCE_API,
+        startDate: job.startDate,
+        endDate: job.endDate,
+        startedAt: now,
+      },
+      select: { id: true },
+    });
+    await this.db.metricCollectionJob.update({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: job.id } },
+      data: { status: "RUNNING", lastErrorCode: null },
+    });
+
+    try {
+      const collectedAt = new Date();
+      const channelMetrics = youtubeMetricKeysFor("CHANNEL");
+      const videoMetrics = youtubeMetricKeysFor("VIDEO");
+      const channelReport = await this.youtube.query({
+        account: authenticatedClient,
+        startDate,
+        endDate,
+        metrics: channelMetrics,
+        granularity: "CHANNEL",
+        videoIds: [],
+      });
+      const values: NormalizedMetricValue[] = this.normalizeReport(
+        channelReport,
+        "CHANNEL",
+        startDate,
+        endDate,
+        channelMetrics,
+        collectedAt,
+        [{ remoteEntityId: null, startDate }],
+      );
+
+      const publishedPosts = await this.publishedPostsFor(
+        context,
+        job.channelId,
+        job.socialAccountId,
+        endDate,
+      );
+      const videoStarts = new Map<string, string>();
+      for (const post of publishedPosts) {
+        const publishedDay = dateOnly(new Date(post.publishedAt));
+        const firstDay = publishedDay > startDate ? publishedDay : startDate;
+        if (firstDay > endDate) continue;
+        const existing = videoStarts.get(post.platformPostId);
+        if (existing === undefined || firstDay < existing)
+          videoStarts.set(post.platformPostId, firstDay);
+      }
+      const videoIds = [...videoStarts.keys()];
+      for (let offset = 0; offset < videoIds.length; offset += videoFilterBatchSize) {
+        const batch = videoIds.slice(offset, offset + videoFilterBatchSize);
+        const report = await this.youtube.query({
+          account: authenticatedClient,
+          startDate,
+          endDate,
+          metrics: videoMetrics,
+          granularity: "VIDEO",
+          videoIds: batch,
+        });
+        values.push(
+          ...this.normalizeReport(
+            report,
+            "VIDEO",
+            startDate,
+            endDate,
+            videoMetrics,
+            collectedAt,
+            batch.map((remoteEntityId) => ({
+              remoteEntityId,
+              startDate: videoStarts.get(remoteEntityId) ?? startDate,
+            })),
+          ),
+        );
+      }
+
+      const completeness = this.collectionCompleteness(values);
+      const snapshotCount = await this.appendSnapshots(
+        context,
+        job.channelId,
+        job.socialAccountId,
+        run.id,
+        values,
+      );
+      const finishedAt = new Date();
+      await this.db.metricCollectionRun.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: run.id } },
+        data: {
+          status: "SUCCEEDED",
+          completeness,
+          snapshotCount,
+          finishedAt,
+        },
+      });
+      await this.db.metricCollectionJob.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: job.id } },
+        data: {
+          status: "SUCCEEDED",
+          retryCount: 0,
+          nextAttemptAt: finishedAt,
+          lastErrorCode: null,
+        },
+      });
+      return {
+        jobId: job.id,
+        runId: run.id,
+        status: "SUCCEEDED",
+        snapshotCount,
+        completeness,
+        retryCount: 0,
+        nextAttemptAt: finishedAt.toISOString(),
+        lastErrorCode: null,
+      };
+    } catch (error) {
+      const failure = collectionFailure(error);
+      const decision = failure.retryable
+        ? retryDecision(
+            job.retryCount,
+            new Date(),
+            failure.retryAfterSeconds,
+            maximumCollectionRetries,
+          )
+        : { retry: false, nextAttemptAt: null };
+      const retryCount = decision.retry ? job.retryCount + 1 : job.retryCount;
+      const finishedAt = new Date();
+      await this.db.metricCollectionRun.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: run.id } },
+        data: { status: "FAILED", errorCode: failure.code, finishedAt },
+      });
+      await this.db.metricCollectionJob.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: job.id } },
+        data: {
+          status: decision.retry ? "RETRY_WAIT" : "FAILED_FINAL",
+          retryCount,
+          nextAttemptAt: decision.nextAttemptAt ?? finishedAt,
+          lastErrorCode: failure.code,
+        },
+      });
+      return {
+        jobId: job.id,
+        runId: run.id,
+        status: decision.retry ? "RETRY_WAIT" : "FAILED_FINAL",
+        snapshotCount: 0,
+        completeness: null,
+        retryCount,
+        nextAttemptAt: (decision.nextAttemptAt ?? finishedAt).toISOString(),
+        lastErrorCode: failure.code,
+      };
+    }
+  }
+
   public async aggregate(
     context: WorkspaceContext,
     channelId: string,
@@ -242,6 +548,109 @@ export class AnalyticsService {
       });
       return result;
     });
+  }
+
+  private async publishedPostsFor(
+    context: WorkspaceContext,
+    channelId: string,
+    socialAccountId: string,
+    endDate: string,
+  ): Promise<PublishedPostRecord[]> {
+    const records: PublishedPostRecord[] = [];
+    let after: string | null = null;
+    let afterId: string | null = null;
+    for (let page = 0; page < maximumPublishedPostPages; page += 1) {
+      const batch = await this.publishedPosts.listPublishedRecords(
+        context,
+        after,
+        publishedPostPageSize,
+        afterId,
+      );
+      records.push(...batch);
+      if (batch.length < publishedPostPageSize) break;
+      const last = batch[batch.length - 1]!;
+      after = last.publishedAt;
+      afterId = last.destinationId;
+    }
+    const end = new Date(`${endDate}T23:59:59.999Z`);
+    return records.filter(
+      (record) =>
+        record.workspaceId === context.workspaceId &&
+        record.channelId === channelId &&
+        record.accountId === socialAccountId &&
+        record.platform === "YOUTUBE" &&
+        new Date(record.publishedAt) <= end,
+    );
+  }
+
+  private normalizeReport(
+    report: YouTubeAnalyticsReport,
+    granularity: "CHANNEL" | "VIDEO",
+    startDate: string,
+    endDate: string,
+    metrics: readonly AnalyticsMetricKey[],
+    collectedAt: Date,
+    entities: readonly CollectionEntity[],
+  ): NormalizedMetricValue[] {
+    const headerIndex = new Map<string, number>();
+    report.columnHeaders.forEach((header, index) => {
+      if (!headerIndex.has(header.name)) headerIndex.set(header.name, index);
+    });
+    const dayIndex = headerIndex.get("day");
+    const entityIndex = granularity === "VIDEO" ? headerIndex.get("video") : undefined;
+    const rows = new Map<string, readonly (string | number | null)[]>();
+    for (const row of report.rows ?? []) {
+      if (dayIndex === undefined) break;
+      const day = row[dayIndex];
+      if (typeof day !== "string") continue;
+      const entity = entityIndex === undefined ? null : row[entityIndex];
+      if (entityIndex !== undefined && typeof entity !== "string") continue;
+      rows.set(`${entity ?? ""}:${day}`, row);
+    }
+
+    const values: NormalizedMetricValue[] = [];
+    for (const entity of entities) {
+      for (const day of calendarDates(entity.startDate, endDate)) {
+        const row = rows.get(`${entity.remoteEntityId ?? ""}:${day}`);
+        for (const metric of metrics) {
+          const metricIndex = headerIndex.get(metric);
+          const raw = row !== undefined && metricIndex !== undefined ? row[metricIndex] : undefined;
+          const value = numericMetricValue(raw);
+          const availability = value === null ? "UNAVAILABLE" : "AVAILABLE";
+          const unavailableReason =
+            value !== null
+              ? null
+              : row === undefined
+                ? "NO_REPORT_ROW"
+                : metricIndex === undefined
+                  ? "MISSING_METRIC_COLUMN"
+                  : "NO_METRIC_VALUE";
+          values.push(
+            NormalizedMetricValueSchema.parse({
+              key: metric,
+              value,
+              unit: youtubeMetricUnit(metric),
+              entityGranularity: granularity,
+              remoteEntityId: entity.remoteEntityId,
+              periodStart: day,
+              periodEnd: day,
+              collectedAt: collectedAt.toISOString(),
+              sourceApi: YOUTUBE_ANALYTICS_SOURCE_API,
+              completeness: availability === "AVAILABLE" ? "COMPLETE" : "UNAVAILABLE",
+              availability,
+              unavailableReason,
+            }),
+          );
+        }
+      }
+    }
+    return values;
+  }
+
+  private collectionCompleteness(values: readonly NormalizedMetricValue[]): MetricCompleteness {
+    if (values.length === 0) return "UNAVAILABLE";
+    const available = values.filter((value) => value.availability === "AVAILABLE").length;
+    return available === values.length ? "COMPLETE" : available === 0 ? "UNAVAILABLE" : "PARTIAL";
   }
 
   public async appendSnapshots(

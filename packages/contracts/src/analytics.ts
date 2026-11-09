@@ -76,19 +76,6 @@ export const MetricAggregateRequestSchema = z
   );
 export type MetricAggregateRequest = z.infer<typeof MetricAggregateRequestSchema>;
 
-export const PublishedPostReferenceSchema = z
-  .object({
-    id: z.string().min(1),
-    workspaceId: z.uuid(),
-    channelId: z.uuid(),
-    socialAccountId: z.uuid(),
-    platform: SocialPlatformSchema,
-    remotePostId: z.string().min(1),
-    publishedAt: z.iso.datetime(),
-  })
-  .strict();
-export type PublishedPostReference = z.infer<typeof PublishedPostReferenceSchema>;
-
 export const NormalizedMetricValueSchema = z
   .object({
     key: AnalyticsMetricKeySchema,
@@ -145,6 +132,7 @@ export type MetricAggregate = z.infer<typeof MetricAggregateSchema>;
 
 export const YouTubeAnalyticsReportSchema = z
   .object({
+    kind: z.string().min(1).optional(),
     columnHeaders: z.array(
       z
         .object({

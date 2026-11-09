@@ -14,6 +14,7 @@ import { CompositionModule } from "./modules/composition/composition.module.js";
 import { QualityModule } from "./modules/quality/quality.module.js";
 import { SocialAccountsModule } from "./modules/social-accounts/social-accounts.module.js";
 import { PublishingModule } from "./modules/publishing/publishing.module.js";
+import { AnalyticsModule } from "./modules/analytics/analytics.module.js";
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { PublishingModule } from "./modules/publishing/publishing.module.js";
     QualityModule,
     SocialAccountsModule,
     PublishingModule,
+    AnalyticsModule,
   ],
   controllers: [HealthController],
 })

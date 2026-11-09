@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { NotFoundException } from "@nestjs/common";
 import { createDatabaseClient } from "@reelforge/database";
+import { SocialProviderError } from "@reelforge/social-providers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { YOUTUBE_ANALYTICS_READ_SCOPE, YOUTUBE_ANALYTICS_SOURCE_API } from "./analytics.catalog.js";
 import { AnalyticsService } from "./analytics.service.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -264,5 +266,127 @@ suite("M14 PostgreSQL persistence", () => {
       select: { value: true },
     });
     expect(Number(snapshot.value)).toBe(13);
+  });
+
+  it("collects provenance-bearing snapshots and keeps them when a later API call fails", async () => {
+    if (!db) return;
+    let failProvider = false;
+    const publishedPost = {
+      workspaceId,
+      channelId,
+      scheduledPostId: randomUUID(),
+      destinationId: randomUUID(),
+      publishJobId: randomUUID(),
+      renderJobId: randomUUID(),
+      accountId,
+      platform: "YOUTUBE" as const,
+      platformPostId: "fixture-video",
+      publishedAt: "2026-11-01T10:00:00.000Z",
+    };
+    const channelReport = {
+      columnHeaders: [
+        { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+        { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "likes", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "comments", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "shares", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "estimatedMinutesWatched", columnType: "METRIC", dataType: "FLOAT" },
+        { name: "subscribersGained", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "subscribersLost", columnType: "METRIC", dataType: "INTEGER" },
+      ],
+      rows: [["2026-11-01", 10, 2, 1, 1, 5.5, 3, 1]],
+    };
+    const videoReport = {
+      columnHeaders: [
+        { name: "day", columnType: "DIMENSION", dataType: "STRING" },
+        { name: "video", columnType: "DIMENSION", dataType: "STRING" },
+        { name: "views", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "likes", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "comments", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "shares", columnType: "METRIC", dataType: "INTEGER" },
+        { name: "estimatedMinutesWatched", columnType: "METRIC", dataType: "FLOAT" },
+      ],
+      rows: [["2026-11-01", "fixture-video", 7, 1, 0, 0, 3.25]],
+    };
+    const service = new AnalyticsService(
+      db,
+      {
+        authenticatedClient: async () => ({
+          account: {
+            channelId,
+            platform: "YOUTUBE",
+            permissions: [{ permission: YOUTUBE_ANALYTICS_READ_SCOPE, status: "GRANTED" }],
+          },
+        }),
+      } as never,
+      {
+        isConfigured: () => true,
+        query: async ({ granularity }: { granularity: "CHANNEL" | "VIDEO" }) => {
+          if (failProvider)
+            throw new SocialProviderError({
+              kind: "TRANSIENT",
+              code: "backendError",
+              message: "YouTube is temporarily unavailable.",
+              retryAfterSeconds: 60,
+            });
+          return granularity === "CHANNEL" ? channelReport : videoReport;
+        },
+      } as never,
+      {
+        isConfigured: () => true,
+        listPublishedRecords: async () => [publishedPost],
+      } as never,
+    );
+    const context = { workspaceId, userId, role: "OWNER" as const };
+    const before = await db.analyticsMetricSnapshot.count({
+      where: { workspaceId, channelId, socialAccountId: accountId },
+    });
+
+    const result = await service.collect(context, jobId);
+    expect(result).toMatchObject({
+      status: "SUCCEEDED",
+      snapshotCount: 12,
+      completeness: "COMPLETE",
+    });
+
+    const collected = await db.analyticsMetricSnapshot.findMany({
+      where: { runId: result.runId },
+      include: { definition: { select: { key: true } } },
+    });
+    expect(collected).toHaveLength(12);
+    for (const snapshot of collected) {
+      expect(snapshot.sourceApi).toBe(YOUTUBE_ANALYTICS_SOURCE_API);
+      expect(snapshot.periodStart.toISOString().slice(0, 10)).toBe("2026-11-01");
+      expect(snapshot.periodEnd.toISOString().slice(0, 10)).toBe("2026-11-01");
+      expect(snapshot.collectedAt).toBeInstanceOf(Date);
+    }
+    const videoViews = collected.find(
+      (snapshot) => snapshot.definition.key === "views" && snapshot.entityGranularity === "VIDEO",
+    );
+    expect(videoViews).toMatchObject({
+      remoteEntityId: "fixture-video",
+      availability: "AVAILABLE",
+    });
+    expect(Number(videoViews?.value)).toBe(7);
+
+    const afterSuccess = await db.analyticsMetricSnapshot.count({
+      where: { workspaceId, channelId, socialAccountId: accountId },
+    });
+    expect(afterSuccess).toBeGreaterThan(before);
+
+    failProvider = true;
+    const failed = await service.collect(context, jobId);
+    expect(failed).toMatchObject({ status: "RETRY_WAIT", snapshotCount: 0 });
+    const afterFailure = await db.analyticsMetricSnapshot.count({
+      where: { workspaceId, channelId, socialAccountId: accountId },
+    });
+    expect(afterFailure).toBe(afterSuccess);
+    const preserved = await db.analyticsMetricSnapshot.findMany({
+      where: { runId: result.runId },
+      select: { id: true, value: true },
+    });
+    expect(preserved).toEqual(
+      collected.map((snapshot) => ({ id: snapshot.id, value: snapshot.value })),
+    );
   });
 });

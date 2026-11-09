@@ -1,22 +1,20 @@
 import type {
   AnalyticsGranularity,
   AnalyticsMetricKey,
-  PublishedPostReference,
+  PublishedPostRecord,
   YouTubeAnalyticsReport,
 } from "@reelforge/contracts";
 import type { AuthenticatedPlatformClient } from "@reelforge/social-providers";
-
-export type PublishedPostQuery = Readonly<{
-  workspaceId: string;
-  channelId: string;
-  socialAccountId: string;
-  startDate: string;
-  endDate: string;
-}>;
+import type { WorkspaceContext } from "../identity/identity.types.js";
 
 export interface PublishedPostSource {
   isConfigured(): boolean;
-  findPublishedPosts(query: PublishedPostQuery): Promise<readonly PublishedPostReference[]>;
+  listPublishedRecords(
+    context: WorkspaceContext,
+    after: string | null,
+    limit: number,
+    afterId: string | null,
+  ): Promise<readonly PublishedPostRecord[]>;
 }
 
 export type YouTubeAnalyticsQuery = Readonly<{
@@ -45,7 +43,7 @@ export class NotConfiguredPublishedPostSource implements PublishedPostSource {
     return false;
   }
 
-  public findPublishedPosts(): Promise<readonly PublishedPostReference[]> {
+  public listPublishedRecords(): Promise<readonly PublishedPostRecord[]> {
     return Promise.reject(
       new AnalyticsConnectorUnavailableError("Published-post source is not configured"),
     );

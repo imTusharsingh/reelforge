@@ -1,9 +1,7 @@
-import type { PublishedPostReference } from "@reelforge/contracts";
 import {
   AnalyticsConnectorUnavailableError,
   NotConfiguredPublishedPostSource,
   NotConfiguredYouTubeAnalyticsClient,
-  type PublishedPostQuery,
   type PublishedPostSource,
   type YouTubeAnalyticsClient,
   type YouTubeAnalyticsQuery,
@@ -17,10 +15,4 @@ export {
   NotConfiguredPublishedPostSource,
   NotConfiguredYouTubeAnalyticsClient,
 };
-export type {
-  PublishedPostQuery,
-  PublishedPostSource,
-  PublishedPostReference,
-  YouTubeAnalyticsClient,
-  YouTubeAnalyticsQuery,
-};
+export type { PublishedPostSource, YouTubeAnalyticsClient, YouTubeAnalyticsQuery };

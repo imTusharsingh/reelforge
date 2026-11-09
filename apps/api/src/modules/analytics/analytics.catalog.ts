@@ -1,6 +1,8 @@
 import type { AnalyticsMetricDefinition, AnalyticsMetricKey } from "@reelforge/contracts";
 
-export const YOUTUBE_ANALYTICS_READ_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
+// Current reports.query documentation (reviewed 2026-11-10) requires the read-only
+// YouTube scope already requested by M12; it no longer requires yt-analytics.readonly.
+export const YOUTUBE_ANALYTICS_READ_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
 export const YOUTUBE_ANALYTICS_SOURCE_API = "youtubeanalytics.googleapis.com/v2/reports";
 
 export const youtubeMetricCatalog = [
@@ -108,6 +110,14 @@ export const youtubeMetricCatalog = [
 export const youtubeMetricKeys = youtubeMetricCatalog.map(
   (metric) => metric.key,
 ) as readonly AnalyticsMetricKey[];
+
+export function youtubeMetricKeysFor(
+  granularity: "CHANNEL" | "VIDEO",
+): readonly AnalyticsMetricKey[] {
+  return youtubeMetricCatalog
+    .filter((metric) => metric.granularities.some((value) => value === granularity))
+    .map((metric) => metric.key);
+}
 
 export function youtubeMetricUnit(key: AnalyticsMetricKey): "COUNT" | "MINUTES" {
   return key === "estimatedMinutesWatched" ? "MINUTES" : "COUNT";

@@ -1,6 +1,7 @@
-import { SocialPlatformErrorSchema } from "@reelforge/contracts";
+import { SocialPlatformErrorSchema, YouTubeAnalyticsReportSchema } from "@reelforge/contracts";
 import type {
   SocialPlatformError,
+  YouTubeAnalyticsReport,
   YouTubeDestinationMetadata,
   YouTubePrivacyStatus,
 } from "@reelforge/contracts";
@@ -10,6 +11,7 @@ import {
   type OAuthAuthorizationRequest,
   type OAuthTokenSet,
   type PlatformAccountIdentity,
+  type YouTubeAnalyticsQueryRequest,
   type YouTubePublishingConnector,
   type YouTubeUploadProgress,
   type VerifiedYouTubeVideo,
@@ -26,6 +28,7 @@ const revocationEndpoint = "https://oauth2.googleapis.com/revoke";
 const channelsEndpoint = "https://www.googleapis.com/youtube/v3/channels";
 const videosEndpoint = "https://www.googleapis.com/youtube/v3/videos";
 const uploadEndpoint = "https://www.googleapis.com/upload/youtube/v3/videos";
+const analyticsEndpoint = "https://youtubeanalytics.googleapis.com/v2/reports";
 const uploadSessionHosts = ["www.googleapis.com"] as const;
 
 export type YouTubeOAuthConfiguration = Readonly<{
@@ -317,6 +320,57 @@ export class YouTubeConnector implements YouTubePublishingConnector {
     });
     if (response.ok) return;
     throw new SocialProviderError(normalizedFailure(response, await responseJson(response)));
+  }
+
+  public async queryAnalytics(
+    accessToken: string,
+    remoteAccountId: string,
+    request: YouTubeAnalyticsQueryRequest,
+  ): Promise<YouTubeAnalyticsReport> {
+    if (remoteAccountId.length === 0 || request.metrics.length === 0) {
+      throw new SocialProviderError({
+        kind: "PERMANENT",
+        code: "INVALID_ANALYTICS_QUERY",
+        message: "YouTube Analytics requires a channel identity and at least one metric.",
+        retryAfterSeconds: null,
+      });
+    }
+    const url = new URL(analyticsEndpoint);
+    url.searchParams.set("ids", `channel==${remoteAccountId}`);
+    url.searchParams.set("startDate", request.startDate);
+    url.searchParams.set("endDate", request.endDate);
+    url.searchParams.set("metrics", request.metrics.join(","));
+    if (request.dimensions !== undefined && request.dimensions.length > 0)
+      url.searchParams.set("dimensions", request.dimensions.join(","));
+    if (request.filters !== undefined && request.filters.length > 0)
+      url.searchParams.set("filters", request.filters.join(";"));
+    if (request.maxResults !== undefined) {
+      if (!Number.isSafeInteger(request.maxResults) || request.maxResults < 1)
+        throw new SocialProviderError({
+          kind: "PERMANENT",
+          code: "INVALID_ANALYTICS_QUERY",
+          message: "YouTube Analytics maxResults must be a positive integer.",
+          retryAfterSeconds: null,
+        });
+      url.searchParams.set("maxResults", String(request.maxResults));
+    }
+    const response = await this.request(url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await responseJson(response);
+    if (!response.ok) throw new SocialProviderError(normalizedFailure(response, body));
+    const parsed = YouTubeAnalyticsReportSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new SocialProviderError({
+        kind: "PERMANENT",
+        code: "INVALID_ANALYTICS_RESPONSE",
+        message: "YouTube returned an invalid Analytics report.",
+        retryAfterSeconds: null,
+      });
+    }
+    return parsed.data;
   }
 
   public async startVideoUpload(

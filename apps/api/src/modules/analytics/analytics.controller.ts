@@ -3,8 +3,12 @@ import { type AnalyticsMetricDefinition, type MetricAggregate } from "@reelforge
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
-import { AnalyticsService } from "./analytics.service.js";
-import { parseMetricAggregateQuery, parseMetricCollectionRequest } from "./analytics.validation.js";
+import { AnalyticsService, type MetricCollectionResult } from "./analytics.service.js";
+import {
+  parseMetricAggregateQuery,
+  parseMetricCollectionJobId,
+  parseMetricCollectionRequest,
+} from "./analytics.validation.js";
 
 @Controller("workspaces/:workspaceId")
 @UseGuards(AuthGuard)
@@ -39,6 +43,16 @@ export class AnalyticsController {
   }> {
     const context = await this.context(request, workspaceId);
     return this.analytics.scheduleCollection(context, parseMetricCollectionRequest(body));
+  }
+
+  @Post("analytics/collection-jobs/:jobId/run")
+  public async collect(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("jobId") jobId: string,
+  ): Promise<MetricCollectionResult> {
+    const context = await this.context(request, workspaceId);
+    return this.analytics.collect(context, parseMetricCollectionJobId(jobId));
   }
 
   @Get("channels/:channelId/metrics")
