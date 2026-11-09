@@ -99,7 +99,7 @@ All commands below used Node `24.22.2` and pnpm `12.16.1` where applicable. A de
 - No calendar, approval flow, analytics, dashboard, Prisma ESM fix, or M13 publishing was added.
 
 ## Next exact action
-Push the B1/B2 fix-forward to PR #22 and request Minu's re-review. Stop for Minu; do not approve or merge.
+Await Minu's re-review of PR #22 at fix-forward `16a3f0a`. The two B1/B2 review threads are resolved. Address any additional requested changes on this branch; do not approve or merge.
 
 ## Reviewer decision
-- Minu requested changes on PR #22; B1 and B2 are addressed locally and await re-review. No approval or merge is claimed.
+- Minu requested changes on PR #22; B1 and B2 were fixed in `16a3f0a`, pushed, and the review threads resolved. Minu's re-review is pending; no approval or merge is claimed.
