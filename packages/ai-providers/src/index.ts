@@ -74,6 +74,43 @@ export interface LlmProviderPort<T = unknown> {
   readonly capability: CapabilityMetadata;
   complete(request: LlmRequest): Promise<LlmResponse<T>>;
 }
+export const QUALITY_REVIEW_PORT = Symbol("QUALITY_REVIEW_PORT");
+export type QualityReviewCriterion =
+  "FACTUALITY" | "CLARITY" | "COHERENCE" | "ENGAGEMENT" | "GENRE_FIT";
+export type QualityReviewCriterionResult = Readonly<{
+  score: number;
+  evidence: ReadonlyArray<string>;
+  limitations: ReadonlyArray<string>;
+}>;
+export type QualityReviewResult = Readonly<{
+  criteria: Readonly<Record<QualityReviewCriterion, QualityReviewCriterionResult>>;
+  metadata: ProviderProvenance;
+}>;
+export type QualityReviewRequest = Readonly<{
+  correlationId: string;
+  title: string;
+  hook: string;
+  dialogue: string;
+  narration: string;
+  callToAction: string;
+  genre: string;
+  allowedTopics: ReadonlyArray<string>;
+  blockedTopics: ReadonlyArray<string>;
+  claims: ReadonlyArray<Readonly<{ text: string; sourceUrl: string }>>;
+  scenes: ReadonlyArray<
+    Readonly<{
+      id: string;
+      dialogue: string;
+      narration: string;
+      visualDescription: string;
+      captions: ReadonlyArray<string>;
+    }>
+  >;
+  requiredDisclosures: ReadonlyArray<string>;
+}>;
+export interface QualityReviewPort {
+  review(request: QualityReviewRequest): Promise<QualityReviewResult>;
+}
 export type ImageRequest = Readonly<{
   prompt: string;
   referenceImageIds?: ReadonlyArray<string>;

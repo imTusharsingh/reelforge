@@ -536,3 +536,53 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: Dead-writer pending-upload rows remain discoverable and trigger cleanup warnings, but their tenant-scoped RESTRICT relation blocks render-job deletion until manual resolution. This is operational follow-up, not a product blocker. Prisma ESM runtime follow-up remains open as documented.
 - Next exact action: open this documentation-only PR, request Minu review, and stop. After it merges, start M11 from the new `origin/main` tip on its own branch.
 - Related status/ADR: `docs/PROJECT_STATE.md`; M10 `STATUS.md`; ADR-005, ADR-007, and ADR-010 unchanged.
+
+## 2026-11-09 - M11 quality assurance and approval implementation
+- Actor/session: Module Implementation Agent, Desktop only. Branch `work/m11-quality-assurance-and-approval`, based on post-closeout main commit `9935435aa03e959417b65ebeb7fac8da0e4aa87c`.
+- Scope: Implemented M11 T01–T07 only. Core Architect provided written approval for the additive M11 database schema and migration.
+- Changes made:
+  - Added runtime-validated hard-gate and five-criterion scorecard contracts; the injectable AI quality port validates criterion scores, evidence, limitations, and provider metadata. The runtime default returns `NOT_CONFIGURED`; no fixture or fake-success runtime adapter was added.
+  - Added quality API endpoints for evaluation, workspace-scoped review queue and run retrieval, and approve/reject/request-changes decisions.
+  - Consumed M10’s manifest integrity validation and output profile for artifact, aspect, duration, codec, audio, and subtitle checks; checked pinned script/genre policy, asset rights and M10 input provenance, and generated disclosure flags.
+  - Added default-manual and channel-configurable score thresholds. Failed hard gates remain unapprovable and cannot auto-approve.
+  - Added audited decisions and route-only regeneration requests capped at three per scene/script/render target across a render retry family.
+  - Added migration `20261109130000_m11_quality_review`; updated M11 status and the current project snapshot.
+- Files/areas changed: `apps/api/src/app.module.ts`, `apps/api/src/modules/quality/**`, `packages/ai-providers/src/index.ts`, `packages/database/prisma/schema.prisma`, the M11 migration, `docs/PROJECT_STATE.md`, M11 `STATUS.md`, and this work log. No M07/M09/M10 engine, root tooling, dependency manifest, or `packages/contracts/**` files changed.
+- Commands actually run and results: `pnpm lint` **passed**; `pnpm format:check` **passed**; `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm typecheck` **passed** across all workspaces; `pnpm test` **passed** (28 files / 170 tests passed, 8 files / 76 tests skipped); `pnpm exec vitest run apps/api/src/modules/quality/quality.service.test.ts` **passed** (1 file / 10 tests); full `pnpm build` **passed**; `pnpm db:validate` **passed**; `pnpm db:migrate:deploy` **passed** against a fresh disposable PostgreSQL 18.6 database on port 55435 (all 17 migrations); `git diff --check` **passed**. `pnpm install --frozen-lockfile` was not run because no dependency manifests or lockfile changed and dependencies were already present. The first disposable migration attempt caught an index-name collision; after correction, the fresh deployment passed. The supplementary full Prisma diff showed pre-existing non-M11 schema/migration drift; the M11-specific diff had no remaining changes.
+- External calls: No AI, social, or provider calls. The temporary PostgreSQL container used only port 55435 and was removed; existing local databases were not reused or stopped.
+- Decisions/approvals: M10 closeout PR #19 was merged by Minu at `9935435aa03e959417b65ebeb7fac8da0e4aa87c`. M11 is `IMPLEMENTED_PENDING_REVIEW`; its additive schema scope was authorized, but no M11 review approval or merge is claimed.
+- Defects/risks/blockers: No real AI quality-review adapter is configured, so new evaluations explicitly become `AI_REVIEW_UNAVAILABLE` and cannot be approved. The disclosure flag taxonomy needs Core review before downstream use as a legal/platform disclosure guarantee. The pre-existing non-M11 schema/migration diff and Prisma ESM dist-boot follow-up remain out of scope.
+- Next exact action: commit and push this M11 branch, open `M11: quality assurance and approval`, request Minu review, and stop. Do not approve or merge.
+- Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 remain unchanged.
+
+## 2026-11-10 - M11 PR #20 review fix-forward
+- Actor/session: Module Implementation Agent, Desktop only. Continuing `work/m11-quality-assurance-and-approval` after Minu's changes-requested review on PR #20.
+- Scope: Addressed Minu's B1–B4 review blockers only; no approval or merge.
+- Changes made:
+  - Runs whose AI-review port returns `NOT_CONFIGURED` now enter `REVIEW_REQUIRED` with a null scorecard and an explicit limitation. They are queueable and manually decidable; automatic approval requires a validated scorecard.
+  - The queue includes blocked runs. `REJECT` and `REQUEST_CHANGES` work for blocked runs, while `APPROVE` remains forbidden. Hard-gate failures map to render/script/offending-scene routes; mismatched routes require a separately audited override reason. The regeneration limit is now keyed to script lineage and target, so new render jobs do not reset it.
+  - A new evaluation transaction supersedes earlier pending runs for that render. Superseded runs cannot be decided. Approval transactions recheck current script provenance, genre/blocked-topic policy, asset rights, and asset provenance.
+  - Added a workspace-scoped render status endpoint for M13 that returns the latest non-superseded status and gate summary.
+  - Added regression coverage for B1–B4 and an additive migration for supersession timestamps/status, audited route overrides, and script-lineage regeneration limits.
+- Files/areas changed: M11 quality service/controller/types/validation/tests; Prisma schema and additive `20261110000000_m11_review_hardening` migration; M11 status, project state, and this work log.
+- Commands actually run and results: `pnpm lint` **passed**; `pnpm format:check` **passed**; `git diff --check` **passed**; `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm typecheck` **passed** across all workspaces; `pnpm test` **passed** (28 files / 175 tests passed, 8 files / 76 tests skipped); focused M11 service tests **passed** (1 file / 15 tests); `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 pnpm db:validate` **passed**; `DATABASE_URL=postgresql://localhost:55435/reelforge_m11 NEXT_TELEMETRY_DISABLED=1 pnpm build` **passed**; `DATABASE_URL=<ephemeral PostgreSQL 18.6 URL on localhost:55435> pnpm db:migrate:deploy` **passed** (all 18 migrations on fresh disposable PostgreSQL 18.6). `pnpm install --frozen-lockfile` was not run because no dependency manifest or lockfile changed.
+- External calls: No AI, social, or provider calls. The dedicated PostgreSQL container on port 55435 was stopped and removed; existing databases were untouched.
+- Decisions/approvals: Additive M11 persistence changes remain within the Core Architect's written M11-only schema/migration approval. Minu's PR #20 changes request is not an approval.
+- Defects/risks/blockers: No real AI adapter is configured; AI scorecards remain unavailable and require human review. Disclosure flag semantics still need Core review before downstream legal/platform sufficiency is assumed. The known unrelated Prisma schema/migration drift and Prisma ESM dist-boot follow-up remain out of scope.
+- Next exact action: commit and push the fix-forward to PR #20, request Minu re-review, and stop. Do not approve or merge.
+- Related status/ADR: M11 `STATUS.md`; `docs/PROJECT_STATE.md`; ADR-005, ADR-007, and ADR-010 unchanged.
+
+## 2026-11-09 19:05 UTC - REVIEW - M11 PostgreSQL null persistence fix
+- Actor/session: Module Implementation Agent, Desktop only. Continuing `work/m11-quality-assurance-and-approval` after Minu's B5 review on PR #20.
+- Work package: M11 quality persistence review fix-forward.
+- Branch and commit: `work/m11-quality-assurance-and-approval`, based on PR head `a652630749bb34a636ca6ccb242c99e2282a7b55`.
+- Starting state: Unscored runs persisted Prisma JSON `null`, violating the PostgreSQL check constraint that permits SQL `NULL` or a JSON object; the unit fixture had masked this distinction.
+- Changes made: Persist null scorecards with `Prisma.DbNull`; made the unit fixture reject `Prisma.JsonNull`; added a real PostgreSQL integration test for blocked and unconfigured-AI runs and their decisions; map Prisma serialization conflicts (`P2034`) from `create()` to HTTP 409; and assert the superseded-run-specific decision error.
+- Files/areas changed: M11 quality service and tests, M11 `STATUS.md`, and this work log. No schema or migration changes.
+- Commands actually run and results: `pnpm lint`, `pnpm format:check`, `git diff --check`, workspace typecheck, `pnpm test` (28 files / 175 tests passed, 9 files / 77 tests skipped), focused quality service tests (15 passed), full workspace build, and `pnpm db:validate` all **passed**. A fresh disposable PostgreSQL 18.6 database on port 55435 accepted all 18 migrations; the focused PostgreSQL integration test **passed** (1 test). The disposable database container was stopped and removed. `pnpm install --frozen-lockfile` was not run because no dependency manifest or lockfile changed.
+- External calls: GitHub metadata only; no AI, social, or provider calls. Existing databases on ports 5432, 55432, 55433, and 55434 were not used or stopped.
+- Tests/evidence: The integration test read the unscored scorecards back from PostgreSQL as SQL `NULL`, rejected the hard-gate-blocked run, and approved the unconfigured-AI run after gates passed.
+- Decisions/approvals: This resolves the requested persistence blocker and related follow-ups; Minu's review remains pending. No approval or merge is claimed.
+- Defects/risks/blockers: No real AI adapter is configured; unscored runs remain manual-review-only. Disclosure flag semantics still need Core review.
+- Next exact action: update PR #20 with the verified fix-forward, request Minu re-review, and stop. Do not approve or merge.
+- Related status/ADR: M11 `STATUS.md`; ADR-005, ADR-007, and ADR-010 unchanged.
