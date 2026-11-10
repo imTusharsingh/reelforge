@@ -52,3 +52,18 @@ export const PublishedPostRecordSchema = z
   })
   .strict();
 export type PublishedPostRecord = z.infer<typeof PublishedPostRecordSchema>;
+
+export const PublishedPostContextSchema = z
+  .object({
+    scheduledPostId: z.uuid(),
+    channelId: z.uuid(),
+    renderJobId: z.uuid(),
+    topic: z.string().min(1).nullable(),
+    hook: z.string().min(1).nullable(),
+    seriesId: z.uuid().nullable(),
+    seriesName: z.string().min(1).nullable(),
+    characterNames: z.array(z.string().min(1)),
+    durationSeconds: z.number().finite().nonnegative().nullable(),
+  })
+  .strict();
+export type PublishedPostContext = z.infer<typeof PublishedPostContextSchema>;

@@ -10,11 +10,14 @@ import {
 } from "@nestjs/common";
 import {
   AnalyticsMetricDefinitionSchema,
+  LatestMetricSnapshotSchema,
   MetricAggregateSchema,
   NormalizedMetricValueSchema,
   SocialPlatformErrorSchema,
   type AnalyticsMetricDefinition,
   type AnalyticsMetricKey,
+  type LatestMetricSnapshot,
+  type LatestMetricSnapshotQuery,
   type MetricAggregate,
   type MetricCompleteness,
   type NormalizedMetricValue,
@@ -557,6 +560,76 @@ export class AnalyticsService {
       });
       return result;
     });
+  }
+
+  public async listLatestSnapshots(
+    context: WorkspaceContext,
+    query: LatestMetricSnapshotQuery,
+  ): Promise<LatestMetricSnapshot[]> {
+    const channel = await this.db.channel.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: query.channelId } },
+      select: { id: true },
+    });
+    if (!channel) throw new NotFoundException("Channel not found");
+
+    const account = await this.db.socialAccount.findUnique({
+      where: {
+        workspaceId_id: {
+          workspaceId: context.workspaceId,
+          id: query.socialAccountId,
+        },
+      },
+      select: { id: true, channelId: true, platform: true },
+    });
+    if (!account || account.channelId !== query.channelId || account.platform !== "YOUTUBE")
+      throw new NotFoundException("YouTube account not found for channel");
+
+    const snapshots = await this.db.analyticsMetricSnapshot.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        channelId: query.channelId,
+        socialAccountId: account.id,
+        entityGranularity: query.granularity,
+        ...(query.granularity === "VIDEO"
+          ? query.remoteEntityId === undefined
+            ? {}
+            : { remoteEntityId: query.remoteEntityId }
+          : { remoteEntityId: null }),
+        periodStart: { gte: new Date(`${query.startDate}T00:00:00.000Z`) },
+        periodEnd: { lte: new Date(`${query.endDate}T00:00:00.000Z`) },
+      },
+      include: { definition: { select: { key: true } } },
+      orderBy: [{ collectedAt: "desc" }, { id: "desc" }],
+    });
+
+    const latestByMetricDay = new Map<string, (typeof snapshots)[number]>();
+    for (const snapshot of snapshots) {
+      const key = [
+        snapshot.definition.key,
+        snapshot.entityGranularity,
+        snapshot.remoteEntityId ?? "",
+        dateOnly(snapshot.periodStart),
+      ].join(":");
+      if (!latestByMetricDay.has(key)) latestByMetricDay.set(key, snapshot);
+    }
+
+    return [...latestByMetricDay.values()].map((snapshot) =>
+      LatestMetricSnapshotSchema.parse({
+        id: snapshot.id,
+        key: snapshot.definition.key,
+        value: snapshot.value === null ? null : Number(snapshot.value),
+        unit: youtubeMetricUnit(snapshot.definition.key as AnalyticsMetricKey),
+        entityGranularity: snapshot.entityGranularity,
+        remoteEntityId: snapshot.remoteEntityId,
+        periodStart: dateOnly(snapshot.periodStart),
+        periodEnd: dateOnly(snapshot.periodEnd),
+        collectedAt: snapshot.collectedAt.toISOString(),
+        sourceApi: snapshot.sourceApi,
+        completeness: snapshot.completeness,
+        availability: snapshot.availability,
+        unavailableReason: snapshot.unavailableReason,
+      }),
+    );
   }
 
   private async publishedPostsFor(

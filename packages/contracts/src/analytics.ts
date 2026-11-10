@@ -130,6 +130,45 @@ export const MetricAggregateSchema = z
   .strict();
 export type MetricAggregate = z.infer<typeof MetricAggregateSchema>;
 
+export const LatestMetricSnapshotSchema = z
+  .object({
+    id: z.uuid(),
+    key: AnalyticsMetricKeySchema,
+    value: z.number().finite().nonnegative().nullable(),
+    unit: z.enum(["COUNT", "MINUTES"]),
+    entityGranularity: AnalyticsGranularitySchema,
+    remoteEntityId: z.string().min(1).nullable(),
+    periodStart: z.iso.date(),
+    periodEnd: z.iso.date(),
+    collectedAt: z.iso.datetime(),
+    sourceApi: z.string().min(1),
+    completeness: MetricCompletenessSchema,
+    availability: MetricAvailabilitySchema,
+    unavailableReason: z.string().min(1).nullable(),
+  })
+  .strict();
+export type LatestMetricSnapshot = z.infer<typeof LatestMetricSnapshotSchema>;
+
+export const LatestMetricSnapshotQuerySchema = z
+  .object({
+    channelId: z.uuid(),
+    socialAccountId: z.uuid(),
+    startDate: z.iso.date(),
+    endDate: z.iso.date(),
+    granularity: AnalyticsGranularitySchema,
+    remoteEntityId: z.string().min(1).max(255).optional(),
+  })
+  .strict()
+  .refine((value) => value.startDate <= value.endDate, {
+    message: "startDate must be on or before endDate",
+    path: ["startDate"],
+  })
+  .refine((value) => value.granularity === "VIDEO" || value.remoteEntityId === undefined, {
+    message: "CHANNEL queries must omit remoteEntityId",
+    path: ["remoteEntityId"],
+  });
+export type LatestMetricSnapshotQuery = z.infer<typeof LatestMetricSnapshotQuerySchema>;
+
 export const YouTubeAnalyticsReportSchema = z
   .object({
     kind: z.string().min(1).optional(),

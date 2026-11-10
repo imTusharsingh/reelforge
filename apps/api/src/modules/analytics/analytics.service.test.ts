@@ -204,4 +204,77 @@ describe("AnalyticsService", () => {
       }),
     );
   });
+
+  it("returns the latest snapshot per metric and day for downstream intelligence", async () => {
+    const db = database();
+    const latestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const olderId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    db.analyticsMetricSnapshot.findMany.mockResolvedValue([
+      {
+        id: latestId,
+        definition: { key: "views" },
+        entityGranularity: "CHANNEL",
+        remoteEntityId: null,
+        periodStart: new Date("2026-11-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        collectedAt: new Date("2026-11-03T00:00:00.000Z"),
+        sourceApi: "fixture",
+        completeness: "COMPLETE",
+        availability: "AVAILABLE",
+        value: { toString: (): string => "15" },
+        unavailableReason: null,
+      },
+      {
+        id: olderId,
+        definition: { key: "views" },
+        entityGranularity: "CHANNEL",
+        remoteEntityId: null,
+        periodStart: new Date("2026-11-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        collectedAt: new Date("2026-11-02T00:00:00.000Z"),
+        sourceApi: "fixture",
+        completeness: "COMPLETE",
+        availability: "AVAILABLE",
+        value: { toString: (): string => "12" },
+        unavailableReason: null,
+      },
+    ]);
+    const analytics = service(db);
+    const snapshots = await analytics.listLatestSnapshots(ownerContext, {
+      channelId,
+      socialAccountId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-01",
+      granularity: "CHANNEL",
+    });
+    expect(snapshots).toEqual([
+      expect.objectContaining({ id: latestId, key: "views", value: 15, unit: "COUNT" }),
+    ]);
+    expect(db.analyticsMetricSnapshot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: ownerContext.workspaceId,
+          channelId,
+          socialAccountId,
+          entityGranularity: "CHANNEL",
+          remoteEntityId: null,
+        }),
+      }),
+    );
+  });
+
+  it("denies snapshot reads when the channel or account is outside the workspace", async () => {
+    const db = database();
+    db.channel.findUnique.mockResolvedValue(null);
+    await expect(
+      service(db).listLatestSnapshots(ownerContext, {
+        channelId,
+        socialAccountId,
+        startDate: "2026-11-01",
+        endDate: "2026-11-01",
+        granularity: "CHANNEL",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(db.analyticsMetricSnapshot.findMany).not.toHaveBeenCalled();
+  });
 });

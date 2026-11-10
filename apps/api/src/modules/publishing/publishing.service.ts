@@ -13,8 +13,10 @@ import {
   DisclosureDecisionSchema,
   PostPublishedV1Schema,
   PublishFailedV1Schema,
+  PublishedPostContextSchema,
   PublishedPostRecordSchema,
   YouTubeDestinationMetadataSchema,
+  type PublishedPostContext,
   type YouTubeDestinationMetadata,
 } from "@reelforge/contracts";
 import { z } from "zod";
@@ -657,6 +659,106 @@ export class PublishingService {
         publishedAt: destination.publishedAt?.toISOString(),
       }),
     );
+  }
+
+  public async listPublishedPostContexts(
+    context: WorkspaceContext,
+    scheduledPostIds: readonly string[],
+  ): Promise<PublishedPostContext[]> {
+    const ids = [...new Set(scheduledPostIds)];
+    if (ids.length === 0) return [];
+    if (ids.length > 500)
+      throw new BadRequestException("At most 500 posts can be resolved at once");
+    for (const id of ids) {
+      if (!z.uuid().safeParse(id).success)
+        throw new BadRequestException("scheduledPostId must be a UUID");
+    }
+
+    const posts = await this.db.scheduledPost.findMany({
+      where: { workspaceId: context.workspaceId, id: { in: ids } },
+      select: {
+        id: true,
+        channelId: true,
+        renderJobId: true,
+        renderJob: {
+          select: {
+            input: true,
+            sceneMediaJob: {
+              select: {
+                script: {
+                  select: {
+                    seriesId: true,
+                    snapshot: {
+                      select: {
+                        topic: true,
+                        hook: true,
+                        seriesId: true,
+                        series: { select: { id: true, name: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const seriesIds = [
+      ...new Set(
+        posts
+          .map(
+            (post) =>
+              post.renderJob.sceneMediaJob.script?.snapshot?.seriesId ??
+              post.renderJob.sceneMediaJob.script?.seriesId ??
+              null,
+          )
+          .filter((seriesId): seriesId is string => seriesId !== null),
+      ),
+    ];
+    const assignments =
+      seriesIds.length === 0
+        ? []
+        : await this.db.characterGroupAssignment.findMany({
+            where: { workspaceId: context.workspaceId, seriesId: { in: seriesIds } },
+            select: {
+              seriesId: true,
+              group: {
+                select: {
+                  name: true,
+                  members: { select: { character: { select: { name: true } } } },
+                },
+              },
+            },
+          });
+    const characterNamesBySeries = new Map<string, Set<string>>();
+    for (const assignment of assignments) {
+      if (assignment.seriesId === null) continue;
+      const names = characterNamesBySeries.get(assignment.seriesId) ?? new Set<string>();
+      for (const member of assignment.group.members) names.add(member.character.name);
+      if (assignment.group.members.length === 0) names.add(assignment.group.name);
+      characterNamesBySeries.set(assignment.seriesId, names);
+    }
+
+    return posts.map((post) => {
+      const script = post.renderJob.sceneMediaJob.script;
+      const snapshot = script?.snapshot ?? null;
+      const seriesId = snapshot?.seriesId ?? script?.seriesId ?? null;
+      const seriesName = snapshot?.series?.name ?? null;
+      return PublishedPostContextSchema.parse({
+        scheduledPostId: post.id,
+        channelId: post.channelId,
+        renderJobId: post.renderJobId,
+        topic: snapshot?.topic ?? null,
+        hook: snapshot?.hook ?? null,
+        seriesId,
+        seriesName,
+        characterNames:
+          seriesId === null ? [] : [...(characterNamesBySeries.get(seriesId) ?? new Set<string>())],
+        durationSeconds: renderDurationSeconds(post.renderJob.input),
+      });
+    });
   }
 
   private async startNewUpload(
@@ -1525,6 +1627,32 @@ function gate(
   evidence: string,
 ): PublishingPreflightGate {
   return { id, passed, evidence: [evidence] };
+}
+
+function renderDurationSeconds(input: Prisma.JsonValue): number | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const scenes = (input as Record<string, unknown>)["scenes"];
+  if (!Array.isArray(scenes) || scenes.length === 0) return null;
+  let totalMs = 0;
+  for (const scene of scenes) {
+    if (typeof scene !== "object" || scene === null || Array.isArray(scene)) return null;
+    const durationMs = (scene as Record<string, unknown>)["durationMs"];
+    if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0)
+      return null;
+    totalMs += durationMs;
+  }
+  const profile = (input as Record<string, unknown>)["profile"];
+  const transitionDurationMs =
+    typeof profile === "object" && profile !== null && !Array.isArray(profile)
+      ? (profile as Record<string, unknown>)["transitionDurationMs"]
+      : undefined;
+  const transition =
+    typeof transitionDurationMs === "number" &&
+    Number.isFinite(transitionDurationMs) &&
+    transitionDurationMs >= 0
+      ? transitionDurationMs
+      : 0;
+  return Math.max(0, totalMs - (scenes.length - 1) * transition) / 1000;
 }
 
 function isExpectedPreflightError(error: unknown): boolean {
