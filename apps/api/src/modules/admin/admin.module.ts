@@ -1,4 +1,4 @@
-import { Module, type MiddlewareConsumer, type NestModule } from "@nestjs/common";
+import { Module, RequestMethod, type MiddlewareConsumer, type NestModule } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { IdentityModule } from "../identity/identity.module.js";
 import { OrchestrationModule } from "../orchestration/orchestration.module.js";
@@ -22,6 +22,9 @@ import { RequestContextMiddleware } from "./request-context.middleware.js";
 })
 export class AdminModule implements NestModule {
   public configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes("*");
+    // Named wildcard (path-to-regexp v8): every route, including the global prefix root.
+    consumer
+      .apply(RequestContextMiddleware)
+      .forRoutes({ path: "{*path}", method: RequestMethod.ALL });
   }
 }

@@ -1,4 +1,5 @@
-import { Controller, Get, Header, Headers, NotFoundException } from "@nestjs/common";
+import { Controller, Get, Header, Headers, NotFoundException, Res } from "@nestjs/common";
+import type { Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { metrics } from "@reelforge/observability";
 
@@ -17,13 +18,17 @@ function sameSecret(a: string, b: string): boolean {
 @Controller("ops")
 export class OpsMetricsController {
   @Get("metrics")
-  @Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
   @Header("Cache-Control", "no-store")
-  public metrics(@Headers("authorization") authorization: string | undefined): string {
+  public metrics(
+    @Headers("authorization") authorization: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): string {
     const token = process.env["OPS_METRICS_TOKEN"];
     if (token === undefined || token.length < 16) throw new NotFoundException();
     const presented = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
     if (!sameSecret(presented, token)) throw new NotFoundException();
+    // Set only on success so the 404 stays a normal JSON error response.
+    response.type("text/plain; version=0.0.4; charset=utf-8");
     return metrics.render();
   }
 }
