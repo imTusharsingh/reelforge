@@ -18,10 +18,12 @@
     "@reelforge/database": "workspace:*",
     "@reelforge/media": "workspace:*",
     "@reelforge/social-providers": "workspace:*",
+    "bullmq": "6.6.0",
     "express": "5.3.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "ioredis": "5.11.1"
   },
   "devDependencies": {
     "@nestjs/testing": "12.3.3",
@@ -52,6 +54,18 @@
     "./storage-factory": {
       "types": "./dist/modules/asset/storage/storage.factory.d.ts",
       "import": "./dist/modules/asset/storage/storage.factory.js"
+    },
+    "./app-module": {
+      "types": "./dist/app-module.d.ts",
+      "import": "./dist/app-module.js"
+    },
+    "./orchestration-service": {
+      "types": "./dist/orchestration-service.d.ts",
+      "import": "./dist/orchestration-service.js"
+    },
+    "./orchestration-queue": {
+      "types": "./dist/orchestration-queue.d.ts",
+      "import": "./dist/orchestration-queue.js"
     }
   }
 }

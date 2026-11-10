@@ -7,7 +7,10 @@
       "@reelforge/api/asset-service": ["../api/src/asset.service.ts"],
       "@reelforge/api/composition-engine": ["../api/src/composition.engine.ts"],
       "@reelforge/api/composition-service": ["../api/src/composition.service.ts"],
-      "@reelforge/api/storage-factory": ["../api/src/storage.factory.ts"]
+      "@reelforge/api/storage-factory": ["../api/src/storage.factory.ts"],
+      "@reelforge/api/app-module": ["../api/src/app-module.ts"],
+      "@reelforge/api/orchestration-service": ["../api/src/orchestration-service.ts"],
+      "@reelforge/api/orchestration-queue": ["../api/src/orchestration-queue.ts"]
     }
   },
   "include": ["src/**/*.ts"]

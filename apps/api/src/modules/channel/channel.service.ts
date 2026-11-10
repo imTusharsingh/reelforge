@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@reelforge/database";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { ChannelRepository } from "./channel.repository.js";
 import type { ChannelInput, ChannelPatch, ChannelStatus, JsonValue } from "./channel.types.js";
@@ -199,6 +200,34 @@ export class ChannelService {
       where: { workspaceId: context.workspaceId, channelId: id },
       select: { id: true, channelId: true, version: true, createdAt: true, config: true },
       orderBy: { version: "desc" },
+    });
+  }
+
+  /**
+   * @internal Cross-workspace read for the M16 scheduler tick only. It bypasses workspace
+   * scoping, so never expose it through a controller or call it with a user context.
+   */
+  public async listSchedulerCandidates(): Promise<
+    ReadonlyArray<{
+      id: string;
+      workspaceId: string;
+      status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+      timezone: string;
+      schedule: unknown;
+      approvalPolicy: unknown;
+    }>
+  > {
+    return this.db.channel.findMany({
+      where: { schedule: { not: Prisma.DbNull } },
+      select: {
+        id: true,
+        workspaceId: true,
+        status: true,
+        timezone: true,
+        schedule: true,
+        approvalPolicy: true,
+      },
+      orderBy: [{ workspaceId: "asc" }, { createdAt: "asc" }],
     });
   }
 
