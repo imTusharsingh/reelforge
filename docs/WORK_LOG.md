@@ -892,3 +892,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: M19-T07 (retention/deletion/export) remains open pending the retention ADR. R1, R2 and R5 are addressed in a separate fix PR.
 - Next exact action: Minu reviews this closeout PR; then M20.
 - Related status/ADR: M19 `STATUS.md`; ADR-019.
+
+## 2026-11-10 - M20 core integration and release gate (Minu backup implementation)
+- Actor/session: Minu backup implementation session, Desktop TRACXN-LP-784, local, no cloud agent. Worktree `reelforge-m20-minu`, branch `work/m20-core-integration-and-release-gate-minu` from `origin/main` `97dd104413d1107f3d26b85b8dfa3c33d10e5e94`; run in parallel with the VS Code M20 session on the main checkout.
+- Work package: M20 T01–T07.
+- Changes made: three offline release-gate test files under `apps/api/src/modules/release-gate/` (tenant/401 sweep over 159 workspace routes and a reviewed unscoped-route allowlist; M13 outbox → registry → M17 round trip; default provider boundaries NOT_CONFIGURED with no charge or network; migration ordering). New M20 `INTEGRATION_REVIEW.md` and `RELEASE_CHECKLIST.md`; M20 `STATUS.md` updated. No product code, migration, schema, contract, dependency, `ci.yml` or `PROJECT_STATE.md` change.
+- Commands actually run and results: frozen install, lint, format:check, typecheck, build, db:validate, fresh-DB migrate (27 migrations) all PASS; migrate diff = 84-line pre-existing drift, unchanged; `pnpm test` 513 passed / 5 skipped with Redis, 510 / 8 without, 518 / 0 with FFmpeg; API smoke on :3005 PASS; `pnpm audit --prod` no known vulnerabilities. First run hit the known M08 flake and a cross-suite audit-table interference from the new sweep, fixed before the final run.
+- External calls: GitHub (`gh`) and git only; no provider, platform or email calls.
+- Decisions/approvals: none taken. Eleven conservative Core decisions are listed in M20 `STATUS.md`. Release decision: NOT RELEASED / BLOCKED.
+- Defects/risks/blockers: T05 not authorized; retention ADR, KMS/hosting, AI vendor and email sender pending; finding C1 (M06/M11/M15 AI ports bypass M08 ledger / M18 reservation) must be fixed before those adapters are bound; event-registry drift E1–E5; schema drift S1–S6.
+- Next exact action: Minu compares this branch with the VS Code M20 PR and picks one to land; then the owner answers the release-gate decisions.
+- Related status/ADR: M20 `STATUS.md`, `INTEGRATION_REVIEW.md`, `RELEASE_CHECKLIST.md`; ADR-007, ADR-010, ADR-013, ADR-018, ADR-019.
