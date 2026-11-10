@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import type { LatestMetricSnapshot } from "@reelforge/contracts";
 import { createDatabaseClient } from "@reelforge/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,7 +26,14 @@ const metricKeys = [
   "subscribersLost",
 ] as const;
 
-const videoIds = [randomUUID(), randomUUID(), randomUUID()];
+const videoIds = [
+  randomUUID(),
+  randomUUID(),
+  randomUUID(),
+  randomUUID(),
+  randomUUID(),
+  randomUUID(),
+];
 
 type PublishedRecordFixture = {
   workspaceId: string;
@@ -48,7 +55,7 @@ type PublishedContextFixture = {
   topic: string;
   hook: string;
   seriesId: null;
-  seriesName: null;
+  seriesName: string | null;
   characterNames: string[];
   durationSeconds: number;
 };
@@ -112,21 +119,21 @@ function publishedRecords(): PublishedRecordFixture[] {
     accountId,
     platform: "YOUTUBE" as const,
     platformPostId: videoId,
-    publishedAt: `2026-11-0${index + 1}T10:00:00.000Z`,
+    publishedAt: index < 3 ? "2026-11-01T10:00:00.000Z" : "2026-11-02T10:00:00.000Z",
   }));
 }
 
 function publishedContexts(records: PublishedRecordFixture[]): PublishedContextFixture[] {
-  return records.map((record) => ({
+  return records.map((record, index) => ({
     scheduledPostId: record.scheduledPostId,
     channelId,
     renderJobId: record.renderJobId,
-    topic: "AI tools",
-    hook: "Question",
+    topic: index < 3 ? "AI tools" : "Gaming",
+    hook: index < 3 ? "Question" : "Statement",
     seriesId: null,
-    seriesName: null,
-    characterNames: ["Nova"],
-    durationSeconds: 120,
+    seriesName: index < 3 ? "AI series" : "Gaming series",
+    characterNames: index < 3 ? ["Nova"] : ["Rex"],
+    durationSeconds: index < 3 ? 120 : 300,
   }));
 }
 
@@ -283,7 +290,7 @@ suite("M15 PostgreSQL persistence", () => {
       recommendationId: recommendation.id,
       summary: "Second approved version",
     });
-    expect(second.version).toBe(2);
+    expect(second).toMatchObject({ id: first.id, version: 1 });
 
     const changes = await db.performanceStrategyChange.findMany({
       where: { workspaceId, channelId },
@@ -292,7 +299,6 @@ suite("M15 PostgreSQL persistence", () => {
     });
     expect(changes).toEqual([
       { version: 1, recommendationId: recommendation.id, status: "APPROVED" },
-      { version: 2, recommendationId: recommendation.id, status: "APPROVED" },
     ]);
 
     const channel = await db.channel.findUniqueOrThrow({
@@ -304,6 +310,34 @@ suite("M15 PostgreSQL persistence", () => {
       automationDefaults: null,
       approvalPolicy: null,
     });
+  });
+
+  it("allows only one concurrent approval of the same recommendation", async () => {
+    if (!db) return;
+    const context = { workspaceId, userId, role: "OWNER" as const };
+    const report = await service().generateInsightReport(context, {
+      channelId,
+      socialAccountId: accountId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-03",
+    });
+    const recommendations = await service().generateRecommendations(context, report.id);
+    expect(recommendations.length).toBeGreaterThan(0);
+    const recommendationId = recommendations[0]!.id;
+
+    const results = await Promise.allSettled([
+      service().approveRecommendation(context, recommendationId),
+      service().approveRecommendation(context, recommendationId),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status).toBe("rejected");
+    if (rejected?.status === "rejected") expect(rejected.reason).toBeInstanceOf(ConflictException);
+
+    const stored = await db.performanceRecommendation.findUniqueOrThrow({
+      where: { workspaceId_id: { workspaceId, id: recommendationId } },
+    });
+    expect(stored.status).toBe("APPROVED");
   });
 
   it("persists experiments with hypothesis, variant, exposure, and outcome", async () => {
@@ -338,5 +372,25 @@ suite("M15 PostgreSQL persistence", () => {
       exposure: 400,
       status: "COMPLETED",
     });
+
+    await expect(
+      service().recordExperimentOutcome(context, experiment.id, {
+        outcome: { viewsLiftPercent: 9 },
+        exposure: 500,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const missingExposure = await service().createExperiment(context, {
+      channelId,
+      hypothesis: "A shorter hook improves retention",
+      variant: "Three-second hook",
+      dimensions: ["HOOK"],
+      designNotes: "Two-week controlled comparison",
+    });
+    await expect(
+      service().recordExperimentOutcome(context, missingExposure.id, {
+        outcome: { viewsLiftPercent: 3 },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

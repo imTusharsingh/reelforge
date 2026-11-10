@@ -20,6 +20,7 @@ import {
   type InsightReportStatus,
   type LatestMetricSnapshot,
   type MetricCompleteness,
+  type PerformanceConfidence,
   type PerformanceDimension,
   type PerformanceDimensionSummary,
   type PerformanceExperiment,
@@ -103,6 +104,16 @@ type VideoPoint = Readonly<{
   record: PublishedPostRecord;
   context: PublishedPostContext | null;
   snapshots: readonly Snapshot[];
+  exposureDays: number;
+  views: number;
+}>;
+
+type DimensionBaseline = Readonly<{
+  videos: number;
+  days: number;
+  snapshots: number;
+  exposureDays: number;
+  averageViewsPerVideoDay: number | null;
 }>;
 
 type InsightReportRecord = Prisma.PerformanceInsightReportGetPayload<object>;
@@ -143,6 +154,26 @@ function hasMetric(snapshots: readonly Snapshot[], key: string): boolean {
   return snapshots.some((snapshot) => snapshot.key === key && isAvailable(snapshot));
 }
 
+function viewsAndExposure(snapshots: readonly Snapshot[]): {
+  views: number;
+  exposureDays: number;
+} {
+  const views = snapshots.filter((snapshot) => snapshot.key === "views" && isAvailable(snapshot));
+  return {
+    views: views.reduce((total, snapshot) => total + (snapshot.value as number), 0),
+    exposureDays: new Set(views.map((snapshot) => snapshot.periodStart)).size,
+  };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
 function sampleOf(snapshots: readonly Snapshot[]): PerformanceSample {
   const available = snapshots.filter(isAvailable);
   const days = new Set(available.map((snapshot) => snapshot.periodStart));
@@ -174,6 +205,23 @@ function meetsMinimum(sample: PerformanceSample, minimum: PerformanceSample): bo
     sample.days >= minimum.days &&
     sample.snapshots >= minimum.snapshots
   );
+}
+
+function isAtMinimumSample(sample: PerformanceSample, minimum: PerformanceSample): boolean {
+  return sample.videos <= minimum.videos || sample.snapshots <= minimum.snapshots;
+}
+
+function dimensionBaselineOf(summaries: readonly PerformanceDimensionSummary[]): DimensionBaseline {
+  const joined = summaries.filter((summary) => summary.value !== "UNKNOWN");
+  const views = joined.reduce((total, summary) => total + (summary.totalViews ?? 0), 0);
+  const exposureDays = joined.reduce((total, summary) => total + summary.exposureDays, 0);
+  return {
+    videos: joined.reduce((total, summary) => total + summary.sample.videos, 0),
+    days: joined.reduce((maximum, summary) => Math.max(maximum, summary.sample.days), 0),
+    snapshots: joined.reduce((total, summary) => total + summary.sample.snapshots, 0),
+    exposureDays,
+    averageViewsPerVideoDay: exposureDays > 0 ? views / exposureDays : null,
+  };
 }
 
 function kpiValue(key: PerformanceKpiKey, snapshots: readonly Snapshot[]): number | null {
@@ -294,15 +342,16 @@ function summarizeDimension(
     );
   const status = meetsMinimum(sample, dimensionMinimumSample) ? "OK" : "INSUFFICIENT_DATA";
   const views = metricSum(snapshots, "views");
-  const videos = sample.videos;
+  const exposureDays = points.reduce((total, point) => total + point.exposureDays, 0);
   return PerformanceDimensionSummarySchema.parse({
     dimension,
     value,
     status,
     sample,
     minimumSample: dimensionMinimumSample,
-    totalViews: status === "OK" ? views : null,
-    averageViewsPerVideo: status === "OK" && videos > 0 ? views / videos : null,
+    totalViews: views,
+    exposureDays,
+    averageViewsPerVideoDay: exposureDays > 0 ? views / exposureDays : null,
     engagementRate:
       status === "OK" && views > 0
         ? (metricSum(snapshots, "likes") +
@@ -363,7 +412,8 @@ function buildDimensionSummaries(points: readonly VideoPoint[]): PerformanceDime
           sample: { videos: unjoined, days: 0, snapshots: 0 },
           minimumSample: dimensionMinimumSample,
           totalViews: null,
-          averageViewsPerVideo: null,
+          exposureDays: 0,
+          averageViewsPerVideoDay: null,
           engagementRate: null,
           watchMinutesPerView: null,
           netSubscribers: null,
@@ -376,14 +426,28 @@ function buildDimensionSummaries(points: readonly VideoPoint[]): PerformanceDime
   return summaries.sort((left, right) => {
     if (left.dimension !== right.dimension) return left.dimension.localeCompare(right.dimension);
     if (left.status !== right.status) return left.status === "OK" ? -1 : 1;
-    return (right.averageViewsPerVideo ?? -1) - (left.averageViewsPerVideo ?? -1);
+    return (right.averageViewsPerVideoDay ?? -1) - (left.averageViewsPerVideoDay ?? -1);
   });
 }
 
-function confidenceFor(sample: PerformanceSample): "LOW" | "MEDIUM" | "HIGH" {
+function confidenceFor(sample: PerformanceSample): PerformanceConfidence {
   if (sample.videos >= 10 && sample.days >= 14) return "HIGH";
   if (sample.videos >= 5 && sample.days >= 7) return "MEDIUM";
   return "LOW";
+}
+
+function recommendationConfidenceFor(
+  sample: PerformanceSample,
+  baseline: DimensionBaseline,
+): PerformanceConfidence {
+  const base = confidenceFor(sample);
+  if (base === "LOW") return "LOW";
+  if (
+    isAtMinimumSample(sample, dimensionMinimumSample) ||
+    isAtMinimumSample(baseline, dimensionMinimumSample)
+  )
+    return "LOW";
+  return base;
 }
 
 @Injectable()
@@ -442,8 +506,9 @@ export class PerformanceIntelligenceService {
       }),
     ]);
 
-    const currentKpiSnapshots = currentChannel.length > 0 ? currentChannel : currentVideo;
-    const previousKpiSnapshots = previousChannel.length > 0 ? previousChannel : previousVideo;
+    const useChannelGranularity = currentChannel.length > 0 && previousChannel.length > 0;
+    const currentKpiSnapshots = useChannelGranularity ? currentChannel : currentVideo;
+    const previousKpiSnapshots = useChannelGranularity ? previousChannel : previousVideo;
     const kpis = performanceKpiDefinitions.map((definition) =>
       computeKpi(definition, currentKpiSnapshots, previousKpiSnapshots, currentWindow, previous),
     );
@@ -472,6 +537,10 @@ export class PerformanceIntelligenceService {
       currency: string | null;
     } | null = null;
     const limitations: string[] = [];
+    if (currentChannel.length > 0 !== previousChannel.length > 0)
+      limitations.push(
+        "KPI comparison uses VIDEO-granularity snapshots for both windows because CHANNEL snapshots were unavailable in one window.",
+      );
     if (status !== "INSUFFICIENT_DATA" && this.llm.isConfigured()) {
       try {
         const result = await this.llm.generate({
@@ -572,16 +641,69 @@ export class PerformanceIntelligenceService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: reportId } },
     });
     if (!report) throw new NotFoundException("Insight report not found");
+    const existing = await this.db.performanceRecommendation.findMany({
+      where: { workspaceId: context.workspaceId, reportId: report.id },
+      orderBy: [{ rank: "asc" }, { id: "asc" }],
+    });
+    if (existing.length > 0) return existing.map((record) => this.presentRecommendation(record));
+
     const dimensions = PerformanceDimensionSummarySchema.array().parse(report.dimensionSummaries);
-    const eligible = dimensions
-      .filter((summary) => summary.status === "OK" && summary.value !== "UNKNOWN")
-      .sort((left, right) => (right.averageViewsPerVideo ?? 0) - (left.averageViewsPerVideo ?? 0))
-      .slice(0, 5);
+    const windowStart = dateOnly(report.periodStart);
+    const windowEnd = dateOnly(report.periodEnd);
+    const candidates: Array<{
+      summary: PerformanceDimensionSummary;
+      baseline: DimensionBaseline;
+      liftPercent: number;
+      unjoinedVideos: number;
+    }> = [];
+    for (const dimension of new Set(dimensions.map((summary) => summary.dimension))) {
+      const summaries = dimensions.filter((summary) => summary.dimension === dimension);
+      const eligible = summaries.filter(
+        (summary) =>
+          summary.status === "OK" &&
+          summary.value !== "UNKNOWN" &&
+          summary.averageViewsPerVideoDay !== null,
+      );
+      if (eligible.length < 2) continue;
+      const baseline = dimensionBaselineOf(summaries);
+      if (baseline.averageViewsPerVideoDay === null || baseline.averageViewsPerVideoDay <= 0)
+        continue;
+      const unjoinedVideos =
+        summaries.find((summary) => summary.value === "UNKNOWN")?.sample.videos ?? 0;
+      for (const summary of eligible) {
+        const liftPercent =
+          ((summary.averageViewsPerVideoDay! - baseline.averageViewsPerVideoDay) /
+            baseline.averageViewsPerVideoDay) *
+          100;
+        if (liftPercent <= 0) continue;
+        candidates.push({ summary, baseline, liftPercent, unjoinedVideos });
+      }
+    }
+    candidates.sort((left, right) => {
+      if (right.liftPercent !== left.liftPercent) return right.liftPercent - left.liftPercent;
+      const dimensionOrder = left.summary.dimension.localeCompare(right.summary.dimension);
+      return dimensionOrder !== 0
+        ? dimensionOrder
+        : left.summary.value.localeCompare(right.summary.value);
+    });
+    const eligible = candidates.slice(0, 5);
     if (eligible.length === 0) return [];
 
     const created: RecommendationRecord[] = [];
-    for (const [index, summary] of eligible.entries()) {
-      const confidence = confidenceFor(summary.sample);
+    for (const [index, candidate] of eligible.entries()) {
+      const { summary, baseline, liftPercent, unjoinedVideos } = candidate;
+      const confidence = recommendationConfidenceFor(summary.sample, baseline);
+      const limitations = [
+        "Correlational association only; this does not establish causation.",
+        `Candidate sample: ${summary.sample.videos} videos, ${summary.sample.days} days, ${summary.sample.snapshots} snapshots; baseline: ${baseline.videos} videos, ${baseline.snapshots} snapshots. Window ${windowStart}..${windowEnd}.`,
+        ...summary.limitations,
+      ];
+      if (unjoinedVideos > 0)
+        limitations.push(
+          `${unjoinedVideos} published videos could not be joined to this dimension and are excluded.`,
+        );
+      const average = summary.averageViewsPerVideoDay ?? 0;
+      const baselineAverage = baseline.averageViewsPerVideoDay ?? 0;
       const record = await this.db.performanceRecommendation.create({
         data: {
           workspaceId: context.workspaceId,
@@ -589,10 +711,10 @@ export class PerformanceIntelligenceService {
           reportId: report.id,
           rank: index + 1,
           dimension: summary.dimension,
-          action: `Prioritize ${summary.dimension.toLowerCase()} "${summary.value}" — it averaged ${Math.round(summary.averageViewsPerVideo ?? 0)} views per video.`,
-          rationale: `Based on ${summary.sample.videos} published videos and ${summary.sample.snapshots} metric snapshots in the report window.`,
+          action: `Prioritize ${summary.dimension.toLowerCase()} "${summary.value}" — ${liftPercent.toFixed(1)}% above the dimension baseline (${baselineAverage.toFixed(1)} views per video-day).`,
+          rationale: `"${summary.value}" averaged ${average.toFixed(1)} views per video-day versus a ${baselineAverage.toFixed(1)} baseline, a ${liftPercent.toFixed(1)}% lift across ${baseline.videos} joined videos in ${windowStart}..${windowEnd}.`,
           confidence,
-          limitations: summary.limitations as unknown as Prisma.InputJsonValue,
+          limitations: limitations as unknown as Prisma.InputJsonValue,
           evidenceSnapshotIds: summary.snapshotIds,
           createdByUserId: context.userId,
         },
@@ -620,22 +742,33 @@ export class PerformanceIntelligenceService {
     recommendationId: string,
   ): Promise<PerformanceRecommendation> {
     this.requireEditor(context);
-    const existing = await this.db.performanceRecommendation.findUnique({
+    const updated = await this.db.performanceRecommendation.updateMany({
       where: {
-        workspaceId_id: { workspaceId: context.workspaceId, id: recommendationId },
+        workspaceId: context.workspaceId,
+        id: recommendationId,
+        status: "PROPOSED",
       },
-    });
-    if (!existing) throw new NotFoundException("Recommendation not found");
-    if (existing.status !== "PROPOSED")
-      throw new ConflictException("Only a proposed recommendation can be approved");
-    const record = await this.db.performanceRecommendation.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: recommendationId } },
       data: {
         status: "APPROVED",
         approvedByUserId: context.userId,
         approvedAt: new Date(),
       },
     });
+    if (updated.count === 0) {
+      const existing = await this.db.performanceRecommendation.findUnique({
+        where: {
+          workspaceId_id: { workspaceId: context.workspaceId, id: recommendationId },
+        },
+      });
+      if (!existing) throw new NotFoundException("Recommendation not found");
+      throw new ConflictException("Only a proposed recommendation can be approved");
+    }
+    const record = await this.db.performanceRecommendation.findUnique({
+      where: {
+        workspaceId_id: { workspaceId: context.workspaceId, id: recommendationId },
+      },
+    });
+    if (!record) throw new NotFoundException("Recommendation not found");
     return this.presentRecommendation(record);
   }
 
@@ -674,14 +807,27 @@ export class PerformanceIntelligenceService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: experimentId } },
     });
     if (!existing) throw new NotFoundException("Experiment not found");
-    const record = await this.db.performanceExperiment.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: experimentId } },
+    const exposure = input.exposure ?? existing.exposure;
+    if (exposure === null || exposure === undefined)
+      throw new BadRequestException("A completed experiment requires a recorded exposure count");
+    const updated = await this.db.performanceExperiment.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        id: experimentId,
+        status: { in: ["DRAFT", "RUNNING"] },
+      },
       data: {
         outcome: input.outcome as unknown as Prisma.InputJsonValue,
-        exposure: input.exposure ?? existing.exposure,
+        exposure,
         status: "COMPLETED",
       },
     });
+    if (updated.count === 0)
+      throw new ConflictException("Only a draft or running experiment can be completed");
+    const record = await this.db.performanceExperiment.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: experimentId } },
+    });
+    if (!record) throw new NotFoundException("Experiment not found");
     return this.presentExperiment(record);
   }
 
@@ -712,34 +858,69 @@ export class PerformanceIntelligenceService {
     if (recommendation.status !== "APPROVED")
       throw new ConflictException("Recommendation must be approved before export");
 
-    const latest = await this.db.performanceStrategyChange.findFirst({
-      where: { workspaceId: context.workspaceId, channelId: recommendation.channelId },
-      orderBy: { version: "desc" },
-      select: { version: true },
-    });
-    const version = (latest?.version ?? 0) + 1;
-    const now = new Date();
-    const record = await this.db.performanceStrategyChange.create({
-      data: {
-        workspaceId: context.workspaceId,
-        channelId: recommendation.channelId,
-        version,
-        recommendationId: recommendation.id,
-        summary: input.summary ?? recommendation.action,
-        changes: {
-          dimension: recommendation.dimension,
-          action: recommendation.action,
-          confidence: recommendation.confidence,
-          limitations: recommendation.limitations,
-        } as unknown as Prisma.InputJsonValue,
-        evidenceSnapshotIds: recommendation.evidenceSnapshotIds,
-        status: "APPROVED",
-        approvedByUserId: context.userId,
-        approvedAt: now,
-        createdByUserId: context.userId,
+    const existing = await this.db.performanceStrategyChange.findUnique({
+      where: {
+        workspaceId_recommendationId: {
+          workspaceId: context.workspaceId,
+          recommendationId: recommendation.id,
+        },
       },
     });
+    if (existing) return this.presentStrategyChange(existing);
+
+    const record = await this.createStrategyChangeRecord(context, recommendation, input, 0);
     return this.presentStrategyChange(record);
+  }
+
+  private async createStrategyChangeRecord(
+    context: WorkspaceContext,
+    recommendation: RecommendationRecord,
+    input: ExportStrategyChangeRequest,
+    attempt: number,
+  ): Promise<StrategyChangeRecord> {
+    try {
+      return await this.db.$transaction(async (transaction) => {
+        const latest = await transaction.performanceStrategyChange.findFirst({
+          where: { workspaceId: context.workspaceId, channelId: recommendation.channelId },
+          orderBy: { version: "desc" },
+          select: { version: true },
+        });
+        const version = (latest?.version ?? 0) + 1;
+        return transaction.performanceStrategyChange.create({
+          data: {
+            workspaceId: context.workspaceId,
+            channelId: recommendation.channelId,
+            version,
+            recommendationId: recommendation.id,
+            summary: input.summary ?? recommendation.action,
+            changes: {
+              dimension: recommendation.dimension,
+              action: recommendation.action,
+              confidence: recommendation.confidence,
+              limitations: recommendation.limitations,
+            } as unknown as Prisma.InputJsonValue,
+            evidenceSnapshotIds: recommendation.evidenceSnapshotIds,
+            status: "APPROVED",
+            approvedByUserId: context.userId,
+            approvedAt: new Date(),
+            createdByUserId: context.userId,
+          },
+        });
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const existing = await this.db.performanceStrategyChange.findUnique({
+        where: {
+          workspaceId_recommendationId: {
+            workspaceId: context.workspaceId,
+            recommendationId: recommendation.id,
+          },
+        },
+      });
+      if (existing) return existing;
+      if (attempt === 0) return this.createStrategyChangeRecord(context, recommendation, input, 1);
+      throw new ConflictException("Strategy change version conflict; retry the export");
+    }
   }
 
   public async listStrategyChanges(
@@ -778,20 +959,7 @@ export class PerformanceIntelligenceService {
       after = last.publishedAt;
       afterId = last.destinationId;
     }
-    const start = parseDate(window.startDate).getTime();
     const end = parseDate(window.endDate).getTime() + dayMilliseconds - 1;
-    const inWindow = records.filter((record) => {
-      if (record.workspaceId !== context.workspaceId) return false;
-      if (record.channelId !== channelId || record.accountId !== socialAccountId) return false;
-      if (record.platform !== "YOUTUBE") return false;
-      const published = new Date(record.publishedAt).getTime();
-      return published >= start && published <= end;
-    });
-    const contexts = await this.publishing.listPublishedPostContexts(
-      context,
-      inWindow.map((record) => record.scheduledPostId),
-    );
-    const contextByPost = new Map(contexts.map((item) => [item.scheduledPostId, item]));
     const snapshotsByVideo = new Map<string, Snapshot[]>();
     for (const snapshot of snapshots) {
       if (snapshot.remoteEntityId === null) continue;
@@ -799,11 +967,32 @@ export class PerformanceIntelligenceService {
       existing.push(snapshot);
       snapshotsByVideo.set(snapshot.remoteEntityId, existing);
     }
-    return inWindow.map((record) => ({
-      record,
-      context: contextByPost.get(record.scheduledPostId) ?? null,
-      snapshots: snapshotsByVideo.get(record.platformPostId) ?? [],
-    }));
+    // Views are normalized per video-day, so videos published before the window
+    // are included when they still have in-window metrics. Records without any
+    // available snapshot in the window cannot contribute to a dimension.
+    const eligible = records.filter((record) => {
+      if (record.workspaceId !== context.workspaceId) return false;
+      if (record.channelId !== channelId || record.accountId !== socialAccountId) return false;
+      if (record.platform !== "YOUTUBE") return false;
+      if (new Date(record.publishedAt).getTime() > end) return false;
+      return (snapshotsByVideo.get(record.platformPostId) ?? []).some(isAvailable);
+    });
+    const contexts = await this.publishing.listPublishedPostContexts(
+      context,
+      eligible.map((record) => record.scheduledPostId),
+    );
+    const contextByPost = new Map(contexts.map((item) => [item.scheduledPostId, item]));
+    return eligible.map((record) => {
+      const videoSnapshots = snapshotsByVideo.get(record.platformPostId) ?? [];
+      const { views, exposureDays } = viewsAndExposure(videoSnapshots);
+      return {
+        record,
+        context: contextByPost.get(record.scheduledPostId) ?? null,
+        snapshots: videoSnapshots,
+        views,
+        exposureDays,
+      };
+    });
   }
 
   private async assertChannel(context: WorkspaceContext, channelId: string): Promise<void> {

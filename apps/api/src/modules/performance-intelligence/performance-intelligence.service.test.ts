@@ -43,7 +43,7 @@ type PublishedContextFixture = {
   topic: string;
   hook: string;
   seriesId: null;
-  seriesName: null;
+  seriesName: string | null;
   characterNames: string[];
   durationSeconds: number;
 };
@@ -165,19 +165,25 @@ type MockDatabase = {
     create: MockMethod;
     findUnique: MockMethod;
     findMany: MockMethod;
-    update: MockMethod;
+    updateMany: MockMethod;
   };
   performanceExperiment: {
     create: MockMethod;
     findUnique: MockMethod;
     findMany: MockMethod;
-    update: MockMethod;
+    updateMany: MockMethod;
   };
-  performanceStrategyChange: { create: MockMethod; findFirst: MockMethod; findMany: MockMethod };
+  performanceStrategyChange: {
+    create: MockMethod;
+    findUnique: MockMethod;
+    findFirst: MockMethod;
+    findMany: MockMethod;
+  };
+  $transaction: MockMethod;
 };
 
 function database(): MockDatabase {
-  return {
+  const db = {
     channel: { findUnique: vi.fn().mockResolvedValue({ id: channelId }) },
     performanceInsightReport: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -205,22 +211,7 @@ function database(): MockDatabase {
       })),
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
-      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-        id: recommendationId,
-        workspaceId,
-        channelId,
-        reportId,
-        rank: 1,
-        dimension: "TOPIC",
-        action: "Prioritize topic",
-        rationale: "Evidence",
-        confidence: "MEDIUM",
-        limitations: [],
-        evidenceSnapshotIds: [],
-        status: data["status"] ?? "APPROVED",
-        approvedAt: data["approvedAt"] ?? null,
-        createdAt: new Date("2026-11-10T00:00:00.000Z"),
-      })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     performanceExperiment: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -234,20 +225,7 @@ function database(): MockDatabase {
       })),
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
-      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-        id: experimentId,
-        workspaceId,
-        channelId,
-        hypothesis: "A better hook lifts retention",
-        variant: "Question hook",
-        dimensions: ["HOOK"],
-        designNotes: "Run for two weeks",
-        exposure: data["exposure"] ?? 100,
-        outcome: data["outcome"] ?? null,
-        status: data["status"] ?? "COMPLETED",
-        createdAt: new Date("2026-11-10T00:00:00.000Z"),
-        updatedAt: new Date("2026-11-10T00:00:00.000Z"),
-      })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     performanceStrategyChange: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -255,10 +233,13 @@ function database(): MockDatabase {
         ...data,
         createdAt: new Date("2026-11-10T00:00:00.000Z"),
       })),
+      findUnique: vi.fn().mockResolvedValue(null),
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
-  };
+  } as MockDatabase;
+  db.$transaction = vi.fn(async (callback: (transaction: MockDatabase) => unknown) => callback(db));
+  return db;
 }
 
 function analytics(
@@ -357,7 +338,8 @@ function dimensionSummary(
     sample: { videos: 12, days: 14, snapshots: 40 },
     minimumSample: { videos: 3, days: 1, snapshots: 3 },
     totalViews: 4000,
-    averageViewsPerVideo: 400,
+    exposureDays: 10,
+    averageViewsPerVideoDay: 400,
     engagementRate: 0.12,
     watchMinutesPerView: 0.8,
     netSubscribers: 40,
@@ -573,38 +555,162 @@ describe("PerformanceIntelligenceService", () => {
     expect(failed.limitations.join(" ")).toContain("failed");
   });
 
-  it("ranks recommendations with confidence and evidence from an OK report", async () => {
+  it("normalizes dimension views by exposure days for videos of different ages", async () => {
+    const db = database();
+    const baseRecords = publishedRecords();
+    const publishedAt = [
+      "2026-10-30T10:00:00.000Z",
+      "2026-11-02T10:00:00.000Z",
+      "2026-11-03T10:00:00.000Z",
+    ] as const;
+    const records = baseRecords.map((record, index) => ({
+      ...record,
+      publishedAt: publishedAt[index]!,
+    }));
+    const snapshots = [
+      snapshot("views", 300, {
+        granularity: "VIDEO",
+        remoteEntityId: videoIds[0],
+        day: "2026-11-01",
+        id: "88888888-8888-4888-8888-888888888801",
+      }),
+      snapshot("views", 300, {
+        granularity: "VIDEO",
+        remoteEntityId: videoIds[0],
+        day: "2026-11-02",
+        id: "88888888-8888-4888-8888-888888888802",
+      }),
+      snapshot("views", 300, {
+        granularity: "VIDEO",
+        remoteEntityId: videoIds[0],
+        day: "2026-11-03",
+        id: "88888888-8888-4888-8888-888888888803",
+      }),
+      snapshot("views", 100, {
+        granularity: "VIDEO",
+        remoteEntityId: videoIds[1],
+        day: "2026-11-02",
+        id: "88888888-8888-4888-8888-888888888804",
+      }),
+      snapshot("views", 200, {
+        granularity: "VIDEO",
+        remoteEntityId: videoIds[2],
+        day: "2026-11-03",
+        id: "88888888-8888-4888-8888-888888888805",
+      }),
+    ];
+
+    const report = await service(
+      db,
+      analytics([], [], snapshots),
+      publishing(records, publishedContexts()),
+    ).generateInsightReport(ownerContext, {
+      channelId,
+      socialAccountId: accountId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-03",
+    });
+
+    const summary = report.dimensions.find(
+      (dimension) => dimension.dimension === "TOPIC" && dimension.value === "AI tools",
+    );
+    expect(summary).toMatchObject({
+      status: "OK",
+      totalViews: 1200,
+      exposureDays: 5,
+      averageViewsPerVideoDay: 240,
+      sample: { videos: 3, days: 3, snapshots: 5 },
+    });
+  });
+
+  it("ranks recommendations by lift against a multi-bucket dimension baseline", async () => {
     const db = database();
     db.performanceInsightReport.findUnique.mockResolvedValue(
       reportRecord({
         dimensionSummaries: [
-          dimensionSummary({ dimension: "TOPIC", value: "AI tools", averageViewsPerVideo: 500 }),
+          dimensionSummary({
+            dimension: "TOPIC",
+            value: "AI tools",
+            totalViews: 5000,
+            exposureDays: 10,
+            averageViewsPerVideoDay: 500,
+            sample: { videos: 10, days: 10, snapshots: 20 },
+          }),
+          dimensionSummary({
+            dimension: "TOPIC",
+            value: "Gaming",
+            totalViews: 2500,
+            exposureDays: 10,
+            averageViewsPerVideoDay: 250,
+            sample: { videos: 10, days: 10, snapshots: 20 },
+          }),
           dimensionSummary({
             dimension: "HOOK",
             value: "Question",
-            averageViewsPerVideo: 300,
-            sample: { videos: 6, days: 8, snapshots: 24 },
+            totalViews: 2400,
+            exposureDays: 8,
+            averageViewsPerVideoDay: 300,
+            sample: { videos: 8, days: 8, snapshots: 16 },
+          }),
+          dimensionSummary({
+            dimension: "HOOK",
+            value: "Statement",
+            totalViews: 1600,
+            exposureDays: 8,
+            averageViewsPerVideoDay: 200,
+            sample: { videos: 8, days: 8, snapshots: 16 },
+          }),
+          dimensionSummary({
+            dimension: "CHARACTER",
+            value: "Nova",
+            totalViews: 2250,
+            exposureDays: 6,
+            averageViewsPerVideoDay: 375,
+            sample: { videos: 6, days: 6, snapshots: 12 },
+          }),
+          dimensionSummary({
+            dimension: "CHARACTER",
+            value: "Rex",
+            totalViews: 1800,
+            exposureDays: 6,
+            averageViewsPerVideoDay: 300,
+            sample: { videos: 6, days: 6, snapshots: 12 },
           }),
           dimensionSummary({
             dimension: "DURATION",
             value: "60_TO_180S",
-            averageViewsPerVideo: 100,
-            sample: { videos: 3, days: 2, snapshots: 9 },
+            totalViews: 900,
+            exposureDays: 3,
+            averageViewsPerVideoDay: 300,
+            sample: { videos: 3, days: 3, snapshots: 6 },
           }),
-          dimensionSummary({ dimension: "SERIES", value: "UNKNOWN", status: "INSUFFICIENT_DATA" }),
+          dimensionSummary({
+            dimension: "SERIES",
+            value: "UNKNOWN",
+            status: "INSUFFICIENT_DATA",
+            sample: { videos: 2, days: 0, snapshots: 0 },
+            totalViews: null,
+            exposureDays: 0,
+            averageViewsPerVideoDay: null,
+          }),
         ],
       }),
     );
 
     const recommendations = await service(db).generateRecommendations(ownerContext, reportId);
-    expect(recommendations).toHaveLength(3);
     expect(recommendations.map((item) => [item.dimension, item.confidence])).toEqual([
-      ["TOPIC", "HIGH"],
+      ["TOPIC", "MEDIUM"],
       ["HOOK", "MEDIUM"],
-      ["DURATION", "LOW"],
+      ["CHARACTER", "LOW"],
     ]);
     expect(recommendations[0]).toMatchObject({ rank: 1, status: "PROPOSED", reportId });
     expect(recommendations[0]?.evidenceSnapshotIds.length).toBeGreaterThan(0);
+    for (const recommendation of recommendations) {
+      expect(recommendation.limitations.length).toBeGreaterThan(0);
+      expect(recommendation.limitations.join(" ")).toContain("Correlational");
+      expect(recommendation.rationale).toContain("baseline");
+      expect(recommendation.rationale).toContain("lift");
+    }
     expect(db.performanceRecommendation.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -615,6 +721,28 @@ describe("PerformanceIntelligenceService", () => {
         }),
       }),
     );
+  });
+
+  it("does not recommend from a dimension with only one OK bucket", async () => {
+    const db = database();
+    db.performanceInsightReport.findUnique.mockResolvedValue(
+      reportRecord({
+        dimensionSummaries: [
+          dimensionSummary({
+            dimension: "TOPIC",
+            value: "AI tools",
+            totalViews: 5000,
+            exposureDays: 10,
+            averageViewsPerVideoDay: 500,
+            sample: { videos: 10, days: 10, snapshots: 20 },
+          }),
+        ],
+      }),
+    );
+
+    const recommendations = await service(db).generateRecommendations(ownerContext, reportId);
+    expect(recommendations).toEqual([]);
+    expect(db.performanceRecommendation.create).not.toHaveBeenCalled();
   });
 
   it("requires an editor and an existing report before generating recommendations", async () => {
@@ -644,12 +772,28 @@ describe("PerformanceIntelligenceService", () => {
       status: "DRAFT",
     });
 
-    db.performanceExperiment.findUnique.mockResolvedValue({
-      id: experimentId,
-      workspaceId,
-      channelId,
-      status: "DRAFT",
-    });
+    db.performanceExperiment.findUnique
+      .mockResolvedValueOnce({
+        id: experimentId,
+        workspaceId,
+        channelId,
+        status: "DRAFT",
+        exposure: null,
+      })
+      .mockResolvedValueOnce({
+        id: experimentId,
+        workspaceId,
+        channelId,
+        hypothesis: "A question hook lifts retention",
+        variant: "Question hook",
+        dimensions: ["HOOK"],
+        designNotes: "Run for two weeks against the current hook",
+        status: "COMPLETED",
+        exposure: 250,
+        outcome: { viewsLiftPercent: 12 },
+        createdAt: new Date("2026-11-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-11-10T00:00:00.000Z"),
+      });
     const completed = await service(db).recordExperimentOutcome(ownerContext, experimentId, {
       outcome: { viewsLiftPercent: 12 },
       exposure: 250,
@@ -659,6 +803,40 @@ describe("PerformanceIntelligenceService", () => {
       exposure: 250,
       outcome: { viewsLiftPercent: 12 },
     });
+    expect(db.performanceExperiment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          workspaceId,
+          id: experimentId,
+          status: { in: ["DRAFT", "RUNNING"] },
+        },
+      }),
+    );
+  });
+
+  it("requires exposure and an open experiment before recording an outcome", async () => {
+    const db = database();
+    db.performanceExperiment.findUnique.mockResolvedValue({
+      id: experimentId,
+      workspaceId,
+      channelId,
+      status: "DRAFT",
+      exposure: null,
+    });
+    await expect(
+      service(db).recordExperimentOutcome(ownerContext, experimentId, {
+        outcome: { viewsLiftPercent: 4 },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.performanceExperiment.updateMany).not.toHaveBeenCalled();
+
+    db.performanceExperiment.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      service(db).recordExperimentOutcome(ownerContext, experimentId, {
+        outcome: { viewsLiftPercent: 4 },
+        exposure: 50,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects multi-dimension experiments without documented design", async () => {
@@ -675,22 +853,51 @@ describe("PerformanceIntelligenceService", () => {
     expect(db.performanceExperiment.create).not.toHaveBeenCalled();
   });
 
-  it("records approval before a recommendation can be applied", async () => {
+  it("approves a proposed recommendation with a compare-and-swap", async () => {
     const db = database();
     db.performanceRecommendation.findUnique.mockResolvedValue({
       id: recommendationId,
       workspaceId,
       channelId,
-      status: "PROPOSED",
+      reportId,
+      rank: 1,
+      dimension: "TOPIC",
+      action: "Prioritize topic",
+      rationale: "Evidence",
+      confidence: "MEDIUM",
+      limitations: [],
+      evidenceSnapshotIds: [],
+      status: "APPROVED",
+      approvedAt: new Date("2026-11-10T00:00:00.000Z"),
+      createdAt: new Date("2026-11-10T00:00:00.000Z"),
     });
     const approved = await service(db).approveRecommendation(ownerContext, recommendationId);
     expect(approved.status).toBe("APPROVED");
-    expect(db.performanceRecommendation.update).toHaveBeenCalledWith(
+    expect(db.performanceRecommendation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { workspaceId_id: { workspaceId, id: recommendationId } },
+        where: { workspaceId, id: recommendationId, status: "PROPOSED" },
         data: expect.objectContaining({ status: "APPROVED", approvedByUserId: userId }),
       }),
     );
+  });
+
+  it("returns 409 when a recommendation is approved concurrently or already approved", async () => {
+    const db = database();
+    db.performanceRecommendation.updateMany.mockResolvedValue({ count: 0 });
+    db.performanceRecommendation.findUnique.mockResolvedValue({
+      id: recommendationId,
+      workspaceId,
+      channelId,
+      status: "APPROVED",
+    });
+    await expect(
+      service(db).approveRecommendation(ownerContext, recommendationId),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    db.performanceRecommendation.findUnique.mockResolvedValue(null);
+    await expect(
+      service(db).approveRecommendation(ownerContext, recommendationId),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("requires approval before exporting a versioned strategy change", async () => {
@@ -739,5 +946,36 @@ describe("PerformanceIntelligenceService", () => {
         data: expect.objectContaining({ workspaceId, channelId, version: 3 }),
       }),
     );
+  });
+
+  it("returns the existing strategy change on re-export instead of creating a duplicate", async () => {
+    const db = database();
+    db.performanceRecommendation.findUnique.mockResolvedValue({
+      id: recommendationId,
+      workspaceId,
+      channelId,
+      dimension: "TOPIC",
+      action: "Prioritize AI tools",
+      confidence: "HIGH",
+      limitations: [],
+      evidenceSnapshotIds: ["77777777-7777-4777-8777-777777777777"],
+      status: "APPROVED",
+    });
+    db.performanceStrategyChange.findUnique.mockResolvedValue({
+      id: strategyChangeId,
+      workspaceId,
+      channelId,
+      version: 1,
+      recommendationId,
+      summary: "Adopt AI tools as the primary topic",
+      changes: {},
+      evidenceSnapshotIds: ["77777777-7777-4777-8777-777777777777"],
+      status: "APPROVED",
+      approvedAt: new Date("2026-11-10T00:00:00.000Z"),
+      createdAt: new Date("2026-11-10T00:00:00.000Z"),
+    });
+    const change = await service(db).exportStrategyChange(ownerContext, { recommendationId });
+    expect(change).toMatchObject({ version: 1, recommendationId });
+    expect(db.performanceStrategyChange.create).not.toHaveBeenCalled();
   });
 });

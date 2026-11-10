@@ -2,6 +2,15 @@
 CREATE TYPE "InsightReportStatus" AS ENUM ('GENERATED', 'NOT_GENERATED', 'INSUFFICIENT_DATA');
 
 -- CreateEnum
+CREATE TYPE "InsightAiStatus" AS ENUM ('GENERATED', 'NOT_CONFIGURED', 'NOT_GENERATED', 'INSUFFICIENT_DATA');
+
+-- CreateEnum
+CREATE TYPE "PerformanceDimension" AS ENUM ('TOPIC', 'HOOK', 'DURATION', 'CHARACTER', 'SERIES', 'PUBLISH_TIMING');
+
+-- CreateEnum
+CREATE TYPE "PerformanceConfidence" AS ENUM ('LOW', 'MEDIUM', 'HIGH');
+
+-- CreateEnum
 CREATE TYPE "RecommendationStatus" AS ENUM ('PROPOSED', 'APPROVED', 'REJECTED');
 
 -- CreateEnum
@@ -23,7 +32,7 @@ CREATE TABLE "performance_insight_reports" (
     "kpis" JSONB NOT NULL,
     "dimension_summaries" JSONB NOT NULL,
     "narrative" TEXT,
-    "ai_status" TEXT NOT NULL,
+    "ai_status" "InsightAiStatus" NOT NULL,
     "provider_id" TEXT,
     "model_version" TEXT,
     "prompt_version" TEXT,
@@ -44,10 +53,10 @@ CREATE TABLE "performance_recommendations" (
     "channel_id" UUID NOT NULL,
     "report_id" UUID,
     "rank" INTEGER NOT NULL,
-    "dimension" TEXT NOT NULL,
+    "dimension" "PerformanceDimension" NOT NULL,
     "action" TEXT NOT NULL,
     "rationale" TEXT NOT NULL,
-    "confidence" TEXT NOT NULL,
+    "confidence" "PerformanceConfidence" NOT NULL,
     "limitations" JSONB NOT NULL,
     "evidence_snapshot_ids" UUID[],
     "status" "RecommendationStatus" NOT NULL DEFAULT 'PROPOSED',
@@ -67,7 +76,7 @@ CREATE TABLE "performance_experiments" (
     "channel_id" UUID NOT NULL,
     "hypothesis" TEXT NOT NULL,
     "variant" TEXT NOT NULL,
-    "dimensions" TEXT[],
+    "dimensions" "PerformanceDimension"[],
     "design_notes" TEXT NOT NULL,
     "exposure" INTEGER,
     "outcome" JSONB,
@@ -121,6 +130,9 @@ CREATE INDEX "performance_experiments_workspace_id_channel_id_status_created_at_
 
 -- CreateIndex
 CREATE UNIQUE INDEX "performance_strategy_changes_workspace_id_id_key" ON "performance_strategy_changes"("workspace_id", "id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "performance_strategy_changes_workspace_id_recommendation_id_key" ON "performance_strategy_changes"("workspace_id", "recommendation_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "performance_strategy_changes_workspace_id_channel_id_version_key" ON "performance_strategy_changes"("workspace_id", "channel_id", "version");

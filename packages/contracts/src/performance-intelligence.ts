@@ -119,6 +119,9 @@ export const PerformanceKpiResultSchema = z
   );
 export type PerformanceKpiResult = z.infer<typeof PerformanceKpiResultSchema>;
 
+// Dimension performance is compared as views per video-day (available in-window
+// views divided by distinct in-window days with view data) so videos of different
+// publish ages are not ranked by raw lifetime views.
 export const PerformanceDimensionSummarySchema = z
   .object({
     dimension: PerformanceDimensionSchema,
@@ -127,7 +130,8 @@ export const PerformanceDimensionSummarySchema = z
     sample: PerformanceSampleSchema,
     minimumSample: PerformanceMinimumsSchema,
     totalViews: z.number().finite().nullable(),
-    averageViewsPerVideo: z.number().finite().nullable(),
+    exposureDays: z.int().nonnegative(),
+    averageViewsPerVideoDay: z.number().finite().nullable(),
     engagementRate: z.number().finite().nullable(),
     watchMinutesPerView: z.number().finite().nullable(),
     netSubscribers: z.number().finite().nullable(),
