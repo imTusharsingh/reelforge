@@ -1,11 +1,12 @@
 # M15 Status - Performance Intelligence & Learning
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (review round 1 fixes applied)
+- **State:** INTEGRATED (PR #27 squash-merged to `main`; docs-only closeout records it)
 - **Assigned session/editor:** Module Implementation Agent, Desktop
 - **Branch/worktree:** `work/m15-performance-intelligence-and-learning`, created from `origin/main` at `c1c95ae851967f44a6ebedc327261106d9ab0cf4`; no worktree created
 - **Last updated:** 2026-11-10
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` (review `5837873024`)
+- **Merged commit:** `0e4e01a0b7e0c27b583c697220330ddb8a2848ac` (squash-merged by `minu-the-reviewer` on 2026-11-10)
 
 ## Current objective
 Translate verified historical metrics into explainable recommendations and controlled experiments.
@@ -92,11 +93,21 @@ The M15 assignment explicitly authorized additive contracts, additive Prisma sch
 - The pre-existing Prisma ESM follow-up and production OAuth/connector configuration remain outside M15.
 
 ## Next exact action
-Commit the review-fix changes, push `work/m15-performance-intelligence-and-learning`, request re-review from `minu-the-reviewer` on PR #27, and stop without merging.
+None for M15 product work. M15 is integrated; M16 is the next work package after this docs-only closeout merges.
 
 ## Handoff notes
 All M15 tasks T01–T07 are implemented and covered by fixture and PostgreSQL tests. Review round 1 blocking issues B1–B4 are addressed with new unit and PostgreSQL coverage; the remaining non-blocking follow-ups are listed above. The module is ready for reviewer verification of acceptance criteria, tenant scoping, fail-closed behavior, and additive contract/schema compatibility.
 
 ## Reviewer decision
-- Round 1: REQUEST_CHANGES at `f695bc6` (B1–B4).
-- Round 2: Pending re-review.
+- Round 1: REQUEST_CHANGES at `f695bc6b658ddc90938fa96e3da9d8aeef8448b4` (review `5837610546`, B1–B4).
+- Round 2: APPROVED at `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` (review `5837873024`) after the B1–B4 fixes in `896a370` and `9f5cdba`.
+- Integration: squash-merged to `main` by `minu-the-reviewer` at `0e4e01a0b7e0c27b583c697220330ddb8a2848ac` (PR #27) on 2026-11-10. State set to INTEGRATED by the docs-only closeout PR; no product rework.
+
+## Carried residual notes (non-blocking)
+- `PublishingService.listPublishedPostContexts` has a 500-ID cap, so a channel with more than 500 videos that have in-window metrics fails the report with HTTP 400. It must be chunked.
+- Concurrent recommendation generation can still duplicate rows because there is no unique key on `reportId`+`rank`.
+- `INSUFFICIENT` buckets expose averages, so the UI must not present them as conclusions.
+- Views per video-day favors young videos.
+- Add the M08 cost-ledger envelope before binding any real insight adapter.
+- Use channel/date-scoped published-record reads.
+- `REJECTED`, `RUNNING`, and `EXPORTED` have no transitions.

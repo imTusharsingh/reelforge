@@ -757,3 +757,15 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approvals: No self-approval, integration, or merge is claimed. Non-blocking follow-ups recorded in `STATUS.md`: M08 cost-ledger envelope before a real AI adapter is bound, channel/date-scoped published-record reads, and remaining `REJECTED`/`RUNNING`/`EXPORTED` transitions.
 - Next exact action: Push the review-fix commit, request Minu re-review on PR #27, and stop without merging.
 - Related status/ADR: M15 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M15 integrated closeout (docs only)
+- Actor/session: Module Implementation Agent, Desktop; branch `chore/m15-integrated-closeout` from `origin/main` `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`.
+- Work package: docs-only closeout recording the already-merged M15 (PR #27) integration. No product rework.
+- Facts verified in git/GitHub: PR #27 head `f695bc6b658ddc90938fa96e3da9d8aeef8448b4` received REQUEST_CHANGES (review `5837610546`); the B1–B4 fixes landed in `896a370` and `9f5cdba`; head `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` was APPROVED (review `5837873024`) and squash-merged by `minu-the-reviewer` at `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`.
+- Changes made: Updated `docs/PROJECT_STATE.md` to M00–M15 integrated (tip `0e4e01a`, no active sessions, next M16 after this closeout); set M15 `STATUS.md` to INTEGRATED with the review IDs, approved head, and merge SHA; carried the M15 residual notes into `PROJECT_STATE.md` and `STATUS.md` (500-ID report cap, duplicate recommendation rows under concurrency, INSUFFICIENT-bucket averages, young-video bias, M08 cost-ledger envelope before a real adapter, channel/date-scoped published reads, missing REJECTED/RUNNING/EXPORTED transitions); preserved the existing M10–M14 and Prisma ESM follow-ups.
+- Commands actually run and results: `git fetch origin` and `git rev-parse origin/main` confirmed `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`; `gh pr view 27` / `gh api .../pulls/27/reviews` confirmed the review IDs, states, commits, and merge actor; `git diff --check` and `pnpm format:check` were run before handoff.
+- External calls: GitHub read-only (PR/review metadata) and git; no live Google/Meta/AI/social calls.
+- Decisions/approvals: No app, schema, CI, or lockfile changes. No self-approval, integration, or merge is claimed; this PR requests Minu's review and stops.
+- Defects/risks/blockers: The M15 residual notes above are documented as non-blocking follow-ups.
+- Next exact action: Push, open the docs-only closeout PR, request `minu-the-reviewer`, and stop without merging.
+- Related status/ADR: M15 `STATUS.md`; ADR-007 and ADR-010.

@@ -13,3 +13,5 @@ renders/
 exports/
 packages/database/src/generated/prisma/
 .pnpm-store/
+.local-tools/
+.vscode/

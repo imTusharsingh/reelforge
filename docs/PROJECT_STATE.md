@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M14 integrated).
+- **Overall phase:** Phase 1 in progress (M00–M15 integrated).
 - **Current release:** v1.
-- **Current integrated commit:** `02dbff53b794f2d78c58d6b44e08285e8c793ff1` (`origin/main` after M14 PR #25).
+- **Current integrated commit:** `0e4e01a0b7e0c27b583c697220330ddb8a2848ac` (`origin/main` after M15 PR #27).
 - **Active implementation sessions:** none.
-- **Active work packages:** none; M15 is next, after this docs-only closeout merges.
+- **Active work packages:** none; M16 is next, after this docs-only closeout merges.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M13 PR #24 at `efa787aa11e00d09e8c1ec133f9217dc58cf270c` (review `5833122821`), squash-merged at `75eee789921948a1d19427c4b2994a88a8766bbe`; Minu approved M14 PR #25 at `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`), squash-merged at `02dbff53b794f2d78c58d6b44e08285e8c793ff1`. Both merges were performed by `minu-the-reviewer`.
+- **Latest core review:** Minu requested changes on M15 PR #27 at `f695bc6b658ddc90938fa96e3da9d8aeef8448b4` (review `5837610546`), then approved at `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` (review `5837873024`) after the B1–B4 fixes (`896a370`, `9f5cdba`); squash-merged by `minu-the-reviewer` at `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M14 integrated**
+**Phase 1 in progress - M00–M15 integrated**
 
 Next exact action:
-1. Complete and submit this docs-only M13+M14 integrated closeout PR for Minu's review; do not approve or merge.
-2. After this closeout merges, implement M15 T01–T07 from the new `origin/main` tip.
+1. Complete and submit this docs-only M15 integrated closeout PR for Minu's review; do not approve or merge.
+2. After this closeout merges, implement M16 T01–T09 from the new `origin/main` tip.
 
 ## Module status index
 
@@ -55,14 +55,14 @@ Next exact action:
 | M12 - Social Accounts & Platform Adapters | INTEGRATED | `main` (PR #22) | `61e4d2f51712be387785464648bd4cf1fb6ca9c4` | residual notes below |
 | M13 - Publishing Calendar & Delivery | INTEGRATED | `main` (PR #24) | `efa787aa11e00d09e8c1ec133f9217dc58cf270c` | residual notes below; no product blocker |
 | M14 - Analytics Collection & Metric Store | INTEGRATED | `main` (PR #25) | `75b860375068150416a37482abc40223dfebcd4e` | residual notes below; no product blocker |
-| M15 - Performance Intelligence & Learning | NOT_STARTED | none | none | next after this closeout |
-| M16 - Workflow Orchestration & Scheduler | NOT_STARTED | none | none | none recorded |
+| M15 - Performance Intelligence & Learning | INTEGRATED | `main` (PR #27) | `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` | residual notes below; no product blocker |
+| M16 - Workflow Orchestration & Scheduler | NOT_STARTED | none | none | next after this closeout |
 | M17 - Notifications & Reporting | NOT_STARTED | none | none | none recorded |
 | M18 - Usage, Budget & Billing Foundation | NOT_STARTED | none | none | none recorded |
 | M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13 is integrated at PR #24 and M14 at PR #25. M15–M20 remain `NOT_STARTED`.
+M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13 is integrated at PR #24, M14 at PR #25, and M15 at PR #27. M16–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -87,6 +87,7 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-10: M12 integrated via PR #22. Minu approved implementation head `16a3f0a4d03b8fff13ac7f8932f8ada9a458db10` (review `5832180458`) and docs-only head `61e4d2f51712be387785464648bd4cf1fb6ca9c4` (review `5832197458`); Minu squash-merged at `a83132b9064a04e3b92266aa9ec4748551299062`.
 - 2026-11-09: M13 integrated via PR #24. Minu approved head `efa787aa11e00d09e8c1ec133f9217dc58cf270c` (review `5833122821`, B1/B2 fix `18eebd8`); `minu-the-reviewer` squash-merged at `75eee789921948a1d19427c4b2994a88a8766bbe`.
 - 2026-11-09: M14 integrated via PR #25. Minu approved head `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`); `minu-the-reviewer` squash-merged at `02dbff53b794f2d78c58d6b44e08285e8c793ff1`.
+- 2026-11-10: M15 integrated via PR #27. Minu requested changes at `f695bc6b658ddc90938fa96e3da9d8aeef8448b4` (review `5837610546`), the B1–B4 fixes landed in `896a370` and `9f5cdba`, and Minu approved head `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` (review `5837873024`); `minu-the-reviewer` squash-merged at `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`.
 
 ## Open engineering follow-ups
 
@@ -97,6 +98,8 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - **M13 residual notes (not product blockers):** A process crash between `startVideoUpload` returning and a successful session persist can still leave `UPLOADING` with no session URI; retry, reconcile, and a later `publishNow` all refuse (no automatic second insert). If all session-persist retries fail, the attempt becomes `FAILED_FINAL` and the in-memory YouTube session is orphaned until it expires. The no-progress branch in `transferUpload` can still return HTTP 200 with a non-published destination after marking reconciliation-required. `StoragePort.getObject()` still returns the full video as a `Buffer`; very large media may need a streaming boundary. Instagram publish stays fail-closed. Unconfigured M16 scheduling/M18 budget ports still fail closed. Production KMS delivery/rotation remains open.
 
 - **M14 residual notes (not product blockers):** A crash or killed request after a job is marked `RUNNING` can still leave it stuck; an editor can create a new job. Large `video`+`day` reports are not paginated with `startIndex`/`maxResults`, so a truncated table is stored as unavailable days rather than detected as incomplete. The official authorization table still lists `yt-analytics.readonly`; re-check live queries if production collection is denied. `appendSnapshots` remains public because the PostgreSQL integration test uses it directly. Instagram collection stays fail-closed. Collection is editor-triggered; there is no scheduler.
+
+- **M15 residual notes (not product blockers):** `PublishingService.listPublishedPostContexts` has a 500-ID cap, so a channel with more than 500 videos that have in-window metrics fails the report with HTTP 400; it must be chunked. Concurrent recommendation generation can still duplicate rows because there is no unique key on `reportId`+`rank`. `INSUFFICIENT` buckets still expose averages, so the UI must not present them as conclusions. Views per video-day favors young videos. The M08 cost-ledger envelope must be added before binding any real insight adapter. Use channel/date-scoped published-record reads instead of the current workspace-wide page-and-filter. `REJECTED`, `RUNNING`, and `EXPORTED` have no transitions.
 
 - **M10 operational note (not a product blocker):** A pending-upload row can remain when its writer dies before reporting completion. Cleanup keeps the row discoverable and warns about it; its tenant-scoped `RESTRICT` relation prevents deleting the render job until the row is resolved manually. Deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests.
 
