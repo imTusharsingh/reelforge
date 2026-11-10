@@ -9,13 +9,13 @@
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M16 integrated).
+- **Overall phase:** Phase 1 in progress (M00–M18 integrated).
 - **Current release:** v1.
-- **Current integrated commit:** `602183aeed1f2fe9fa086cf819f86fc7de07bb72` (`origin/main` after M16 PR #29).
+- **Current integrated commit:** `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e` (`origin/main` after M18 PR #31; M17 PR #32 at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b` is an ancestor).
 - **Active implementation sessions:** none.
-- **Active work packages:** none; M17 and M18 are next and run in parallel worktrees after this docs-only closeout merges.
+- **Active work packages:** none; M19 is next after this docs-only closeout merges.
 - **Blocked work packages:** none recorded.
-- **Latest core review:** Minu requested changes on M16 PR #29 at `0c6b941c5f53e07885f327280ac2ff4970d381fb` (review `5838818072`, B1–B6), then approved at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` (review `5839211545`) after the fix-forward commits; squash-merged by `minu-the-reviewer` at `602183aeed1f2fe9fa086cf819f86fc7de07bb72`.
+- **Latest core review:** Minu requested changes on M18 PR #31 at `e8533ac3209b6e16e3122fa8ff77ab37c6a7fcec` (review `5839788708`), then approved at `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`); squash-merged by `minu-the-reviewer` at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`. M17 PR #32: REQUEST_CHANGES at `ef987932e8c6f30ecc39e90cd14b9587143e1031` (review `5839809149`), APPROVED at `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` (review `5839978742`); squash-merged by `minu-the-reviewer` at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b`.
 
 ## Frozen architecture summary
 
@@ -30,11 +30,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M16 integrated**
+**Phase 1 in progress - M00–M18 integrated**
 
 Next exact action:
-1. Complete and submit this docs-only M16 integrated closeout PR for Minu's review; do not approve or merge.
-2. After this closeout merges, implement M17 and M18 in parallel worktrees from the new `origin/main` tip (M17 migration `20261116010000`, M18 migration `20261117010000`; M17 merges first, then M18 rebases).
+1. Complete and submit this docs-only M17+M18 integrated closeout PR for Minu's review; do not approve or merge.
+2. After this closeout merges, implement M19 from the new `origin/main` tip (migration `20261118010000`). Do not start M20 here.
 
 ## Module status index
 
@@ -57,12 +57,12 @@ Next exact action:
 | M14 - Analytics Collection & Metric Store | INTEGRATED | `main` (PR #25) | `75b860375068150416a37482abc40223dfebcd4e` | residual notes below; no product blocker |
 | M15 - Performance Intelligence & Learning | INTEGRATED | `main` (PR #27) | `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` | residual notes below; no product blocker |
 | M16 - Workflow Orchestration & Scheduler | INTEGRATED | `main` (PR #29) | `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` | residual notes below; no product blocker |
-| M17 - Notifications & Reporting | NOT_STARTED | none | none | next after this closeout (parallel with M18) |
-| M18 - Usage, Budget & Billing Foundation | NOT_STARTED | none | none | next after this closeout (parallel with M17) |
-| M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | none recorded |
+| M17 - Notifications & Reporting | INTEGRATED | `main` (PR #32) | `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` | residual notes below; no product blocker |
+| M18 - Usage, Budget & Billing Foundation | INTEGRATED | `main` (PR #31) | `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` | residual notes below; no product blocker |
+| M19 - Admin, Security, Audit & Observability | NOT_STARTED | none | none | next after this closeout |
 | M20 - Core Integration & Release Gate | NOT_STARTED | none | none | none recorded |
 
-M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13 is integrated at PR #24, M14 at PR #25, M15 at PR #27, and M16 at PR #29. M17–M20 remain `NOT_STARTED`.
+M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13 is integrated at PR #24, M14 at PR #25, M15 at PR #27, M16 at PR #29, M17 at PR #32, and M18 at PR #31. M19–M20 remain `NOT_STARTED`.
 
 
 ## Open decisions
@@ -89,6 +89,9 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-09: M14 integrated via PR #25. Minu approved head `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`); `minu-the-reviewer` squash-merged at `02dbff53b794f2d78c58d6b44e08285e8c793ff1`.
 - 2026-11-10: M15 integrated via PR #27. Minu requested changes at `f695bc6b658ddc90938fa96e3da9d8aeef8448b4` (review `5837610546`), the B1–B4 fixes landed in `896a370` and `9f5cdba`, and Minu approved head `9f5cdbac0b9bf87bfabf3488f0ce6bfe00f779d0` (review `5837873024`); `minu-the-reviewer` squash-merged at `0e4e01a0b7e0c27b583c697220330ddb8a2848ac`.
 - 2026-11-10: M16 integrated via PR #29. Minu requested changes at `0c6b941c5f53e07885f327280ac2ff4970d381fb` (review `5838818072`, B1–B6), the fixes landed in fix-forward commits ending at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c`, and Minu approved head `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` (review `5839211545`); `minu-the-reviewer` squash-merged at `602183aeed1f2fe9fa086cf819f86fc7de07bb72`.
+- 2026-11-10: M16 status closeout documentation merged via PR #30 at `6e4f2965f3b3c6d4097eae2153bf9874b2d99a63`.
+- 2026-11-10: M17 integrated via PR #32. Minu requested changes at `ef987932e8c6f30ecc39e90cd14b9587143e1031` (review `5839809149`, B1–B3), the fixes landed in `9e8b9d6`, and Minu approved head `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` (review `5839978742`); `minu-the-reviewer` squash-merged at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b`.
+- 2026-11-10: M18 integrated via PR #31. Minu requested changes at `e8533ac3209b6e16e3122fa8ff77ab37c6a7fcec` (review `5839788708`, B1–B2 plus the scheduler policy-error fix), the fixes and a merge of `origin/main` (M17) landed ending at `6c49a4b`, and Minu approved head `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`); `minu-the-reviewer` squash-merged at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`.
 
 ## Open engineering follow-ups
 
@@ -103,6 +106,10 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - **M15 residual notes (not product blockers):** `PublishingService.listPublishedPostContexts` has a 500-ID cap, so a channel with more than 500 videos that have in-window metrics fails the report with HTTP 400; it must be chunked. Concurrent recommendation generation can still duplicate rows because there is no unique key on `reportId`+`rank`. `INSUFFICIENT` buckets still expose averages, so the UI must not present them as conclusions. Views per video-day favors young videos. The M08 cost-ledger envelope must be added before binding any real insight adapter. Use channel/date-scoped published-record reads instead of the current workspace-wide page-and-filter. `REJECTED`, `RUNNING`, and `EXPORTED` have no transitions.
 
 - **M16 residual notes (not product blockers):** Add a per-claim token before raising worker concurrency above 1. A crash-retry of the script, QA, or analytics step can create a new record. A retry after a final QA or render failure re-reads the old reference. BullMQ job re-add is not atomic. Resume can reset a `RECONCILIATION_REQUIRED` step. Resume after M11 QA approval is manual. The scheduler only looks back 5 minutes and does not backfill. A schedule's timezone can override the channel's. Provider limits are per workspace, not global. The worker loads the full `AppModule`. M14 `RUNNING` collection jobs are not reclaimed. Scheduled runs stay blocked (`BUDGET_POLICY_UNAVAILABLE`) until M18 provides the real `BudgetPolicyPort` adapter.
+
+- **M17 residual notes (not product blockers):** R1: the 30 s intake settle window assumes source transactions commit within ~5 s of their timestamp and clock skew stays under ~30 s. R1a: cursor precision is milliseconds only. R1b: the keyset should add a redundant `ts >=` lower bound. R3: a manual report run before metrics arrive stays incomplete. R4: M17 reads M13 `outbox_events` directly. R5: a poison event can block the head of the fan-out queue. R6: members who join later still receive old events. R7: `CHANGES_REQUESTED` / `BLOCKED` review outcomes map to the wrong notification types. R8: the future email adapter must honour the delivery id for idempotency. R9: VIEWERs get failure emails by default; product should confirm. R10: bump the report payload `schemaVersion` on the next shape change. Also: the worker boots a third `AppModule`; published-record scans are capped at 5,000 rows; there is no live email adapter (sender ADR still pending); email bodies carry relative links; the reconciliation re-notify key is per destination and retry count; a review decided before intake is not notified as needed; M14 metric days are platform calendar dates; missed periods are not backfilled; an invalid channel timezone falls back to UTC.
+
+- **M18 residual notes (not product blockers):** The scene-media budget path needs a Postgres integration test. Not-dispatched calls are detected by error code; use the ledger's dispatched flag instead. The partial unique index on `usage_reservations(workspace_id, correlation_id)` exists only in the migration SQL, not in `schema.prisma`; watch `migrate diff`. A generic reserve that reuses a correlation id under a different key returns 500 instead of 409. The M16 run correlation id blocks a second paid script call in the same run, so retries need a new correlation id per attempt. A failed finish-hold expires after 60 minutes. M16 fails over-budget runs instead of pausing them. The expiry sweep is not on a worker tick. Ledger gaps: no video/job id, heuristic category, no RENDER / PUBLISH / ANALYTICS source. Currency mismatch is a permanent block; recovery (delete and recreate the budget, or wait for FX) is documented in M18 `STATUS.md`. Workspace budgets default to UTC. Each check rescans the ledger. The append-only trigger allows deletes too broadly. The existing M08 25 ms prior-day test is flaky under full-suite load.
 
 - **M10 operational note (not a product blocker):** A pending-upload row can remain when its writer dies before reporting completion. Cleanup keeps the row discoverable and warns about it; its tenant-scoped `RESTRICT` relation prevents deleting the render job until the row is resolved manually. Deployment scheduling is still required to invoke the worker/retention pass. FFmpeg remains an explicit local/runner dependency for real-render tests.
 

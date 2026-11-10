@@ -1,17 +1,18 @@
 # M18 Status - Usage, Budget & Billing Foundation
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (PR #31 squash-merged to `main`; docs-only closeout records it)
 - **Assigned session/editor:** Module Implementation Agent, Desktop (TRACXN-LP-784), local session (no cloud agent)
 - **Branch/worktree:** `work/m18-usage-budget-and-billing-foundation` from `origin/main` `6e4f2965f3b3c6d4097eae2153bf9874b2d99a63` (M16 closeout); worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m18`, built in parallel with M17
 - **Last updated:** 2026-11-10 (review 5839788708 fixes, merged with origin/main `f0feccd`)
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`, APPROVED by `minu-the-reviewer`)
+- **Merged commit:** `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e` (squash-merged by `minu-the-reviewer` on 2026-11-10)
 
 ## Current objective
 Control provider spending and expose transparent per-channel usage.
 
 ## Completion estimate
-About 95% (estimate only, not an approval). All six tasks are implemented and tested, and the findings of review 5839788708 (B1, B2, scheduler policy error) are fixed (see "Review 5839788708 fixes"). Waiting for re-review.
+Implemented, reviewed, and integrated via PR #31. Residual notes below are non-blocking follow-ups.
 
 ## Task checklist
 - [x] M18-T01: Usage categories `LLM`, `TTS`, `IMAGE_MEDIA`, `RENDER`, `PUBLISH`, `ANALYTICS_API`, plus `UNCATEGORIZED` for ledger rows whose capability can't be mapped. Usage is read from the EXISTING M08 ledger (`provider_requests`) through read-only joins (`usage-budget.ledger.ts`). M18 records no provider spend of its own.
@@ -117,10 +118,28 @@ Integration coverage (`usage-budget.postgres.integration.test.ts`): NOT_CONFIGUR
 - M18 module alone: 4 files, 33 tests (14 unit, 13 Postgres, 6 M08 paid-call integration). Scene-media unit tests: 21, including 2 new B1 tests.
 
 ## Next exact action
-Minu re-reviews PR #31 at the new head. Merge only after approval.
+None for M18 product work. M17 and M18 are integrated; M19 is next after the docs-only closeout merges.
 
 ## Handoff notes
 Containers `reelforge-m18-db` and `reelforge-m18-redis` were disposable and are removed after verification. `.local-data/` holds the command log and progress file and is gitignored.
 
 ## Reviewer decision
-- Pending.
+- Round 1: REQUEST_CHANGES at `e8533ac3209b6e16e3122fa8ff77ab37c6a7fcec` (review `5839788708`, B1–B2 plus the scheduler policy-error fix).
+- Round 2: APPROVED at `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`) after the fix-forward commits and the merge of `origin/main` (M17).
+- Integration: squash-merged to `main` by `minu-the-reviewer` at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e` (PR #31) on 2026-11-10. State set to INTEGRATED by the docs-only closeout PR; no product rework.
+
+## Carried residual notes (non-blocking)
+- The scene-media budget path needs a Postgres integration test.
+- Not-dispatched calls are detected by error code; use the ledger's dispatched flag instead.
+- The partial unique index on `usage_reservations(workspace_id, correlation_id)` exists only in the migration SQL, not in `schema.prisma`. Watch `migrate diff`.
+- A generic reserve that reuses a correlation id under a different key returns 500 instead of 409.
+- The M16 run correlation id blocks a second paid script call in the same run, so retries need a new correlation id per attempt.
+- A failed finish-hold expires after 60 minutes.
+- M16 fails over-budget runs instead of pausing them.
+- The expiry sweep is not on a worker tick.
+- Ledger gaps: no video/job id, heuristic category, no RENDER / PUBLISH / ANALYTICS source.
+- Currency mismatch is a permanent block. The recovery in "Currency-mismatch recovery" above (delete and recreate the budget, or wait for FX) is carried forward unchanged.
+- Workspace budgets default to UTC.
+- Each check rescans the ledger.
+- The append-only trigger allows deletes too broadly.
+- The M08 25 ms prior-day test is flaky under full-suite load.
