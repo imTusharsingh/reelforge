@@ -30,8 +30,10 @@ function capture(): { lines: string[]; logger: StructuredLogger } {
   const logger = new StructuredLogger({
     service: "test",
     level: "debug",
-    sink: (line) => lines.push(line),
-    clock: () => new Date("2026-11-10T00:00:00.000Z"),
+    sink: (line): void => {
+      lines.push(line);
+    },
+    clock: (): Date => new Date("2026-11-10T00:00:00.000Z"),
   });
   return { lines, logger };
 }
