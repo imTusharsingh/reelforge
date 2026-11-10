@@ -15,6 +15,7 @@ import { createDatabaseClient } from "@reelforge/database";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../../app.module.js";
+import { AuditService } from "../admin/audit.service.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { NOTIFICATION_EMAIL_PORT } from "../notifications/notifications.ports.js";
 import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
@@ -31,6 +32,22 @@ import { BILLING_PROVIDER } from "../usage-budget/usage-budget.types.js";
  * network call is attempted. Offline only (ADR-007/ADR-010). The workspace, user and session rows
  * below are clearly marked test fixtures, not product data.
  */
+/**
+ * Test-seam audit sink. The real M19 `HttpAuditInterceptor` still runs, but its entries are kept in
+ * memory instead of the shared `audit_events` table, because that table is append-only and other
+ * suites read it by time window; writing hundreds of denied sweep rows there would bleed into them.
+ */
+class CapturingAuditService {
+  public readonly entries: Array<Readonly<Record<string, unknown>>> = [];
+  public record(entry: Readonly<Record<string, unknown>>): Promise<unknown> {
+    this.entries.push(entry);
+    return Promise.resolve({ ...entry, id: randomUUID() });
+  }
+  public list(): Promise<unknown> {
+    return Promise.resolve({ items: [], nextBefore: null });
+  }
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
 const PREFIX = "/api/v1";
@@ -53,6 +70,7 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
   const db = databaseUrl === undefined ? undefined : createDatabaseClient(databaseUrl);
   let app: INestApplication | undefined;
   let token = "";
+  const auditSink = new CapturingAuditService();
   const fetchSpy = vi.fn(async (): Promise<Response> => {
     throw new Error("M20 release gate: live network call attempted");
   });
@@ -82,6 +100,8 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
       .useValue(db)
       .overrideProvider(WORKFLOW_QUEUE_PORT)
       .useValue(new NotConfiguredWorkflowQueue())
+      .overrideProvider(AuditService)
+      .useValue(auditSink)
       .compile();
     app = module.createNestApplication({ logger: false });
     app.setGlobalPrefix("api/v1");

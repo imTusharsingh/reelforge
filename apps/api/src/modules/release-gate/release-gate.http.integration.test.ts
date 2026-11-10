@@ -8,6 +8,7 @@ import { createDatabaseClient } from "@reelforge/database";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../../app.module.js";
+import { AuditService } from "../admin/audit.service.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { NotificationIntakeSources } from "../notifications/notifications.sources.js";
 import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
@@ -21,6 +22,22 @@ import { WORKFLOW_QUEUE_PORT } from "../orchestration/orchestration.types.js";
  * replaced by a spy that throws, and the workflow queue is the NOT_CONFIGURED adapter. Passing it
  * proves local authorization and contract behaviour only, not live provider integration.
  */
+/**
+ * Test-seam audit sink. The real M19 `HttpAuditInterceptor` still runs, but its entries are kept in
+ * memory instead of the shared `audit_events` table, because that table is append-only and other
+ * suites read it by time window; writing hundreds of denied sweep rows there would bleed into them.
+ */
+class CapturingAuditService {
+  public readonly entries: Array<Readonly<Record<string, unknown>>> = [];
+  public record(entry: Readonly<Record<string, unknown>>): Promise<unknown> {
+    this.entries.push(entry);
+    return Promise.resolve({ ...entry, id: randomUUID() });
+  }
+  public list(): Promise<unknown> {
+    return Promise.resolve({ items: [], nextBefore: null });
+  }
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
 const PREFIX = "/api/v1";
@@ -114,6 +131,7 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
   let app: INestApplication | undefined;
   let victimToken = "";
   let attackerToken = "";
+  const auditSink = new CapturingAuditService();
   const fetchSpy = vi.fn(async (): Promise<Response> => {
     throw new Error("M20 release gate: live network call attempted");
   });
@@ -152,6 +170,8 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
       .useValue(db)
       .overrideProvider(WORKFLOW_QUEUE_PORT)
       .useValue(new NotConfiguredWorkflowQueue())
+      .overrideProvider(AuditService)
+      .useValue(auditSink)
       .compile();
     app = module.createNestApplication({ logger: false });
     app.setGlobalPrefix("api/v1");
@@ -196,11 +216,12 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
     expect(await db.channel.count({ where: { workspaceId: victimWorkspaceId } })).toBe(1);
     expect(await db.workflowRun.count({ where: { workspaceId: victimWorkspaceId } })).toBe(0);
     expect(await db.providerRequest.count({ where: { workspaceId: victimWorkspaceId } })).toBe(0);
-    expect(
-      await db.auditEvent.count({
-        where: { workspaceId: victimWorkspaceId, actorUserId: attackerId, outcome: "SUCCESS" },
-      }),
-    ).toBe(0);
+    // The real audit interceptor saw the attacker's requests and recorded none as a success.
+    const attackerEntries = auditSink.entries.filter(
+      (entry) => entry["actorUserId"] === attackerId,
+    );
+    expect(attackerEntries.length).toBeGreaterThan(0);
+    expect(attackerEntries.filter((entry) => entry["outcome"] === "SUCCESS")).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
