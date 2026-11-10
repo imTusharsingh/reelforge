@@ -141,6 +141,15 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
   4. M18 provides the real `BudgetPolicyPort` adapter. Until it is bound, scheduled runs stay blocked with `BUDGET_POLICY_UNAVAILABLE`; manual runs are allowed.
 - **Consequence:** Changing the Redis client, removing the script approval wait, or changing the M17/M18 migration order requires a later ADR.
 
+## ADR-018 - M17 intake cursor and M18 paid-call budget reservation
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of the M17+M18 integration closeout. M17 PR #32 was approved at `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29`, review `5839978742`, and squash-merged at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b`. M18 PR #31 was approved at `6c49a4b878126e3d1a3639d1db4ab0db8944c79c`, review `5842769674`, and squash-merged at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`.)
+- **Decision:** These record review decisions already approved on PR #32 and PR #31; no new policy.
+  1. M17 notification intake uses a strict `(ts, id)` keyset with no stall branch. A fresh cursor starts at `now - settle` and does not replay history unless `intakeBackfill` is set. The settle window assumes source transactions commit within ~5 s and clock skew stays under ~30 s (M17 residual R1).
+  2. M18 paid script and scene-media calls reserve through M18 **before** the provider is called. A failed call that was already dispatched is charged at its estimate. Only a provably not-dispatched call is released. If the budget policy throws, the M16 scheduler marks the slot `SKIPPED` / `BUDGET_POLICY_ERROR`.
+  3. ADR-017 item 4 is done: the real `BudgetPolicyPort` adapter (M18 `UsageBudgetPolicy`) is bound. Unconfigured budgets still block scheduled runs and allow manual ones.
+- **Consequence:** Replaying intake history by default, calling a paid provider before an M18 reservation, or treating a dispatched failure as free requires a later ADR.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:
