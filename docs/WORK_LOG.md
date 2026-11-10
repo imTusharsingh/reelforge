@@ -769,3 +769,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: The M15 residual notes above are documented as non-blocking follow-ups.
 - Next exact action: Push, open the docs-only closeout PR, request `minu-the-reviewer`, and stop without merging.
 - Related status/ADR: M15 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M16 workflow orchestration and scheduler
+- Actor/session: Module Implementation Agent, Desktop (TRACXN-LP-784). Started in an opencode session that stopped at a model usage limit with uncommitted work, which was finished locally in the main checkout on branch `work/m16-workflow-orchestration-and-scheduler` from `origin/main` `727140ce025b9691aca1f0999c889983c5b8d32d`. No worktree, no cloud agent.
+- Work package: M16 T01–T09.
+- Changes made: Additive `OrchestrationModule` with Postgres-backed run/step/job/event state, CAS transitions, a `WorkflowQueuePort` (BullMQ 6.6.0, in-memory, and NOT_CONFIGURED adapters), deterministic job ids, retries with backoff, and dead letter; channel-timezone/DST schedule evaluation with slot claims; the default NOT_CONFIGURED budget port, which blocks scheduled runs with `BUDGET_POLICY_UNAVAILABLE`; the M11 approval wait; Postgres lease and rate limits; stale-lease recovery to RETRY_WAIT or RECONCILIATION_REQUIRED; correlation ids in the event history; API endpoints for start, list, inspect, cancel, retry, and resume; worker orchestration handlers next to the composition poller with SIGTERM handling and an injectable clock. The migration is `20261114010000_m16_workflow_orchestration`. One additive read was added: `ChannelService.listSchedulerCandidates`.
+- Commands actually run and results: see M16 `STATUS.md`. install, lint, format:check, typecheck, test (56 files passed / 2 skipped; 390 tests passed / 7 skipped), build, db:validate, and db:migrate:deploy from scratch (23 migrations) all **passed**. The Redis suite was **not run** (skipped) because BullMQ's Redis client peer is not installed.
+- External calls: NONE to Google, Meta, AI, or social providers. Tests use fixture dispatchers.
+- Decisions/approvals: Followed the Core approval in the M16 task. No new dependency beyond `bullmq` 6.6.0 in `apps/api` at the existing pin. `ci.yml` and `PROJECT_STATE.md` are untouched.
+- Defects/risks/blockers: The BullMQ Redis client peer (`ioredis`/`redis`) is missing and adding it needs Core approval. Also: LIMIT_WAIT consumes an attempt, approval requires a manual resume, there is no scheduler backfill beyond 5 minutes, and M14 stuck-job reclaim is deferred.
+- Next exact action: Minu review of the M16 PR, then a Core decision on the Redis client pin. Do not merge until then.
+- Related status/ADR: M16 `STATUS.md`; ADR-005, ADR-006, ADR-007, and ADR-010.

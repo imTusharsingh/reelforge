@@ -223,6 +223,9 @@ importers:
       '@reelforge/social-providers':
         specifier: workspace:*
         version: link:../../packages/social-providers
+      bullmq:
+        specifier: 6.6.0
+        version: 6.6.0(pg@8.23.1)
       express:
         specifier: 5.3.0
         version: 5.3.0

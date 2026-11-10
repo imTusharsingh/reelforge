@@ -16,6 +16,7 @@ import { SocialAccountsModule } from "./modules/social-accounts/social-accounts.
 import { PublishingModule } from "./modules/publishing/publishing.module.js";
 import { AnalyticsModule } from "./modules/analytics/analytics.module.js";
 import { PerformanceIntelligenceModule } from "./modules/performance-intelligence/performance-intelligence.module.js";
+import { OrchestrationModule } from "./modules/orchestration/orchestration.module.js";
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { PerformanceIntelligenceModule } from "./modules/performance-intelligenc
     PublishingModule,
     AnalyticsModule,
     PerformanceIntelligenceModule,
+    OrchestrationModule,
   ],
   controllers: [HealthController],
 })

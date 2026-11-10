@@ -61,6 +61,64 @@ enum ChannelStatus {
   ARCHIVED
 }
 
+enum WorkflowTrigger {
+  MANUAL
+  SCHEDULED
+}
+
+enum WorkflowDefinitionKey {
+  GENERATION
+  PUBLISH
+  ANALYTICS
+}
+
+enum WorkflowDispatchStatus {
+  NOT_CONFIGURED
+  DISPATCHED
+}
+
+enum WorkflowBudgetDecision {
+  NOT_CONFIGURED
+  ALLOWED
+  BLOCKED
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  WAITING_APPROVAL
+  SUCCEEDED
+  RETRY_WAIT
+  FAILED
+  CANCELED
+  SKIPPED
+  RECONCILIATION_REQUIRED
+}
+
+enum WorkflowJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  RETRY_WAIT
+  FAILED
+  DEAD_LETTER
+  CANCELED
+}
+
+enum WorkflowLeaseScope {
+  WORKSPACE
+  CHANNEL
+  PROVIDER
+  JOB_TYPE
+}
+
+enum WorkflowScheduleSlotStatus {
+  CLAIMED
+  STARTED
+  SKIPPED
+}
+
 enum AssetOwnership {
   USER_UPLOADED
   STARTER_LIBRARY
@@ -198,6 +256,13 @@ model Workspace {
   characterGroupAssignments   CharacterGroupAssignment[]
   assetUsageReferences        AssetUsageReference[]
   workflowRuns                WorkflowRun[]
+  workflowSteps               WorkflowStep[]
+  workflowJobs                WorkflowJob[]
+  workflowEvents              WorkflowEvent[]
+  workflowScheduleSlots       WorkflowScheduleSlot[]
+  workflowSchedulerCursors    WorkflowSchedulerCursor[]
+  workflowLimitLeases         WorkflowLimitLease[]
+  workflowRateCounters        WorkflowRateCounter[]
   outboxEvents                OutboxEvent[]
   defaultForUsers             User[]                       @relation("UserDefaultWorkspace")
   activeConfigSnapshotId      String?                      @map("active_config_snapshot_id") @db.Uuid
@@ -327,6 +392,9 @@ model Channel {
   performanceRecommendations PerformanceRecommendation[]
   performanceExperiments    PerformanceExperiment[]
   performanceStrategyChanges PerformanceStrategyChange[]
+  workflowRuns              WorkflowRun[]
+  workflowScheduleSlots     WorkflowScheduleSlot[]
+  workflowSchedulerCursors  WorkflowSchedulerCursor[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -592,19 +660,191 @@ model Post {
 }
 
 model WorkflowRun {
-  id             String        @id @default(uuid()) @db.Uuid
-  workspaceId    String        @map("workspace_id") @db.Uuid
-  correlationId  String        @map("correlation_id") @db.Uuid
-  idempotencyKey String        @map("idempotency_key")
-  state          WorkflowState
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id                String                   @id @default(uuid()) @db.Uuid
+  workspaceId       String                   @map("workspace_id") @db.Uuid
+  channelId         String?                  @map("channel_id") @db.Uuid
+  correlationId     String                   @map("correlation_id") @db.Uuid
+  idempotencyKey    String                   @map("idempotency_key")
+  definitionKey     WorkflowDefinitionKey    @default(GENERATION) @map("definition_key")
+  trigger           WorkflowTrigger          @default(MANUAL)
+  triggeredByUserId String?                  @map("triggered_by_user_id") @db.Uuid
+  state             WorkflowState
+  dispatchStatus    WorkflowDispatchStatus   @default(NOT_CONFIGURED) @map("dispatch_status")
+  budgetDecision    WorkflowBudgetDecision   @default(NOT_CONFIGURED) @map("budget_decision")
+  budgetReason      String?                  @map("budget_reason")
+  input             Json                     @default("{}")
+  nextAction        String?                  @map("next_action")
+  pausedReason      String?                  @map("paused_reason")
+  currentStepKey    String?                  @map("current_step_key")
+  lastErrorCode     String?                  @map("last_error_code")
+  lastErrorMessage  String?                  @map("last_error_message")
+  startedAt         DateTime?                @map("started_at") @db.Timestamptz(6)
+  completedAt       DateTime?                @map("completed_at") @db.Timestamptz(6)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel?                 @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  steps             WorkflowStep[]
+  jobs              WorkflowJob[]
+  events            WorkflowEvent[]
 
   @@unique([workspaceId, idempotencyKey])
   @@unique([workspaceId, id])
   @@index([workspaceId, state, createdAt])
+  @@index([workspaceId, channelId, createdAt])
   @@map("workflow_runs")
+}
+
+model WorkflowStep {
+  id             String             @id @default(uuid()) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  runId          String             @map("run_id") @db.Uuid
+  stepKey        String             @map("step_key")
+  sequence       Int
+  status         WorkflowStepStatus
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3) @map("max_attempts")
+  retryGeneration Int               @default(0) @map("retry_generation")
+  sideEffect     Boolean            @default(false) @map("side_effect")
+  idempotencyKey String             @map("idempotency_key")
+  resultRef      String?            @map("result_ref")
+  resultType     String?            @map("result_type")
+  errorCode      String?            @map("error_code")
+  errorMessage   String?            @map("error_message")
+  leaseOwner     String?            @map("lease_owner")
+  leaseExpiresAt DateTime?          @map("lease_expires_at") @db.Timestamptz(6)
+  nextAttemptAt  DateTime?          @map("next_attempt_at") @db.Timestamptz(6)
+  startedAt      DateTime?          @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?          @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run            WorkflowRun        @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  jobs           WorkflowJob[]
+  events         WorkflowEvent[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, runId, stepKey])
+  @@index([workspaceId, status, nextAttemptAt])
+  @@index([workspaceId, status, leaseExpiresAt])
+  @@map("workflow_steps")
+}
+
+model WorkflowJob {
+  id             String            @id @default(uuid()) @db.Uuid
+  workspaceId    String            @map("workspace_id") @db.Uuid
+  runId          String            @map("run_id") @db.Uuid
+  stepId         String            @map("step_id") @db.Uuid
+  jobId          String            @map("job_id")
+  queueName      String            @map("queue_name")
+  attempt        Int
+  status         WorkflowJobStatus
+  payload        Json
+  errorCode      String?           @map("error_code")
+  errorMessage   String?           @map("error_message")
+  deadLetteredAt DateTime?         @map("dead_lettered_at") @db.Timestamptz(6)
+  startedAt      DateTime?         @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?         @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run            WorkflowRun       @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  step           WorkflowStep      @relation(fields: [workspaceId, stepId], references: [workspaceId, id], onDelete: Cascade)
+  events         WorkflowEvent[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, jobId])
+  @@index([workspaceId, runId, createdAt])
+  @@index([workspaceId, status, createdAt])
+  @@map("workflow_jobs")
+}
+
+model WorkflowEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  workspaceId   String        @map("workspace_id") @db.Uuid
+  runId         String        @map("run_id") @db.Uuid
+  stepId        String?       @map("step_id") @db.Uuid
+  jobId         String?       @map("job_id") @db.Uuid
+  eventType     String        @map("event_type")
+  correlationId String        @map("correlation_id") @db.Uuid
+  causationId   String?       @map("causation_id") @db.Uuid
+  payload       Json
+  occurredAt    DateTime      @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run           WorkflowRun   @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  step          WorkflowStep? @relation(fields: [workspaceId, stepId], references: [workspaceId, id], onDelete: Cascade)
+  job           WorkflowJob?  @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@index([workspaceId, runId, occurredAt])
+  @@map("workflow_events")
+}
+
+model WorkflowScheduleSlot {
+  id           String                     @id @default(uuid()) @db.Uuid
+  workspaceId  String                     @map("workspace_id") @db.Uuid
+  channelId    String                     @map("channel_id") @db.Uuid
+  slotKey      String                     @map("slot_key")
+  localDate    String                     @map("local_date")
+  localTime    String                     @map("local_time")
+  scheduledFor DateTime                   @map("scheduled_for") @db.Timestamptz(6)
+  status       WorkflowScheduleSlotStatus
+  reason       String?
+  runId        String?                    @map("run_id") @db.Uuid
+  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace    Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel      Channel                    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, channelId, slotKey])
+  @@index([workspaceId, scheduledFor])
+  @@map("workflow_schedule_slots")
+}
+
+model WorkflowSchedulerCursor {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  channelId       String    @map("channel_id") @db.Uuid
+  lastSlotKey     String?   @map("last_slot_key")
+  lastEvaluatedAt DateTime  @map("last_evaluated_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel         Channel   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, channelId])
+  @@map("workflow_scheduler_cursors")
+}
+
+model WorkflowLimitLease {
+  id          String             @id @default(uuid()) @db.Uuid
+  workspaceId String             @map("workspace_id") @db.Uuid
+  scope       WorkflowLeaseScope
+  scopeKey    String             @map("scope_key")
+  slot        Int
+  holderId    String             @map("holder_id")
+  acquiredAt  DateTime           @default(now()) @map("acquired_at") @db.Timestamptz(6)
+  expiresAt   DateTime           @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, scope, scopeKey, slot])
+  @@index([workspaceId, scope, scopeKey, expiresAt])
+  @@map("workflow_limit_leases")
+}
+
+model WorkflowRateCounter {
+  id          String             @id @default(uuid()) @db.Uuid
+  workspaceId String             @map("workspace_id") @db.Uuid
+  scope       WorkflowLeaseScope
+  scopeKey    String             @map("scope_key")
+  windowStart DateTime           @map("window_start") @db.Timestamptz(6)
+  count       Int                @default(0)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, scope, scopeKey, windowStart])
+  @@map("workflow_rate_counters")
 }
 
 model OutboxEvent {
