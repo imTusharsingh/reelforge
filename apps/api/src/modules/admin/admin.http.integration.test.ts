@@ -27,6 +27,44 @@ const registerEmail = `m19-${randomUUID()}@http.invalid`;
 const SECRET_PASSWORD = "Sup3r-Secret-Passw0rd!";
 const PREFIX = "/api/v1";
 
+/**
+ * Records every model/raw call the application makes through the injected Prisma client, so the
+ * health test can prove which database work a probe does (and that nothing else, such as a
+ * provider ledger row or a usage reservation, is written), independent of other parallel suites.
+ */
+function recordingClient<T extends object>(client: T, calls: string[]): T {
+  return new Proxy(client, {
+    get(target, prop, receiver): unknown {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof prop !== "string") return value;
+      if (typeof value === "function") {
+        return (...args: unknown[]): unknown => {
+          calls.push(prop);
+          return (value as (...inner: unknown[]) => unknown).apply(target, args);
+        };
+      }
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        !prop.startsWith("_") &&
+        !prop.startsWith("$")
+      ) {
+        return new Proxy(value, {
+          get(delegate, method): unknown {
+            const fn: unknown = Reflect.get(delegate, method);
+            if (typeof fn !== "function") return fn;
+            return (...args: unknown[]): unknown => {
+              calls.push(`${prop}.${String(method)}`);
+              return (fn as (...inner: unknown[]) => unknown).apply(delegate, args);
+            };
+          },
+        });
+      }
+      return value;
+    },
+  });
+}
+
 async function session(
   db: ReturnType<typeof createDatabaseClient>,
   userId: string,
@@ -48,6 +86,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     outsider: "",
   };
   let registeredUserId = "";
+  const dbCalls: string[] = [];
 
   const server = (): never => app!.getHttpServer() as never;
   const auth = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
@@ -118,7 +157,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     process.env["LOG_LEVEL"] = "warn";
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider("DATABASE")
-      .useValue(db)
+      .useValue(recordingClient(db, dbCalls))
       .overrideProvider(WORKFLOW_QUEUE_PORT)
       .useValue(new NotConfiguredWorkflowQueue())
       .compile();
@@ -167,7 +206,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
   it("serves /health without provider calls or charges, with liveness and readiness probes", async () => {
     if (!db) return;
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const before = [await db.providerRequest.count(), await db.usageReservation.count()];
+    dbCalls.length = 0;
     const health = await request(server()).get(`${PREFIX}/health`).expect(200);
     expect(health.body).toEqual({ status: "ok", queue: "NOT_CONFIGURED", database: "OK" });
     await request(server())
@@ -178,7 +217,9 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
       .expect(200)
       .expect((response) => expect(response.body).toMatchObject({ status: "ok", database: "OK" }));
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect([await db.providerRequest.count(), await db.usageReservation.count()]).toEqual(before);
+    // The only database work across the three probes is the two readiness `SELECT 1` checks
+    // (plain /health and ?probe=readiness); liveness touches nothing. No ledger or usage writes.
+    expect(dbCalls).toEqual(["$queryRaw", "$queryRaw"]);
     fetchSpy.mockRestore();
   });
 
