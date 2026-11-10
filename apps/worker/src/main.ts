@@ -1,10 +1,15 @@
 import "reflect-metadata";
+import { Logger } from "@nestjs/common";
+import { bootstrapProcessObservability } from "@reelforge/observability";
 import { createCompositionPoller } from "./handlers/composition/factory.js";
 import { CompositionWorkerHandler } from "./handlers/composition/handler.js";
 import { createOrchestrationRuntime } from "./handlers/orchestration/factory.js";
 import { OrchestrationWorkerHandler } from "./handlers/orchestration/handler.js";
 import { createNotificationsRuntime } from "./handlers/notifications/factory.js";
 import { NotificationsWorkerHandler } from "./handlers/notifications/handler.js";
+
+// M19-T03: redacting JSON logs for console.* and every Nest context the worker boots.
+Logger.overrideLogger(bootstrapProcessObservability("worker").frameworkLogger);
 
 const composition = createCompositionPoller(process.env);
 const compositionHandler = new CompositionWorkerHandler((batch) =>

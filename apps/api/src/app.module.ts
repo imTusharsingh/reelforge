@@ -19,6 +19,7 @@ import { PerformanceIntelligenceModule } from "./modules/performance-intelligenc
 import { OrchestrationModule } from "./modules/orchestration/orchestration.module.js";
 import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 import { UsageBudgetModule } from "./modules/usage-budget/usage-budget.module.js";
+import { AdminModule } from "./modules/admin/admin.module.js";
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { UsageBudgetModule } from "./modules/usage-budget/usage-budget.module.js
     OrchestrationModule,
     NotificationsModule,
     UsageBudgetModule,
+    AdminModule,
   ],
   controllers: [HealthController],
 })

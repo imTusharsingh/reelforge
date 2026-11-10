@@ -220,6 +220,9 @@ importers:
       '@reelforge/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@reelforge/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@reelforge/social-providers':
         specifier: workspace:*
         version: link:../../packages/social-providers
@@ -291,6 +294,9 @@ importers:
       '@reelforge/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@reelforge/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       bullmq:
         specifier: 6.6.0
         version: 6.6.0(ioredis@5.11.1)(pg@8.23.1)
@@ -343,7 +349,11 @@ importers:
         specifier: 24.19.2
         version: 24.19.2
 
-  packages/observability: {}
+  packages/observability:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
 
   packages/shared: {}
 

@@ -860,3 +860,23 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: The M17 and M18 residual notes are documented as non-blocking follow-ups.
 - Next exact action: Minu reviews this closeout PR; then M19.
 - Related status/ADR: M17 and M18 `STATUS.md`; ADR-017, ADR-018.
+
+## 2026-11-10 - M19 admin, security, audit and observability
+- Actor/session: Module Implementation Agent, Desktop (TRACXN-LP-784), local session, no cloud agent. Main checkout on branch `work/m19-admin-security-audit-and-observability`, started from `origin/main` `7e862fe` and merged with `54db53f` (closeout PR #33); no rebase, no force-push.
+- Work package: M19 T01–T08.
+- Changes made:
+  - `packages/observability`, with no third-party dependencies: redaction, JSON logs, AsyncLocalStorage correlation context and W3C traceparent, Prometheus-text metrics, and OTel-shaped spans. It is installed in the API and worker bootstraps.
+  - New `AdminModule`, which adds:
+    - an append-only `audit_events` table (no FKs; triggers reject UPDATE/DELETE/TRUNCATE), fed by a global HTTP audit interceptor;
+    - OWNER-only admin views (failed jobs, queue depth, provider status, recent events, audit log);
+    - an emergency stop with GLOBAL env, WORKSPACE and CHANNEL scopes. It composes with M16 (budget-policy decorator and a step-boundary `PAUSED/EMERGENCY_STOP`), M18 (`reservePaidCall` refused) and M13 (preflight fails), and still allows reconciliation;
+    - a token-gated `/ops/metrics` route.
+  - `/health` now has a Postgres readiness check and `probe=liveness|readiness` modes.
+  - Additive migration `20261118010000_m19_admin_security_audit_observability`.
+  - Docs: security baseline and security review checklist.
+- Commands actually run and results: see M19 `STATUS.md`. Frozen install, lint, format:check, typecheck, build, db:validate and the fresh-DB migrate (27 migrations) all passed. Migrate diff shows no M19 drift. `pnpm test` passed with and without Redis (counts in STATUS). `pnpm audit --prod` found no known vulnerabilities; the full audit found 1 moderate dev-only issue (minimatch via eslint).
+- External calls: NONE. Tests use fixtures and disposable Postgres/Redis only; health makes no provider calls.
+- Decisions/approvals: the conservative Core decisions are listed in M19 `STATUS.md` under "Core decisions requested" and await Minu. Workspace OWNER is admin, with no new role. No new external dependency. `ci.yml` and `PROJECT_STATE.md` are untouched.
+- Defects/risks/blockers: T07 (retention/deletion/export) is blocked on the pending retention ADR, so no periods were invented. Domain-level before/after audit diffs are not captured for every route (route-level records only).
+- Next exact action: Minu reviews the M19 PR; do not merge before approval.
+- Related status/ADR: M19 `STATUS.md`; ADR-003, ADR-007, ADR-010, ADR-012, ADR-017.

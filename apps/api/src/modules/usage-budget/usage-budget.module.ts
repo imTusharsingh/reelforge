@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { EmergencyStopModule } from "../admin/emergency-stop.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { NotConfiguredBillingProvider } from "./usage-budget.billing.js";
@@ -8,7 +9,7 @@ import { UsageBudgetService } from "./usage-budget.service.js";
 import { BILLING_PROVIDER, USAGE_CLOCK } from "./usage-budget.types.js";
 
 @Module({
-  imports: [IdentityModule, WorkspaceModule],
+  imports: [IdentityModule, WorkspaceModule, EmergencyStopModule],
   controllers: [UsageBudgetController],
   providers: [
     UsageBudgetService,

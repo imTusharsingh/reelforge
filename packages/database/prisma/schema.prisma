@@ -309,6 +309,7 @@ model Workspace {
   usageReservations           UsageReservation[]
   usageAdjustments            UsageAdjustment[]
   usageAuditRecords           UsageAuditRecord[]
+  emergencyStops              EmergencyStop[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -410,6 +411,7 @@ model Channel {
   workflowScheduleSlots     WorkflowScheduleSlot[]
   workflowSchedulerCursors  WorkflowSchedulerCursor[]
   usageBudgets              UsageBudget[]
+  emergencyStops            EmergencyStop[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -2333,4 +2335,75 @@ model UsageAuditRecord {
   @@unique([workspaceId, id])
   @@index([workspaceId, createdAt])
   @@map("usage_audit_records")
+}
+
+// M19 admin, security, audit & observability (additive). `audit_events` deliberately has no
+// foreign keys so audit history survives workspace/user deletion; the migration adds triggers that
+// reject every UPDATE, DELETE, and TRUNCATE (tighter than the M18 usage audit trigger).
+enum AuditCategory {
+  AUTH
+  CONFIG
+  APPROVAL
+  CONNECTION
+  PUBLISHING
+  ADMIN
+  OPERATION
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+enum EmergencyStopScope {
+  WORKSPACE
+  CHANNEL
+}
+
+model AuditEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  occurredAt    DateTime      @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  workspaceId   String?       @map("workspace_id") @db.Uuid
+  actorUserId   String?       @map("actor_user_id") @db.Uuid
+  category      AuditCategory
+  action        String
+  method        String?
+  route         String?
+  outcome       AuditOutcome
+  statusCode    Int?          @map("status_code")
+  errorCode     String?       @map("error_code")
+  targetIds     Json          @default("{}") @map("target_ids")
+  metadata      Json          @default("{}")
+  correlationId String        @map("correlation_id") @db.Uuid
+  traceId       String?       @map("trace_id")
+
+  @@index([workspaceId, occurredAt, id])
+  @@index([occurredAt, id])
+  @@index([actorUserId, occurredAt])
+  @@map("audit_events")
+}
+
+model EmergencyStop {
+  id              String             @id @default(uuid()) @db.Uuid
+  workspaceId     String             @map("workspace_id") @db.Uuid
+  scope           EmergencyStopScope
+  channelId       String?            @map("channel_id") @db.Uuid
+  scopeKey        String             @map("scope_key")
+  active          Boolean            @default(false)
+  reason          String?
+  setByUserId     String?            @map("set_by_user_id") @db.Uuid
+  setAt           DateTime?          @map("set_at") @db.Timestamptz(6)
+  clearedByUserId String?            @map("cleared_by_user_id") @db.Uuid
+  clearedAt       DateTime?          @map("cleared_at") @db.Timestamptz(6)
+  version         Int                @default(0)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel         Channel?           @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, scopeKey])
+  @@unique([workspaceId, id])
+  @@index([workspaceId, active])
+  @@map("emergency_stops")
 }

@@ -6,8 +6,14 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
+import {
+  EMERGENCY_STOP_PORT,
+  EmergencyStopError,
+  type EmergencyStopPort,
+} from "../admin/emergency-stop.types.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import {
   categorize,
@@ -191,6 +197,10 @@ export class UsageBudgetService {
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
     @Inject(USAGE_CLOCK) private readonly clock: () => Date,
+    // M19-T06: optional so positional test construction keeps working; bound in UsageBudgetModule.
+    @Optional()
+    @Inject(EMERGENCY_STOP_PORT)
+    private readonly emergencyStop?: EmergencyStopPort,
   ) {}
 
   // ---------------------------------------------------------------- budgets (T02) and admin (T05)
@@ -531,6 +541,15 @@ export class UsageBudgetService {
   ): Promise<PaidCallReservation | null> {
     let result: ReserveResult;
     try {
+      // M19-T06: an active emergency stop refuses every paid M08 call before any reservation or
+      // ledger row exists (409 EMERGENCY_STOP), so the provider is never called.
+      if (this.emergencyStop !== undefined) {
+        const stop = await this.emergencyStop.check({
+          workspaceId: input.workspaceId,
+          channelId: input.channelId,
+        });
+        if (stop.stopped) throw new EmergencyStopError(stop, "the paid provider call");
+      }
       const currency = input.currency.trim().toUpperCase();
       result = await this.reserve(input.workspaceId, {
         channelId: input.channelId,

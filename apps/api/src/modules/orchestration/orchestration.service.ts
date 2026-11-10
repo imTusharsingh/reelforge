@@ -7,9 +7,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import { EMERGENCY_STOP_PORT, type EmergencyStopPort } from "../admin/emergency-stop.types.js";
 import { ChannelService } from "../channel/channel.service.js";
 import { QualityService } from "../quality/quality.service.js";
 import {
@@ -118,6 +120,10 @@ export class OrchestrationService {
     private readonly channels: ChannelService,
     private readonly quality: QualityService,
     @Inject(ORCHESTRATION_CLOCK) private readonly clock: () => Date,
+    // M19-T06: optional so positional test construction keeps working; bound in OrchestrationModule.
+    @Optional()
+    @Inject(EMERGENCY_STOP_PORT)
+    private readonly emergencyStop?: EmergencyStopPort,
   ) {}
 
   /** Releases the queue connection owned by this service. */
@@ -470,6 +476,16 @@ export class OrchestrationService {
     }
     if (run.state !== "PAUSED")
       throw new ConflictException("Only a paused or approval-waiting workflow run can resume");
+    if (this.emergencyStop !== undefined) {
+      const stop = await this.emergencyStop.check({
+        workspaceId: run.workspaceId,
+        channelId: run.channelId,
+      });
+      if (stop.stopped)
+        throw new ConflictException(
+          `Emergency stop (${stop.scope ?? "UNKNOWN"}) is active; clear it before resuming the run`,
+        );
+    }
     if (run.channelId !== null) {
       const channel = await this.channels.get(context, run.channelId);
       if (channel.status !== "ACTIVE")
@@ -570,6 +586,16 @@ export class OrchestrationService {
     // Only the job id the step currently expects may claim it; older deliveries are superseded.
     if (payload.jobId !== this.expectedJobId(run.id, step))
       return this.noop(payload, "superseded job");
+    // M19-T06 emergency stop: a step that would start new work pauses the run at this boundary,
+    // the same way CHANNEL_PAUSED does. WAITING_EXTERNAL polls (re-checking work that already
+    // exists) continue, so in-flight external work can still be reconciled.
+    if (step.status !== "WAITING_EXTERNAL" && this.emergencyStop !== undefined) {
+      const stop = await this.emergencyStop.check({
+        workspaceId: run.workspaceId,
+        channelId: run.channelId,
+      });
+      if (stop.stopped) return this.pauseForEmergencyStop(run, step, payload);
+    }
     const due = new Date(now.getTime() + CLAIM_SKEW_MS);
     if (step.nextAttemptAt !== null && step.nextAttemptAt.getTime() > due.getTime())
       return this.noop(payload, "step is not due yet");
@@ -2027,6 +2053,35 @@ export class OrchestrationService {
     });
     if (!run) throw new NotFoundException("Workflow run not found");
     return run;
+  }
+
+  /** M19-T06: pauses an active run before its next step starts (no step claim, no dispatch). */
+  private async pauseForEmergencyStop(
+    run: RunRecord,
+    step: StepRecord,
+    payload: WorkflowQueueJob,
+  ): Promise<WorkflowJobProcessResult> {
+    const paused = await this.db.workflowRun.updateMany({
+      where: {
+        workspaceId: run.workspaceId,
+        id: run.id,
+        state: { in: transitionFrom("RUN", ["QUEUED", "RUNNING", "RETRY_WAIT"], "PAUSED") },
+      },
+      data: {
+        state: "PAUSED",
+        currentStepKey: step.stepKey,
+        pausedReason: "EMERGENCY_STOP",
+        nextAction: "Clear the emergency stop, then resume the run",
+      },
+    });
+    if (paused.count > 0)
+      await this.recordEvent(
+        run,
+        "WORKFLOW_RUN_PAUSED",
+        { stepKey: step.stepKey, reason: "EMERGENCY_STOP" },
+        step.id,
+      );
+    return { ...this.noop(payload, "emergency stop"), status: "PAUSED" };
   }
 
   private noop(
