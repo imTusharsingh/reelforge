@@ -540,7 +540,7 @@ export class QualityService {
   }
 
   /**
-   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of reviews that need a human decision, for the M17
+   * @internal Cross-workspace strict keyset read (rows after `(at, id)` in `(timestamp, id)` order) of reviews that need a human decision, for the M17
    * notification intake only. Read-only; never expose it through a controller.
    */
   public async listReviewRequestsAfter(query: {
@@ -560,7 +560,15 @@ export class QualityService {
     const runs = await this.db.qualityReviewRun.findMany({
       where: {
         status: { in: ["REVIEW_REQUIRED", "AI_REVIEW_UNAVAILABLE"] },
-        createdAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+        createdAt: { lte: query.until },
+        ...(query.after === null
+          ? {}
+          : {
+              OR: [
+                { createdAt: { gt: query.after.at } },
+                { createdAt: query.after.at, id: { gt: query.after.id } },
+              ],
+            }),
       },
       select: {
         id: true,
@@ -584,7 +592,7 @@ export class QualityService {
   }
 
   /**
-   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of human review decisions, for the M17 notification
+   * @internal Cross-workspace strict keyset read (rows after `(at, id)` in `(timestamp, id)` order) of human review decisions, for the M17 notification
    * intake only. Read-only; never expose it through a controller.
    */
   public async listDecisionsAfter(query: {
@@ -603,7 +611,15 @@ export class QualityService {
   > {
     const decisions = await this.db.qualityDecision.findMany({
       where: {
-        createdAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+        createdAt: { lte: query.until },
+        ...(query.after === null
+          ? {}
+          : {
+              OR: [
+                { createdAt: { gt: query.after.at } },
+                { createdAt: query.after.at, id: { gt: query.after.id } },
+              ],
+            }),
       },
       select: {
         id: true,

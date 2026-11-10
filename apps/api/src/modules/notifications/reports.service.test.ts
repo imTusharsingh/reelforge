@@ -33,12 +33,40 @@ function snapshot(key: string, day: string, value: number | null): LatestMetricS
   };
 }
 
+type InsightsQuery = Readonly<{
+  channelId: string;
+  from: Date;
+  to: Date;
+  reportLimit: number;
+  recommendationLimit: number;
+}>;
+
+function failureRow(index: number): Record<string, unknown> {
+  return {
+    id: crypto.randomUUID(),
+    payload: { postId: crypto.randomUUID(), failureCode: "X" },
+    occurredAt: new Date(Date.UTC(2026, 9, 27, 0, 0, index)),
+  };
+}
+
 function service(options: {
   snapshots?: LatestMetricSnapshot[];
   published?: unknown[];
   failRuns?: boolean;
+  failures?: { rows: number; total: number };
+  insights?: { reports: number; reportTotal: number; recs: number; recTotal: number };
+  insightQueries?: InsightsQuery[];
 }): ChannelReportsService {
-  const db = { outboxEvent: { findMany: async (): Promise<never[]> => [] } };
+  const db = {
+    outboxEvent: {
+      findMany: async (args: { take: number }): Promise<unknown[]> =>
+        Array.from({ length: Math.min(options.failures?.rows ?? 0, args.take) }, (_, index) =>
+          failureRow(index),
+        ),
+      count: async (): Promise<number> => options.failures?.total ?? 0,
+    },
+  };
+  const insights = options.insights ?? { reports: 0, reportTotal: 0, recs: 0, recTotal: 0 };
   return new ChannelReportsService(
     db as never,
     {} as never,
@@ -50,7 +78,30 @@ function service(options: {
       ],
     } as never,
     { listLatestSnapshots: async () => options.snapshots ?? [] } as never,
-    { listInsightReports: async () => [], listRecommendations: async () => [] } as never,
+    {
+      listChannelInsightsBetween: async (_context: unknown, query: InsightsQuery) => {
+        options.insightQueries?.push(query);
+        return {
+          reports: Array.from({ length: Math.min(insights.reports, query.reportLimit) }, () => ({
+            id: crypto.randomUUID(),
+            status: "GENERATED",
+            createdAt: "2026-10-27T00:00:00.000Z",
+          })),
+          reportTotal: insights.reportTotal,
+          recommendations: Array.from(
+            { length: Math.min(insights.recs, query.recommendationLimit) },
+            () => ({
+              id: crypto.randomUUID(),
+              action: "post earlier",
+              confidence: "LOW",
+              status: "PROPOSED",
+              createdAt: "2026-10-27T00:00:00.000Z",
+            }),
+          ),
+          recommendationTotal: insights.recTotal,
+        };
+      },
+    } as never,
     {
       countRunOutcomes: async () => {
         if (options.failRuns) throw new Error("db down");
@@ -113,5 +164,62 @@ describe("M17 report assembly", () => {
     const { data } = await service({ published }).assemble(channel, week);
     expect(data.publishing.publishedCount).toBe(2);
     expect(data.publishing.status).toBe("AVAILABLE");
+  });
+
+  const codes = (items: ReadonlyArray<{ code: string }>): string[] =>
+    items.map((item) => item.code);
+
+  it("reports the exact publish-failure count and marks a capped failure list PARTIAL", async () => {
+    const capped = await service({ failures: { rows: 250, total: 250 } }).assemble(channel, week);
+    expect(capped.data.publishing.failedCount).toBe(250);
+    expect(capped.data.publishing.failures).toHaveLength(200);
+    expect(capped.data.publishing.status).toBe("PARTIAL");
+    expect(codes(capped.missingData)).toContain("PUBLISH_FAILURES_TRUNCATED");
+
+    const whole = await service({ failures: { rows: 3, total: 3 } }).assemble(channel, week);
+    expect(whole.data.publishing.failedCount).toBe(3);
+    expect(whole.data.publishing.failures).toHaveLength(3);
+    expect(codes(whole.missingData)).not.toContain("PUBLISH_FAILURES_TRUNCATED");
+  });
+
+  it("reads insights bounded to the period and marks capped insight reports PARTIAL", async () => {
+    const insightQueries: InsightsQuery[] = [];
+    const { data, missingData } = await service({
+      insights: { reports: 60, reportTotal: 60, recs: 2, recTotal: 2 },
+      insightQueries,
+    }).assemble(channel, week);
+    expect(insightQueries).toEqual([
+      {
+        channelId,
+        from: week.start,
+        to: week.end,
+        reportLimit: 50,
+        recommendationLimit: 100,
+      },
+    ]);
+    expect(data.insights.status).toBe("PARTIAL");
+    expect(data.insights.reportCount).toBe(60);
+    expect(data.insights.reports).toHaveLength(50);
+    expect(data.insights.recommendationCount).toBe(2);
+    expect(codes(missingData)).toContain("INSIGHT_REPORTS_TRUNCATED");
+    expect(codes(missingData)).not.toContain("RECOMMENDATIONS_TRUNCATED");
+  });
+
+  it("marks capped recommendations PARTIAL with the exact total", async () => {
+    const { data, missingData } = await service({
+      insights: { reports: 1, reportTotal: 1, recs: 120, recTotal: 120 },
+    }).assemble(channel, week);
+    expect(data.insights.status).toBe("PARTIAL");
+    expect(data.insights.recommendationCount).toBe(120);
+    expect(data.insights.recommendations).toHaveLength(100);
+    expect(codes(missingData)).toContain("RECOMMENDATIONS_TRUNCATED");
+    expect(codes(missingData)).not.toContain("INSIGHT_REPORTS_TRUNCATED");
+
+    const none = await service({}).assemble(channel, week);
+    expect(none.data.insights).toMatchObject({
+      status: "NO_DATA",
+      reportCount: 0,
+      recommendationCount: 0,
+    });
   });
 });

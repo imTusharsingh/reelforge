@@ -198,3 +198,23 @@ ALTER TABLE "channel_reports" ADD CONSTRAINT "channel_reports_workspace_id_fkey"
 
 -- AddForeignKey
 ALTER TABLE "channel_reports" ADD CONSTRAINT "channel_reports_workspace_id_channel_id_fkey" FOREIGN KEY ("workspace_id", "channel_id") REFERENCES "channels"("workspace_id", "id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- M17 notification intake: indexes for the strict (timestamp, id) keyset reads over other
+-- modules' tables (approved shared edit, review 5839809149 B2). Additive only.
+-- CreateIndex
+CREATE INDEX "workflow_events_occurred_at_id_idx" ON "workflow_events"("occurred_at", "id");
+
+-- CreateIndex
+CREATE INDEX "outbox_events_occurred_at_id_idx" ON "outbox_events"("occurred_at", "id");
+
+-- CreateIndex
+CREATE INDEX "quality_review_runs_created_at_id_idx" ON "quality_review_runs"("created_at", "id");
+
+-- CreateIndex
+CREATE INDEX "quality_decisions_created_at_id_idx" ON "quality_decisions"("created_at", "id");
+
+-- CreateIndex
+CREATE INDEX "performance_insight_reports_created_at_id_idx" ON "performance_insight_reports"("created_at", "id");
+
+-- CreateIndex
+CREATE INDEX "publishing_destinations_status_updated_at_id_idx" ON "publishing_destinations"("status", "updated_at", "id");

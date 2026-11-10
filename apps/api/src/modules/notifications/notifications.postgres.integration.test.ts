@@ -16,6 +16,7 @@ import { WorkspaceService } from "../workspace/workspace.service.js";
 import {
   DEFAULT_NOTIFICATIONS_CONFIG,
   NotConfiguredNotificationEmail,
+  type NotificationsConfig,
   NotificationEmailError,
   type NotificationEmailPort,
 } from "./notifications.ports.js";
@@ -90,20 +91,17 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
     );
   }
 
+  // The fixtures are back-dated, so these suites backfill from an empty cursor by default.
+  const backfill: NotificationsConfig = { ...DEFAULT_NOTIFICATIONS_CONFIG, intakeBackfill: true };
+
   function notifications(
     email: NotificationEmailPort = new NotConfiguredNotificationEmail(),
+    config: NotificationsConfig = backfill,
   ): NotificationsService {
-    return new NotificationsService(
-      db as never,
-      workspaces(),
-      sources(),
-      email,
-      clock,
-      DEFAULT_NOTIFICATIONS_CONFIG,
-    );
+    return new NotificationsService(db as never, workspaces(), sources(), email, clock, config);
   }
 
-  function reports(service = notifications()): ChannelReportsService {
+  function reports(service: NotificationsService = notifications()): ChannelReportsService {
     return new ChannelReportsService(
       db as never,
       new ChannelService(db as never),
@@ -474,5 +472,157 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
       }),
     ).toBe(2);
     expect(await db.channelReport.count({ where: { channelId: pausedChannelId } })).toBe(0);
+  });
+
+  it("strict keyset: more same-timestamp rows than one batch are all consumed across ticks", async () => {
+    if (!db) return;
+    clockNow = new Date();
+    const config: NotificationsConfig = {
+      ...DEFAULT_NOTIFICATIONS_CONFIG,
+      intakeBatchSize: 3,
+      intakeMaxPages: 1,
+    };
+    const service = notifications(new NotConfiguredNotificationEmail(), config);
+    // Fresh cursors at the current settle boundary, then batchSize + 1 rows on one timestamp.
+    await db.notificationIntakeCursor.deleteMany({});
+    await service.runIntake(clockNow);
+    const shared = new Date(clockNow.getTime() - 10_000);
+    const ids: string[] = [];
+    for (let index = 0; index < config.intakeBatchSize + 1; index += 1)
+      ids.push(await outbox(workspaceId, channelId, "PublishFailed", shared));
+    const later = new Date(clockNow.getTime() + 60_000);
+    let ticks = 0;
+    for (; ticks < 50; ticks += 1) {
+      const results = await service.runIntake(later);
+      const outboxResult = results.find((result) => result.source === "m13.outbox");
+      expect(outboxResult?.error).toBeNull();
+      expect(outboxResult!.read).toBeLessThanOrEqual(config.intakeBatchSize);
+      if (outboxResult!.read === 0) break;
+    }
+    expect(ticks).toBeGreaterThanOrEqual(2);
+    const recorded = await db.notificationEvent.findMany({
+      where: { workspaceId, sourceKey: { in: ids.map((id) => `m13:outbox:${id}`) } },
+    });
+    expect(recorded).toHaveLength(ids.length);
+    const cursor = await db.notificationIntakeCursor.findUniqueOrThrow({
+      where: { source: "m13.outbox" },
+    });
+    expect(cursor.afterAt!.getTime()).toBeGreaterThanOrEqual(shared.getTime());
+  });
+
+  it("a fresh cursor starts at the settle boundary and ignores older rows unless backfilling", async () => {
+    if (!db) return;
+    clockNow = new Date(Date.now() + 5 * 60_000);
+    const old = await outbox(
+      workspaceId,
+      channelId,
+      "PublishFailed",
+      new Date(clockNow.getTime() - 120_000),
+    );
+    const service = notifications(
+      new NotConfiguredNotificationEmail(),
+      DEFAULT_NOTIFICATIONS_CONFIG,
+    );
+    await db.notificationIntakeCursor.deleteMany({});
+    await service.runIntake(clockNow);
+    const until = new Date(clockNow.getTime() - DEFAULT_NOTIFICATIONS_CONFIG.intakeSettleMs);
+    const cursor = await db.notificationIntakeCursor.findUniqueOrThrow({
+      where: { source: "m13.outbox" },
+    });
+    expect(cursor.afterAt?.getTime()).toBe(until.getTime());
+    const keyOf = (id: string): Promise<number> =>
+      db.notificationEvent.count({ where: { workspaceId, sourceKey: `m13:outbox:${id}` } });
+    expect(await keyOf(old)).toBe(0);
+
+    // A row after the boundary is consumed on the next tick.
+    const fresh = await outbox(
+      workspaceId,
+      channelId,
+      "PublishFailed",
+      new Date(until.getTime() + 1_000),
+    );
+    await service.runIntake(new Date(clockNow.getTime() + 60_000));
+    expect(await keyOf(fresh)).toBe(1);
+    expect(await keyOf(old)).toBe(0);
+
+    // An explicit backfill from an empty cursor picks the older row up.
+    await db.notificationIntakeCursor.deleteMany({});
+    const backfiller = notifications();
+    for (let tick = 0; tick < 20 && (await keyOf(old)) === 0; tick += 1)
+      await backfiller.runIntake(new Date(clockNow.getTime() + 60_000));
+    expect(await keyOf(old)).toBe(1);
+  });
+
+  it("insights in a report use a period-bounded read with exact totals", async () => {
+    if (!db) return;
+    const period = {
+      from: new Date("2026-10-01T00:00:00.000Z"),
+      to: new Date("2026-10-02T00:00:00.000Z"),
+    };
+    const insight = (createdAt: Date): Promise<unknown> =>
+      db.performanceInsightReport.create({
+        data: {
+          workspaceId,
+          channelId,
+          periodStart: new Date("2026-09-01"),
+          periodEnd: new Date("2026-09-07"),
+          comparisonStart: new Date("2026-08-25"),
+          comparisonEnd: new Date("2026-08-31"),
+          status: "INSUFFICIENT_DATA",
+          kpis: [],
+          dimensionSummaries: [],
+          aiStatus: "NOT_CONFIGURED",
+          limitations: [],
+          snapshotIds: [],
+          createdByUserId: ownerId,
+          createdAt,
+        },
+      });
+    await insight(new Date("2026-10-01T01:00:00.000Z"));
+    await insight(new Date("2026-10-01T02:00:00.000Z"));
+    await insight(new Date("2026-10-01T03:00:00.000Z"));
+    await insight(new Date("2026-10-02T00:00:00.000Z")); // outside [from, to)
+    const result = await performance().listChannelInsightsBetween(owner, {
+      channelId,
+      ...period,
+      reportLimit: 2,
+      recommendationLimit: 5,
+    });
+    expect(result.reportTotal).toBe(3);
+    expect(result.reports.map((report) => report.createdAt)).toEqual([
+      "2026-10-01T01:00:00.000Z",
+      "2026-10-01T02:00:00.000Z",
+    ]);
+    expect(result.recommendationTotal).toBe(0);
+    await expect(
+      performance().listChannelInsightsBetween(outsider, {
+        channelId,
+        ...period,
+        reportLimit: 2,
+        recommendationLimit: 5,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("a report and its CHANNEL_REPORT_READY event commit together", async () => {
+    if (!db) return;
+    clockNow = new Date("2026-11-10T12:00:00.000Z");
+    const body = { channelId, periodType: "DAILY", periodStartDate: "2026-11-04" };
+    const failing = {
+      recordEvents: async (): Promise<number> => {
+        throw new Error("event insert failed");
+      },
+    } as unknown as NotificationsService;
+    await expect(reports(failing).generate(editor, body)).rejects.toThrow("event insert failed");
+    const where = { channelId, periodType: "DAILY" as const, localStartDate: "2026-11-04" };
+    expect(await db.channelReport.count({ where })).toBe(0);
+
+    const report = await reports().generate(editor, body);
+    expect(await db.channelReport.count({ where })).toBe(1);
+    expect(
+      await db.notificationEvent.count({
+        where: { workspaceId, sourceKey: `m17:channel-report:${report.id}` },
+      }),
+    ).toBe(1);
   });
 });

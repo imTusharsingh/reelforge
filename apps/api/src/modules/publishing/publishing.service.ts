@@ -662,7 +662,7 @@ export class PublishingService {
   }
 
   /**
-   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) (by `updatedAt`) of destinations that need manual
+   * @internal Cross-workspace strict keyset read (rows after `(at, id)` in `(timestamp, id)` order) (by `updatedAt`) of destinations that need manual
    * reconciliation, for the M17 notification intake only. Read-only; never expose it through a
    * controller.
    */
@@ -685,7 +685,15 @@ export class PublishingService {
     const destinations = await this.db.publishingDestination.findMany({
       where: {
         status: "RECONCILIATION_REQUIRED",
-        updatedAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+        updatedAt: { lte: query.until },
+        ...(query.after === null
+          ? {}
+          : {
+              OR: [
+                { updatedAt: { gt: query.after.at } },
+                { updatedAt: query.after.at, id: { gt: query.after.id } },
+              ],
+            }),
       },
       select: {
         id: true,

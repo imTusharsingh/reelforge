@@ -789,6 +789,8 @@ model WorkflowEvent {
   job           WorkflowJob?  @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
 
   @@index([workspaceId, runId, occurredAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([occurredAt, id])
   @@map("workflow_events")
 }
 
@@ -878,6 +880,8 @@ model OutboxEvent {
 
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, publishedAt, occurredAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([occurredAt, id])
   @@map("outbox_events")
 }
 
@@ -936,6 +940,8 @@ model PublishingDestination {
   @@unique([workspaceId, scheduledPostId, socialAccountId])
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, status, createdAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([status, updatedAt, id])
   @@map("publishing_destinations")
 }
 
@@ -1740,6 +1746,8 @@ model QualityReviewRun {
   @@unique([workspaceId, id])
   @@index([workspaceId, status, createdAt])
   @@index([workspaceId, renderJobId, createdAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([createdAt, id])
   @@map("quality_review_runs")
 }
 
@@ -1759,6 +1767,8 @@ model QualityDecision {
 
   @@unique([workspaceId, id])
   @@index([workspaceId, reviewRunId, createdAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([createdAt, id])
   @@map("quality_decisions")
 }
 
@@ -1965,6 +1975,8 @@ model PerformanceInsightReport {
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId, createdAt])
+  // M17 notification intake: strict (timestamp, id) keyset scan.
+  @@index([createdAt, id])
   @@map("performance_insight_reports")
 }
 

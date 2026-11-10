@@ -46,8 +46,19 @@ export class NotConfiguredNotificationEmail implements NotificationEmailPort {
 }
 
 export type NotificationsConfig = Readonly<{
-  /** Rows newer than now - settleMs are not consumed yet, so late commits are not skipped. */
+  /**
+   * Rows newer than now - settleMs are not consumed yet, so late commits are not skipped.
+   * R1 assumption: a source row commits within ~5 s of the timestamp it carries (short
+   * transactions) and API/worker clocks are within ~30 s of each other (NTP). A row committed
+   * later than `intakeSettleMs` after its own timestamp, net of skew, can be passed by the cursor and
+   * is then never notified. Raise this if either assumption stops holding.
+   */
   intakeSettleMs: number;
+  /**
+   * When a source has no cursor yet: false (default) starts at now - settleMs, so older rows are
+   * ignored; true starts at the beginning and backfills every persisted row.
+   */
+  intakeBackfill: boolean;
   intakeBatchSize: number;
   intakeMaxPages: number;
   fanoutBatchSize: number;
@@ -62,6 +73,7 @@ export type NotificationsConfig = Readonly<{
 
 export const DEFAULT_NOTIFICATIONS_CONFIG: NotificationsConfig = {
   intakeSettleMs: 30_000,
+  intakeBackfill: false,
   intakeBatchSize: 200,
   intakeMaxPages: 10,
   fanoutBatchSize: 100,

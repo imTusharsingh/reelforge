@@ -203,7 +203,7 @@ export class OrchestrationService {
   }
 
   /**
-   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of run history events for the M17 notification
+   * @internal Cross-workspace strict keyset read (rows after `(at, id)` in `(timestamp, id)` order) of run history events for the M17 notification
    * intake only. Read-only; never expose it through a controller or call it with a user context.
    */
   public async listEventsAfter(query: {
@@ -226,7 +226,15 @@ export class OrchestrationService {
     const events = await this.db.workflowEvent.findMany({
       where: {
         eventType: { in: [...query.eventTypes] },
-        occurredAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+        occurredAt: { lte: query.until },
+        ...(query.after === null
+          ? {}
+          : {
+              OR: [
+                { occurredAt: { gt: query.after.at } },
+                { occurredAt: query.after.at, id: { gt: query.after.id } },
+              ],
+            }),
       },
       include: { run: { select: { channelId: true } } },
       orderBy: [{ occurredAt: "asc" }, { id: "asc" }],

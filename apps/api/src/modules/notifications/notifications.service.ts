@@ -120,6 +120,9 @@ function asPayload(value: Prisma.JsonValue): Record<string, unknown> {
     : {};
 }
 
+/** Sorts after every UUID, so a fresh cursor at `(until, CURSOR_MAX_ID)` skips rows at `until` too. */
+const CURSOR_MAX_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
 @Injectable()
 export class NotificationsService {
   public constructor(
@@ -300,9 +303,12 @@ export class NotificationsService {
   }
 
   /** Records M17's own events (e.g. CHANNEL_REPORT_READY). Duplicate source keys are ignored. */
-  public async recordEvents(events: readonly NotificationEventInput[]): Promise<number> {
+  public async recordEvents(
+    events: readonly NotificationEventInput[],
+    client: Pick<Prisma.TransactionClient, "notificationEvent"> = this.db,
+  ): Promise<number> {
     if (events.length === 0) return 0;
-    const created = await this.db.notificationEvent.createMany({
+    const created = await client.notificationEvent.createMany({
       data: events.map((event) => this.eventRow(event)),
       skipDuplicates: true,
     });
@@ -466,8 +472,14 @@ export class NotificationsService {
   ): Promise<IntakeSourceResult> {
     let read = 0;
     let recorded = 0;
+    // A source without a cursor starts at the current settle boundary, so turning M17 on does not
+    // replay history; `intakeBackfill` starts it at the beginning instead (tests, explicit backfill).
     await this.db.notificationIntakeCursor.createMany({
-      data: [{ source: source.key }],
+      data: [
+        this.config.intakeBackfill
+          ? { source: source.key }
+          : { source: source.key, afterAt: until, afterId: CURSOR_MAX_ID },
+      ],
       skipDuplicates: true,
     });
     for (let page = 0; page < this.config.intakeMaxPages; page += 1) {
@@ -481,18 +493,8 @@ export class NotificationsService {
       const items = await source.read(after, until, this.config.intakeBatchSize);
       if (items.length === 0) break;
       const last = items[items.length - 1]!.cursor;
+      // Strict keyset reads always move forward; this only guards against a misbehaving reader.
       if (after !== null && last.at.getTime() === after.at.getTime() && last.id === after.id) break;
-      if (
-        after !== null &&
-        items.length >= this.config.intakeBatchSize &&
-        last.at.getTime() === after.at.getTime()
-      )
-        return {
-          source: source.key,
-          read,
-          recorded,
-          error: "More rows share one timestamp than fit in a batch; raise intakeBatchSize",
-        };
       const events = items.flatMap((item) => (item.event === null ? [] : [item.event]));
       const inserted = await this.db.$transaction(async (tx) => {
         const moved = await tx.notificationIntakeCursor.updateMany({

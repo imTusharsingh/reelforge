@@ -64,8 +64,12 @@ function pick(
 /**
  * Read-only adapters over other modules' persisted events. M13 events come from the shared
  * `outbox_events` table; everything else comes through `@internal` read methods on the owning
- * module's public service. Cursors are inclusive `(timestamp, id)` positions, so a row can be re-read; redelivery is a no-op because of
- * the unique `(workspaceId, sourceKey)` on `notification_events`.
+ * module's public service. Cursors are strict `(timestamp, id)` keyset positions: a read returns only
+ * rows with `ts > at OR (ts = at AND id > id)`, ordered by `(ts, id)`, so any number of rows sharing
+ * one timestamp is paged through without stalling. Redelivery (for example after a cursor reset) is
+ * still a no-op because of the unique `(workspaceId, sourceKey)` on `notification_events`.
+ * All source timestamps are written by Prisma with millisecond precision, which matches the JS `Date`
+ * kept in the cursor.
  */
 @Injectable()
 export class NotificationIntakeSources {
@@ -108,7 +112,15 @@ export class NotificationIntakeSources {
     const rows = await this.db.outboxEvent.findMany({
       where: {
         eventType: { in: ["PostPublished", "PublishFailed"] },
-        occurredAt: { lte: until, ...(after === null ? {} : { gte: after.at }) },
+        occurredAt: { lte: until },
+        ...(after === null
+          ? {}
+          : {
+              OR: [
+                { occurredAt: { gt: after.at } },
+                { occurredAt: after.at, id: { gt: after.id } },
+              ],
+            }),
       },
       orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
       take: limit,

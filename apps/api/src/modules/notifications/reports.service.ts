@@ -42,6 +42,9 @@ const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 const PUBLISHED_PAGE_SIZE = 100;
 const PUBLISHED_MAX_PAGES = 50;
+const FAILURE_LIST_LIMIT = 200;
+const INSIGHT_REPORT_LIMIT = 50;
+const RECOMMENDATION_LIMIT = 100;
 const editorRoles = new Set(["OWNER", "EDITOR"]);
 
 export type SectionStatus = "AVAILABLE" | "PARTIAL" | "NO_DATA" | "UNAVAILABLE";
@@ -91,12 +94,17 @@ export type ChannelReportData = Readonly<{
     status: SectionStatus;
     publishedCount: number | null;
     posts: readonly PublishedPostItem[];
-    failedCount: number;
+    /** Exact count of PublishFailed events in the period; null only if it could not be read. */
+    failedCount: number | null;
+    /** Oldest first, at most FAILURE_LIST_LIMIT; PUBLISH_FAILURES_TRUNCATED marks a cut list. */
     failures: readonly PublishFailureItem[];
   }>;
   metrics: Readonly<{ status: SectionStatus; accounts: readonly MetricsAccountItem[] }>;
   insights: Readonly<{
     status: SectionStatus;
+    /** Exact totals in the period; the lists below are capped (see *_TRUNCATED missing data). */
+    reportCount: number | null;
+    recommendationCount: number | null;
     reports: ReadonlyArray<{ id: string; status: string; createdAt: string; link: string }>;
     recommendations: ReadonlyArray<{
       id: string;
@@ -334,22 +342,51 @@ export class ChannelReportsService {
     const { data, missingData } = await this.assemble(channel, period);
     let report: ReportRecord;
     try {
-      report = await this.db.channelReport.create({
-        data: {
-          workspaceId: channel.workspaceId,
-          channelId: channel.id,
-          periodType: period.periodType,
-          periodStart: period.start,
-          periodEnd: period.end,
-          localStartDate: period.localStartDate,
-          localEndDate: period.localEndDate,
-          timezone: period.timezone,
-          trigger,
-          generatedByUserId: userId,
-          schemaVersion: CHANNEL_REPORT_SCHEMA_VERSION,
-          data: data as unknown as Prisma.InputJsonValue,
-          missingData: missingData as unknown as Prisma.InputJsonValue,
-        },
+      // The report and its CHANNEL_REPORT_READY event commit together (review R2), so a crash
+      // between the two can never leave a stored report that was never announced.
+      report = await this.db.$transaction(async (tx) => {
+        const created = await tx.channelReport.create({
+          data: {
+            workspaceId: channel.workspaceId,
+            channelId: channel.id,
+            periodType: period.periodType,
+            periodStart: period.start,
+            periodEnd: period.end,
+            localStartDate: period.localStartDate,
+            localEndDate: period.localEndDate,
+            timezone: period.timezone,
+            trigger,
+            generatedByUserId: userId,
+            schemaVersion: CHANNEL_REPORT_SCHEMA_VERSION,
+            data: data as unknown as Prisma.InputJsonValue,
+            missingData: missingData as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await this.notifications.recordEvents(
+          [
+            {
+              workspaceId: created.workspaceId,
+              channelId: created.channelId,
+              eventType: "CHANNEL_REPORT_READY",
+              sourceModule: "M17",
+              sourceKey: `m17:channel-report:${created.id}`,
+              correlationId: null,
+              subjectType: "channel_report",
+              subjectId: created.id,
+              link: this.link(created),
+              payload: {
+                reportId: created.id,
+                periodType: created.periodType,
+                localStartDate: created.localStartDate,
+                localEndDate: created.localEndDate,
+                missingDataCount: missingData.length,
+              },
+              occurredAt: created.createdAt,
+            },
+          ],
+          tx,
+        );
+        return created;
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
@@ -357,27 +394,6 @@ export class ChannelReportsService {
       if (!raced) throw error;
       return { report: raced, created: false };
     }
-    await this.notifications.recordEvents([
-      {
-        workspaceId: report.workspaceId,
-        channelId: report.channelId,
-        eventType: "CHANNEL_REPORT_READY",
-        sourceModule: "M17",
-        sourceKey: `m17:channel-report:${report.id}`,
-        correlationId: null,
-        subjectType: "channel_report",
-        subjectId: report.id,
-        link: this.link(report),
-        payload: {
-          reportId: report.id,
-          periodType: report.periodType,
-          localStartDate: report.localStartDate,
-          localEndDate: report.localEndDate,
-          missingDataCount: missingData.length,
-        },
-        occurredAt: report.createdAt,
-      },
-    ]);
     return { report, created: true };
   }
 
@@ -445,33 +461,57 @@ export class ChannelReportsService {
         detail: errorMessage(error),
       });
     }
-    const failureRows = await this.db.outboxEvent.findMany({
-      where: {
-        workspaceId: channel.workspaceId,
-        channelId: channel.id,
-        eventType: "PublishFailed",
-        occurredAt: { gte: period.start, lt: period.end },
-      },
-      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
-      take: 200,
-    });
-    const failures = failureRows.map((row): PublishFailureItem => {
-      const payload = jsonRecord(row.payload);
-      const postId = typeof payload["postId"] === "string" ? payload["postId"] : null;
-      return {
-        scheduledPostId: postId,
-        failureCode: typeof payload["failureCode"] === "string" ? payload["failureCode"] : null,
-        occurredAt: row.occurredAt.toISOString(),
-        link:
-          postId === null
-            ? null
-            : buildNotificationLink("publishedPost", {
-                workspaceId: channel.workspaceId,
-                scheduledPostId: postId,
-              }),
-      };
-    });
-    return { status, publishedCount, posts, failedCount: failures.length, failures };
+    const failureWhere = {
+      workspaceId: channel.workspaceId,
+      channelId: channel.id,
+      eventType: "PublishFailed",
+      occurredAt: { gte: period.start, lt: period.end },
+    };
+    let failures: PublishFailureItem[] = [];
+    let failedCount: number | null = null;
+    try {
+      const [failureRows, failureTotal] = await Promise.all([
+        this.db.outboxEvent.findMany({
+          where: failureWhere,
+          orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+          take: FAILURE_LIST_LIMIT,
+        }),
+        this.db.outboxEvent.count({ where: failureWhere }),
+      ]);
+      failedCount = failureTotal;
+      failures = failureRows.map((row): PublishFailureItem => {
+        const payload = jsonRecord(row.payload);
+        const postId = typeof payload["postId"] === "string" ? payload["postId"] : null;
+        return {
+          scheduledPostId: postId,
+          failureCode: typeof payload["failureCode"] === "string" ? payload["failureCode"] : null,
+          occurredAt: row.occurredAt.toISOString(),
+          link:
+            postId === null
+              ? null
+              : buildNotificationLink("publishedPost", {
+                  workspaceId: channel.workspaceId,
+                  scheduledPostId: postId,
+                }),
+        };
+      });
+      if (failureTotal > failures.length) {
+        if (status !== "UNAVAILABLE") status = "PARTIAL";
+        missing.push({
+          section: "publishing",
+          code: "PUBLISH_FAILURES_TRUNCATED",
+          detail: `${failureTotal} publish failures in the period; only the first ${failures.length} are listed`,
+        });
+      }
+    } catch (error) {
+      if (status !== "UNAVAILABLE") status = "PARTIAL";
+      missing.push({
+        section: "publishing",
+        code: "PUBLISH_FAILURES_UNAVAILABLE",
+        detail: errorMessage(error),
+      });
+    }
+    return { status, publishedCount, posts, failedCount, failures };
   }
 
   private async metricsSection(
@@ -575,15 +615,36 @@ export class ChannelReportsService {
     missing: MissingDataItem[],
   ): Promise<ChannelReportData["insights"]> {
     try {
-      const [reports, recommendations] = await Promise.all([
-        this.performance.listInsightReports(context, channel.id),
-        this.performance.listRecommendations(context, channel.id),
-      ]);
-      const inPeriod = reports.filter((report) => within(report.createdAt, period));
-      const recs = recommendations.filter((item) => within(item.createdAt, period));
+      const insights = await this.performance.listChannelInsightsBetween(context, {
+        channelId: channel.id,
+        from: period.start,
+        to: period.end,
+        reportLimit: INSIGHT_REPORT_LIMIT,
+        recommendationLimit: RECOMMENDATION_LIMIT,
+      });
+      let truncated = false;
+      if (insights.reportTotal > insights.reports.length) {
+        truncated = true;
+        missing.push({
+          section: "insights",
+          code: "INSIGHT_REPORTS_TRUNCATED",
+          detail: `${insights.reportTotal} insight reports in the period; only the first ${insights.reports.length} are listed`,
+        });
+      }
+      if (insights.recommendationTotal > insights.recommendations.length) {
+        truncated = true;
+        missing.push({
+          section: "insights",
+          code: "RECOMMENDATIONS_TRUNCATED",
+          detail: `${insights.recommendationTotal} recommendations in the period; only the first ${insights.recommendations.length} are listed`,
+        });
+      }
+      const any = insights.reportTotal > 0 || insights.recommendationTotal > 0;
       return {
-        status: inPeriod.length > 0 || recs.length > 0 ? "AVAILABLE" : "NO_DATA",
-        reports: inPeriod.map((report) => ({
+        status: truncated ? "PARTIAL" : any ? "AVAILABLE" : "NO_DATA",
+        reportCount: insights.reportTotal,
+        recommendationCount: insights.recommendationTotal,
+        reports: insights.reports.map((report) => ({
           id: report.id,
           status: report.status,
           createdAt: report.createdAt,
@@ -593,7 +654,7 @@ export class ChannelReportsService {
             reportId: report.id,
           }),
         })),
-        recommendations: recs.map((item) => ({
+        recommendations: insights.recommendations.map((item) => ({
           id: item.id,
           action: item.action,
           confidence: item.confidence,
@@ -607,7 +668,13 @@ export class ChannelReportsService {
         code: "INSIGHTS_UNAVAILABLE",
         detail: errorMessage(error),
       });
-      return { status: "UNAVAILABLE", reports: [], recommendations: [] };
+      return {
+        status: "UNAVAILABLE",
+        reportCount: null,
+        recommendationCount: null,
+        reports: [],
+        recommendations: [],
+      };
     }
   }
 

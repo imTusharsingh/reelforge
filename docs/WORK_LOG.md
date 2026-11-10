@@ -812,3 +812,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: see M17 `STATUS.md` (no live email adapter; global `workflow_events` scan index; settle-window and same-millisecond limits; report caps; no backfill).
 - Next exact action: Minu review of the M17 PR; do not merge until approved. M18 rebases after M17 merges.
 - Related status/ADR: M17 `STATUS.md`; ADR-005, ADR-007, ADR-010, ADR-017.
+
+## 2026-11-10 - M17 review 5839809149 fixes
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784, worktree `reelforge-m17`, branch `work/m17-notifications-and-reporting` (on top of `ef98793`). Local only.
+- Work package: M17, Minu review 5839809149 (REQUEST_CHANGES): B1, B2, B3, R1, R2.
+- Changes made: strict `(ts, id)` keyset in all intake readers with the stall branch removed and fresh cursors at `now - settle` unless `intakeBackfill`; six intake keyset indexes in the M17 migration and `schema.prisma` (approved shared edit); exact counts and `PARTIAL`/`*_TRUNCATED` for capped report lists, with a new period-bounded `PerformanceIntelligenceService.listChannelInsightsBetween`; report and `CHANNEL_REPORT_READY` in one transaction; R1 settle-window assumption documented.
+- Commands actually run and results: fresh-DB migrate (25), frozen install, lint, format:check, typecheck, test (64 files passed / 1 skipped; 431 passed / 5 FFmpeg skips), build, db:validate all **passed**; focused M17 27/27 twice.
+- External calls: NONE.
+- Decisions/approvals: index additions to other modules' tables are the B2-approved shared edit; no `PROJECT_STATE.md`, `ci.yml`, dependency, or contracts change.
+- Defects/risks/blockers: see M17 `STATUS.md`.
+- Next exact action: Minu re-review of PR #32; do not merge until approved.
+- Related status/ADR: M17 `STATUS.md`; ADR-017.
