@@ -202,6 +202,76 @@ export class OrchestrationService {
     return runs.map((run) => this.presentRun(run));
   }
 
+  /**
+   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of run history events for the M17 notification
+   * intake only. Read-only; never expose it through a controller or call it with a user context.
+   */
+  public async listEventsAfter(query: {
+    readonly eventTypes: readonly string[];
+    readonly after: Readonly<{ at: Date; id: string }> | null;
+    readonly until: Date;
+    readonly limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      runId: string;
+      channelId: string | null;
+      eventType: string;
+      correlationId: string;
+      payload: WorkflowRunInput;
+      occurredAt: Date;
+    }>
+  > {
+    const events = await this.db.workflowEvent.findMany({
+      where: {
+        eventType: { in: [...query.eventTypes] },
+        occurredAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+      },
+      include: { run: { select: { channelId: true } } },
+      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+      take: query.limit,
+    });
+    return events.map((event) => ({
+      id: event.id,
+      workspaceId: event.workspaceId,
+      runId: event.runId,
+      channelId: event.run.channelId,
+      eventType: event.eventType,
+      correlationId: event.correlationId,
+      payload: asRecord(event.payload),
+      occurredAt: event.occurredAt,
+    }));
+  }
+
+  /**
+   * Read-only outcome counts of a channel's runs that completed in [from, to), for M17 reports.
+   */
+  public async countRunOutcomes(
+    context: WorkspaceContext,
+    channelId: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ byState: Record<string, number>; failedRunIds: string[] }> {
+    const where = {
+      workspaceId: context.workspaceId,
+      channelId,
+      completedAt: { gte: from, lt: to },
+    } satisfies Prisma.WorkflowRunWhereInput;
+    const [groups, failed] = await Promise.all([
+      this.db.workflowRun.groupBy({ by: ["state"], where, _count: { _all: true } }),
+      this.db.workflowRun.findMany({
+        where: { ...where, state: "FAILED" },
+        select: { id: true },
+        orderBy: [{ completedAt: "asc" }, { id: "asc" }],
+        take: 50,
+      }),
+    ]);
+    const byState: Record<string, number> = {};
+    for (const group of groups) byState[group.state] = group._count._all;
+    return { byState, failedRunIds: failed.map((run) => run.id) };
+  }
+
   public async getRun(context: WorkspaceContext, runId: string): Promise<WorkflowRunView> {
     const id = parseRunId(runId);
     const run = await this.db.workflowRun.findUnique({

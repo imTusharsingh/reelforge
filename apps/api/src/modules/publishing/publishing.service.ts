@@ -661,6 +661,57 @@ export class PublishingService {
     );
   }
 
+  /**
+   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) (by `updatedAt`) of destinations that need manual
+   * reconciliation, for the M17 notification intake only. Read-only; never expose it through a
+   * controller.
+   */
+  public async listReconciliationRequiredAfter(query: {
+    readonly after: Readonly<{ at: Date; id: string }> | null;
+    readonly until: Date;
+    readonly limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      channelId: string;
+      scheduledPostId: string;
+      platform: string;
+      retryCount: number;
+      lastErrorCode: string | null;
+      updatedAt: Date;
+    }>
+  > {
+    const destinations = await this.db.publishingDestination.findMany({
+      where: {
+        status: "RECONCILIATION_REQUIRED",
+        updatedAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        scheduledPostId: true,
+        platform: true,
+        lastErrorCode: true,
+        updatedAt: true,
+        scheduledPost: { select: { channelId: true } },
+        publishJob: { select: { retryCount: true } },
+      },
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      take: query.limit,
+    });
+    return destinations.map((destination) => ({
+      id: destination.id,
+      workspaceId: destination.workspaceId,
+      channelId: destination.scheduledPost.channelId,
+      scheduledPostId: destination.scheduledPostId,
+      platform: destination.platform,
+      retryCount: destination.publishJob?.retryCount ?? 0,
+      lastErrorCode: destination.lastErrorCode,
+      updatedAt: destination.updatedAt,
+    }));
+  }
+
   public async listPublishedPostContexts(
     context: WorkspaceContext,
     scheduledPostIds: readonly string[],

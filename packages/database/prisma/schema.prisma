@@ -300,6 +300,11 @@ model Workspace {
   performanceRecommendations  PerformanceRecommendation[]
   performanceExperiments      PerformanceExperiment[]
   performanceStrategyChanges  PerformanceStrategyChange[]
+  notificationPreferences     NotificationPreference[]
+  notificationEvents          NotificationEvent[]
+  notifications               Notification[]
+  notificationDeliveries      NotificationDelivery[]
+  channelReports              ChannelReport[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -350,6 +355,9 @@ model WorkspaceMembership {
   workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   metricJobs  MetricCollectionJob[] @relation("MetricJobRequester")
+  notificationPreferences NotificationPreference[]
+  notifications           Notification[]
+  notificationDeliveries  NotificationDelivery[]
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -393,6 +401,7 @@ model Channel {
   performanceRecommendations PerformanceRecommendation[]
   performanceExperiments    PerformanceExperiment[]
   performanceStrategyChanges PerformanceStrategyChange[]
+  channelReports            ChannelReport[]
   workflowRuns              WorkflowRun[]
   workflowScheduleSlots     WorkflowScheduleSlot[]
   workflowSchedulerCursors  WorkflowSchedulerCursor[]
@@ -2033,4 +2042,160 @@ model PerformanceStrategyChange {
   @@unique([workspaceId, channelId, version])
   @@index([workspaceId, channelId, createdAt])
   @@map("performance_strategy_changes")
+}
+
+// M17 - Notifications & Reporting
+
+enum NotificationFanoutStatus {
+  PENDING
+  DONE
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  RETRY_WAIT
+  FAILED
+  SKIPPED_NOT_CONFIGURED
+}
+
+enum ChannelReportPeriod {
+  DAILY
+  WEEKLY
+}
+
+enum ChannelReportTrigger {
+  MANUAL
+  SCHEDULED
+}
+
+model NotificationPreference {
+  id                String              @id @default(uuid()) @db.Uuid
+  workspaceId       String              @map("workspace_id") @db.Uuid
+  recipientMemberId String              @map("recipient_member_id") @db.Uuid
+  eventType         String              @map("event_type")
+  inApp             Boolean             @map("in_app")
+  email             Boolean
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipient         WorkspaceMembership @relation(fields: [recipientMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, recipientMemberId, eventType])
+  @@map("notification_preferences")
+}
+
+model NotificationEvent {
+  id            String                   @id @default(uuid()) @db.Uuid
+  workspaceId   String                   @map("workspace_id") @db.Uuid
+  channelId     String?                  @map("channel_id") @db.Uuid
+  eventType     String                   @map("event_type")
+  sourceModule  String                   @map("source_module")
+  sourceKey     String                   @map("source_key")
+  correlationId String?                  @map("correlation_id")
+  subjectType   String                   @map("subject_type")
+  subjectId     String                   @map("subject_id")
+  link          String?
+  payload       Json
+  occurredAt    DateTime                 @map("occurred_at") @db.Timestamptz(6)
+  fanoutStatus  NotificationFanoutStatus @default(PENDING) @map("fanout_status")
+  fannedOutAt   DateTime?                @map("fanned_out_at") @db.Timestamptz(6)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace     Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+  deliveries    NotificationDelivery[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, sourceKey])
+  @@index([fanoutStatus, createdAt])
+  @@map("notification_events")
+}
+
+model Notification {
+  id                String              @id @default(uuid()) @db.Uuid
+  workspaceId       String              @map("workspace_id") @db.Uuid
+  recipientMemberId String              @map("recipient_member_id") @db.Uuid
+  eventId           String              @map("event_id") @db.Uuid
+  eventType         String              @map("event_type")
+  channelId         String?             @map("channel_id") @db.Uuid
+  title             String
+  body              String
+  link              String?
+  dedupeKey         String              @map("dedupe_key")
+  readAt            DateTime?           @map("read_at") @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipient         WorkspaceMembership @relation(fields: [recipientMemberId], references: [id], onDelete: Cascade)
+  event             NotificationEvent   @relation(fields: [workspaceId, eventId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, recipientMemberId, dedupeKey])
+  @@index([workspaceId, recipientMemberId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model NotificationDelivery {
+  id                String                     @id @default(uuid()) @db.Uuid
+  workspaceId       String                     @map("workspace_id") @db.Uuid
+  recipientMemberId String                     @map("recipient_member_id") @db.Uuid
+  eventId           String                     @map("event_id") @db.Uuid
+  channel           String
+  status            NotificationDeliveryStatus @default(PENDING)
+  dedupeKey         String                     @map("dedupe_key")
+  attempts          Int                        @default(0)
+  maxAttempts       Int                        @default(5) @map("max_attempts")
+  nextAttemptAt     DateTime?                  @map("next_attempt_at") @db.Timestamptz(6)
+  leaseExpiresAt    DateTime?                  @map("lease_expires_at") @db.Timestamptz(6)
+  lastErrorCode     String?                    @map("last_error_code")
+  lastErrorMessage  String?                    @map("last_error_message")
+  providerMessageId String?                    @map("provider_message_id")
+  sentAt            DateTime?                  @map("sent_at") @db.Timestamptz(6)
+  createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipient         WorkspaceMembership        @relation(fields: [recipientMemberId], references: [id], onDelete: Cascade)
+  event             NotificationEvent          @relation(fields: [workspaceId, eventId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, recipientMemberId, channel, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([workspaceId, recipientMemberId, createdAt])
+  @@map("notification_deliveries")
+}
+
+model NotificationIntakeCursor {
+  id        String    @id @default(uuid()) @db.Uuid
+  source    String    @unique
+  afterAt   DateTime? @map("after_at") @db.Timestamptz(6)
+  afterId   String?   @map("after_id")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("notification_intake_cursors")
+}
+
+model ChannelReport {
+  id                String               @id @default(uuid()) @db.Uuid
+  workspaceId       String               @map("workspace_id") @db.Uuid
+  channelId         String               @map("channel_id") @db.Uuid
+  periodType        ChannelReportPeriod  @map("period_type")
+  periodStart       DateTime             @map("period_start") @db.Timestamptz(6)
+  periodEnd         DateTime             @map("period_end") @db.Timestamptz(6)
+  localStartDate    String               @map("local_start_date")
+  localEndDate      String               @map("local_end_date")
+  timezone          String
+  trigger           ChannelReportTrigger
+  generatedByUserId String?              @map("generated_by_user_id") @db.Uuid
+  schemaVersion     Int                  @default(1) @map("schema_version")
+  data              Json
+  missingData       Json                 @map("missing_data")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel              @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([channelId, periodType, periodStart])
+  @@index([workspaceId, channelId, periodType, periodStart])
+  @@map("channel_reports")
 }

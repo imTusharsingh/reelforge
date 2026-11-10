@@ -539,6 +539,95 @@ export class QualityService {
     return runs.map((run) => this.present(run));
   }
 
+  /**
+   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of reviews that need a human decision, for the M17
+   * notification intake only. Read-only; never expose it through a controller.
+   */
+  public async listReviewRequestsAfter(query: {
+    readonly after: Readonly<{ at: Date; id: string }> | null;
+    readonly until: Date;
+    readonly limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      channelId: string | null;
+      renderJobId: string;
+      status: string;
+      createdAt: Date;
+    }>
+  > {
+    const runs = await this.db.qualityReviewRun.findMany({
+      where: {
+        status: { in: ["REVIEW_REQUIRED", "AI_REVIEW_UNAVAILABLE"] },
+        createdAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        renderJobId: true,
+        status: true,
+        createdAt: true,
+        renderJob: { select: { sceneMediaJob: { select: { channelId: true } } } },
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: query.limit,
+    });
+    return runs.map((run) => ({
+      id: run.id,
+      workspaceId: run.workspaceId,
+      channelId: run.renderJob.sceneMediaJob.channelId,
+      renderJobId: run.renderJobId,
+      status: run.status,
+      createdAt: run.createdAt,
+    }));
+  }
+
+  /**
+   * @internal Cross-workspace cursor read (inclusive of the cursor timestamp; callers de-duplicate) of human review decisions, for the M17 notification
+   * intake only. Read-only; never expose it through a controller.
+   */
+  public async listDecisionsAfter(query: {
+    readonly after: Readonly<{ at: Date; id: string }> | null;
+    readonly until: Date;
+    readonly limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      reviewRunId: string;
+      channelId: string | null;
+      action: string;
+      createdAt: Date;
+    }>
+  > {
+    const decisions = await this.db.qualityDecision.findMany({
+      where: {
+        createdAt: { lte: query.until, ...(query.after === null ? {} : { gte: query.after.at }) },
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        reviewRunId: true,
+        action: true,
+        createdAt: true,
+        reviewRun: {
+          select: { renderJob: { select: { sceneMediaJob: { select: { channelId: true } } } } },
+        },
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: query.limit,
+    });
+    return decisions.map((decision) => ({
+      id: decision.id,
+      workspaceId: decision.workspaceId,
+      reviewRunId: decision.reviewRunId,
+      channelId: decision.reviewRun.renderJob.sceneMediaJob.channelId,
+      action: decision.action,
+      createdAt: decision.createdAt,
+    }));
+  }
+
   public async get(context: WorkspaceContext, runId: string): Promise<QualityRunView> {
     const run = await this.db.qualityReviewRun.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: runId } },
