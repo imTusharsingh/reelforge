@@ -621,6 +621,35 @@ export class PerformanceIntelligenceService {
     return records.map((record) => this.presentReport(record));
   }
 
+  /**
+   * @internal Cross-workspace strict keyset read (rows after `(at, id)` in `(timestamp, id)` order) of insight reports, for the M17 notification intake
+   * only. Read-only; never expose it through a controller.
+   */
+  public async listInsightReportsAfter(query: {
+    readonly after: Readonly<{ at: Date; id: string }> | null;
+    readonly until: Date;
+    readonly limit: number;
+  }): Promise<
+    Array<{ id: string; workspaceId: string; channelId: string; status: string; createdAt: Date }>
+  > {
+    return this.db.performanceInsightReport.findMany({
+      where: {
+        createdAt: { lte: query.until },
+        ...(query.after === null
+          ? {}
+          : {
+              OR: [
+                { createdAt: { gt: query.after.at } },
+                { createdAt: query.after.at, id: { gt: query.after.id } },
+              ],
+            }),
+      },
+      select: { id: true, workspaceId: true, channelId: true, status: true, createdAt: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: query.limit,
+    });
+  }
+
   public async getInsightReport(
     context: WorkspaceContext,
     reportId: string,
@@ -735,6 +764,54 @@ export class PerformanceIntelligenceService {
       take: 100,
     });
     return records.map((record) => this.presentRecommendation(record));
+  }
+
+  /**
+   * @internal Read-only, period-bounded read of a channel's insight reports and recommendations
+   * created in `[from, to)`, with exact totals, for M17 channel reports. Lists are capped at the
+   * given limits (oldest first); the totals are never capped.
+   */
+  public async listChannelInsightsBetween(
+    context: WorkspaceContext,
+    query: {
+      readonly channelId: string;
+      readonly from: Date;
+      readonly to: Date;
+      readonly reportLimit: number;
+      readonly recommendationLimit: number;
+    },
+  ): Promise<{
+    reports: PerformanceInsightReport[];
+    reportTotal: number;
+    recommendations: PerformanceRecommendation[];
+    recommendationTotal: number;
+  }> {
+    await this.assertChannel(context, query.channelId);
+    const where = {
+      workspaceId: context.workspaceId,
+      channelId: query.channelId,
+      createdAt: { gte: query.from, lt: query.to },
+    };
+    const [reports, reportTotal, recommendations, recommendationTotal] = await Promise.all([
+      this.db.performanceInsightReport.findMany({
+        where,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: query.reportLimit,
+      }),
+      this.db.performanceInsightReport.count({ where }),
+      this.db.performanceRecommendation.findMany({
+        where,
+        orderBy: [{ createdAt: "asc" }, { rank: "asc" }, { id: "asc" }],
+        take: query.recommendationLimit,
+      }),
+      this.db.performanceRecommendation.count({ where }),
+    ]);
+    return {
+      reports: reports.map((record) => this.presentReport(record)),
+      reportTotal,
+      recommendations: recommendations.map((record) => this.presentRecommendation(record)),
+      recommendationTotal,
+    };
   }
 
   public async approveRecommendation(

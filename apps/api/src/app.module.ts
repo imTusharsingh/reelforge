@@ -17,6 +17,7 @@ import { PublishingModule } from "./modules/publishing/publishing.module.js";
 import { AnalyticsModule } from "./modules/analytics/analytics.module.js";
 import { PerformanceIntelligenceModule } from "./modules/performance-intelligence/performance-intelligence.module.js";
 import { OrchestrationModule } from "./modules/orchestration/orchestration.module.js";
+import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { OrchestrationModule } from "./modules/orchestration/orchestration.modul
     AnalyticsModule,
     PerformanceIntelligenceModule,
     OrchestrationModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

@@ -22,6 +22,31 @@ export class WorkspaceService {
     return context;
   }
 
+  /**
+   * @internal Member read for M17 notification fan-out and recipient resolution. Read-only;
+   * never expose it through a controller.
+   */
+  public async listMembers(workspaceId: string): Promise<
+    Array<{
+      membershipId: string;
+      userId: string;
+      role: "OWNER" | "EDITOR" | "VIEWER";
+      email: string;
+    }>
+  > {
+    const members = await this.db.workspaceMembership.findMany({
+      where: { workspaceId, workspace: { archivedAt: null } },
+      select: { id: true, userId: true, role: true, user: { select: { email: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    return members.map((member) => ({
+      membershipId: member.id,
+      userId: member.userId,
+      role: member.role,
+      email: member.user.email,
+    }));
+  }
+
   public async create(userId: string, name: string): Promise<{ id: string; name: string }> {
     const workspace = await this.db.workspace.create({
       data: { name: name.trim(), memberships: { create: { userId, role: "OWNER" } } },

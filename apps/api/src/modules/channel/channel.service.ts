@@ -231,6 +231,32 @@ export class ChannelService {
     });
   }
 
+  /**
+   * @internal Read for M17 reports and the report schedule tick. Cross-workspace when no
+   * workspaceId is given, so never expose it through a controller or call it with user input
+   * without a workspaceId.
+   */
+  public async listReportChannels(
+    filter: { readonly workspaceId?: string; readonly channelId?: string } = {},
+  ): Promise<
+    ReadonlyArray<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+      timezone: string;
+    }>
+  > {
+    return this.db.channel.findMany({
+      where: {
+        ...(filter.workspaceId === undefined ? {} : { workspaceId: filter.workspaceId }),
+        ...(filter.channelId === undefined ? {} : { id: filter.channelId }),
+      },
+      select: { id: true, workspaceId: true, name: true, status: true, timezone: true },
+      orderBy: [{ workspaceId: "asc" }, { createdAt: "asc" }],
+    });
+  }
+
   public async assertChannelAllowsAutonomousWork(
     context: WorkspaceContext,
     id: string,

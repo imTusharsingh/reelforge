@@ -66,6 +66,10 @@
     "./orchestration-queue": {
       "types": "./dist/orchestration-queue.d.ts",
       "import": "./dist/orchestration-queue.js"
+    },
+    "./notifications-service": {
+      "types": "./dist/notifications-service.d.ts",
+      "import": "./dist/notifications-service.js"
     }
   }
 }
