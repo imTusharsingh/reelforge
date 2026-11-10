@@ -8,8 +8,8 @@
  * - A field whose name looks secret is replaced entirely with `[REDACTED]`.
  * - Every URL inside any string keeps only its scheme and host: `https://host/[REDACTED]`. Path,
  *   query, fragment, and user-info are dropped, so signed URLs and upload session URIs never leak.
- * - Bearer tokens, JWTs, Google OAuth access/refresh tokens, and `key=value` secrets embedded in
- *   free text are masked.
+ * - Bearer tokens, JWTs, Google OAuth access/refresh tokens, `key=value` secrets, and JSON/YAML
+ *   style `"key": "value"` / `key: value` secrets embedded in free text are masked.
  * - Values of secret-looking environment variables registered at startup are masked wherever
  *   they appear verbatim.
  */
@@ -64,6 +64,16 @@ const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,
 const GOOGLE_TOKEN_PATTERN = /\b(ya29\.[0-9A-Za-z_-]{10,}|1\/\/[0-9A-Za-z_-]{10,})/g;
 const KEY_VALUE_PATTERN =
   /\b(password|passwd|secret|token|access_token|refresh_token|id_token|client_secret|api[_-]?key|apikey|sig|signature|x-amz-signature|x-amz-credential|upload_id)=([^&\s"',;]+)/gi;
+/**
+ * JSON / YAML / JS-object style secrets in free text, for example a provider error body
+ * `{"access_token":"ya29…","client_secret":"…"}` or a YAML line `client_secret: abc`. The key may be
+ * quoted with `"` or `'` (or bare, or `\"` inside an already-encoded JSON string); the value is a
+ * quoted string (escapes honoured) or a bare token. Key-name runs are length-bounded so the
+ * pattern stays linear. The key's quoting and the value's quote style are kept so JSON stays
+ * readable.
+ */
+const STRUCTURED_SECRET_PATTERN =
+  /(\\?["']?)\b([A-Za-z0-9_-]{0,40}(?:password|passwd|secret|token|api[_-]?key|apikey|authorization|cookie|private[_-]?key|credentials?|signature)[A-Za-z0-9_-]{0,40})\1(\s*:\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;}\]]+)/gi;
 const SESSION_COOKIE_PATTERN = /\b(reelforge_session)=([^;\s"']+)/gi;
 
 const registeredSecrets = new Set<string>();
@@ -118,6 +128,13 @@ export function redactString(input: string): string {
     .replace(GOOGLE_TOKEN_PATTERN, REDACTED)
     .replace(SESSION_COOKIE_PATTERN, (_match, key: string) => `${key}=${REDACTED}`)
     .replace(KEY_VALUE_PATTERN, (_match, key: string) => `${key}=${REDACTED}`)
+    .replace(
+      STRUCTURED_SECRET_PATTERN,
+      (_match, quote: string, key: string, separator: string, value: string) => {
+        const valueQuote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+        return `${quote}${key}${quote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
+      },
+    )
     .replace(URL_PATTERN, (_match, scheme: string, rest: string) => redactUrl(scheme, rest));
   return output;
 }

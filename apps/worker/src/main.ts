@@ -1,6 +1,9 @@
 import "reflect-metadata";
 import { Logger } from "@nestjs/common";
-import { bootstrapProcessObservability } from "@reelforge/observability";
+import {
+  bootstrapProcessObservability,
+  installProcessErrorHandlers,
+} from "@reelforge/observability";
 import { createCompositionPoller } from "./handlers/composition/factory.js";
 import { CompositionWorkerHandler } from "./handlers/composition/handler.js";
 import { createOrchestrationRuntime } from "./handlers/orchestration/factory.js";
@@ -9,7 +12,10 @@ import { createNotificationsRuntime } from "./handlers/notifications/factory.js"
 import { NotificationsWorkerHandler } from "./handlers/notifications/handler.js";
 
 // M19-T03: redacting JSON logs for console.* and every Nest context the worker boots.
-Logger.overrideLogger(bootstrapProcessObservability("worker").frameworkLogger);
+const observability = bootstrapProcessObservability("worker");
+Logger.overrideLogger(observability.frameworkLogger);
+// M19 R2: uncaught exceptions and unhandled rejections are logged through redaction and exit 1.
+installProcessErrorHandlers(observability.logger);
 
 const composition = createCompositionPoller(process.env);
 const compositionHandler = new CompositionWorkerHandler((batch) =>

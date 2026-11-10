@@ -19,7 +19,12 @@ limit, not a claim of coverage.
   api key, private key, credential, ciphertext, signature, session/upload/signed URLs, storage keys,
   file paths), reduces every URL to `scheme://host/[REDACTED]` (so signed media URLs and query tokens
   never reach logs), and masks Bearer tokens, JWTs, Google `ya29.`/`1//` tokens, `key=value` secrets,
-  the session cookie, and the literal values of configured secret env vars.
+  the session cookie, and the literal values of configured secret env vars. Since the R1 fix it also
+  masks JSON/YAML-style secrets in free text (`"access_token":"…"`, `client_secret: …`, escaped JSON).
+- Since the R2 fix, `uncaughtException` and `unhandledRejection` in the API and worker are logged
+  through the redacting logger at `fatal` (`installProcessErrorHandlers`) and the process exits 1.
+- Since the R5 fix, the `/ops/metrics` token is compared as SHA-256 digests (`secretsEqual`), so the
+  comparison leaks neither content nor length.
 
 ## RBAC (ADR-003)
 - Roles are OWNER / EDITOR / VIEWER per workspace. Every workspace route resolves its context through
