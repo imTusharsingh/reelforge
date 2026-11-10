@@ -880,3 +880,15 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: T07 (retention/deletion/export) is blocked on the pending retention ADR, so no periods were invented. Domain-level before/after audit diffs are not captured for every route (route-level records only).
 - Next exact action: Minu reviews the M19 PR; do not merge before approval.
 - Related status/ADR: M19 `STATUS.md`; ADR-003, ADR-007, ADR-010, ADR-012, ADR-017.
+
+## 2026-11-10 - M19 integrated closeout (docs only)
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784; branch `chore/m19-integrated-closeout` from `origin/main` `3da846e10bc8b682639a32c46bcefc9f529f6e0b`; main checkout.
+- Work package: docs-only closeout recording the already-merged M19 (PR #34) integration. No product rework.
+- Facts verified in git/GitHub: PR #34 received APPROVE at `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`, no blockers) and was squash-merged by `minu-the-reviewer` at `3da846e10bc8b682639a32c46bcefc9f529f6e0b`.
+- Changes made: Updated `docs/PROJECT_STATE.md` to M00–M19 integrated (tip `3da846e`, no active sessions, M20 next); set M19 `STATUS.md` to INTEGRATED with the review id, approved head and merge SHA; carried the M19 residual notes R1–R14 into `PROJECT_STATE.md` and M19 `STATUS.md`; added ADR-019 to `DECISION_LOG.md`.
+- Commands actually run and results: `git fetch --prune` and `git rev-parse origin/main` confirmed `3da846e10bc8b682639a32c46bcefc9f529f6e0b`; `gh api` confirmed the review id, head and merge commit; `git diff --check` and `pnpm format:check` were run before handoff.
+- External calls: GitHub and git only; no live Google/Meta/AI/social calls.
+- Decisions/approvals: No app, schema, CI, or lockfile changes. ADR-019 records already-approved review decisions. No merge is claimed; this PR requests Minu's review and stops.
+- Defects/risks/blockers: M19-T07 (retention/deletion/export) remains open pending the retention ADR. R1, R2 and R5 are addressed in a separate fix PR.
+- Next exact action: Minu reviews this closeout PR; then M20.
+- Related status/ADR: M19 `STATUS.md`; ADR-019.
