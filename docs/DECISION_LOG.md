@@ -131,6 +131,16 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
 - **Reason:** These choices are what M04 implemented and what Minu approved on PR #10. No earlier ADR recorded them.
 - **Consequence:** Generation jobs consume immutable references rather than mutable asset records. Changing versioning/rights semantics or adding production object storage requires a later ADR. The open Prisma Client / Nest ESM boot follow-up is an engineering gap, not a decision resolved by this ADR.
 
+## ADR-017 - M16 orchestration Core decisions and M17/M18 parallel plan
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of the M16 integration closeout after PR #29 was approved at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c`, review `5839211545`, and squash-merged at `602183aeed1f2fe9fa086cf819f86fc7de07bb72`).
+- **Decision:**
+  1. `ioredis` 5.11.1 is pinned in `apps/api` and `apps/worker` as the Redis client for BullMQ 6.6.0 (ADR-012). A set but unreachable `REDIS_URL` fails loudly; an unset `REDIS_URL` stays NOT_CONFIGURED.
+  2. A generated run's script step waits (polled, up to 72 h) for human M07 script approval before scene media, because M09 refuses unapproved scripts. This follows ADR-005 (human approval by default).
+  3. M17 and M18 are implemented in parallel worktrees with fixed migration timestamps: M17 `20261116010000`, M18 `20261117010000`. M17 merges first; M18 then rebases onto it.
+  4. M18 provides the real `BudgetPolicyPort` adapter. Until it is bound, scheduled runs stay blocked with `BUDGET_POLICY_UNAVAILABLE`; manual runs are allowed.
+- **Consequence:** Changing the Redis client, removing the script approval wait, or changing the M17/M18 migration order requires a later ADR.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:

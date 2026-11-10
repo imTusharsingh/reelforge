@@ -1,17 +1,18 @@
 # M16 Status - Workflow Orchestration & Scheduler
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (PR #29 squash-merged to `main`; docs-only closeout records it)
 - **Assigned session/editor:** Module Implementation Agent, Desktop (TRACXN-LP-784); started in an opencode session that stopped at a usage limit, finished locally in the same checkout
 - **Branch/worktree:** `work/m16-workflow-orchestration-and-scheduler` from `origin/main` `727140ce025b9691aca1f0999c889983c5b8d32d`; main checkout, no worktree
 - **Last updated:** 2026-11-10
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` (review `5839211545`, APPROVED by `minu-the-reviewer`)
+- **Merged commit:** `602183aeed1f2fe9fa086cf819f86fc7de07bb72` (squash-merged by `minu-the-reviewer` on 2026-11-10)
 
 ## Current objective
 Coordinate durable jobs, schedules, dependencies, pause/resume, retries, and run history.
 
 ## Completion estimate
-~97% (estimate only, not an approval). Review REQUEST_CHANGES 5838818072 (B1–B6 plus the cheap residuals) is addressed in fix-forward commits on top of `0c6b941`; awaiting re-review.
+Implemented, reviewed, and integrated via PR #29. Residual notes below are non-blocking follow-ups.
 
 ## Task checklist
 - [x] M16-T01: Run/step/job state machines (`orchestration.state.ts`); every transition is an `updateMany` compare-and-swap on the expected status, and a failed CAS is a 409 or a no-op.
@@ -82,10 +83,25 @@ Coordinate durable jobs, schedules, dependencies, pause/resume, retries, and run
 - Stuck M14 `RUNNING` collection jobs are not reclaimed (needs a new M14 method).
 
 ## Next exact action
-Minu re-reviews PR #29 (fix-forward commits on top of `0c6b941`). Do not merge until approved.
+None for M16 product work. M16 is integrated; M17 and M18 are next (parallel) after this docs-only closeout merges.
 
 ## Handoff notes
 No self-approval, integration, or merge is claimed.
 
 ## Reviewer decision
-- Pending.
+- Round 1: REQUEST_CHANGES at `0c6b941c5f53e07885f327280ac2ff4970d381fb` (review `5838818072`, B1–B6).
+- Round 2: APPROVED at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` (review `5839211545`) after the B1–B6 fix-forward commits.
+- Integration: squash-merged to `main` by `minu-the-reviewer` at `602183aeed1f2fe9fa086cf819f86fc7de07bb72` (PR #29) on 2026-11-10. State set to INTEGRATED by the docs-only closeout PR; no product rework.
+
+## Carried residual notes (non-blocking)
+- Add a per-claim token before raising worker concurrency above 1.
+- A crash-retry of the script, QA, or analytics step can create a new record.
+- A retry after a final QA or render failure re-reads the old reference.
+- BullMQ job re-add is not atomic.
+- Resume can reset a `RECONCILIATION_REQUIRED` step.
+- Resume after M11 QA approval is manual.
+- The scheduler only looks back 5 minutes and does not backfill.
+- A schedule's timezone can override the channel's.
+- Provider limits are per workspace.
+- The worker loads the full `AppModule`.
+- M14 `RUNNING` collection jobs are not reclaimed.

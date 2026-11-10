@@ -790,3 +790,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Next exact action: Minu re-review of PR #29.
 - Related status/ADR: M16 `STATUS.md`.
 
+## 2026-11-10 - M16 integrated closeout (docs only)
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784; branch `chore/m16-integrated-closeout` from `origin/main` `602183aeed1f2fe9fa086cf819f86fc7de07bb72`.
+- Work package: docs-only closeout recording the already-merged M16 (PR #29) integration. No product rework.
+- Facts verified in git/GitHub: PR #29 received REQUEST_CHANGES at `0c6b941c5f53e07885f327280ac2ff4970d381fb` (review `5838818072`, B1–B6); the fixes landed in fix-forward commits ending at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c`; head `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c` was APPROVED (review `5839211545`) and squash-merged by `minu-the-reviewer` at `602183aeed1f2fe9fa086cf819f86fc7de07bb72`.
+- Changes made: Updated `docs/PROJECT_STATE.md` to M00–M16 integrated (tip `602183a`, no active sessions, M17 and M18 next in parallel); set M16 `STATUS.md` to INTEGRATED with the review IDs, approved head, and merge SHA; carried the M16 residual notes into `PROJECT_STATE.md` and `STATUS.md`; recorded the M16 Core decisions in `DECISION_LOG.md`; added `.local-data/` to `.gitignore`.
+- Commands actually run and results: `git fetch origin` and `git rev-parse origin/main` confirmed `602183aeed1f2fe9fa086cf819f86fc7de07bb72`; `git diff --check` and `pnpm format:check` were run before handoff.
+- External calls: GitHub and git only; no live Google/Meta/AI/social calls.
+- Decisions/approvals: No app, schema, CI, or lockfile changes. Core decisions recorded in `DECISION_LOG.md` (ADR-017). No merge is claimed; this PR requests Minu's review and stops.
+- Defects/risks/blockers: The M16 residual notes are documented as non-blocking follow-ups.
+- Next exact action: Push, open the docs-only closeout PR, request `minu-the-reviewer`, and stop without merging.
+- Related status/ADR: M16 `STATUS.md`; ADR-005, ADR-006, ADR-012, ADR-017.
