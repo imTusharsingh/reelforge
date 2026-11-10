@@ -1,7 +1,7 @@
 # M14 Status - Analytics Collection & Metric Store
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
-- **Completion:** 100% of assigned implementation (estimate only; not approval).
+- **State:** INTEGRATED
+- **Completion:** 100% of assigned implementation; approved and squash-merged to `main`.
 - **Assigned session/editor:** Module Implementation Agent, Desktop
 - **Branch/worktree:** `work/m14-analytics-collection-and-metric-store` / `../reelforge-m14`
 - **Base:** `75eee789921948a1d19427c4b2994a88a8766bbe` (M13 on `origin/main`)
@@ -10,7 +10,8 @@
 - **Review-fix commit:** `0bfc4c8` (pushed; PR #25)
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
-- **Approved commit:** none
+- **Approved commit:** `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`)
+- **Integrated merge:** `02dbff53b794f2d78c58d6b44e08285e8c793ff1` (PR #25, squash-merged by `minu-the-reviewer`)
 
 ## Current objective
 Collect and normalize YouTube metrics with provenance, reporting period, collection timestamp, completeness, and retry state; export published posts from M13; keep Instagram fail-closed; never fabricate values or overwrite prior valid snapshots on API failure. No live Google or Meta calls were made.
@@ -99,7 +100,16 @@ Node 24.22.2 and pnpm 12.16.1 were used. Database work used the disposable Postg
 - Instagram collection remains unimplemented and fail-closed.
 
 ## Next exact action
-Minu re-reviews the B1 fix, the atomic job claim, and the updated evidence. If approved, merge the M14 PR; do not self-approve or merge from this session.
+None for M14; the module is integrated. Residuals below are non-blocking follow-ups for later work.
 
 ## Reviewer decision
-- Pending; no approval, integration, or review request is claimed by this session.
+- Minu approved `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`) and `minu-the-reviewer` squash-merged PR #25 at `02dbff53b794f2d78c58d6b44e08285e8c793ff1`.
+- No self-approval, self-merge, or push to `main` was performed by this session.
+
+## Residual notes (non-blocking)
+- A crash or killed request after the job is marked `RUNNING` can leave it stuck; an editor can create a new job.
+- Large `video`+`day` reports are not paginated with `startIndex`/`maxResults`; a truncated table is stored as unavailable days rather than detected as incomplete.
+- The official authorization table still lists `yt-analytics.readonly`; re-check live queries if production collection is denied.
+- `appendSnapshots` remains public because the PostgreSQL integration test exercises append-only revision and missing-report preservation directly.
+- Instagram collection remains unimplemented and fail-closed.
+- Collection is editor-triggered; no scheduler or worker was added.
