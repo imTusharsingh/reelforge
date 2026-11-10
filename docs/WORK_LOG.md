@@ -848,3 +848,15 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approvals: The cross-module M08 edit is Core-approved in review B1. The optional M16 PAUSE-on-BUDGET_EXHAUSTED was not done. No `PROJECT_STATE.md`/`ci.yml` change, no new dependency, no force-push.
 - Next exact action: Minu re-reviews PR #31.
 - Related status/ADR: M18 `STATUS.md`; ADR-017.
+
+## 2026-11-10 - M17 and M18 integrated closeout (docs only)
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784; branch `chore/m17-m18-integrated-closeout` from `origin/main` `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`; main checkout.
+- Work package: docs-only closeout recording the already-merged M17 (PR #32) and M18 (PR #31) integrations. No product rework.
+- Facts verified in git/GitHub: PR #32 received REQUEST_CHANGES at `ef987932e8c6f30ecc39e90cd14b9587143e1031` (review `5839809149`) and APPROVE at `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` (review `5839978742`), squash-merged by `minu-the-reviewer` at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b`. PR #31 received REQUEST_CHANGES at `e8533ac3209b6e16e3122fa8ff77ab37c6a7fcec` (review `5839788708`) and APPROVE at `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`), squash-merged by `minu-the-reviewer` at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`.
+- Changes made: Updated `docs/PROJECT_STATE.md` to M00–M18 integrated (tip `7e862fe`, no active sessions, M19 next); set M17 and M18 `STATUS.md` to INTEGRATED with review IDs, approved heads, and merge SHAs; carried the M17 (R1–R10 and others) and M18 residual notes into `PROJECT_STATE.md` and both STATUS files; added ADR-018 to `DECISION_LOG.md`.
+- Commands actually run and results: `git fetch origin` and `git rev-parse origin/main` confirmed `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`; `gh api` confirmed review IDs, heads, and merge commits; `git diff --check` and `pnpm format:check` were run before handoff.
+- External calls: GitHub and git only; no live Google/Meta/AI/social calls.
+- Decisions/approvals: No app, schema, CI, or lockfile changes. ADR-018 records already-approved review decisions. No merge is claimed; this PR requests Minu's review and stops.
+- Defects/risks/blockers: The M17 and M18 residual notes are documented as non-blocking follow-ups.
+- Next exact action: Minu reviews this closeout PR; then M19.
+- Related status/ADR: M17 and M18 `STATUS.md`; ADR-017, ADR-018.

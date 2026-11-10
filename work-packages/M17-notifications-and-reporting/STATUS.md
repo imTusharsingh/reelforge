@@ -1,12 +1,13 @@
 # M17 Status - Notifications & Reporting
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (PR #32 squash-merged to `main`; docs-only closeout records it)
 - **Assigned session/editor:** Module Implementation Agent, Desktop TRACXN-LP-784 (local, no cloud agent)
 - **Branch/worktree:** `work/m17-notifications-and-reporting` in worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m17`, from `origin/main` `6e4f2965f3b3c6d4097eae2153bf9874b2d99a63`
 - **Last updated:** 2026-11-10
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
-- **Completion estimate:** ~90% (estimate only, not approval). Remaining: review, and a real email adapter once a sender is chosen.
+- **Approved commit:** `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` (review `5839978742`, APPROVED by `minu-the-reviewer`)
+- **Merged commit:** `f0feccd0be9d4052e8484b5ea8214aa239f95a8b` (squash-merged by `minu-the-reviewer` on 2026-11-10)
+- **Completion estimate:** Implemented, reviewed, and integrated via PR #32. Residual notes below are non-blocking follow-ups; a live email adapter waits for the sender ADR.
 
 ## Current objective
 Deliver useful event-based notifications and scheduled channel reports.
@@ -90,7 +91,7 @@ The web app does not implement these routes yet; they are the contract for it.
 - The worker boots a third `AppModule` context (as composition and M16 already do).
 
 ## Next exact action
-Minu review of the M17 PR. Do not merge until an official APPROVE. After merge, M18 rebases onto it (ADR-017).
+None for M17 product work. M17 and M18 are integrated; M19 is next after the docs-only closeout merges.
 
 ## Handoff notes
 No PROJECT_STATE edit (closeout PR does that). Containers `reelforge-m17-db` and `reelforge-m17-redis` were removed after verification.
@@ -102,4 +103,27 @@ No PROJECT_STATE edit (closeout PR does that). Containers `reelforge-m17-db` and
 - R2: report + `CHANNEL_REPORT_READY` in one transaction (integration test). R1: documented on `intakeSettleMs`.
 
 ## Reviewer decision
-- 5839809149: REQUEST_CHANGES on `ef98793` (B1–B3, R1–R2); fixes pushed, re-review pending.
+- Round 1: REQUEST_CHANGES at `ef987932e8c6f30ecc39e90cd14b9587143e1031` (review `5839809149`, B1–B3, R1–R2).
+- Round 2: APPROVED at `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` (review `5839978742`) after the fix-forward commit.
+- Integration: squash-merged to `main` by `minu-the-reviewer` at `f0feccd0be9d4052e8484b5ea8214aa239f95a8b` (PR #32) on 2026-11-10. State set to INTEGRATED by the docs-only closeout PR; no product rework.
+
+## Carried residual notes (non-blocking)
+- R1: the 30 s settle window assumes source transactions finish in under ~5 s and clock skew stays under ~30 s.
+- R1a: cursor precision is milliseconds only.
+- R1b: the keyset needs a redundant `ts >=` lower bound.
+- R3: a manual report run before metrics arrive stays incomplete.
+- R4: M17 reads M13 `outbox_events` directly.
+- R5: a poison event can block the head of the fan-out queue.
+- R6: members who join later still receive old events.
+- R7: `CHANGES_REQUESTED` / `BLOCKED` review outcomes map to the wrong notification types.
+- R8: the future email adapter must honour the delivery id for idempotency.
+- R9: VIEWERs get failure emails by default; product should confirm.
+- R10: report payload `schemaVersion` should be bumped on the next shape change.
+- The worker boots a third `AppModule`.
+- Published-record scans are capped at 5,000 rows.
+- There is no live email adapter (sender ADR still pending); email bodies carry relative links until a public base URL is configured.
+- `PUBLISH_RECONCILIATION_REQUIRED` is keyed per destination and retry count; a second episode without a retry is not re-notified.
+- A review decided before intake ran is not notified as needed (its decision is).
+- M14 metric days are platform calendar dates, not converted to the channel timezone.
+- The scheduler does not backfill missed periods older than the latest completed one.
+- An invalid channel timezone falls back to UTC.
