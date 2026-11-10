@@ -4,6 +4,7 @@ import { ScriptService } from "./script.service.js";
 import type { ScriptLlmPort } from "./script.types.js";
 import { ScriptController } from "./script.controller.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { PROVIDER_REGISTRY, ProviderRegistry } from "@reelforge/ai-providers";
 
@@ -25,7 +26,7 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
   }
 }
 @Module({
-  imports: [IdentityModule, WorkspaceModule],
+  imports: [IdentityModule, WorkspaceModule, UsageBudgetModule],
   controllers: [ScriptController],
   providers: [
     ScriptService,

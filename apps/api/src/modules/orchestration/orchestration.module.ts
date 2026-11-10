@@ -8,8 +8,9 @@ import { PublishingModule } from "../publishing/publishing.module.js";
 import { QualityModule } from "../quality/quality.module.js";
 import { SceneMediaModule } from "../scene-media/scene-media.module.js";
 import { ScriptModule } from "../script/script.module.js";
+import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
+import { UsageBudgetPolicy } from "../usage-budget/usage-budget.policy.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
-import { UnconfiguredBudgetPolicy } from "./orchestration.budget.js";
 import { createWorkflowQueueFromEnv } from "./orchestration.bullmq.js";
 import { OrchestrationController } from "./orchestration.controller.js";
 import { WorkflowDomainDispatcher } from "./orchestration.dispatcher.js";
@@ -37,6 +38,7 @@ import {
     QualityModule,
     PublishingModule,
     AnalyticsModule,
+    UsageBudgetModule,
   ],
   controllers: [OrchestrationController],
   providers: [
@@ -47,7 +49,8 @@ import {
       provide: WORKFLOW_QUEUE_PORT,
       useFactory: (): WorkflowQueuePort => createWorkflowQueueFromEnv(process.env),
     },
-    { provide: WORKFLOW_BUDGET_POLICY, useClass: UnconfiguredBudgetPolicy },
+    // M18 real adapter (ADR-017): unconfigured budgets still answer NOT_CONFIGURED.
+    { provide: WORKFLOW_BUDGET_POLICY, useExisting: UsageBudgetPolicy },
     { provide: WORKFLOW_STEP_DISPATCHER, useExisting: WorkflowDomainDispatcher },
     { provide: ORCHESTRATION_CLOCK, useValue: (): Date => new Date() },
     { provide: WORKFLOW_LIMIT_CONFIG, useValue: DEFAULT_WORKFLOW_LIMIT_CONFIG },

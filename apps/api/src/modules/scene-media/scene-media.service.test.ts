@@ -18,6 +18,8 @@ import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { SceneDispatchLedger } from "./scene-media.budget.js";
 import { SceneMediaService } from "./scene-media.service.js";
 import type { SceneMediaPackage } from "./scene-media.types.js";
+import type { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { BudgetExhaustedError } from "../usage-budget/usage-budget.types.js";
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -439,6 +441,7 @@ function harness(options?: {
   register?: boolean;
   characters?: Array<Record<string, unknown>>;
   cost?: number | null;
+  usage?: Pick<UsageBudgetService, "reservePaidCall" | "finishPaidCall">;
 }): {
   service: SceneMediaService;
   context: WorkspaceContext;
@@ -579,6 +582,7 @@ function harness(options?: {
     storage,
     assets,
     ledger,
+    options?.usage as UsageBudgetService | undefined,
   );
   return {
     service,
@@ -915,6 +919,64 @@ describe("scene media generation", () => {
     expect(env.ledger.reservations[0]?.status).toBe("RELEASED");
     expect(env.ledger.records[0]?.status).toBe("FAILED");
     expect(env.assets).toHaveLength(0);
+  });
+
+  it("stops before the provider when the M18 budget is exhausted (B1)", async () => {
+    const finished: unknown[] = [];
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      usage: {
+        reservePaidCall: async (): Promise<never> => {
+          throw new BudgetExhaustedError({
+            budgetId: randomUUID(),
+            period: "DAY",
+            limitMinor: 50,
+            consumedMinor: 50,
+            requestedMinor: 100,
+            currency: "USD",
+          });
+        },
+        finishPaidCall: async (...args: unknown[]): Promise<void> => {
+          finished.push(args);
+        },
+      },
+    });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    expect(env.imageCalls).toHaveLength(0);
+    expect(created.scenes[0]?.outputs[0]).toMatchObject({
+      status: "FAILED_RETRYABLE",
+      errorCode: "BUDGET_EXHAUSTED",
+    });
+    // Refused before the M08 hold or ledger row: nothing reserved, nothing recorded.
+    expect(env.ledger.reservations).toHaveLength(0);
+    expect(env.ledger.records).toHaveLength(0);
+    expect(finished).toEqual([[null, { dispatched: false, actualCost: null }]]);
+  });
+
+  it("commits the M18 hold after dispatch, including a provider failure (B1)", async () => {
+    const hold = { workspaceId: "w", reservationId: "r", currency: "USD", estimateMinor: 100 };
+    const finished: unknown[] = [];
+    const usage = {
+      reservePaidCall: async (): Promise<typeof hold> => hold,
+      finishPaidCall: async (...args: unknown[]): Promise<void> => {
+        finished.push(args);
+      },
+    };
+    const ok = harness({ scenes: [scene("one", { narration: undefined, dialogue: "" })], usage });
+    await ok.service.create(ok.context, createBody(ok.scriptId));
+    expect(finished).toEqual([[hold, { dispatched: true, actualCost: 1, actualCurrency: "USD" }]]);
+    finished.length = 0;
+    const failing = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      usage,
+      image: {
+        generate: async (request) => {
+          throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
+        },
+      },
+    });
+    await failing.service.create(failing.context, createBody(failing.scriptId));
+    expect(finished).toEqual([[hold, { dispatched: true, actualCost: null }]]);
   });
 
   it("does not call an unconfigured provider or publish media", async () => {
