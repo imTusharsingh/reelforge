@@ -232,8 +232,8 @@ model User {
   createdQualityReviewRuns QualityReviewRun[]
   qualityDecisions         QualityDecision[]
   socialOAuthStates        SocialOAuthState[]
-  scheduledPosts           ScheduledPost[]       @relation("ScheduledPostCreator")
-  authorizedPosts          ScheduledPost[]       @relation("ScheduledPostPublisher")
+  scheduledPosts           ScheduledPost[]      @relation("ScheduledPostCreator")
+  authorizedPosts          ScheduledPost[]      @relation("ScheduledPostPublisher")
   defaultWorkspaceId       String?               @map("default_workspace_id") @db.Uuid
   defaultWorkspace         Workspace?            @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id], onDelete: SetNull)
 
@@ -352,14 +352,14 @@ model AuthEvent {
 }
 
 model WorkspaceMembership {
-  id                      String                   @id @default(uuid()) @db.Uuid
-  workspaceId             String                   @map("workspace_id") @db.Uuid
-  userId                  String                   @map("user_id") @db.Uuid
-  role                    WorkspaceRole
-  createdAt               DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  metricJobs              MetricCollectionJob[]    @relation("MetricJobRequester")
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metricJobs  MetricCollectionJob[] @relation("MetricJobRequester")
   notificationPreferences NotificationPreference[]
   notifications           Notification[]
   notificationDeliveries  NotificationDelivery[]
@@ -370,49 +370,49 @@ model WorkspaceMembership {
 }
 
 model Channel {
-  id                         String                      @id @default(uuid()) @db.Uuid
-  workspaceId                String                      @map("workspace_id") @db.Uuid
-  name                       String
-  handle                     String?
-  description                String?
-  niche                      String?
-  language                   String?
-  audience                   String?
-  timezone                   String                      @default("UTC")
-  goals                      Json?
-  schedule                   Json?
-  automationDefaults         Json?                       @map("automation_defaults")
-  approvalPolicy             Json?                       @map("approval_policy")
-  publishingDestinations     Json?                       @map("publishing_destinations")
-  status                     ChannelStatus               @default(ACTIVE)
-  activeSnapshotId           String?                     @map("active_snapshot_id") @db.Uuid
-  createdAt                  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                  Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  series                     ContentSeries[]
-  videos                     Video[]
-  posts                      Post[]
-  characterGroupAssignments  CharacterGroupAssignment[]
-  ideas                      Idea[]
-  ideaApprovalSnapshots      IdeaApprovalSnapshot[]
-  sceneMediaJobs             SceneMediaJob[]
-  snapshots                  ChannelConfigSnapshot[]
-  socialAccounts             SocialAccount[]
-  socialOAuthStates          SocialOAuthState[]
-  scheduledPosts             ScheduledPost[]
-  metricCollectionJobs       MetricCollectionJob[]
-  metricSnapshots            AnalyticsMetricSnapshot[]
-  performanceInsightReports  PerformanceInsightReport[]
+  id                        String                     @id @default(uuid()) @db.Uuid
+  workspaceId               String                     @map("workspace_id") @db.Uuid
+  name                      String
+  handle                    String?
+  description               String?
+  niche                     String?
+  language                  String?
+  audience                  String?
+  timezone                  String                     @default("UTC")
+  goals                     Json?
+  schedule                  Json?
+  automationDefaults        Json?                      @map("automation_defaults")
+  approvalPolicy            Json?                      @map("approval_policy")
+  publishingDestinations    Json?                      @map("publishing_destinations")
+  status                    ChannelStatus              @default(ACTIVE)
+  activeSnapshotId          String?                    @map("active_snapshot_id") @db.Uuid
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                 Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  series                    ContentSeries[]
+  videos                    Video[]
+  posts                     Post[]
+  characterGroupAssignments CharacterGroupAssignment[]
+  ideas                     Idea[]
+  ideaApprovalSnapshots     IdeaApprovalSnapshot[]
+  sceneMediaJobs            SceneMediaJob[]
+  snapshots                 ChannelConfigSnapshot[]
+  socialAccounts            SocialAccount[]
+  socialOAuthStates         SocialOAuthState[]
+  scheduledPosts            ScheduledPost[]
+  metricCollectionJobs      MetricCollectionJob[]
+  metricSnapshots           AnalyticsMetricSnapshot[]
+  performanceInsightReports PerformanceInsightReport[]
   performanceRecommendations PerformanceRecommendation[]
-  performanceExperiments     PerformanceExperiment[]
+  performanceExperiments    PerformanceExperiment[]
   performanceStrategyChanges PerformanceStrategyChange[]
-  channelReports             ChannelReport[]
-  workflowRuns               WorkflowRun[]
-  workflowScheduleSlots      WorkflowScheduleSlot[]
-  workflowSchedulerCursors   WorkflowSchedulerCursor[]
-  usageBudgets               UsageBudget[]
-  emergencyStops             EmergencyStop[]
-  activeSnapshot             ChannelConfigSnapshot?      @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
+  channelReports            ChannelReport[]
+  workflowRuns              WorkflowRun[]
+  workflowScheduleSlots     WorkflowScheduleSlot[]
+  workflowSchedulerCursors  WorkflowSchedulerCursor[]
+  usageBudgets              UsageBudget[]
+  emergencyStops            EmergencyStop[]
+  activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, activeSnapshotId])
@@ -437,27 +437,27 @@ model ChannelConfigSnapshot {
 }
 
 model SocialAccount {
-  id                     String                    @id @default(uuid()) @db.Uuid
-  workspaceId            String                    @map("workspace_id") @db.Uuid
-  channelId              String                    @map("channel_id") @db.Uuid
-  platform               SocialPlatform
-  remoteAccountId        String                    @map("remote_account_id")
-  displayName            String                    @map("display_name")
-  username               String?
-  status                 SocialAccountStatus       @default(CONNECTED)
-  health                 SocialAccountHealth       @default(UNAVAILABLE)
-  connectedAt            DateTime                  @default(now()) @map("connected_at") @db.Timestamptz(6)
-  lastHealthCheckAt      DateTime?                 @map("last_health_check_at") @db.Timestamptz(6)
-  createdAt              DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace              Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel                Channel                   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  tokens                 SocialAccountToken?
-  permissions            SocialAccountPermission[]
-  capabilities           SocialAccountCapability[]
+  id                String                    @id @default(uuid()) @db.Uuid
+  workspaceId       String                    @map("workspace_id") @db.Uuid
+  channelId         String                    @map("channel_id") @db.Uuid
+  platform          SocialPlatform
+  remoteAccountId   String                    @map("remote_account_id")
+  displayName       String                    @map("display_name")
+  username          String?
+  status            SocialAccountStatus       @default(CONNECTED)
+  health            SocialAccountHealth       @default(UNAVAILABLE)
+  connectedAt       DateTime                  @default(now()) @map("connected_at") @db.Timestamptz(6)
+  lastHealthCheckAt DateTime?                 @map("last_health_check_at") @db.Timestamptz(6)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel                   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  tokens            SocialAccountToken?
+  permissions       SocialAccountPermission[]
+  capabilities      SocialAccountCapability[]
   publishingDestinations PublishingDestination[]
-  metricCollectionJobs   MetricCollectionJob[]
-  metricSnapshots        AnalyticsMetricSnapshot[]
+  metricCollectionJobs MetricCollectionJob[]
+  metricSnapshots   AnalyticsMetricSnapshot[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, channelId, platform, remoteAccountId])
@@ -677,30 +677,30 @@ model Post {
 }
 
 model WorkflowRun {
-  id                String                 @id @default(uuid()) @db.Uuid
-  workspaceId       String                 @map("workspace_id") @db.Uuid
-  channelId         String?                @map("channel_id") @db.Uuid
-  correlationId     String                 @map("correlation_id") @db.Uuid
-  idempotencyKey    String                 @map("idempotency_key")
-  definitionKey     WorkflowDefinitionKey  @default(GENERATION) @map("definition_key")
-  trigger           WorkflowTrigger        @default(MANUAL)
-  triggeredByUserId String?                @map("triggered_by_user_id") @db.Uuid
+  id                String                   @id @default(uuid()) @db.Uuid
+  workspaceId       String                   @map("workspace_id") @db.Uuid
+  channelId         String?                  @map("channel_id") @db.Uuid
+  correlationId     String                   @map("correlation_id") @db.Uuid
+  idempotencyKey    String                   @map("idempotency_key")
+  definitionKey     WorkflowDefinitionKey    @default(GENERATION) @map("definition_key")
+  trigger           WorkflowTrigger          @default(MANUAL)
+  triggeredByUserId String?                  @map("triggered_by_user_id") @db.Uuid
   state             WorkflowState
-  dispatchStatus    WorkflowDispatchStatus @default(NOT_CONFIGURED) @map("dispatch_status")
-  budgetDecision    WorkflowBudgetDecision @default(NOT_CONFIGURED) @map("budget_decision")
-  budgetReason      String?                @map("budget_reason")
-  input             Json                   @default("{}")
-  nextAction        String?                @map("next_action")
-  pausedReason      String?                @map("paused_reason")
-  currentStepKey    String?                @map("current_step_key")
-  lastErrorCode     String?                @map("last_error_code")
-  lastErrorMessage  String?                @map("last_error_message")
-  startedAt         DateTime?              @map("started_at") @db.Timestamptz(6)
-  completedAt       DateTime?              @map("completed_at") @db.Timestamptz(6)
-  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel           Channel?               @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  dispatchStatus    WorkflowDispatchStatus   @default(NOT_CONFIGURED) @map("dispatch_status")
+  budgetDecision    WorkflowBudgetDecision   @default(NOT_CONFIGURED) @map("budget_decision")
+  budgetReason      String?                  @map("budget_reason")
+  input             Json                     @default("{}")
+  nextAction        String?                  @map("next_action")
+  pausedReason      String?                  @map("paused_reason")
+  currentStepKey    String?                  @map("current_step_key")
+  lastErrorCode     String?                  @map("last_error_code")
+  lastErrorMessage  String?                  @map("last_error_message")
+  startedAt         DateTime?                @map("started_at") @db.Timestamptz(6)
+  completedAt       DateTime?                @map("completed_at") @db.Timestamptz(6)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel?                 @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
   steps             WorkflowStep[]
   jobs              WorkflowJob[]
   events            WorkflowEvent[]
@@ -713,35 +713,35 @@ model WorkflowRun {
 }
 
 model WorkflowStep {
-  id                 String             @id @default(uuid()) @db.Uuid
-  workspaceId        String             @map("workspace_id") @db.Uuid
-  runId              String             @map("run_id") @db.Uuid
-  stepKey            String             @map("step_key")
-  sequence           Int
-  status             WorkflowStepStatus
-  attempts           Int                @default(0)
-  maxAttempts        Int                @default(3) @map("max_attempts")
-  retryGeneration    Int                @default(0) @map("retry_generation")
-  limitWaits         Int                @default(0) @map("limit_waits")
-  externalPolls      Int                @default(0) @map("external_polls")
-  externalDeadlineAt DateTime?          @map("external_deadline_at") @db.Timestamptz(6)
-  sideEffect         Boolean            @default(false) @map("side_effect")
-  idempotencyKey     String             @map("idempotency_key")
-  resultRef          String?            @map("result_ref")
-  resultType         String?            @map("result_type")
-  errorCode          String?            @map("error_code")
-  errorMessage       String?            @map("error_message")
-  leaseOwner         String?            @map("lease_owner")
-  leaseExpiresAt     DateTime?          @map("lease_expires_at") @db.Timestamptz(6)
-  nextAttemptAt      DateTime?          @map("next_attempt_at") @db.Timestamptz(6)
-  startedAt          DateTime?          @map("started_at") @db.Timestamptz(6)
-  completedAt        DateTime?          @map("completed_at") @db.Timestamptz(6)
-  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  run                WorkflowRun        @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
-  jobs               WorkflowJob[]
-  events             WorkflowEvent[]
+  id             String             @id @default(uuid()) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  runId          String             @map("run_id") @db.Uuid
+  stepKey        String             @map("step_key")
+  sequence       Int
+  status         WorkflowStepStatus
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3) @map("max_attempts")
+  retryGeneration Int               @default(0) @map("retry_generation")
+  limitWaits     Int                @default(0) @map("limit_waits")
+  externalPolls  Int                @default(0) @map("external_polls")
+  externalDeadlineAt DateTime?      @map("external_deadline_at") @db.Timestamptz(6)
+  sideEffect     Boolean            @default(false) @map("side_effect")
+  idempotencyKey String             @map("idempotency_key")
+  resultRef      String?            @map("result_ref")
+  resultType     String?            @map("result_type")
+  errorCode      String?            @map("error_code")
+  errorMessage   String?            @map("error_message")
+  leaseOwner     String?            @map("lease_owner")
+  leaseExpiresAt DateTime?          @map("lease_expires_at") @db.Timestamptz(6)
+  nextAttemptAt  DateTime?          @map("next_attempt_at") @db.Timestamptz(6)
+  startedAt      DateTime?          @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?          @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run            WorkflowRun        @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  jobs           WorkflowJob[]
+  events         WorkflowEvent[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, runId, stepKey])
@@ -893,28 +893,28 @@ model OutboxEvent {
 }
 
 model ScheduledPost {
-  id                         String                       @id @default(uuid()) @db.Uuid
-  workspaceId                String                       @map("workspace_id") @db.Uuid
-  channelId                  String                       @map("channel_id") @db.Uuid
-  renderJobId                String                       @map("render_job_id") @db.Uuid
-  qualityReviewRunId         String                       @map("quality_review_run_id") @db.Uuid
-  revision                   Int                          @default(1)
-  scheduledAt                DateTime?                    @map("scheduled_at") @db.Timestamptz(6)
-  status                     PublishStatus                @default(DRAFT)
-  disclosureDecision         PublishingDisclosureDecision @map("disclosure_decision")
-  disclosureText             String?                      @map("disclosure_text")
-  disclosureReason           String                       @map("disclosure_reason")
-  manuallyAuthorizedAt       DateTime?                    @map("manually_authorized_at") @db.Timestamptz(6)
-  manuallyAuthorizedByUserId String?                      @map("manually_authorized_by_user_id") @db.Uuid
-  createdByUserId            String                       @map("created_by_user_id") @db.Uuid
-  createdAt                  DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace                  Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel                    Channel                      @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  renderJob                  RenderJob                    @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
-  qualityReviewRun           QualityReviewRun             @relation(fields: [workspaceId, qualityReviewRunId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy                  User                         @relation("ScheduledPostCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  manuallyAuthorizedBy       User?                        @relation("ScheduledPostPublisher", fields: [manuallyAuthorizedByUserId], references: [id], onDelete: Restrict)
+  id                         String                         @id @default(uuid()) @db.Uuid
+  workspaceId                String                         @map("workspace_id") @db.Uuid
+  channelId                  String                         @map("channel_id") @db.Uuid
+  renderJobId                String                         @map("render_job_id") @db.Uuid
+  qualityReviewRunId         String                         @map("quality_review_run_id") @db.Uuid
+  revision                   Int                            @default(1)
+  scheduledAt                DateTime?                      @map("scheduled_at") @db.Timestamptz(6)
+  status                     PublishStatus                  @default(DRAFT)
+  disclosureDecision         PublishingDisclosureDecision   @map("disclosure_decision")
+  disclosureText             String?                        @map("disclosure_text")
+  disclosureReason           String                         @map("disclosure_reason")
+  manuallyAuthorizedAt       DateTime?                      @map("manually_authorized_at") @db.Timestamptz(6)
+  manuallyAuthorizedByUserId String?                        @map("manually_authorized_by_user_id") @db.Uuid
+  createdByUserId            String                         @map("created_by_user_id") @db.Uuid
+  createdAt                  DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace                  Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel                    Channel                        @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  renderJob                  RenderJob                      @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  qualityReviewRun           QualityReviewRun               @relation(fields: [workspaceId, qualityReviewRunId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy                  User                           @relation("ScheduledPostCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  manuallyAuthorizedBy       User?                          @relation("ScheduledPostPublisher", fields: [manuallyAuthorizedByUserId], references: [id], onDelete: Restrict)
   destinations               PublishingDestination[]
 
   @@unique([workspaceId, id])
@@ -924,24 +924,24 @@ model ScheduledPost {
 }
 
 model PublishingDestination {
-  id               String         @id @default(uuid()) @db.Uuid
-  workspaceId      String         @map("workspace_id") @db.Uuid
-  scheduledPostId  String         @map("scheduled_post_id") @db.Uuid
-  socialAccountId  String         @map("social_account_id") @db.Uuid
-  platform         SocialPlatform
-  metadata         Json
-  status           PublishStatus  @default(DRAFT)
-  idempotencyKey   String         @map("idempotency_key")
-  remotePostId     String?        @map("remote_post_id")
-  publishedAt      DateTime?      @map("published_at") @db.Timestamptz(6)
-  lastErrorCode    String?        @map("last_error_code")
-  lastErrorMessage String?        @map("last_error_message")
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  scheduledPost    ScheduledPost  @relation(fields: [workspaceId, scheduledPostId], references: [workspaceId, id], onDelete: Cascade)
-  socialAccount    SocialAccount  @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Restrict)
-  publishJob       PublishJob?
+  id                 String        @id @default(uuid()) @db.Uuid
+  workspaceId        String        @map("workspace_id") @db.Uuid
+  scheduledPostId    String        @map("scheduled_post_id") @db.Uuid
+  socialAccountId    String        @map("social_account_id") @db.Uuid
+  platform           SocialPlatform
+  metadata           Json
+  status             PublishStatus @default(DRAFT)
+  idempotencyKey     String        @map("idempotency_key")
+  remotePostId       String?       @map("remote_post_id")
+  publishedAt        DateTime?     @map("published_at") @db.Timestamptz(6)
+  lastErrorCode      String?       @map("last_error_code")
+  lastErrorMessage   String?       @map("last_error_message")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scheduledPost      ScheduledPost @relation(fields: [workspaceId, scheduledPostId], references: [workspaceId, id], onDelete: Cascade)
+  socialAccount      SocialAccount @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Restrict)
+  publishJob         PublishJob?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, scheduledPostId, socialAccountId])
@@ -953,19 +953,19 @@ model PublishingDestination {
 }
 
 model PublishJob {
-  id             String                @id @default(uuid()) @db.Uuid
-  workspaceId    String                @map("workspace_id") @db.Uuid
-  destinationId  String                @map("destination_id") @db.Uuid
-  status         PublishStatus         @default(DRAFT)
-  idempotencyKey String                @map("idempotency_key")
-  retryCount     Int                   @default(0) @map("retry_count")
-  nextAttemptAt  DateTime?             @map("next_attempt_at") @db.Timestamptz(6)
-  canceledAt     DateTime?             @map("canceled_at") @db.Timestamptz(6)
-  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  destination    PublishingDestination @relation(fields: [workspaceId, destinationId], references: [workspaceId, id], onDelete: Cascade)
-  attempts       PublishAttempt[]
+  id                String        @id @default(uuid()) @db.Uuid
+  workspaceId       String        @map("workspace_id") @db.Uuid
+  destinationId     String        @map("destination_id") @db.Uuid
+  status            PublishStatus @default(DRAFT)
+  idempotencyKey    String        @map("idempotency_key")
+  retryCount        Int           @default(0) @map("retry_count")
+  nextAttemptAt     DateTime?     @map("next_attempt_at") @db.Timestamptz(6)
+  canceledAt        DateTime?     @map("canceled_at") @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  destination       PublishingDestination @relation(fields: [workspaceId, destinationId], references: [workspaceId, id], onDelete: Cascade)
+  attempts          PublishAttempt[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, destinationId])
@@ -975,25 +975,25 @@ model PublishJob {
 }
 
 model PublishAttempt {
-  id                String               @id @default(uuid()) @db.Uuid
-  workspaceId       String               @map("workspace_id") @db.Uuid
-  publishJobId      String               @map("publish_job_id") @db.Uuid
-  attemptNumber     Int                  @map("attempt_number")
-  idempotencyKey    String               @map("idempotency_key")
-  status            PublishAttemptStatus
-  sessionCiphertext String?              @map("session_ciphertext")
-  sessionNonce      String?              @map("session_nonce")
-  sessionTag        String?              @map("session_tag")
-  sessionKeyVersion String?              @map("session_key_version")
-  totalBytes        BigInt?              @map("total_bytes")
-  confirmedBytes    BigInt               @default(0) @map("confirmed_bytes")
-  remotePostId      String?              @map("remote_post_id")
-  errorCode         String?              @map("error_code")
-  errorMessage      String?              @map("error_message")
-  startedAt         DateTime             @default(now()) @map("started_at") @db.Timestamptz(6)
-  finishedAt        DateTime?            @map("finished_at") @db.Timestamptz(6)
-  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  publishJob        PublishJob           @relation(fields: [workspaceId, publishJobId], references: [workspaceId, id], onDelete: Cascade)
+  id                       String              @id @default(uuid()) @db.Uuid
+  workspaceId              String              @map("workspace_id") @db.Uuid
+  publishJobId             String              @map("publish_job_id") @db.Uuid
+  attemptNumber            Int                 @map("attempt_number")
+  idempotencyKey           String              @map("idempotency_key")
+  status                   PublishAttemptStatus
+  sessionCiphertext        String?             @map("session_ciphertext")
+  sessionNonce            String?             @map("session_nonce")
+  sessionTag              String?             @map("session_tag")
+  sessionKeyVersion       String?             @map("session_key_version")
+  totalBytes              BigInt?             @map("total_bytes")
+  confirmedBytes          BigInt               @default(0) @map("confirmed_bytes")
+  remotePostId            String?             @map("remote_post_id")
+  errorCode               String?             @map("error_code")
+  errorMessage            String?             @map("error_message")
+  startedAt               DateTime            @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt              DateTime?           @map("finished_at") @db.Timestamptz(6)
+  workspace               Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publishJob              PublishJob          @relation(fields: [workspaceId, publishJobId], references: [workspaceId, id], onDelete: Cascade)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, publishJobId, attemptNumber])
@@ -1805,20 +1805,20 @@ model QualityRegenerationRequest {
 }
 
 model AnalyticsMetricDefinition {
-  id                 String                    @id @default(uuid()) @db.Uuid
+  id                 String               @id @default(uuid()) @db.Uuid
   platform           SocialPlatform
   key                String
   label              String
   description        String
-  accountEligibility String                    @map("account_eligibility")
-  requiredScopes     String[]                  @map("required_scopes")
+  accountEligibility String               @map("account_eligibility")
+  requiredScopes     String[]             @map("required_scopes")
   granularities      AnalyticsGranularity[]
-  sourceApi          String                    @map("source_api")
-  documentationUrl   String                    @map("documentation_url")
-  availabilityNotes  String                    @map("availability_notes")
-  verifiedAt         DateTime                  @map("verified_at") @db.Date
-  isActive           Boolean                   @default(true) @map("is_active")
-  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  sourceApi          String               @map("source_api")
+  documentationUrl   String               @map("documentation_url")
+  availabilityNotes  String               @map("availability_notes")
+  verifiedAt         DateTime             @map("verified_at") @db.Date
+  isActive           Boolean              @default(true) @map("is_active")
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   snapshots          AnalyticsMetricSnapshot[]
 
   @@unique([platform, key])
@@ -1852,22 +1852,22 @@ model MetricCollectionJob {
 }
 
 model MetricCollectionRun {
-  id            String                    @id @default(uuid()) @db.Uuid
-  workspaceId   String                    @map("workspace_id") @db.Uuid
-  jobId         String                    @map("job_id") @db.Uuid
-  attempt       Int
-  status        MetricCollectionRunStatus
-  sourceApi     String                    @map("source_api")
-  startDate     DateTime                  @map("start_date") @db.Date
-  endDate       DateTime                  @map("end_date") @db.Date
-  completeness  MetricCompleteness?
-  snapshotCount Int                       @default(0) @map("snapshot_count")
-  errorCode     String?                   @map("error_code")
-  startedAt     DateTime                  @default(now()) @map("started_at") @db.Timestamptz(6)
-  finishedAt    DateTime?                 @map("finished_at") @db.Timestamptz(6)
-  workspace     Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  job           MetricCollectionJob       @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
-  snapshots     AnalyticsMetricSnapshot[]
+  id             String                     @id @default(uuid()) @db.Uuid
+  workspaceId    String                     @map("workspace_id") @db.Uuid
+  jobId          String                     @map("job_id") @db.Uuid
+  attempt        Int
+  status         MetricCollectionRunStatus
+  sourceApi      String                     @map("source_api")
+  startDate      DateTime                   @map("start_date") @db.Date
+  endDate        DateTime                   @map("end_date") @db.Date
+  completeness   MetricCompleteness?
+  snapshotCount  Int                        @default(0) @map("snapshot_count")
+  errorCode      String?                    @map("error_code")
+  startedAt      DateTime                   @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime?                  @map("finished_at") @db.Timestamptz(6)
+  workspace      Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job            MetricCollectionJob        @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+  snapshots      AnalyticsMetricSnapshot[]
 
   @@unique([workspaceId, id])
   @@unique([jobId, attempt])
@@ -1955,30 +1955,30 @@ enum StrategyChangeStatus {
 }
 
 model PerformanceInsightReport {
-  id                 String                      @id @default(uuid()) @db.Uuid
-  workspaceId        String                      @map("workspace_id") @db.Uuid
-  channelId          String                      @map("channel_id") @db.Uuid
-  periodStart        DateTime                    @map("period_start") @db.Date
-  periodEnd          DateTime                    @map("period_end") @db.Date
-  comparisonStart    DateTime                    @map("comparison_start") @db.Date
-  comparisonEnd      DateTime                    @map("comparison_end") @db.Date
-  status             InsightReportStatus
-  kpis               Json
-  dimensionSummaries Json                        @map("dimension_summaries")
-  narrative          String?
-  aiStatus           InsightAiStatus             @map("ai_status")
-  providerId         String?                     @map("provider_id")
-  modelVersion       String?                     @map("model_version")
-  promptVersion      String?                     @map("prompt_version")
-  cost               Decimal?                    @db.Decimal(18, 8)
-  costCurrency       String?                     @map("cost_currency")
-  limitations        Json
-  snapshotIds        String[]                    @map("snapshot_ids") @db.Uuid
-  createdByUserId    String                      @map("created_by_user_id") @db.Uuid
-  createdAt          DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
-  workspace          Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel            Channel                     @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  recommendations    PerformanceRecommendation[]
+  id                String              @id @default(uuid()) @db.Uuid
+  workspaceId       String              @map("workspace_id") @db.Uuid
+  channelId         String              @map("channel_id") @db.Uuid
+  periodStart       DateTime            @map("period_start") @db.Date
+  periodEnd         DateTime            @map("period_end") @db.Date
+  comparisonStart   DateTime            @map("comparison_start") @db.Date
+  comparisonEnd     DateTime            @map("comparison_end") @db.Date
+  status            InsightReportStatus
+  kpis              Json
+  dimensionSummaries Json               @map("dimension_summaries")
+  narrative         String?
+  aiStatus          InsightAiStatus     @map("ai_status")
+  providerId        String?             @map("provider_id")
+  modelVersion      String?             @map("model_version")
+  promptVersion     String?             @map("prompt_version")
+  cost              Decimal?            @db.Decimal(18, 8)
+  costCurrency      String?             @map("cost_currency")
+  limitations       Json
+  snapshotIds       String[]            @map("snapshot_ids") @db.Uuid
+  createdByUserId   String              @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel             @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  recommendations   PerformanceRecommendation[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId, createdAt])
@@ -1988,26 +1988,26 @@ model PerformanceInsightReport {
 }
 
 model PerformanceRecommendation {
-  id                  String                      @id @default(uuid()) @db.Uuid
-  workspaceId         String                      @map("workspace_id") @db.Uuid
-  channelId           String                      @map("channel_id") @db.Uuid
-  reportId            String?                     @map("report_id") @db.Uuid
+  id                  String                     @id @default(uuid()) @db.Uuid
+  workspaceId         String                     @map("workspace_id") @db.Uuid
+  channelId           String                     @map("channel_id") @db.Uuid
+  reportId            String?                    @map("report_id") @db.Uuid
   rank                Int
   dimension           PerformanceDimension
   action              String
   rationale           String
   confidence          PerformanceConfidence
   limitations         Json
-  evidenceSnapshotIds String[]                    @map("evidence_snapshot_ids") @db.Uuid
-  status              RecommendationStatus        @default(PROPOSED)
-  approvedByUserId    String?                     @map("approved_by_user_id") @db.Uuid
-  approvedAt          DateTime?                   @map("approved_at") @db.Timestamptz(6)
-  createdByUserId     String                      @map("created_by_user_id") @db.Uuid
-  createdAt           DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel             Channel                     @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  report              PerformanceInsightReport?   @relation(fields: [workspaceId, reportId], references: [workspaceId, id], onDelete: Restrict)
+  evidenceSnapshotIds String[]                   @map("evidence_snapshot_ids") @db.Uuid
+  status              RecommendationStatus       @default(PROPOSED)
+  approvedByUserId    String?                    @map("approved_by_user_id") @db.Uuid
+  approvedAt          DateTime?                  @map("approved_at") @db.Timestamptz(6)
+  createdByUserId     String                     @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace           Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel             Channel                    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  report              PerformanceInsightReport?  @relation(fields: [workspaceId, reportId], references: [workspaceId, id], onDelete: Restrict)
   strategyChanges     PerformanceStrategyChange[]
 
   @@unique([workspaceId, id])
@@ -2017,21 +2017,21 @@ model PerformanceRecommendation {
 }
 
 model PerformanceExperiment {
-  id              String                 @id @default(uuid()) @db.Uuid
-  workspaceId     String                 @map("workspace_id") @db.Uuid
-  channelId       String                 @map("channel_id") @db.Uuid
+  id              String           @id @default(uuid()) @db.Uuid
+  workspaceId     String           @map("workspace_id") @db.Uuid
+  channelId       String           @map("channel_id") @db.Uuid
   hypothesis      String
   variant         String
   dimensions      PerformanceDimension[]
-  designNotes     String                 @map("design_notes")
+  designNotes     String           @map("design_notes")
   exposure        Int?
   outcome         Json?
-  status          ExperimentStatus       @default(DRAFT)
-  createdByUserId String                 @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channel         Channel                @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  status          ExperimentStatus @default(DRAFT)
+  createdByUserId String           @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel         Channel          @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
 
   @@unique([workspaceId, id])
   @@index([workspaceId, channelId, status, createdAt])
