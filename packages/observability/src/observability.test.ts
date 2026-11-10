@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   FrameworkLoggerAdapter,
@@ -8,12 +9,14 @@ import {
   createContext,
   formatTraceparent,
   installConsoleRedaction,
+  installProcessErrorHandlers,
   normalizeCorrelationId,
   parseTraceparent,
   redact,
   redactString,
   registerSecretEnv,
   runWithContext,
+  secretsEqual,
   setSpanExporter,
   startSpan,
   withSpan,
@@ -235,5 +238,89 @@ describe("metrics registry", () => {
     expect(text).toContain('http_request_duration_ms_count{route="/x"} 1');
     expect(text).not.toContain("X-Amz-Signature");
     expect(() => registry.gauge("http_requests_total", "dup")).toThrow();
+  });
+});
+
+describe("M19 redaction hardening (R1, R2, R5)", () => {
+  it("R1: masks JSON-style secret keys in free text and keeps the JSON shape", () => {
+    const body =
+      '{"access_token":"ya29-not-a-google-shape-XYZ","refresh_token": "rt-SECRET-1","client_secret":"cs-SECRET-2","apiKey":"ak-SECRET-3","expires_in":3599,"scope":"youtube"}';
+    const text = redactString(`provider said ${body}`);
+    expect(text).not.toMatch(/ya29-not|rt-SECRET|cs-SECRET|ak-SECRET/);
+    expect(text).toContain(`"access_token":"${REDACTED}"`);
+    expect(text).toContain(`"refresh_token": "${REDACTED}"`);
+    expect(text).toContain(`"expires_in":3599`);
+    expect(text).toContain(`"scope":"youtube"`);
+    expect(() => JSON.parse(text.slice("provider said ".length))).not.toThrow();
+  });
+
+  it("R1: masks single-quoted, YAML-style, escaped-JSON and escaped-quote values", () => {
+    const text = redactString(
+      [
+        "client_secret: yaml-SECRET-1",
+        "password: 'single SECRET-2'",
+        '{ token: "js \\"SECRET-3\\" tail" }',
+        '{\\"id_token\\":\\"esc-SECRET-4\\",\\"ok\\":1}',
+        "private_key: pk-SECRET-5",
+        "Authorization: Basic dXNlcjpTRUNSRVQtNg==",
+      ].join("\n"),
+    );
+    expect(text).not.toMatch(/SECRET-[1-5]|dXNlcjpT/);
+    expect(text).toContain(`client_secret: ${REDACTED}`);
+    expect(text).toContain(`password: '${REDACTED}'`);
+    expect(text).toContain(`token: "${REDACTED}"`);
+  });
+
+  it("R1: leaves ordinary JSON keys alone and stays fast on long input", () => {
+    expect(redactString('{"status":"FAILED","channelId":"c1"}')).toBe(
+      '{"status":"FAILED","channelId":"c1"}',
+    );
+    const long = "a-".repeat(50_000) + "token";
+    const started = Date.now();
+    redactString(long);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("R1: masks JSON secrets inside logged error messages", () => {
+    const { lines, logger } = capture();
+    logger.error("oauth refresh failed", {
+      error: new Error('400 {"error":"invalid_grant","refresh_token":"rt-LEAK-9"}'),
+    });
+    expect(lines.join("\n")).not.toContain("rt-LEAK-9");
+  });
+
+  it("R2: logs uncaught exceptions and unhandled rejections through redaction, then exits 1", () => {
+    const { lines, logger } = capture();
+    const target = new EventEmitter();
+    const exits: number[] = [];
+    const uninstall = installProcessErrorHandlers(logger, {
+      target,
+      exit: (code): void => {
+        exits.push(code);
+      },
+    });
+    target.emit(
+      "uncaughtException",
+      new Error(`boom ${SIGNED_URL} {"client_secret":"cs-LEAK-1"} Bearer abcdef123456`),
+    );
+    target.emit("unhandledRejection", { password: "pw-LEAK-2", message: "rejected" });
+    const output = lines.join("\n");
+    expect(output).not.toMatch(/cs-LEAK-1|pw-LEAK-2|abcdef123456|X-Amz-Signature/);
+    const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries.map((entry) => [entry["level"], entry["msg"]])).toEqual([
+      ["fatal", "uncaught exception"],
+      ["fatal", "unhandled rejection"],
+    ]);
+    expect(exits).toEqual([1]);
+    uninstall();
+    expect(target.listenerCount("uncaughtException")).toBe(0);
+    expect(target.listenerCount("unhandledRejection")).toBe(0);
+  });
+
+  it("R5: compares secrets by SHA-256 digest, independent of length", () => {
+    expect(secretsEqual("operator-token-0123456789", "operator-token-0123456789")).toBe(true);
+    expect(secretsEqual("operator-token-012345678", "operator-token-0123456789")).toBe(false);
+    expect(secretsEqual("", "operator-token-0123456789")).toBe(false);
+    expect(secretsEqual("x".repeat(10_000), "operator-token-0123456789")).toBe(false);
   });
 });

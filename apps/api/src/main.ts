@@ -1,12 +1,19 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
-import { bootstrapProcessObservability } from "@reelforge/observability";
+import {
+  bootstrapProcessObservability,
+  installProcessErrorHandlers,
+} from "@reelforge/observability";
 import { AppModule } from "./app.module.js";
 
+// M19-T03: redacting JSON logs for console.* and the Nest logger.
+const { logger, frameworkLogger } = bootstrapProcessObservability("api");
+// M19 R2: uncaught exceptions and unhandled rejections (including a failed bootstrap) are logged
+// through redaction and exit non-zero.
+installProcessErrorHandlers(logger);
+
 async function bootstrap(): Promise<void> {
-  // M19-T03: redacting JSON logs for console.* and the Nest logger.
-  const { frameworkLogger } = bootstrapProcessObservability("api");
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: frameworkLogger,
   });
