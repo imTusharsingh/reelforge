@@ -24,7 +24,41 @@ export const CATEGORIES_WITHOUT_LEDGER_SOURCE: readonly UsageCategoryValue[] = [
 ];
 
 export type UsagePeriod = "DAY" | "MONTH";
-export type CostKind = "ACTUAL" | "ESTIMATED" | "UNKNOWN";
+/**
+ * ACTUAL: provider-reported cost. ESTIMATED: succeeded or in-flight call charged at its estimate.
+ * FAILED_ESTIMATED: a call that failed after dispatch with no reported cost, charged at its
+ * estimate ("failed, charged at estimate") because the provider may have billed it; an OWNER can
+ * correct it with an audited CREDIT. NOT_DISPATCHED: provably refused before the provider was
+ * called (zero). UNKNOWN: no actual cost and no estimate (zero, flagged).
+ */
+export type CostKind = "ACTUAL" | "ESTIMATED" | "FAILED_ESTIMATED" | "NOT_DISPATCHED" | "UNKNOWN";
+
+export const COST_KIND_LABELS: Readonly<Record<CostKind, string>> = {
+  ACTUAL: "actual",
+  ESTIMATED: "estimated",
+  FAILED_ESTIMATED: "failed, charged at estimate",
+  NOT_DISPATCHED: "not dispatched",
+  UNKNOWN: "unknown",
+};
+
+/**
+ * Ledger error codes that M08 writes only when the provider was provably never called (the M18
+ * preflight refused the call, or the M08 reservation failed). Such rows are never charged.
+ */
+export const PRE_DISPATCH_ERROR_CODES: readonly string[] = [
+  "NOT_DISPATCHED",
+  "BUDGET_EXHAUSTED",
+  "BUDGET_CURRENCY_MISMATCH",
+  "BUDGET_TIMEZONE_INVALID",
+];
+
+/** Handle for an M18 reservation held around one M08 paid provider call. */
+export type PaidCallReservation = Readonly<{
+  workspaceId: string;
+  reservationId: string;
+  currency: string;
+  estimateMinor: number;
+}>;
 
 export const USAGE_CLOCK = Symbol("USAGE_CLOCK");
 export const BILLING_PROVIDER = Symbol("BILLING_PROVIDER");
@@ -78,7 +112,13 @@ export type ReservationView = Readonly<{
 }>;
 
 export type ReserveResult =
-  | Readonly<{ decision: "RESERVED"; reservation: ReservationView; budgets: BudgetStatusView[] }>
+  | Readonly<{
+      decision: "RESERVED";
+      reservation: ReservationView;
+      budgets: BudgetStatusView[];
+      /** True when the idempotency key already existed and the stored reservation was returned. */
+      replayed: boolean;
+    }>
   | Readonly<{ decision: "NOT_CONFIGURED"; reason: "BUDGET_POLICY_UNAVAILABLE" }>;
 
 /** Typed hard stop (M18-T03). Never caught and ignored inside M18. */
@@ -109,6 +149,14 @@ export class BudgetUnresolvableError extends ConflictException {
     message: string,
   ) {
     super({ code, message });
+  }
+}
+
+/** The M18 preflight could not run (e.g. database error): the paid call is not dispatched. */
+export class PaidCallNotDispatchedError extends ServiceUnavailableException {
+  public readonly code = "NOT_DISPATCHED";
+  public constructor(message: string) {
+    super({ code: "NOT_DISPATCHED", message });
   }
 }
 

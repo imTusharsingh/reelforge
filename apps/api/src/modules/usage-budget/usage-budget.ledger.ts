@@ -1,6 +1,10 @@
 import { Prisma } from "@reelforge/database";
 import { decimalToMinor, isCurrencyCode } from "./usage-budget.money.js";
-import type { CostKind, UsageCategoryValue } from "./usage-budget.types.js";
+import {
+  PRE_DISPATCH_ERROR_CODES,
+  type CostKind,
+  type UsageCategoryValue,
+} from "./usage-budget.types.js";
 
 /**
  * M18-T01: read-only joins over the EXISTING M08 cost ledger (`provider_requests`). M18 never
@@ -188,8 +192,10 @@ export type ClassifiedCost = Readonly<{
 
 /**
  * Actual cost wins. A succeeded or still-pending call without an actual cost is charged at its
- * estimate (marked ESTIMATED). A failed call without an actual cost is UNKNOWN (M08 releases its
- * reservation, so it is not counted), as is any row without a usable currency.
+ * estimate (ESTIMATED). A call that failed after dispatch without an actual cost is charged at its
+ * estimate too (FAILED_ESTIMATED, "failed, charged at estimate"): the provider may have billed it,
+ * and M18 fails closed. Only a row M08 marked as provably never dispatched (an errorCode in
+ * PRE_DISPATCH_ERROR_CODES) is skipped (NOT_DISPATCHED). A row with neither cost is UNKNOWN.
  */
 export function classifyCost(
   row: Pick<LedgerRow, "status" | "errorCode" | "estimatedCost" | "actualCost" | "currency">,
@@ -201,12 +207,17 @@ export function classifyCost(
       amountMinor: currency === null ? null : decimalToMinor(row.actualCost, currency),
       currency,
     };
+  if (
+    row.status === "FAILED" &&
+    row.errorCode !== null &&
+    PRE_DISPATCH_ERROR_CODES.includes(row.errorCode)
+  )
+    return { kind: "NOT_DISPATCHED", amountMinor: null, currency };
+  if (row.estimatedCost === null) return { kind: "UNKNOWN", amountMinor: null, currency };
   const pending = row.status === "FAILED" && row.errorCode === "PENDING";
-  if ((row.status === "SUCCEEDED" || pending) && row.estimatedCost !== null)
-    return {
-      kind: "ESTIMATED",
-      amountMinor: currency === null ? null : decimalToMinor(row.estimatedCost, currency),
-      currency,
-    };
-  return { kind: "UNKNOWN", amountMinor: null, currency };
+  return {
+    kind: row.status === "SUCCEEDED" || pending ? "ESTIMATED" : "FAILED_ESTIMATED",
+    amountMinor: currency === null ? null : decimalToMinor(row.estimatedCost, currency),
+    currency,
+  };
 }

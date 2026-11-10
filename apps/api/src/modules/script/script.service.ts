@@ -12,6 +12,11 @@ import { Prisma } from "@reelforge/database";
 import { z } from "zod";
 import { PROVIDER_REGISTRY, SCRIPT_LLM, type ProviderRegistry } from "@reelforge/ai-providers";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import {
+  PRE_DISPATCH_ERROR_CODES,
+  type PaidCallReservation,
+} from "../usage-budget/usage-budget.types.js";
 import type { ScriptLlmPort } from "./script.types.js";
 import { parseScriptDocument, validateGenrePolicy, validateScript } from "./script.validation.js";
 
@@ -56,6 +61,9 @@ export class ScriptService {
     @Inject(SCRIPT_LLM) private readonly llm: ScriptLlmPort,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
     @Optional() now?: (() => Date) | undefined,
+    // M18 budget preflight (B1). Required by Nest DI (ScriptModule imports UsageBudgetModule);
+    // the parameter is optional only so hand-built unit fixtures without a budget still compile.
+    @Inject(UsageBudgetService) private readonly usage?: UsageBudgetService,
   ) {
     this.now = now ?? ((): Date => new Date());
   }
@@ -122,16 +130,40 @@ export class ScriptService {
       snapshot.hook,
       snapshot.angle,
     ].join("\n");
-    const reservation = await this.reserveBudget(
-      context.workspaceId,
-      input.channelId ?? null,
-      estimate,
-      correlationId,
-      dispatchedPrompt,
-    );
+    // M18 preflight (B1), before the M08 ledger row exists so the call is not counted twice: a hard
+    // stop (BUDGET_EXHAUSTED / unresolvable, 409) throws here and the provider is never called.
+    // NOT_CONFIGURED (null) proceeds under the M16 manual-run rule.
+    const usageHold: PaidCallReservation | null =
+      this.usage === undefined
+        ? null
+        : await this.usage.reservePaidCall({
+            workspaceId: context.workspaceId,
+            channelId: input.channelId ?? null,
+            correlationId,
+            category: "LLM",
+            currency: estimationCurrency,
+            estimate,
+          });
+    let reservation: Reservation;
+    try {
+      reservation = await this.reserveBudget(
+        context.workspaceId,
+        input.channelId ?? null,
+        estimate,
+        correlationId,
+        dispatchedPrompt,
+      );
+    } catch (error) {
+      // The M08 guard refused: the provider was never called, so the M18 hold is released.
+      await this.usage?.finishPaidCall(usageHold, { dispatched: false, actualCost: null });
+      throw error;
+    }
     let result: z.infer<typeof providerEnvelopeSchema> | undefined;
     let settled = false;
+    let dispatched = false;
+    let usageFinished = false;
     try {
+      dispatched = true;
       const envelope = providerEnvelopeSchema.safeParse(
         await this.llm.complete({ prompt: dispatchedPrompt, correlationId }),
       );
@@ -145,6 +177,12 @@ export class ScriptService {
         estimate,
       );
       settled = true;
+      usageFinished = true;
+      await this.usage?.finishPaidCall(usageHold, {
+        dispatched: true,
+        actualCost: provenance.success ? provenance.data.cost : null,
+        actualCurrency: provenance.success ? (provenance.data.currency ?? null) : null,
+      });
       if (!provenance.success) throw new ConflictException("Provider returned invalid provenance");
       const document = parseScriptDocument(result.output);
       validateScript(document);
@@ -213,7 +251,36 @@ export class ScriptService {
       if (!settled) {
         await this.releaseBudget(context.workspaceId, reservation);
       }
+      // A dispatched call that failed is charged at its estimate (the provider may have billed it);
+      // only a call that never reached the provider is released.
+      if (!usageFinished)
+        await this.usage?.finishPaidCall(usageHold, { dispatched, actualCost: null });
     }
+  }
+
+  /** Marks the PENDING ledger row of a call that never reached the provider (never charged). */
+  private async markNotDispatched(
+    workspaceId: string,
+    correlationId: string,
+    error: unknown,
+  ): Promise<void> {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      PRE_DISPATCH_ERROR_CODES.includes(error.code)
+        ? error.code
+        : "NOT_DISPATCHED";
+    await this.db.providerRequest.updateMany({
+      where: { workspaceId, correlationId, errorCode: "PENDING" },
+      data: {
+        status: "FAILED",
+        errorCode: code,
+        errorMessage: error instanceof Error ? error.message.slice(0, 1000) : "Not dispatched",
+        responseMetadata: { dispatched: false, costKnown: false },
+      },
+    });
   }
 
   public async get(context: WorkspaceContext, id: string): Promise<unknown> {
@@ -502,7 +569,13 @@ export class ScriptService {
         RETURNING "id", "period_start"`;
     });
     const row = reserved[0];
-    if (!row) throw new ConflictException("Provider daily budget exceeded");
+    if (!row) {
+      // The PENDING row committed above; record that this call never reached the provider so the
+      // M18 ledger does not charge it.
+      const exceeded = new ConflictException("Provider daily budget exceeded");
+      await this.markNotDispatched(workspaceId, correlationId, exceeded);
+      throw exceeded;
+    }
     return {
       id: row.id,
       budgetId: budget.id,

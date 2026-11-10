@@ -545,14 +545,25 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     );
     expect(byCategory["LLM"]).toMatchObject({ actualMinor: 13, ledgerRequests: 1 });
     expect(byCategory["IMAGE_MEDIA"]).toMatchObject({ estimatedMinor: 50 });
-    expect(byCategory["TTS"]).toMatchObject({ unknownCostRequests: 1, totalMinor: 0 });
-    expect(video.totals.unknownCostRequests).toBe(1);
+    // B2: the narration call failed after dispatch without an actual cost: charged at its estimate.
+    expect(byCategory["TTS"]).toMatchObject({
+      unknownCostRequests: 0,
+      failedEstimatedMinor: 20,
+      failedEstimatedRequests: 1,
+      totalMinor: 20,
+    });
+    expect(video.totals.unknownCostRequests).toBe(0);
+    expect(video.lines.find((line) => line.category === "TTS")).toMatchObject({
+      costKind: "FAILED_ESTIMATED",
+      costKindLabel: "failed, charged at estimate",
+      amountMinor: 20,
+    });
     const run = await usage.runBreakdown(t.viewer, f.runId);
     expect(run.lines.map((line) => line.correlationId).sort()).toEqual(
       [f.runCorrelationId, f.imageCorrelationId, f.ttsCorrelationId].sort(),
     );
     const summary = await usage.usageSummary(t.viewer, { channelId: t.channelId });
-    expect(summary.totals.currencies[0]).toMatchObject({ currency: "USD", totalMinor: 63 });
+    expect(summary.totals.currencies[0]).toMatchObject({ currency: "USD", totalMinor: 83 });
 
     // A COMMITTED M18 reservation for the same correlation replaces the ledger row (no double count).
     await usage.upsertBudget(t.owner, {
@@ -574,9 +585,9 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     await usage.commit(t.workspaceId, held.reservation.id, 15);
     const again = await usage.videoBreakdown(t.viewer, f.scriptId);
     expect(again.lines).toHaveLength(2);
-    expect(again.totals.currencies[0]).toMatchObject({ totalMinor: 65, committedMinor: 15 });
+    expect(again.totals.currencies[0]).toMatchObject({ totalMinor: 85, committedMinor: 15 });
     const [status] = await usage.listBudgets(t.owner);
-    expect(status?.periods[0]?.consumedMinor).toBe(65);
+    expect(status?.periods[0]?.consumedMinor).toBe(85);
 
     const other = await tenant();
     await expect(usage.videoBreakdown(other.owner, f.scriptId)).rejects.toBeInstanceOf(
@@ -585,6 +596,78 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     await expect(usage.runBreakdown(other.owner, f.runId)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it("lets a failed-after-dispatch call consume budget, but not a pre-dispatch refusal (B2)", async () => {
+    if (!db) return;
+    const t = await tenant();
+    const usage = service();
+    await usage.upsertBudget(t.owner, { currency: "USD", dailyLimitMinor: 100, reason: "b2 cap" });
+    await ledgerRow(t, {
+      status: "FAILED",
+      errorCode: "PROVIDER_TIMEOUT",
+      estimatedCost: new Prisma.Decimal("0.8"),
+    });
+    await ledgerRow(t, {
+      status: "FAILED",
+      errorCode: "NOT_DISPATCHED",
+      estimatedCost: new Prisma.Decimal("5"),
+    });
+    const [status] = await usage.listBudgets(t.owner);
+    expect(status?.periods[0]).toMatchObject({ consumedMinor: 80, remainingMinor: 20 });
+    await expect(
+      usage.reserve(t.workspaceId, {
+        idempotencyKey: "b2-over",
+        category: "LLM",
+        currency: "USD",
+        amountMinor: 30,
+      }),
+    ).rejects.toBeInstanceOf(BudgetExhaustedError);
+    await expect(
+      usage.reserve(t.workspaceId, {
+        idempotencyKey: "b2-fits",
+        category: "LLM",
+        currency: "USD",
+        amountMinor: 20,
+      }),
+    ).resolves.toMatchObject({ decision: "RESERVED" });
+  });
+
+  it("marks a scheduled slot SKIPPED with BUDGET_POLICY_ERROR when the budget policy throws", async () => {
+    if (!db) return;
+    const t = await tenant("UTC", {
+      time: "09:00",
+      frequency: "DAILY",
+      input: { ideaId: randomUUID() },
+    });
+    const channels = new ChannelService(db as never);
+    const all = channels.listSchedulerCandidates.bind(channels);
+    channels.listSchedulerCandidates = async (): ReturnType<typeof all> =>
+      (await all()).filter((channel) => channel.workspaceId === t.workspaceId);
+    const orchestration = new OrchestrationService(
+      db as never,
+      new NotConfiguredWorkflowQueue(),
+      { dispatchStep: (): Promise<never> => Promise.reject(new Error("not expected")) },
+      { evaluate: (): Promise<never> => Promise.reject(new Error("budget store unavailable")) },
+      new WorkflowLimitsService(db as never, DEFAULT_WORKFLOW_LIMIT_CONFIG),
+      channels,
+      { get: () => Promise.resolve({ status: "REVIEW_REQUIRED" }) } as never,
+      clock,
+    );
+    try {
+      clockMs = Date.parse("2026-11-10T09:01:00.000Z");
+      await expect(orchestration.runSchedulerTick(clock())).resolves.toMatchObject({
+        startedRuns: 0,
+      });
+      await expect(
+        db.workflowScheduleSlot.findFirst({
+          where: { channelId: t.channelId, slotKey: "GENERATION:2026-11-10T09:00" },
+        }),
+      ).resolves.toMatchObject({ status: "SKIPPED", reason: "BUDGET_POLICY_ERROR" });
+      expect(await db.workflowRun.count({ where: { workspaceId: t.workspaceId } })).toBe(0);
+    } finally {
+      clockMs = Date.parse("2026-11-10T08:00:00.000Z");
+    }
   });
 
   it("blocks scheduled M16 runs when unconfigured and allows them under budget", async () => {
@@ -843,7 +926,7 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
       capabilityId: "scene-image",
       estimatedCost: new Prisma.Decimal("0.5"),
     });
-    // Narration call failed with no actual cost: UNKNOWN, not counted.
+    // Narration call failed after dispatch with no actual cost: charged at its estimate (B2).
     await ledgerRow(t, {
       correlationId: ttsCorrelationId,
       capabilityId: "narration",

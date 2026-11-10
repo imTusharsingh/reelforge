@@ -5,10 +5,12 @@ import { USAGE_CATEGORIES, type UsageCategoryValue } from "./usage-budget.types.
 type Bucket = {
   actual: bigint;
   estimated: bigint;
+  failedEstimated: bigint;
   reserved: bigint;
   committed: bigint;
   requests: number;
   unknownCost: number;
+  failedEstimatedRequests: number;
 };
 
 type CurrencyBucket = {
@@ -20,10 +22,13 @@ export type CategoryTotalsView = Readonly<{
   category: UsageCategoryValue;
   actualMinor: number;
   estimatedMinor: number;
+  /** Calls that failed after dispatch with no reported cost, "failed, charged at estimate". */
+  failedEstimatedMinor: number;
   reservedMinor: number;
   committedMinor: number;
   totalMinor: number;
   ledgerRequests: number;
+  failedEstimatedRequests: number;
   unknownCostRequests: number;
 }>;
 
@@ -32,6 +37,7 @@ export type CurrencyTotalsView = Readonly<{
   totalMinor: number;
   actualMinor: number;
   estimatedMinor: number;
+  failedEstimatedMinor: number;
   reservedMinor: number;
   committedMinor: number;
   adjustmentNetMinor: number;
@@ -44,6 +50,8 @@ export type UsageTotalsView = Readonly<{
   unknownCostRequests: number;
   /** Ledger calls with a cost but no usable currency; never silently converted. */
   unpricedRequests: number;
+  /** Calls M08 recorded as refused before dispatch; never charged. */
+  notDispatchedRequests: number;
 }>;
 
 export type ReservationLike = Readonly<{
@@ -60,10 +68,12 @@ export type AdjustmentLike = Readonly<{ kind: string; currency: string; amountMi
 const empty = (): Bucket => ({
   actual: 0n,
   estimated: 0n,
+  failedEstimated: 0n,
   reserved: 0n,
   committed: 0n,
   requests: 0,
   unknownCost: 0,
+  failedEstimatedRequests: 0,
 });
 
 /** Aggregates ledger rows, reservations and adjustments per currency and category. */
@@ -71,11 +81,16 @@ export class UsageTotals {
   private readonly currencies = new Map<string, CurrencyBucket>();
   private unknownCost = 0;
   private unpriced = 0;
+  private notDispatched = 0;
 
   public constructor(private readonly now: Date) {}
 
   public addLedger(row: LedgerRow): this {
     const cost = classifyCost(row);
+    if (cost.kind === "NOT_DISPATCHED") {
+      this.notDispatched += 1;
+      return this;
+    }
     if (cost.kind === "UNKNOWN") {
       this.unknownCost += 1;
       if (cost.currency !== null) {
@@ -92,7 +107,10 @@ export class UsageTotals {
     const bucket = this.bucket(cost.currency, categorize(row));
     bucket.requests += 1;
     if (cost.kind === "ACTUAL") bucket.actual += cost.amountMinor;
-    else bucket.estimated += cost.amountMinor;
+    else if (cost.kind === "FAILED_ESTIMATED") {
+      bucket.failedEstimated += cost.amountMinor;
+      bucket.failedEstimatedRequests += 1;
+    } else bucket.estimated += cost.amountMinor;
     return this;
   }
 
@@ -123,12 +141,18 @@ export class UsageTotals {
             category,
             actualMinor: minorToNumber(value.actual),
             estimatedMinor: minorToNumber(value.estimated),
+            failedEstimatedMinor: minorToNumber(value.failedEstimated),
             reservedMinor: minorToNumber(value.reserved),
             committedMinor: minorToNumber(value.committed),
             totalMinor: minorToNumber(
-              value.actual + value.estimated + value.reserved + value.committed,
+              value.actual +
+                value.estimated +
+                value.failedEstimated +
+                value.reserved +
+                value.committed,
             ),
             ledgerRequests: value.requests,
+            failedEstimatedRequests: value.failedEstimatedRequests,
             unknownCostRequests: value.unknownCost,
           };
         });
@@ -136,15 +160,17 @@ export class UsageTotals {
           [...bucket.categories.values()].reduce((total, item) => total + pick(item), 0n);
         const actual = sum((item) => item.actual);
         const estimated = sum((item) => item.estimated);
+        const failedEstimated = sum((item) => item.failedEstimated);
         const reserved = sum((item) => item.reserved);
         const committed = sum((item) => item.committed);
         return {
           currency,
           totalMinor: minorToNumber(
-            actual + estimated + reserved + committed + bucket.adjustmentNet,
+            actual + estimated + failedEstimated + reserved + committed + bucket.adjustmentNet,
           ),
           actualMinor: minorToNumber(actual),
           estimatedMinor: minorToNumber(estimated),
+          failedEstimatedMinor: minorToNumber(failedEstimated),
           reservedMinor: minorToNumber(reserved),
           committedMinor: minorToNumber(committed),
           adjustmentNetMinor: minorToNumber(bucket.adjustmentNet),
@@ -155,6 +181,7 @@ export class UsageTotals {
       currencies,
       unknownCostRequests: this.unknownCost,
       unpricedRequests: this.unpriced,
+      notDispatchedRequests: this.notDispatched,
     };
   }
 

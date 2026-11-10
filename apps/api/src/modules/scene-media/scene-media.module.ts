@@ -8,6 +8,7 @@ import {
 } from "@reelforge/ai-providers";
 import { AssetModule } from "../asset/asset.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { PrismaSceneDispatchLedger, SCENE_DISPATCH_LEDGER } from "./scene-media.budget.js";
 import {
@@ -19,7 +20,7 @@ import {
 import { SceneMediaService } from "./scene-media.service.js";
 
 @Module({
-  imports: [IdentityModule, WorkspaceModule, AssetModule],
+  imports: [IdentityModule, WorkspaceModule, AssetModule, UsageBudgetModule],
   controllers: [SceneMediaController],
   providers: [
     SceneMediaService,

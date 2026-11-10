@@ -32,6 +32,13 @@ import {
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { parseScriptDocument } from "../script/script.validation.js";
 import type { ScriptScene } from "../script/script.types.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import {
+  BudgetExhaustedError,
+  BudgetUnresolvableError,
+  PaidCallNotDispatchedError,
+  type PaidCallReservation,
+} from "../usage-budget/usage-budget.types.js";
 import {
   SCENE_DISPATCH_LEDGER,
   type DispatchReservation,
@@ -124,6 +131,9 @@ export class SceneMediaService {
     @Inject(STORAGE_PORT) private readonly storage: StoragePort,
     private readonly assets: AssetService,
     @Inject(SCENE_DISPATCH_LEDGER) private readonly ledger: SceneDispatchLedger,
+    // M18 budget preflight (B1). Required by Nest DI (SceneMediaModule imports UsageBudgetModule);
+    // the parameter is optional only so hand-built unit fixtures without a budget still compile.
+    @Inject(UsageBudgetService) private readonly usage?: UsageBudgetService,
   ) {}
 
   public async create(context: WorkspaceContext, body: unknown): Promise<SceneMediaPackage> {
@@ -586,6 +596,9 @@ export class SceneMediaService {
     let storedKey: string | undefined;
     const started = Date.now();
     let normalized: NormalizedMediaResult | undefined;
+    let usageHold: PaidCallReservation | null = null;
+    let dispatched = false;
+    let usageFinished = false;
     try {
       this.prepareDispatch(kind, planned, capability, correlationId);
       this.registry.assertReady(capability, providerEnvironment());
@@ -597,6 +610,20 @@ export class SceneMediaService {
           correlationId,
         );
       }
+      // M18 preflight (B1), before the M08 ledger row exists so the call is not counted twice. A
+      // hard stop (BUDGET_EXHAUSTED / unresolvable) throws here, the provider is never called, and
+      // the output fails with that code; NOT_CONFIGURED (null) proceeds (M16 manual rule).
+      usageHold =
+        this.usage === undefined
+          ? null
+          : await this.usage.reservePaidCall({
+              workspaceId: context.workspaceId,
+              channelId: plan.channelId,
+              correlationId,
+              category: kind === "IMAGE" || kind === "VIDEO" ? "IMAGE_MEDIA" : "TTS",
+              currency: capability.costModel.currency,
+              estimate,
+            });
       reservation = await this.ledger.reserve({
         workspaceId: context.workspaceId,
         channelId: plan.channelId,
@@ -608,6 +635,7 @@ export class SceneMediaService {
         providerId: capability.providerId,
         capabilityId: capability.capabilityId,
       });
+      dispatched = true;
       const raw = await this.invoke(kind, planned, correlationId);
       normalized = normalizeMediaResult(raw);
       if (
@@ -624,6 +652,12 @@ export class SceneMediaService {
         estimate,
       );
       settled = true;
+      usageFinished = true;
+      await this.usage?.finishPaidCall(usageHold, {
+        dispatched: true,
+        actualCost: normalized.provenanceValid ? normalized.cost : null,
+        actualCurrency: normalized.provenanceValid ? normalized.currency : null,
+      });
       if (!normalized.provenanceValid)
         throw new ConflictException("Provider returned invalid provenance");
       const providerJobId = normalized.providerJobId ?? normalized.providerRequestId;
@@ -726,6 +760,9 @@ export class SceneMediaService {
       });
       return "SUCCEEDED";
     } catch (error) {
+      // Dispatched failures are charged at the estimate; only a never-dispatched call is released.
+      if (!usageFinished)
+        await this.usage?.finishPaidCall(usageHold, { dispatched, actualCost: null });
       if (reservation && !settled) {
         try {
           await this.ledger.release(context.workspaceId, reservation);
@@ -742,7 +779,9 @@ export class SceneMediaService {
           currency: ledgerCurrency(normalized?.currency, capability.costModel.currency),
           latencyMs: Date.now() - started,
           dispatchedPrompt: dispatchPrompt(planned, kind),
-          responseMetadata: responseMetadata(normalized),
+          responseMetadata: dispatched
+            ? responseMetadata(normalized)
+            : { dispatched: false, costKnown: false },
           actualCost: normalized?.provenanceValid ? normalized.cost : null,
           usage: normalized?.usage ?? null,
           error,
@@ -1051,6 +1090,14 @@ function classify(error: unknown): {
 } {
   if (error instanceof MissingVoiceError) {
     return { status: "FAILED_FINAL", code: error.code, message: error.message };
+  }
+  if (
+    error instanceof BudgetExhaustedError ||
+    error instanceof BudgetUnresolvableError ||
+    error instanceof PaidCallNotDispatchedError
+  ) {
+    // M18 refused the call before dispatch; retry once the period resets or the budget is fixed.
+    return { status: "FAILED_RETRYABLE", code: error.code, message: exceptionMessage(error) };
   }
   if (error instanceof ProviderError) {
     return {

@@ -107,6 +107,10 @@ CREATE UNIQUE INDEX "usage_reservations_workspace_id_id_key" ON "usage_reservati
 -- CreateIndex
 CREATE UNIQUE INDEX "usage_reservations_workspace_id_idempotency_key_key" ON "usage_reservations"("workspace_id", "idempotency_key");
 
+-- One reservation per correlation id, so a provider call is never held (and counted) twice.
+-- Partial index: Prisma cannot express it, so it lives only in SQL.
+CREATE UNIQUE INDEX "usage_reservations_workspace_id_correlation_id_unique" ON "usage_reservations"("workspace_id", "correlation_id") WHERE "correlation_id" IS NOT NULL;
+
 -- CreateIndex
 CREATE INDEX "usage_adjustments_workspace_id_created_at_idx" ON "usage_adjustments"("workspace_id", "created_at");
 

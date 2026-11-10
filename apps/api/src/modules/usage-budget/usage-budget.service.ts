@@ -16,7 +16,7 @@ import {
   type LedgerReader,
   type LedgerRow,
 } from "./usage-budget.ledger.js";
-import { minorToNumber } from "./usage-budget.money.js";
+import { decimalToMinor, minorToNumber } from "./usage-budget.money.js";
 import {
   isValidTimeZone,
   periodBounds,
@@ -28,8 +28,12 @@ import {
   BudgetExhaustedError,
   BudgetUnresolvableError,
   CATEGORIES_WITHOUT_LEDGER_SOURCE,
+  COST_KIND_LABELS,
   DEFAULT_RESERVATION_TTL_MS,
+  PaidCallNotDispatchedError,
+  type CostKind,
   USAGE_CLOCK,
+  type PaidCallReservation,
   type BudgetPeriodStatus,
   type BudgetStatusView,
   type ReservationView,
@@ -125,7 +129,9 @@ export type CostLineView = Readonly<{
   category: UsageCategoryValue;
   providerId: string;
   capabilityId: string;
-  costKind: "ACTUAL" | "ESTIMATED" | "UNKNOWN";
+  costKind: CostKind;
+  /** Plain label, e.g. "failed, charged at estimate". */
+  costKindLabel: string;
   amountMinor: number | null;
   currency: string | null;
   workflowRunId: string | null;
@@ -162,6 +168,8 @@ export type AuditRecordView = Readonly<{
 }>;
 
 const WORKSPACE_SCOPE = "WORKSPACE";
+/** Paid-call holds outlive slow provider calls; on expiry the ledger row counts again (no gap). */
+const PAID_CALL_TTL_MS = 60 * 60 * 1000;
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -423,12 +431,17 @@ export class UsageBudgetService {
           decision: "RESERVED",
           reservation: this.reservationView(created as ReservationRecord),
           budgets: after,
+          replayed: false,
         } as const;
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       const winner = await this.findReservationByKey(this.db, workspaceId, input.idempotencyKey);
-      if (!winner) throw error;
+      if (!winner)
+        throw new ConflictException({
+          code: "CORRELATION_ALREADY_RESERVED",
+          message: "Another reservation already covers this correlation id",
+        });
       return this.replay(winner, input);
     }
   }
@@ -492,6 +505,98 @@ export class UsageBudgetService {
    * Expiry sweep: RESERVED reservations past expiresAt become EXPIRED. Expired reservations
    * already stop counting at their expiry instant, so a late sweep never over-blocks.
    */
+  /**
+   * M18 preflight for one M08 paid provider call (B1). Reserves the call's estimate with the
+   * idempotency key `m08:<correlationId>` and the call's correlation id, so the M08 ledger row is
+   * excluded while the reservation is live or committed (no double count). Callers must run this
+   * BEFORE writing their M08 ledger row: a PENDING row with no reservation yet is counted at its
+   * estimate, so writing it first would charge the call twice during its own preflight.
+   *
+   * Returns null when no budget applies (NOT_CONFIGURED: the manual-run rule lets the call
+   * proceed; scheduled runs are already blocked at M16). Throws BudgetExhaustedError or
+   * BudgetUnresolvableError (409) on a hard stop, a ConflictException (409) when the correlation id
+   * was already reserved (replay), and PaidCallNotDispatchedError (503) if the preflight itself
+   * fails. Every error thrown here means the provider must NOT be called.
+   */
+  public async reservePaidCall(
+    input: Readonly<{
+      workspaceId: string;
+      channelId: string | null;
+      correlationId: string;
+      category: UsageCategoryValue;
+      currency: string;
+      estimate: number;
+      ttlMs?: number;
+    }>,
+  ): Promise<PaidCallReservation | null> {
+    let result: ReserveResult;
+    try {
+      const currency = input.currency.trim().toUpperCase();
+      result = await this.reserve(input.workspaceId, {
+        channelId: input.channelId,
+        idempotencyKey: `m08:${input.correlationId}`,
+        category: input.category,
+        currency,
+        amountMinor: minorToNumber(decimalToMinor(input.estimate, currency)),
+        ttlMs: input.ttlMs ?? PAID_CALL_TTL_MS,
+        correlationId: input.correlationId,
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      throw new PaidCallNotDispatchedError(
+        `Budget preflight failed; the provider was not called: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+    if (result.decision === "NOT_CONFIGURED") return null;
+    if (result.replayed)
+      throw new ConflictException({
+        code: "PAID_CALL_REPLAYED",
+        message: `Paid call ${input.correlationId} already holds a reservation; not dispatched again`,
+      });
+    return {
+      workspaceId: input.workspaceId,
+      reservationId: result.reservation.id,
+      currency: result.reservation.currency,
+      estimateMinor: result.reservation.amountMinor,
+    };
+  }
+
+  /**
+   * Finishes a paid-call reservation. Dispatched calls are committed at the actual cost when it is
+   * known in the reservation currency, otherwise at the estimate (fail closed). Only a call that was
+   * provably never dispatched is released. Never throws: if this write fails, the reservation
+   * expires and the M08 ledger row (charged at its estimate) counts again, so nothing is lost.
+   */
+  public async finishPaidCall(
+    reservation: PaidCallReservation | null,
+    outcome: Readonly<{
+      dispatched: boolean;
+      actualCost: number | null;
+      actualCurrency?: string | null;
+    }>,
+  ): Promise<void> {
+    if (reservation === null) return;
+    try {
+      if (!outcome.dispatched) {
+        await this.release(reservation.workspaceId, reservation.reservationId, "NOT_DISPATCHED");
+        return;
+      }
+      const currency = (outcome.actualCurrency ?? reservation.currency).trim().toUpperCase();
+      const amount =
+        outcome.actualCost !== null && currency === reservation.currency
+          ? minorToNumber(decimalToMinor(outcome.actualCost, currency))
+          : reservation.estimateMinor;
+      await this.commit(reservation.workspaceId, reservation.reservationId, amount);
+    } catch (error) {
+      console.error(
+        `[usage-budget] could not finish paid-call reservation ${reservation.reservationId}; it will expire`,
+        error,
+      );
+    }
+  }
+
   public async sweepExpiredReservations(
     now: Date = this.clock(),
     workspaceId?: string,
@@ -726,6 +831,7 @@ export class UsageBudgetService {
         providerId: row.providerId,
         capabilityId: row.capabilityId,
         costKind: cost.kind,
+        costKindLabel: COST_KIND_LABELS[cost.kind],
         amountMinor: cost.amountMinor === null ? null : minorToNumber(cost.amountMinor),
         currency: cost.currency,
         workflowRunId: row.workflowRunId,
@@ -880,6 +986,7 @@ export class UsageBudgetService {
       decision: "RESERVED",
       reservation: this.reservationView(existing),
       budgets: await this.statuses(this.db, budgets, now),
+      replayed: true,
     };
   }
 
@@ -969,7 +1076,9 @@ export class UsageBudgetService {
     });
     for (const row of rows) {
       const cost = classifyCost(row);
-      if (cost.kind === "UNKNOWN") continue;
+      // Failed-after-dispatch rows count at their estimate (B2); only UNKNOWN (no cost at all) and
+      // provably pre-dispatch rows are skipped.
+      if (cost.kind === "UNKNOWN" || cost.kind === "NOT_DISPATCHED") continue;
       if (cost.currency !== budget.currency || cost.amountMinor === null) {
         unconverted += 1;
         continue;

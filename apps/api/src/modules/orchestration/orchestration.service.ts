@@ -870,12 +870,20 @@ export class OrchestrationService {
         }
         // Without an allowing budget policy no run is created at all, so nothing counts toward
         // maxRunsPerDay and nothing waits to be resumed.
-        const budget = await this.budget.evaluate({
-          workspaceId: channel.workspaceId,
-          channelId: channel.id,
-          definitionKey: occurrence.definitionKey,
-          trigger: "SCHEDULED",
-        });
+        let budget: Awaited<ReturnType<BudgetPolicyPort["evaluate"]>>;
+        try {
+          budget = await this.budget.evaluate({
+            workspaceId: channel.workspaceId,
+            channelId: channel.id,
+            definitionKey: occurrence.definitionKey,
+            trigger: "SCHEDULED",
+          });
+        } catch {
+          // A policy error must not leave the slot CLAIMED forever with no run (fail closed).
+          await this.skipSlot(channel.workspaceId, claimed.id, "BUDGET_POLICY_ERROR");
+          skippedSlots += 1;
+          continue;
+        }
         if (budget.decision !== "ALLOWED") {
           await this.skipSlot(
             channel.workspaceId,

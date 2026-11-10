@@ -44,7 +44,7 @@ describe("M18 money", () => {
 });
 
 describe("M18 ledger classification", () => {
-  it("prefers actual cost, falls back to estimates for succeeded or pending calls, else UNKNOWN", () => {
+  it("prefers actual cost, falls back to estimates (failed calls included), else UNKNOWN", () => {
     expect(classifyCost(row({ actualCost: "0.5", estimatedCost: "9" }))).toEqual({
       kind: "ACTUAL",
       amountMinor: 50n,
@@ -57,9 +57,23 @@ describe("M18 ledger classification", () => {
     expect(
       classifyCost(row({ status: "FAILED", errorCode: "PENDING", estimatedCost: "1" })),
     ).toMatchObject({ kind: "ESTIMATED", amountMinor: 100n });
+    // B2: a call that failed after dispatch may have been billed: charged at its estimate.
     expect(
       classifyCost(row({ status: "FAILED", errorCode: "TIMEOUT", estimatedCost: "1" })),
-    ).toMatchObject({ kind: "UNKNOWN", amountMinor: null });
+    ).toEqual({ kind: "FAILED_ESTIMATED", amountMinor: 100n, currency: "USD" });
+    expect(
+      classifyCost(row({ status: "FAILED", errorCode: null, estimatedCost: "0.3" })),
+    ).toMatchObject({ kind: "FAILED_ESTIMATED", amountMinor: 30n });
+    // Only rows M08 marked as provably never dispatched are skipped.
+    for (const errorCode of ["NOT_DISPATCHED", "BUDGET_EXHAUSTED", "BUDGET_CURRENCY_MISMATCH"])
+      expect(classifyCost(row({ status: "FAILED", errorCode, estimatedCost: "1" }))).toMatchObject({
+        kind: "NOT_DISPATCHED",
+        amountMinor: null,
+      });
+    expect(classifyCost(row({ status: "FAILED", errorCode: "TIMEOUT" }))).toMatchObject({
+      kind: "UNKNOWN",
+      amountMinor: null,
+    });
     expect(classifyCost(row({ actualCost: "1", currency: null }))).toMatchObject({
       kind: "ACTUAL",
       amountMinor: null,
@@ -241,5 +255,30 @@ describe("M18 roles, policy adapter and billing extension point", () => {
         idempotencyKey: "k",
       }),
     ).rejects.toBeInstanceOf(BillingNotConfiguredError);
+  });
+});
+
+describe("M18 totals for failed calls (B2)", () => {
+  it("adds failed-after-dispatch rows at their estimate and ignores pre-dispatch rows", () => {
+    const view = new UsageTotals(now)
+      .addLedger(row({ id: "ok", actualCost: "0.5" }))
+      .addLedger(row({ id: "failed", status: "FAILED", errorCode: "TIMEOUT", estimatedCost: "1" }))
+      .addLedger(
+        row({ id: "refused", status: "FAILED", errorCode: "NOT_DISPATCHED", estimatedCost: "9" }),
+      )
+      .view();
+    expect(view.currencies[0]).toMatchObject({
+      currency: "USD",
+      actualMinor: 50,
+      failedEstimatedMinor: 100,
+      totalMinor: 150,
+    });
+    expect(view.currencies[0]?.byCategory[0]).toMatchObject({
+      category: "LLM",
+      failedEstimatedMinor: 100,
+      failedEstimatedRequests: 1,
+      ledgerRequests: 2,
+    });
+    expect(view).toMatchObject({ unknownCostRequests: 0, notDispatchedRequests: 1 });
   });
 });
