@@ -300,6 +300,10 @@ model Workspace {
   performanceRecommendations  PerformanceRecommendation[]
   performanceExperiments      PerformanceExperiment[]
   performanceStrategyChanges  PerformanceStrategyChange[]
+  usageBudgets                UsageBudget[]
+  usageReservations           UsageReservation[]
+  usageAdjustments            UsageAdjustment[]
+  usageAuditRecords           UsageAuditRecord[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -396,6 +400,7 @@ model Channel {
   workflowRuns              WorkflowRun[]
   workflowScheduleSlots     WorkflowScheduleSlot[]
   workflowSchedulerCursors  WorkflowSchedulerCursor[]
+  usageBudgets              UsageBudget[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -2033,4 +2038,122 @@ model PerformanceStrategyChange {
   @@unique([workspaceId, channelId, version])
   @@index([workspaceId, channelId, createdAt])
   @@map("performance_strategy_changes")
+}
+
+// M18 usage, budget and billing foundation. Money is integer minor units plus an ISO 4217
+// currency. Provider spend is NOT recorded here: usage views read the M08 provider_requests
+// ledger. Adjustments and audit records are append-only (enforced by database triggers).
+enum UsageCategory {
+  LLM
+  TTS
+  IMAGE_MEDIA
+  RENDER
+  PUBLISH
+  ANALYTICS_API
+  UNCATEGORIZED
+}
+
+enum UsageReservationStatus {
+  RESERVED
+  COMMITTED
+  RELEASED
+  EXPIRED
+}
+
+enum UsageAdjustmentKind {
+  CREDIT
+  DEBIT
+}
+
+enum UsageAuditAction {
+  BUDGET_CREATED
+  LIMIT_CHANGED
+  CREDIT
+  DEBIT
+}
+
+model UsageBudget {
+  id                String    @id @default(uuid()) @db.Uuid
+  workspaceId       String    @map("workspace_id") @db.Uuid
+  channelId         String?   @map("channel_id") @db.Uuid
+  scopeKey          String    @map("scope_key")
+  currency          String
+  dailyLimitMinor   BigInt?   @map("daily_limit_minor")
+  monthlyLimitMinor BigInt?   @map("monthly_limit_minor")
+  timezone          String    @default("UTC")
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel?  @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, scopeKey])
+  @@map("usage_budgets")
+}
+
+model UsageReservation {
+  id             String                 @id @default(uuid()) @db.Uuid
+  workspaceId    String                 @map("workspace_id") @db.Uuid
+  channelId      String?                @map("channel_id") @db.Uuid
+  idempotencyKey String                 @map("idempotency_key")
+  category       UsageCategory
+  currency       String
+  amountMinor    BigInt                 @map("amount_minor")
+  committedMinor BigInt?                @map("committed_minor")
+  status         UsageReservationStatus @default(RESERVED)
+  correlationId  String?                @map("correlation_id") @db.Uuid
+  workflowRunId  String?                @map("workflow_run_id") @db.Uuid
+  scriptId       String?                @map("script_id") @db.Uuid
+  expiresAt      DateTime               @map("expires_at") @db.Timestamptz(6)
+  committedAt    DateTime?              @map("committed_at") @db.Timestamptz(6)
+  releasedAt     DateTime?              @map("released_at") @db.Timestamptz(6)
+  releaseReason  String?                @map("release_reason")
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, correlationId])
+  @@index([status, expiresAt])
+  @@map("usage_reservations")
+}
+
+model UsageAdjustment {
+  id            String              @id @default(uuid()) @db.Uuid
+  workspaceId   String              @map("workspace_id") @db.Uuid
+  channelId     String?             @map("channel_id") @db.Uuid
+  kind          UsageAdjustmentKind
+  currency      String
+  amountMinor   BigInt              @map("amount_minor")
+  reason        String
+  actorUserId   String              @map("actor_user_id") @db.Uuid
+  correlationId String              @map("correlation_id") @db.Uuid
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+  @@map("usage_adjustments")
+}
+
+model UsageAuditRecord {
+  id            String           @id @default(uuid()) @db.Uuid
+  workspaceId   String           @map("workspace_id") @db.Uuid
+  action        UsageAuditAction
+  actorUserId   String           @map("actor_user_id") @db.Uuid
+  reason        String
+  before        Json?
+  after         Json
+  correlationId String           @map("correlation_id") @db.Uuid
+  budgetId      String?          @map("budget_id") @db.Uuid
+  adjustmentId  String?          @map("adjustment_id") @db.Uuid
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+  @@map("usage_audit_records")
 }

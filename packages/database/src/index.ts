@@ -4,6 +4,10 @@ export { Prisma } from "./generated/prisma/client.js";
 export {
   PublishAttemptStatus,
   PublishStatus,
+  UsageAdjustmentKind,
+  UsageAuditAction,
+  UsageCategory,
+  UsageReservationStatus,
   WorkflowBudgetDecision,
   WorkflowDefinitionKey,
   WorkflowDispatchStatus,
