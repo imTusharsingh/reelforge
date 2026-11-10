@@ -1,17 +1,18 @@
 # M19 Status - Admin, Security, Audit & Observability
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (PR #34 squash-merged to `main`; docs-only closeout records it). T07 remains OPEN pending the retention ADR.
 - **Assigned session/editor:** Module Implementation Agent, Desktop (TRACXN-LP-784), local session (no cloud agent)
 - **Branch/worktree:** `work/m19-admin-security-audit-and-observability`, started from `origin/main` `7e862fe` and merged with `origin/main` `54db53f` (closeout PR #33) using a merge commit (no rebase, no force-push). Main checkout `/home/tracxn-lp-784/Desktop/project/reelforge`.
 - **Last updated:** 2026-11-10
 - **Reviewer:** Core Architect/Reviewer (Minu)
-- **Approved commit:** none
+- **Approved commit:** `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`, APPROVED by `minu-the-reviewer`)
+- **Merged commit:** `3da846e10bc8b682639a32c46bcefc9f529f6e0b` (squash-merged by `minu-the-reviewer` on 2026-11-10)
 
 ## Current objective
 Provide operational safety, audit history, health checks, and diagnostic visibility.
 
 ## Completion estimate
-About 90% (estimate only, not an approval). T01–T06 and T08 are implemented and tested. T07 stops at an explicit ADR blocker, as the task requires. Every "Core decisions requested" item below needs Minu's written approval.
+Implemented, reviewed, and integrated via PR #34. T01–T06 and T08 are done; T07 is open pending the retention ADR. The "Core decisions requested" were approved and are recorded as ADR-019.
 
 ## Task checklist
 - [x] **M19-T01 Security baseline.** See `SECURITY_BASELINE.md` (secrets, RBAC, tenant isolation, input validation, upload controls), which records existing controls and their gaps. The enforced part is a test that walks every controller in `AppModule` and fails on any unguarded route that is not on the public allowlist. M01/M04 were not rewritten.
@@ -152,10 +153,27 @@ Results:
 - The worker boots its own `AppModule` (existing pattern). The emergency-stop checks therefore also run in worker job processing; the stop is read from Postgres, so the API and worker agree.
 
 ## Next exact action
-Minu reviews the M19 PR and the "Core decisions requested". Do not merge before approval.
+None for M19 product work except T07, which waits for the retention ADR. M20 is next after the docs-only closeout merges.
 
 ## Handoff notes
 - Owner-side env vars: `REELFORGE_EMERGENCY_STOP`, `REELFORGE_EMERGENCY_STOP_REASON`, `OPS_METRICS_TOKEN`, `LOG_LEVEL`.
 
 ## Reviewer decision
-- Pending.
+- APPROVED at `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`), no blockers. Core decisions approved and recorded as ADR-019.
+- Integration: squash-merged to `main` by `minu-the-reviewer` at `3da846e10bc8b682639a32c46bcefc9f529f6e0b` (PR #34) on 2026-11-10. State set to INTEGRATED by the docs-only closeout PR; no product rework.
+
+## Carried residual notes (non-blocking)
+- R1: JSON- and YAML-style secrets (`"access_token": "…"`) are not masked (`packages/observability/src/redaction.ts:65-66`).
+- R2: `uncaughtException` / `unhandledRejection` output bypasses the redacting logger.
+- R3: Prisma validation errors can print argument values.
+- R4: non-URL local file paths are not masked.
+- R5: the `/ops/metrics` token compare leaks the token length; compare SHA-256 digests instead.
+- R6: an emergency stop raised mid-step fails the run instead of pausing it.
+- R7: the manual-run 409 during an emergency stop says 'Budget policy blocked'.
+- R8: the audit write is not transactional with the action, and redirects are recorded as 200.
+- R9: audit paging (`before=`) skips rows with equal timestamps.
+- R10: a simultaneous first-time emergency stop on the same scope returns 500.
+- R11: metrics are in-memory and per process.
+- R12: `audit_events` rows are undeletable (intentional).
+- R13: the GLOBAL stop env var must be set on both the API and the worker.
+- R14 / T07: retention, deletion and export are OPEN pending the retention ADR; that ADR must also cover audit retention, because the trigger blocks deletes.

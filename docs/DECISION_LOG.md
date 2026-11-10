@@ -150,6 +150,19 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
   3. ADR-017 item 4 is done: the real `BudgetPolicyPort` adapter (M18 `UsageBudgetPolicy`) is bound. Unconfigured budgets still block scheduled runs and allow manual ones.
 - **Consequence:** Replaying intake history by default, calling a paid provider before an M18 reservation, or treating a dispatched failure as free requires a later ADR.
 
+## ADR-019 - M19 admin, emergency stop, audit and observability Core rulings
+
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of the M19 integration closeout. M19 PR #34 was approved at `e5938e1484972afaf4125f6396646b9fb4483b20`, review `5843747594`, and squash-merged at `3da846e10bc8b682639a32c46bcefc9f529f6e0b`.)
+- **Decision:** These record the M19 "Core decisions requested" that Minu approved on PR #34; no new policy.
+  1. "Admin" is the workspace **OWNER** (ADR-003). No new role and no platform-operator role. The only platform-wide control is the GLOBAL emergency stop, which is set by operator environment (`REELFORGE_EMERGENCY_STOP`) only and cannot be set over HTTP.
+  2. The emergency stop goes through the M19 decorator in front of the M18 `BudgetPolicyPort` adapter, plus one step-boundary pause in M16 `processJob` that reuses `PAUSED` / `pausedReason` (no new M16 state). Analytics metric reads and social OAuth connect are not blocked; `WAITING_EXTERNAL` polls, M13 reconcile and sweeps keep running.
+  3. Audit history is the append-only `audit_events` table (no FKs; triggers reject UPDATE/DELETE/TRUNCATE), fed by one global HTTP interceptor. Guard-level 401s are covered by M01 `auth_events`, not by `audit_events`.
+  4. No new observability dependency (OTel SDK deferred to a future pin). `/ops/metrics` is token-gated (`OPS_METRICS_TOKEN`) and returns 404 when unset.
+  5. A single `/health` route with `probe=liveness|readiness`; readiness gates on Postgres only.
+  6. Admin views are API-only and OWNER-only, workspace-scoped.
+  7. The CI dependency-audit step (`pnpm audit --prod --audit-level high`) is approved in principle, to land as a separate `ci.yml` chore PR.
+- **Consequence:** Adding an admin/operator role, setting the GLOBAL stop over HTTP, making audit rows mutable or deletable, adding an observability dependency, or adding readiness dependencies beyond Postgres requires a later ADR. M19-T07 retention/deletion/export, including audit retention, stays open until the retention ADR is decided.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:
