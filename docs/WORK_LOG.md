@@ -725,3 +725,15 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions/approvals: No self-approval, integration, or merge is claimed.
 - Next exact action: Push the review-fix commit, request Minu re-review on PR #25, and stop without merging.
 - Related status/ADR: M14 `STATUS.md`; ADR-007 and ADR-010.
+
+## 2026-11-10 - M13 + M14 integrated closeout (docs only)
+- Actor/session: Module Implementation Agent, Desktop; branch `chore/m13-m14-integrated-closeout` from `origin/main` `02dbff53b794f2d78c58d6b44e08285e8c793ff1`.
+- Work package: docs-only closeout recording the already-merged M13 (PR #24) and M14 (PR #25) integrations. No product rework.
+- Facts verified in git/GitHub: PR #24 approved by Minu at `efa787aa11e00d09e8c1ec133f9217dc58cf270c` (review `5833122821`) and squash-merged by `minu-the-reviewer` at `75eee789921948a1d19427c4b2994a88a8766bbe`; PR #25 approved at `75b860375068150416a37482abc40223dfebcd4e` (review `5833592187`, B1 fix `0bfc4c8`) and squash-merged by `minu-the-reviewer` at `02dbff53b794f2d78c58d6b44e08285e8c793ff1`.
+- Changes made: Updated `docs/PROJECT_STATE.md` to M00–M14 integrated (tip `02dbff53`, active sessions none, next M15); set M13 and M14 `STATUS.md` to INTEGRATED with the approvals and merge SHAs; carried forward M13/M14 residual notes; preserved existing M10/M11/M12 and Prisma ESM follow-ups; updated the module-index blurb that still said M13/M14 were not started.
+- Commands actually run and results: `git fetch`/`git rev-parse origin/main` confirmed `02dbff53b794f2d78c58d6b44e08285e8c793ff1`; `gh pr view`/`gh api` confirmed approvals and merge actors. `pnpm install --frozen-lockfile` passed under Node 24.22.2 / pnpm 12.16.1.
+- External calls: GitHub read-only (PR/review metadata) and git; no live Google/Meta/AI/social calls.
+- Decisions/approvals: No self-approval, integration, or merge is claimed; this PR requests Minu's review and stops.
+- Defects/risks/blockers: M13 and M14 residuals are documented as non-blocking follow-ups; production KMS, Instagram fail-closed, no scheduler, and the Prisma ESM follow-up remain open.
+- Next exact action: Push, open the docs-only PR, request `minu-the-reviewer`, and stop without merging.
+- Related status/ADR: M13 and M14 `STATUS.md`; ADR-007 and ADR-010.

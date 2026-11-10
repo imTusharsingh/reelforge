@@ -1,13 +1,14 @@
 # M13 Status - Publishing Calendar & Delivery
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
-- **Completion estimate:** 100% of assigned T01-T08 implementation; review and integration pending.
+- **State:** INTEGRATED
+- **Completion estimate:** 100% of assigned T01-T08 implementation; approved and squash-merged to `main`.
 - **Assigned session/editor:** Module Implementation Agent
 - **Branch/worktree:** `work/m13-publishing-calendar-and-delivery` / `reelforge-m13`
 - **Base:** post-M12-closeout `origin/main` at `1a3436db300d34e23810d2e17992921f488d478c`
 - **Last updated:** 2026-11-10
 - **Reviewer:** Minu (Core Architect)
-- **Approved commit:** none
+- **Approved commit:** `efa787aa11e00d09e8c1ec133f9217dc58cf270c` (review `5833122821`)
+- **Integrated merge:** `75eee789921948a1d19427c4b2994a88a8766bbe` (PR #24, squash-merged by `minu-the-reviewer`)
 
 ## Current objective
 Deliver a workspace-scoped publishing calendar and manual YouTube publishing workflow. Instagram and unconfigured scheduling/budget dependencies remain fail-closed.
@@ -95,9 +96,11 @@ Toolchain: Node `24.22.2`, pnpm `12.16.1`.
 - Existing connected accounts with stale capability snapshots fail closed until M12 records executable upload capabilities again.
 - M10's current `StoragePort.getObject()` returns the full video as a `Buffer`; very large media may require a streaming storage/upload boundary before production-scale delivery.
 - No scheduler/worker execution or web UI is included; this package exposes manual API actions only.
+- A crash between `startVideoUpload` returning and a successful session persist can leave `UPLOADING` with no session URI; retry/reconcile/publish all refuse (no automatic second insert). If all persist retries fail the attempt is `FAILED_FINAL` and the remote YouTube session is orphaned until expiry.
+- The no-progress `transferUpload` branch can still return HTTP 200 with a non-published destination after marking reconciliation-required.
 
 ## Handoff notes
-- PR #24 is open at https://github.com/imTusharsingh/reelforge/pull/24 at review-fix commit `18eebd88714ea993f5c4503ccdcaba221fe0eba4`; Minu has been requested for re-review.
-- Implementation remains pending Minu's independent review; this session has not approved, merged, or pushed to `main`.
-- M13's published-record contract/service above is ready for Bot 2 to wire after M13 integrates.
-- Exact next action: await Minu's re-review; do not merge.
+- Integrated via PR #24 (https://github.com/imTusharsingh/reelforge/pull/24): Minu approved `efa787aa11e00d09e8c1ec133f9217dc58cf270c` (review `5833122821`) and `minu-the-reviewer` squash-merged at `75eee789921948a1d19427c4b2994a88a8766bbe`.
+- No self-approval or self-merge was performed by this session.
+- M13's published-record contract/service is consumed read-only by M14 via `PublishingService.listPublishedRecords`.
+- Exact next action: none for M13; residual notes above are non-blocking follow-ups.
