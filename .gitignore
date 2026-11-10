@@ -15,3 +15,4 @@ packages/database/src/generated/prisma/
 .pnpm-store/
 .local-tools/
 .vscode/
+.local-data/
