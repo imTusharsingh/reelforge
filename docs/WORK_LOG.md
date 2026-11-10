@@ -780,3 +780,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: The BullMQ Redis client peer (`ioredis`/`redis`) is missing and adding it needs Core approval. Also: LIMIT_WAIT consumes an attempt, approval requires a manual resume, there is no scheduler backfill beyond 5 minutes, and M14 stuck-job reclaim is deferred.
 - Next exact action: Minu review of the M16 PR, then a Core decision on the Redis client pin. Do not merge until then.
 - Related status/ADR: M16 `STATUS.md`; ADR-005, ADR-006, ADR-007, and ADR-010.
+
+## 2026-11-10 - M16 review fixes (REQUEST_CHANGES 5838818072)
+- Session/editor: Module Implementation Agent, Desktop (TRACXN-LP-784), main checkout, branch `work/m16-workflow-orchestration-and-scheduler`.
+- Work package: M16 review blockers B1–B6 and the cheap residuals, as new commits on top of `0c6b941` (no amend, no force-push).
+- Changes made: pinned `ioredis` 5.11.1 (Core-approved) and made a set-but-unusable `REDIS_URL` fail loud (worker refuses to start, `/health` reports the queue status); lease-owner + attempt fencing on every step write with a heartbeat; `WAITING_EXTERNAL` polling for script approval, scene media, render, and publish (M13 reconcile, never a second `publishNow`); atomic complete-and-advance plus a recovery sweep in the worker tick; 4xx/validation = final, unknown side-effect error = reconciliation; a real-dispatcher Postgres integration test. Additive migration `20261115010000_m16_orchestration_hardening`.
+- Commands actually run and results: see M16 `STATUS.md`. frozen install, lint, format:check, typecheck, test (59 files passed / 1 skipped; 404 tests passed / 5 FFmpeg skips; the Redis suite ran 3/3), build, db:validate, migrate:deploy from scratch (24 migrations) all **passed**. Worker fail-loud smoke exits 1 as intended.
+- Decisions/approvals: only `ioredis` 5.11.1 added; `ci.yml` and `PROJECT_STATE.md` untouched; no merge or approval.
+- Next exact action: Minu re-review of PR #29.
+- Related status/ADR: M16 `STATUS.md`.
+

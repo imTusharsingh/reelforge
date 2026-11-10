@@ -11,12 +11,12 @@
 Coordinate durable jobs, schedules, dependencies, pause/resume, retries, and run history.
 
 ## Completion estimate
-~90% (estimate only, not an approval). The BullMQ/Redis transport is written but cannot connect until a Redis client peer is approved (see Blockers).
+~97% (estimate only, not an approval). Review REQUEST_CHANGES 5838818072 (B1–B6 plus the cheap residuals) is addressed in fix-forward commits on top of `0c6b941`; awaiting re-review.
 
 ## Task checklist
 - [x] M16-T01: Run/step/job state machines (`orchestration.state.ts`); every transition is an `updateMany` compare-and-swap on the expected status, and a failed CAS is a 409 or a no-op.
 - [x] M16-T02: `WorkflowQueuePort` with a BullMQ 6.6.0 adapter, an in-memory adapter, and a NOT_CONFIGURED adapter. Job ids are deterministic (`run.step.retryGeneration.attempt`). Attempts, exponential backoff, and dead letter (`workflow_jobs.status = DEAD_LETTER`, `dead_lettered_at`) are persisted in Postgres.
-- [x] M16-T03: Channel schedule evaluation in the channel's IANA timezone (DST gap skipped, fall-back ambiguity yields one slot). Slots are claimed through a unique `(workspace, channel, slotKey)`. Paused or archived channels get a SKIPPED slot. The budget port defaults to NOT_CONFIGURED, so scheduled runs are PAUSED with `BUDGET_POLICY_UNAVAILABLE`. Approval waits are visible.
+- [x] M16-T03: Channel schedule evaluation in the channel's IANA timezone (DST gap skipped, fall-back ambiguity yields one slot). Slots are claimed through a unique `(workspace, channel, slotKey)`. Paused or archived channels get a SKIPPED slot. The budget port defaults to NOT_CONFIGURED, so a scheduled slot is SKIPPED with `BUDGET_POLICY_UNAVAILABLE` and no run is created (nothing counts toward `maxRunsPerDay`). Approval waits are visible.
 - [x] M16-T04: Manual and scheduled runs share `createRun`, the definition, and the state machine.
 - [x] M16-T05: GENERATION: VERIFY_CONTEXT → SELECT_IDEA (M06) → GENERATE_SCRIPT (M07) → GENERATE_SCENE_MEDIA (M09) → COMPOSE_RENDER (M10) → QUALITY_REVIEW (M11, waits for human approval).
 - [x] M16-T06: PUBLISH: VERIFY_CONTEXT → PUBLISH (M13 `publishNow`, all M13 gates) → ANALYTICS_FOLLOW_UP (M14 `scheduleCollection`). ANALYTICS is a standalone follow-up.
@@ -37,45 +37,52 @@ Coordinate durable jobs, schedules, dependencies, pause/resume, retries, and run
 ## API
 `/workspaces/:workspaceId/orchestration/runs`: `POST` (start manual), `GET` (list), `GET :runId` (inspect: state, steps, jobs, events, failures, retries, nextAction), `POST :runId/cancel`, `POST :runId/retry`, `POST :runId/resume`. OWNER/EDITOR can write. VIEWER is read-only (403 on writes). Everything is workspace-scoped, and other tenants get 404.
 
-## Commands and evidence (2026-11-10, Node 24.22.2, pnpm 12.16.1, disposable `postgres:18.6-alpine` on 127.0.0.1:55437, `redis:7-alpine` on 127.0.0.1:56379)
-- `pnpm install --frozen-lockfile`: **passed** (lockfile up to date).
-- `pnpm lint`: **passed**.
-- `pnpm format:check`: **passed**.
-- `DATABASE_URL=… pnpm typecheck`: **passed** (all 11 workspaces).
-- `DATABASE_URL=… pnpm test`: **passed**. 56 files passed / 2 skipped; 390 tests passed / 7 skipped. The skips are the existing 5 FFmpeg/ffprobe tests plus the 2 Redis/BullMQ tests (see Blockers). Re-run on a freshly migrated DB gave the same result.
-- Focused M16: 5 files passed / 1 skipped; 47 tests passed / 2 skipped. The PostgreSQL integration suite (14 tests) passed in three consecutive runs.
-- `DATABASE_URL=… pnpm build`: **passed** (exit 0).
-- `DATABASE_URL=… pnpm db:validate`: **passed**.
-- `DATABASE_URL=… pnpm db:migrate:deploy` on a dropped and recreated DB: **passed**, 23 migrations applied from scratch.
-- `prisma migrate diff --from-config-datasource --to-schema`: **no workflow_* drift**. Index names were aligned to Prisma's 63-char truncation, and the missing `workflow_runs (workspace_id, channel_id, created_at)` index was added. The remaining diff lines are pre-existing pre-M16 naming drift.
-- `REDIS_URL=redis://127.0.0.1:56379 vitest run …orchestration`: the Redis suite **NOT RUN (skipped)**. BullMQ 6.6.0 cannot load a Redis client (see Blockers). With `REDIS_URL` set, the queue factory degrades to NOT_CONFIGURED, and a unit test asserts that.
-- Worker smoke: `node apps/worker/dist/main.js` with DATABASE_URL, run once with `REDIS_URL` unset and once with it set. Both stayed up for 8 s and exited 0 on SIGTERM. With `REDIS_URL` set it logged the missing Redis-client warning and did not crash.
+## Review fixes for REQUEST_CHANGES 5838818072 (fix-forward, no amend/force-push)
+- **B1 Redis client / fail loud.** `ioredis` pinned at exactly `5.11.1` in `apps/api` and `apps/worker` (the only new dependency; bullmq resolves as `6.6.0(ioredis@5.11.1)`). `createWorkflowQueueFromEnv` (`orchestration.bullmq.ts`): unset `REDIS_URL` → NOT_CONFIGURED; set → always `BullMqWorkflowQueue` (a malformed URL throws at startup). The `redisClientAvailable()` fallback is removed everywhere. `WorkflowQueuePort.health()` returns CONFIGURED / NOT_CONFIGURED / UNREACHABLE (connect + round-trip with a 5 s timeout); enqueue also has a 5 s timeout, so a down Redis throws instead of hanging. `GET /health` (`health.controller.ts`) now returns `{ status: "ok" | "degraded", queue }`. The worker (`apps/worker/src/handlers/orchestration/factory.ts`) refuses to start when `REDIS_URL` is set and the queue is not CONFIGURED, and waits at most 10 s for BullMQ readiness (`handler.ts`). The Redis suite skips only when `REDIS_URL`/`DATABASE_URL` is unset.
+- **B2 lease fencing.** The claim records `leaseOwner = workerId` and CASes on the observed `attempts`, `retryGeneration`, `limitWaits`, `externalPolls`, lease, and `nextAttemptAt`. Every later RUNNING→* write (success, approval wait, external wait, limit wait, retry, fail, reconciliation) is fenced by `{ status: RUNNING, leaseOwner: workerId, attempts }` (`orchestration.service.ts` `guard`). A heartbeat (`startHeartbeat`, every `heartbeatIntervalMs` = 20 s, TTL 60 s) renews the lease during `dispatchStep` and is cleared in `finally`. Only the job id the step currently expects may claim it; older deliveries return `superseded job`. Stale-lease recovery also CASes on owner and attempts.
+- **B3 waiting on external work.** New step state `WAITING_EXTERNAL` (additive migration `20261115010000_m16_orchestration_hardening`: enum value plus `limit_waits`, `external_polls`, `external_deadline_at`). A dispatcher result with `waitingExternal` parks the step, merges its output into the run input in the same transaction (so `sceneMediaJobId` / `renderJobId` / publish state are persisted as soon as they exist), and re-enqueues a poll after 15–60 s (clamped by `minPollMs`/`maxPollMs`). Polls never consume attempts. After the per-step deadline → RECONCILIATION_REQUIRED with `EXTERNAL_WAIT_TIMEOUT`. Dispatcher (`orchestration.dispatcher.ts`): scene media is success only when `isCompletePackage()`; QUEUED/RUNNING is a wait; PARTIAL/incomplete or FAILED is a final failure. Render: SUCCEEDED → success; QUEUED/RUNNING → wait; FAILED_* / CANCELED → final failure. Publish: the first attempt calls M13 `publishNow`; after an upload exists it reads `getScheduledPost` and calls M13 `reconcile` while REMOTE_PROCESSING, and never calls `publishNow` again. GENERATE_SCRIPT also waits (up to 72 h) for the M07 human script approval, because M09 refuses unapproved scripts with 409 (found by the B6 test).
+- **B4 atomic advance + recovery sweep.** Step completion, job SUCCEEDED, events, the run transition and the next step's QUEUED commit in one `$transaction` (`completeAndAdvance`, also used by approval resume); the enqueue happens after commit and `enqueueCurrent` never throws (it logs on the run, `nextAction: "Dispatch failed …"`). Completion/advance errors are outside the dispatch failure path, so they cannot mark a succeeded step or the run FAILED. `reconcileStalledWork(now)` runs on every worker tick: it re-enqueues QUEUED / RETRY_WAIT / WAITING_EXTERNAL steps that are due but older than `stallGraceMs` (2 min) — or immediately when the last dispatch failed — and promotes the next PENDING step (including the first step) of active runs with no active step, using the same deterministic job id. BullMQ `enqueue` removes a completed/failed job with that id and re-adds it; a pending one is DUPLICATE (in-memory adapter matches).
+- **B5 failure classification.** `classify()`: explicit `WorkflowStepError` wins; `HttpException` with status < 500 and `ZodError` → final FAILED (`DOMAIN_REJECTED_<status>` / `DOMAIN_VALIDATION_FAILED`), never retried; any other error on a side-effect step → RECONCILIATION_REQUIRED (`UNKNOWN_SIDE_EFFECT_OUTCOME`); on a pure step → retry. The step idempotency key is passed to every service that accepts one (M09 scene media, M10 render). M07 `generate`, M11 `create`, and M14 `scheduleCollection` take no key, so those steps reuse the record an earlier attempt/poll persisted (`previousResultRef`) instead of creating a second one.
+- **B6 real dispatcher end-to-end.** `orchestration.dispatcher.postgres.integration.test.ts`: a Nest `TestingModule` of the real `OrchestrationModule` + `WorkflowDomainDispatcher`, overriding only the DB, fixture LLM/image/video/TTS providers, local storage, the fake composition engine, the in-memory queue, and clocks. Flow: idea → script (waits for M07 approval, polled without regenerating) → approve → scene media (complete) → render queued (WAITING_EXTERNAL, one more poll still waiting) → M10 `runClaim` renders → poll sees SUCCEEDED → M11 review AI_REVIEW_UNAVAILABLE → WAITING_APPROVAL → a PUBLISH run for that render is refused by M13 preflight (`DOMAIN_REJECTED_409 "Publishing is blocked…"`, 1 attempt, no publish attempt row) → M11 human APPROVE → resume → SUCCEEDED.
+- **Residuals fixed.** Claim checks `nextAttemptAt <= now` (1 s skew tolerance). The transition table is used by every service CAS (`transitionFrom` in `orchestration.state.ts`); it found and now allows QUEUED→RETRY_WAIT. Scheduled input is validated with the manual-run schema (invalid → slot SKIPPED `INVALID_SCHEDULE_INPUT`). Budget NOT_CONFIGURED/BLOCKED → slot SKIPPED, no PAUSED run. A concurrent duplicate manual idempotency key (P2002) returns the existing run. `skipSlot` is workspace-scoped. `ChannelService.listSchedulerCandidates()` is marked `@internal`. Concurrency/rate waits are counted in `limitWaits`, return the step to its prior state, and do not consume attempts.
+
+## Commands and evidence (2026-11-10 after the review fixes, Node 24.22.2, pnpm 12.16.1, disposable `postgres:18.6-alpine` on 127.0.0.1:55437, `redis:7-alpine` on 127.0.0.1:56379)
+- `pnpm install --frozen-lockfile`: **passed**.
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`: **passed**.
+- `DATABASE_URL=… REDIS_URL=redis://127.0.0.1:56379 pnpm test`: **passed**. 59 files passed / 1 skipped; 404 tests passed / 5 skipped. The only skips are the existing 5 FFmpeg/ffprobe tests.
+- Focused M16 (`vitest run src/modules/orchestration`): 7 files / **60 tests passed**, 0 skipped: Postgres suite 22, real-dispatcher suite 1, **Redis/BullMQ suite 3 (ran against :56379, not skipped)**, unit/state/schedule/time 34. Plus `health.controller.test.ts` 1.
+- `pnpm build`: **passed**. `pnpm db:validate`: **passed**.
+- `pnpm db:migrate:deploy` on a dropped and recreated DB: **passed**, 24 migrations including `20261115010000_m16_orchestration_hardening`.
+- `prisma migrate diff --from-config-datasource --to-schema`: no workflow_* drift; the remaining lines are the pre-existing pre-M16 FK naming drift.
+- Worker fail-loud smoke: `node apps/worker/dist/main.js` with `REDIS_URL=redis://127.0.0.1:1` exits 1 with "REDIS_URL is set but the workflow queue is UNREACHABLE; refusing to start the orchestration worker".
+
+## Phase-1 evidence (superseded by the section above)
+- 56 files passed / 2 skipped; 390 tests passed / 7 skipped (Redis suite skipped then because no Redis client was installed).
 
 ## Acceptance evidence
-- Restart/redelivery does not repeat side effects. In-memory and Postgres tests cover redelivery to the same worker, a new service instance ("restart"), two workers racing on one job (one claims it, the other no-ops), and stale-lease recovery of a side-effect step. That step goes to RECONCILIATION_REQUIRED and is never re-run, and a late domain result is recorded on the step. BullMQ variant: written, not run (Blockers).
+- Restart/redelivery does not repeat side effects: redelivery, a new service instance, two racing workers, stale-lease recovery of a side-effect step (RECONCILIATION_REQUIRED, never re-run), a stale worker's late write after recovery (no-op, the step advances exactly once), and the BullMQ variant against real Redis.
 - Manual and scheduled runs use the same definition and state machine (test).
-- Paused channel: the slot is SKIPPED with `CHANNEL_PAUSED` and no run starts. Manual start on a paused channel returns 409. An in-flight run pauses before its next step and resumes safely. Budget unavailable and approval pending are visible through `state`, `pausedReason`, `budgetDecision`, and `nextAction` (tests).
-- Each run exposes state, current step, failures (`lastError*` plus per-step and per-job errors), attempts, retryGeneration, dead letter, and nextAction (tests).
-- A concurrent cancel and retry, held at a barrier after both read FAILED, gives exactly one winner and one 409 (3 rounds).
-- Limits: 12 concurrent lease attempts from two Prisma clients with limit 2 got exactly slots {0,1}. The rate counter allowed exactly 4 of 6. Two orchestration workers with job-type concurrency 1 produced one dispatch and one LIMIT_WAIT.
-- Timezone/DST: New York spring-forward gap and fall-back, London fall-back, Asia/Kolkata and New York local weekday/date different from UTC, and stable slot keys across overlapping windows.
+- Paused channel: slot SKIPPED `CHANNEL_PAUSED`, manual start 409, an in-flight run pauses before its next step and resumes safely. Budget unavailable, approval pending, external waits, limit waits, and dispatch failures are visible through `state`, `pausedReason`, `budgetDecision`, and `nextAction`.
+- Lost Redis jobs, enqueue throws, and a crash between completion and advance are recovered by the sweep (tests).
+- A concurrent cancel and retry gives exactly one winner and one 409 (3 rounds).
+- Limits: 12 concurrent lease attempts with limit 2 got exactly slots {0,1}; the rate counter allowed exactly 4 of 6; two workers with job-type concurrency 1 produce one dispatch and one LIMIT_WAIT that keeps `attempts = 0`.
+- Timezone/DST tests as before.
 
 ## Contract/schema proposals
-- Additive schema and migration as approved (timestamp `20261114010000` > `20261113010000`). No `packages/contracts` change. The view types are module-local.
+- Additive schema and migrations as approved: `20261114010000` (phase 1) and `20261115010000_m16_orchestration_hardening` (enum value + 3 columns, later than `20261114010000`). No `packages/contracts` change.
 
-## Blockers / risks / unknowns
-- **BLOCKER (needs Core approval): BullMQ 6.6.0 needs a Redis client peer.** `ioredis` and `redis` are optional peer dependencies, and neither is in the lockfile. `new Queue(...)` throws "BullMQ could not load the optional 'ioredis' package". The approval allows no other dependencies, so I did not add one. Mitigation in this PR: `redisClientAvailable()` detects the peer, and with `REDIS_URL` set but no client, dispatch stays NOT_CONFIGURED and nothing crashes, in both API and worker. To unblock: approve pinning `ioredis` (exact version) in `apps/api` and `apps/worker`, then run `orchestration.bullmq.redis.integration.test.ts` against :56379.
-- Dispatch requires a queue. With NOT_CONFIGURED, manual runs persist as QUEUED with `nextAction: "Configure REDIS_URL…"`. The worker tick's `dispatchUndispatchedRuns()` dispatches them once a queue is configured.
-- A LIMIT_WAIT consumes a step attempt, because the job id is per attempt. Heavy limit contention can therefore leave fewer retries for real failures. Follow-up: a separate limit-wait counter.
-- Approval is not polled. After M11 approval, an editor must call `resume`, which re-reads the review. Auto-advance on approval is deferred.
-- The scheduler only looks back 5 minutes. Slots missed during a longer worker outage are not backfilled.
-- If Redis loses queued jobs (for example on a Redis restart without persistence), steps stay QUEUED with no reconciler. Stale recovery only covers RUNNING leases.
-- Stuck M14 `RUNNING` collection jobs are **not** reclaimed. Doing that would need a new M14 method, so it is left as allowed.
-- Dispatcher domain wiring (`orchestration.dispatcher.ts`) is unit-shaped only. Tests use fixture dispatchers, with no live AI, Google, or Meta calls, so the real M06–M14 call payloads have no end-to-end test yet.
-- Scheduled runs act as the workspace's first OWNER, re-checked on each step. Manual runs act as their starter, and the starter's current role is re-checked on each step.
+## Blockers / risks / unknowns (residuals left as notes per the review)
+- Resume after M11 approval is manual: an editor calls `resume`, which re-reads the review. (Script approval, by contrast, is polled as an external wait.)
+- The scheduler looks back 5 minutes and does not backfill longer outages; `workflow_scheduler_cursors` is written but not yet used to resume from.
+- A schedule's own `timezone` overrides the channel timezone when valid.
+- PROVIDER concurrency leases are per workspace, not global per provider.
+- The worker boots the full `AppModule` (all modules) to get `OrchestrationService`.
+- Retrying a step whose M10 render is FAILED_* re-reads the same render id; a new M10 retry child is not picked up automatically (operator retries the render in M10, then the step re-reads it only if the run input is updated). Follow-up.
+- Steps waiting on script approval poll every 60 s for up to 72 h.
+- Stuck M14 `RUNNING` collection jobs are not reclaimed (needs a new M14 method).
 
 ## Next exact action
-Minu reviews the PR. Core decides on the Redis client peer (`ioredis` pin); once approved, add it and run the Redis suite with `REDIS_URL=redis://127.0.0.1:56379`.
+Minu re-reviews PR #29 (fix-forward commits on top of `0c6b941`). Do not merge until approved.
 
 ## Handoff notes
 No self-approval, integration, or merge is claimed.
