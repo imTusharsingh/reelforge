@@ -341,7 +341,7 @@ function summarizeDimension(
       `Requires at least ${dimensionMinimumSample.videos} published videos with metrics; found ${sample.videos}.`,
     );
   const status = meetsMinimum(sample, dimensionMinimumSample) ? "OK" : "INSUFFICIENT_DATA";
-  const views = metricSum(snapshots, "views");
+  const views = points.reduce((total, point) => total + point.views, 0);
   const exposureDays = points.reduce((total, point) => total + point.exposureDays, 0);
   return PerformanceDimensionSummarySchema.parse({
     dimension,
