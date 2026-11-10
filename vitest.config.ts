@@ -11,6 +11,8 @@ export default defineConfig({
         .pathname,
       "@reelforge/database": new URL("./packages/database/src/index.ts", import.meta.url).pathname,
       "@reelforge/media": new URL("./packages/media/src/index.ts", import.meta.url).pathname,
+      "@reelforge/observability": new URL("./packages/observability/src/index.ts", import.meta.url)
+        .pathname,
     },
   },
   test: {

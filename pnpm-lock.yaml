@@ -220,6 +220,9 @@ importers:
       '@reelforge/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@reelforge/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@reelforge/social-providers':
         specifier: workspace:*
         version: link:../../packages/social-providers
@@ -343,7 +346,11 @@ importers:
         specifier: 24.19.2
         version: 24.19.2
 
-  packages/observability: {}
+  packages/observability:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
 
   packages/shared: {}
 
