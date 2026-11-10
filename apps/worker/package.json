@@ -17,7 +17,8 @@
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "zod": "4.6.7",
-    "bullmq": "6.6.0"
+    "bullmq": "6.6.0",
+    "ioredis": "5.11.1"
   },
   "type": "module"
 }
