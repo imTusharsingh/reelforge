@@ -294,6 +294,9 @@ importers:
       '@reelforge/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@reelforge/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       bullmq:
         specifier: 6.6.0
         version: 6.6.0(ioredis@5.11.1)(pg@8.23.1)

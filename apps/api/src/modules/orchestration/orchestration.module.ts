@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { EmergencyStopBudgetPolicy } from "../admin/emergency-stop.adapters.js";
+import { EmergencyStopModule } from "../admin/emergency-stop.module.js";
+import { EMERGENCY_STOP_PORT, type EmergencyStopPort } from "../admin/emergency-stop.types.js";
 import { AnalyticsModule } from "../analytics/analytics.module.js";
 import { ChannelModule } from "../channel/channel.module.js";
 import { CompositionModule } from "../composition/composition.module.js";
@@ -39,6 +42,7 @@ import {
     PublishingModule,
     AnalyticsModule,
     UsageBudgetModule,
+    EmergencyStopModule,
   ],
   controllers: [OrchestrationController],
   providers: [
@@ -49,8 +53,14 @@ import {
       provide: WORKFLOW_QUEUE_PORT,
       useFactory: (): WorkflowQueuePort => createWorkflowQueueFromEnv(process.env),
     },
-    // M18 real adapter (ADR-017): unconfigured budgets still answer NOT_CONFIGURED.
-    { provide: WORKFLOW_BUDGET_POLICY, useExisting: UsageBudgetPolicy },
+    // M18 real adapter (ADR-017): unconfigured budgets still answer NOT_CONFIGURED. M19-T06 puts the
+    // emergency stop in front of it: an active stop answers BLOCKED / EMERGENCY_STOP.
+    {
+      provide: WORKFLOW_BUDGET_POLICY,
+      useFactory: (stop: EmergencyStopPort, budget: UsageBudgetPolicy): EmergencyStopBudgetPolicy =>
+        new EmergencyStopBudgetPolicy(stop, budget),
+      inject: [EMERGENCY_STOP_PORT, UsageBudgetPolicy],
+    },
     { provide: WORKFLOW_STEP_DISPATCHER, useExisting: WorkflowDomainDispatcher },
     { provide: ORCHESTRATION_CLOCK, useValue: (): Date => new Date() },
     { provide: WORKFLOW_LIMIT_CONFIG, useValue: DEFAULT_WORKFLOW_LIMIT_CONFIG },

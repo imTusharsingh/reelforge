@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { EmergencyStopPublishingSchedulePort } from "../admin/emergency-stop.adapters.js";
+import { EmergencyStopModule } from "../admin/emergency-stop.module.js";
+import { EMERGENCY_STOP_PORT, type EmergencyStopPort } from "../admin/emergency-stop.types.js";
 import { AssetModule } from "../asset/asset.module.js";
 import { CompositionModule } from "../composition/composition.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -23,13 +26,18 @@ import { PublishingSessionVault } from "./publishing-session-vault.js";
     QualityModule,
     SocialAccountsModule,
     WorkspaceModule,
+    EmergencyStopModule,
   ],
   controllers: [PublishingController],
   providers: [
     PublishingService,
     {
+      // M19-T06: an active emergency stop fails the M13 preflight (publish/retry); reconcile is
+      // unaffected. Otherwise the existing (still unconfigured, fail-closed) schedule port decides.
       provide: PUBLISHING_SCHEDULE_PORT,
-      useClass: UnconfiguredPublishingSchedulePort,
+      useFactory: (stop: EmergencyStopPort): EmergencyStopPublishingSchedulePort =>
+        new EmergencyStopPublishingSchedulePort(stop, new UnconfiguredPublishingSchedulePort()),
+      inject: [EMERGENCY_STOP_PORT],
     },
     {
       provide: PUBLISHING_BUDGET_PORT,
