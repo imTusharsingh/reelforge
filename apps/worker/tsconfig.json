@@ -10,7 +10,8 @@
       "@reelforge/api/storage-factory": ["../api/src/storage.factory.ts"],
       "@reelforge/api/app-module": ["../api/src/app-module.ts"],
       "@reelforge/api/orchestration-service": ["../api/src/orchestration-service.ts"],
-      "@reelforge/api/orchestration-queue": ["../api/src/orchestration-queue.ts"]
+      "@reelforge/api/orchestration-queue": ["../api/src/orchestration-queue.ts"],
+      "@reelforge/api/notifications-service": ["../api/src/notifications-service.ts"]
     }
   },
   "include": ["src/**/*.ts"]

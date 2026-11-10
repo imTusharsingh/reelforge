@@ -802,6 +802,28 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Next exact action: Push, open the docs-only closeout PR, request `minu-the-reviewer`, and stop without merging.
 - Related status/ADR: M16 `STATUS.md`; ADR-005, ADR-006, ADR-012, ADR-017.
 
+## 2026-11-10 - M17 notifications and reporting
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784, worktree `reelforge-m17`, branch `work/m17-notifications-and-reporting` from `origin/main` `6e4f2965f3b3c6d4097eae2153bf9874b2d99a63`. Local only, no cloud agent; M18 is built in parallel in a sibling worktree and was not touched.
+- Work package: M17 T01–T06.
+- Changes made: New `NotificationsModule` with a typed event catalog (M11/M13/M15/M16/M17), per-member preferences with defaults, persisted in-app notifications with read state and unique per-recipient dedupe, cursor-based intake from `outbox_events` and `@internal` read methods on M11/M13/M15/M16 services, transactional fan-out, a NOT_CONFIGURED `NotificationEmailPort` with persisted delivery attempts/backoff and a member retry endpoint, DST-safe daily/weekly channel reports from persisted M13/M14/M15/M16 data with explicit missing-data marking, relative deep links, an API, and a worker handler next to the composition poller and the M16 handler. Migration `20261116010000_m17_notifications_and_reporting`. Additive read-only methods: `OrchestrationService.listEventsAfter`/`countRunOutcomes`, `QualityService.listReviewRequestsAfter`/`listDecisionsAfter`, `PerformanceIntelligenceService.listInsightReportsAfter`, `PublishingService.listReconciliationRequiredAfter`, `ChannelService.listReportChannels`, `WorkspaceService.listMembers`.
+- Commands actually run and results: see M17 `STATUS.md`. frozen install, lint, format:check, typecheck, test (64 files passed / 1 skipped; 424 tests passed / 5 FFmpeg skips), build, db:validate, and db:migrate:deploy from scratch (25 migrations) all **passed**. Focused M17: 5 files / 20 tests passed.
+- External calls: NONE (no email, Google, Meta, AI, or social calls). Tests use fakes.
+- Decisions/approvals: Followed the Core approvals in the M17 task. No new dependency, no `ci.yml` or `PROJECT_STATE.md` change, no contracts change.
+- Defects/risks/blockers: see M17 `STATUS.md` (no live email adapter; global `workflow_events` scan index; settle-window and same-millisecond limits; report caps; no backfill).
+- Next exact action: Minu review of the M17 PR; do not merge until approved. M18 rebases after M17 merges.
+- Related status/ADR: M17 `STATUS.md`; ADR-005, ADR-007, ADR-010, ADR-017.
+
+## 2026-11-10 - M17 review 5839809149 fixes
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784, worktree `reelforge-m17`, branch `work/m17-notifications-and-reporting` (on top of `ef98793`). Local only.
+- Work package: M17, Minu review 5839809149 (REQUEST_CHANGES): B1, B2, B3, R1, R2.
+- Changes made: strict `(ts, id)` keyset in all intake readers with the stall branch removed and fresh cursors at `now - settle` unless `intakeBackfill`; six intake keyset indexes in the M17 migration and `schema.prisma` (approved shared edit); exact counts and `PARTIAL`/`*_TRUNCATED` for capped report lists, with a new period-bounded `PerformanceIntelligenceService.listChannelInsightsBetween`; report and `CHANNEL_REPORT_READY` in one transaction; R1 settle-window assumption documented.
+- Commands actually run and results: fresh-DB migrate (25), frozen install, lint, format:check, typecheck, test (64 files passed / 1 skipped; 431 passed / 5 FFmpeg skips), build, db:validate all **passed**; focused M17 27/27 twice.
+- External calls: NONE.
+- Decisions/approvals: index additions to other modules' tables are the B2-approved shared edit; no `PROJECT_STATE.md`, `ci.yml`, dependency, or contracts change.
+- Defects/risks/blockers: see M17 `STATUS.md`.
+- Next exact action: Minu re-review of PR #32; do not merge until approved.
+- Related status/ADR: M17 `STATUS.md`; ADR-017.
+
 ## 2026-11-10 - M18 usage, budget and billing foundation
 - Actor/session: Module Implementation Agent, Desktop (TRACXN-LP-784), local session, no cloud agent. Worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m18` on branch `work/m18-usage-budget-and-billing-foundation` from `origin/main` `6e4f2965f3b3c6d4097eae2153bf9874b2d99a63`, built in parallel with M17 (ADR-017).
 - Work package: M18 T01–T06.

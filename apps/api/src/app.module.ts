@@ -17,6 +17,7 @@ import { PublishingModule } from "./modules/publishing/publishing.module.js";
 import { AnalyticsModule } from "./modules/analytics/analytics.module.js";
 import { PerformanceIntelligenceModule } from "./modules/performance-intelligence/performance-intelligence.module.js";
 import { OrchestrationModule } from "./modules/orchestration/orchestration.module.js";
+import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 import { UsageBudgetModule } from "./modules/usage-budget/usage-budget.module.js";
 
 @Module({
@@ -38,6 +39,7 @@ import { UsageBudgetModule } from "./modules/usage-budget/usage-budget.module.js
     AnalyticsModule,
     PerformanceIntelligenceModule,
     OrchestrationModule,
+    NotificationsModule,
     UsageBudgetModule,
   ],
   controllers: [HealthController],
