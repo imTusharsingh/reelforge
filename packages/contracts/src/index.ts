@@ -4,3 +4,4 @@ export * from "./states.js";
 export * from "./social-accounts.js";
 export * from "./publishing.js";
 export * from "./analytics.js";
+export * from "./performance-intelligence.js";

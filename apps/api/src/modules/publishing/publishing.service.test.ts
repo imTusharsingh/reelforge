@@ -542,6 +542,73 @@ describe("PublishingService published-post export", () => {
       }),
     );
   });
+
+  it("resolves read-only post context without exposing another workspace", async () => {
+    const seriesId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: scheduledPostId,
+        channelId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        renderJobId,
+        renderJob: {
+          input: {
+            scenes: [{ durationMs: 5_000 }, { durationMs: 5_000 }],
+            profile: { transitionDurationMs: 1_000 },
+          },
+          sceneMediaJob: {
+            script: {
+              seriesId,
+              snapshot: {
+                topic: "AI tools",
+                hook: "Question",
+                seriesId,
+                series: { id: seriesId, name: "Series A" },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    const assignmentFindMany = vi.fn().mockResolvedValue([
+      {
+        seriesId,
+        group: { name: "Hosts", members: [{ character: { name: "Nova" } }] },
+      },
+    ]);
+    const publishing = service({
+      scheduledPost: { findMany },
+      characterGroupAssignment: { findMany: assignmentFindMany },
+    });
+
+    const contexts = await publishing.listPublishedPostContexts(context("VIEWER"), [
+      scheduledPostId,
+    ]);
+    expect(contexts).toEqual([
+      {
+        scheduledPostId,
+        channelId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        renderJobId,
+        topic: "AI tools",
+        hook: "Question",
+        seriesId,
+        seriesName: "Series A",
+        characterNames: ["Nova"],
+        durationSeconds: 9,
+      },
+    ]);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId, id: { in: [scheduledPostId] } },
+      }),
+    );
+    expect(assignmentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId, seriesId: { in: [seriesId] } },
+      }),
+    );
+
+    await expect(publishing.listPublishedPostContexts(context(), [])).resolves.toEqual([]);
+  });
 });
 
 describe("PublishingService YouTube delivery", () => {

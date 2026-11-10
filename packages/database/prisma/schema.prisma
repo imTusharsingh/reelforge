@@ -230,6 +230,10 @@ model Workspace {
   metricCollectionJobs        MetricCollectionJob[]
   metricCollectionRuns        MetricCollectionRun[]
   metricSnapshots             AnalyticsMetricSnapshot[]
+  performanceInsightReports   PerformanceInsightReport[]
+  performanceRecommendations  PerformanceRecommendation[]
+  performanceExperiments      PerformanceExperiment[]
+  performanceStrategyChanges  PerformanceStrategyChange[]
   activeConfigSnapshot        WorkspaceConfigSnapshot?     @relation("WorkspaceActiveConfigSnapshot", fields: [activeConfigSnapshotId], references: [id])
 
   @@unique([activeConfigSnapshotId])
@@ -319,6 +323,10 @@ model Channel {
   scheduledPosts            ScheduledPost[]
   metricCollectionJobs      MetricCollectionJob[]
   metricSnapshots           AnalyticsMetricSnapshot[]
+  performanceInsightReports PerformanceInsightReport[]
+  performanceRecommendations PerformanceRecommendation[]
+  performanceExperiments    PerformanceExperiment[]
+  performanceStrategyChanges PerformanceStrategyChange[]
   activeSnapshot            ChannelConfigSnapshot?     @relation("ChannelActiveSnapshot", fields: [workspaceId, activeSnapshotId], references: [workspaceId, id])
 
   @@unique([workspaceId, id])
@@ -1628,4 +1636,157 @@ model AnalyticsMetricSnapshot {
   @@index([workspaceId, socialAccountId, metricDefinitionId, periodStart, periodEnd])
   @@index([workspaceId, entityGranularity, remoteEntityId, periodStart, periodEnd])
   @@map("analytics_metric_snapshots")
+}
+
+enum InsightReportStatus {
+  GENERATED
+  NOT_GENERATED
+  INSUFFICIENT_DATA
+}
+
+enum InsightAiStatus {
+  GENERATED
+  NOT_CONFIGURED
+  NOT_GENERATED
+  INSUFFICIENT_DATA
+}
+
+enum PerformanceDimension {
+  TOPIC
+  HOOK
+  DURATION
+  CHARACTER
+  SERIES
+  PUBLISH_TIMING
+}
+
+enum PerformanceConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RecommendationStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+}
+
+enum ExperimentStatus {
+  DRAFT
+  RUNNING
+  COMPLETED
+  REJECTED
+}
+
+enum StrategyChangeStatus {
+  APPROVED
+  EXPORTED
+}
+
+model PerformanceInsightReport {
+  id                String              @id @default(uuid()) @db.Uuid
+  workspaceId       String              @map("workspace_id") @db.Uuid
+  channelId         String              @map("channel_id") @db.Uuid
+  periodStart       DateTime            @map("period_start") @db.Date
+  periodEnd         DateTime            @map("period_end") @db.Date
+  comparisonStart   DateTime            @map("comparison_start") @db.Date
+  comparisonEnd     DateTime            @map("comparison_end") @db.Date
+  status            InsightReportStatus
+  kpis              Json
+  dimensionSummaries Json               @map("dimension_summaries")
+  narrative         String?
+  aiStatus          InsightAiStatus     @map("ai_status")
+  providerId        String?             @map("provider_id")
+  modelVersion      String?             @map("model_version")
+  promptVersion     String?             @map("prompt_version")
+  cost              Decimal?            @db.Decimal(18, 8)
+  costCurrency      String?             @map("cost_currency")
+  limitations       Json
+  snapshotIds       String[]            @map("snapshot_ids") @db.Uuid
+  createdByUserId   String              @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel           Channel             @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  recommendations   PerformanceRecommendation[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, createdAt])
+  @@map("performance_insight_reports")
+}
+
+model PerformanceRecommendation {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  workspaceId         String                     @map("workspace_id") @db.Uuid
+  channelId           String                     @map("channel_id") @db.Uuid
+  reportId            String?                    @map("report_id") @db.Uuid
+  rank                Int
+  dimension           PerformanceDimension
+  action              String
+  rationale           String
+  confidence          PerformanceConfidence
+  limitations         Json
+  evidenceSnapshotIds String[]                   @map("evidence_snapshot_ids") @db.Uuid
+  status              RecommendationStatus       @default(PROPOSED)
+  approvedByUserId    String?                    @map("approved_by_user_id") @db.Uuid
+  approvedAt          DateTime?                  @map("approved_at") @db.Timestamptz(6)
+  createdByUserId     String                     @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace           Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel             Channel                    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  report              PerformanceInsightReport?  @relation(fields: [workspaceId, reportId], references: [workspaceId, id], onDelete: Restrict)
+  strategyChanges     PerformanceStrategyChange[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, status, rank])
+  @@index([workspaceId, reportId])
+  @@map("performance_recommendations")
+}
+
+model PerformanceExperiment {
+  id              String           @id @default(uuid()) @db.Uuid
+  workspaceId     String           @map("workspace_id") @db.Uuid
+  channelId       String           @map("channel_id") @db.Uuid
+  hypothesis      String
+  variant         String
+  dimensions      PerformanceDimension[]
+  designNotes     String           @map("design_notes")
+  exposure        Int?
+  outcome         Json?
+  status          ExperimentStatus @default(DRAFT)
+  createdByUserId String           @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel         Channel          @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, channelId, status, createdAt])
+  @@map("performance_experiments")
+}
+
+model PerformanceStrategyChange {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  workspaceId         String                     @map("workspace_id") @db.Uuid
+  channelId           String                     @map("channel_id") @db.Uuid
+  version             Int
+  recommendationId    String?                    @map("recommendation_id") @db.Uuid
+  summary             String
+  changes             Json
+  evidenceSnapshotIds String[]                   @map("evidence_snapshot_ids") @db.Uuid
+  status              StrategyChangeStatus       @default(APPROVED)
+  approvedByUserId    String                     @map("approved_by_user_id") @db.Uuid
+  approvedAt          DateTime                   @map("approved_at") @db.Timestamptz(6)
+  createdByUserId     String                     @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace           Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel             Channel                    @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  recommendation      PerformanceRecommendation? @relation(fields: [workspaceId, recommendationId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, recommendationId])
+  @@unique([workspaceId, channelId, version])
+  @@index([workspaceId, channelId, createdAt])
+  @@map("performance_strategy_changes")
 }
