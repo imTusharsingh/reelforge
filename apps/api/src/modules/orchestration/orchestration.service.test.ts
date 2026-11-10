@@ -2,9 +2,9 @@ import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
 import { StaticBudgetPolicy, UnconfiguredBudgetPolicy } from "./orchestration.budget.js";
 import {
+  BullMqWorkflowQueue,
   createWorkflowQueueFromEnv,
   parseRedisConnection,
-  redisClientAvailable,
 } from "./orchestration.bullmq.js";
 import { workflowDefinition } from "./orchestration.definitions.js";
 import {
@@ -68,14 +68,21 @@ describe("workflow queue port", () => {
     expect(job(1).jobId).not.toContain(":");
   });
 
-  it("deduplicates queued and already delivered job ids in memory", async () => {
+  it("deduplicates pending job ids in memory and lets a delivered id be re-added", async () => {
     const queue = new InMemoryWorkflowQueue();
     await expect(queue.enqueue(job(1))).resolves.toBe("ENQUEUED");
     await expect(queue.enqueue(job(1))).resolves.toBe("DUPLICATE");
     expect(queue.take()).toHaveLength(1);
-    await expect(queue.enqueue(job(1))).resolves.toBe("DUPLICATE");
+    // Like BullMQ after completion: the recovery sweep may re-add a lost delivery.
+    await expect(queue.enqueue(job(1))).resolves.toBe("ENQUEUED");
     await expect(queue.enqueue(job(2))).resolves.toBe("ENQUEUED");
-    expect(queue.peek().map((item) => item.attempt)).toEqual([2]);
+    expect(queue.peek().map((item) => item.attempt)).toEqual([1, 2]);
+    await expect(queue.health()).resolves.toBe("CONFIGURED");
+  });
+
+  it("adds a wake suffix only for limit waits and external polls", () => {
+    expect(deterministicJobId(runId, stepId, 1, 0, 0)).toBe(`${runId}.${stepId}.0.1`);
+    expect(deterministicJobId(runId, stepId, 1, 0, 3)).toBe(`${runId}.${stepId}.0.1.w3`);
   });
 
   it("reports NOT_CONFIGURED without Redis and never crashes", async () => {
@@ -87,15 +94,19 @@ describe("workflow queue port", () => {
     expect(createWorkflowQueueFromEnv({ REDIS_URL: "   " }).status).toBe("NOT_CONFIGURED");
   });
 
-  it("degrades to NOT_CONFIGURED instead of crashing when the Redis client peer is missing", async () => {
-    const queue = createWorkflowQueueFromEnv({ REDIS_URL: "redis://127.0.0.1:1" });
-    if (redisClientAvailable()) {
-      expect(queue.status).toBe("CONFIGURED");
-      await queue.close();
-      return;
-    }
-    expect(queue).toBeInstanceOf(NotConfiguredWorkflowQueue);
-    expect((queue as NotConfiguredWorkflowQueue).reason).toBe("REDIS_CLIENT_UNAVAILABLE");
+  it("fails loud when REDIS_URL is set but unusable", async () => {
+    expect(() => createWorkflowQueueFromEnv({ REDIS_URL: "http://127.0.0.1:6379" })).toThrow(
+      /redis/,
+    );
+    const fromEnv = createWorkflowQueueFromEnv({ REDIS_URL: "redis://127.0.0.1:1" });
+    expect(fromEnv).toBeInstanceOf(BullMqWorkflowQueue);
+    expect(fromEnv.status).toBe("CONFIGURED");
+    await fromEnv.close().catch(() => undefined);
+    const unreachable = new BullMqWorkflowQueue("redis://127.0.0.1:1", "m16-unreachable", 300);
+    await expect(unreachable.health()).resolves.toBe("UNREACHABLE");
+    await expect(unreachable.enqueue(job(1))).rejects.toThrow();
+    await unreachable.close().catch(() => undefined);
+    await expect(new NotConfiguredWorkflowQueue().health()).resolves.toBe("NOT_CONFIGURED");
   });
 
   it("parses redis connection URLs and rejects other protocols", () => {

@@ -10,8 +10,10 @@ import { PublishingService } from "../publishing/publishing.service.js";
 import { QualityService } from "../quality/quality.service.js";
 import { SceneMediaService } from "../scene-media/scene-media.service.js";
 import type { SceneMediaPackage } from "../scene-media/scene-media.types.js";
+import { isCompletePackage } from "../scene-media/scene-media.validation.js";
 import { ScriptService } from "../script/script.service.js";
 import { scriptDocumentSchema } from "../script/script.validation.js";
+import type { ScheduledPostView } from "../publishing/publishing.types.js";
 import {
   WorkflowStepError,
   type WorkflowRunInput,
@@ -142,15 +144,12 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
     input: WorkflowStepDispatchInput,
   ): Promise<WorkflowStepDispatchResult> {
     const existingScriptId = stringValue(input.input, "scriptId");
-    if (existingScriptId !== null) {
-      await this.scripts.get(input.context, existingScriptId);
-      return {
-        resultRef: existingScriptId,
-        resultType: "SCRIPT",
-        output: { scriptId: existingScriptId },
-        skipped: true,
-      };
-    }
+    if (existingScriptId !== null)
+      return this.scriptResult(input, existingScriptId, input.previousResultRef === null);
+    // ScriptService.generate takes no idempotency key: reuse the script an earlier attempt of
+    // this step already persisted instead of generating a second one.
+    if (input.previousResultRef !== null)
+      return this.scriptResult(input, input.previousResultRef, false);
     const approvedIdeaSnapshotId = requiredString(input.input, "approvedIdeaSnapshotId");
     const approvedIdeaChecksum = requiredString(input.input, "approvedIdeaChecksum");
     const configSnapshotId = requiredString(input.input, "configSnapshotId");
@@ -182,7 +181,47 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
         "Script service did not return a script id",
         false,
       );
-    return { resultRef: scriptId, resultType: "SCRIPT", output: { scriptId } };
+    return this.scriptResult(input, scriptId, false);
+  }
+
+  private async scriptResult(
+    input: WorkflowStepDispatchInput,
+    scriptId: string,
+    provided: boolean,
+  ): Promise<WorkflowStepDispatchResult> {
+    const script = record(await this.scripts.get(input.context, scriptId));
+    return this.scriptStatusResult(scriptId, script["status"], provided);
+  }
+
+  /**
+   * Scene media only accepts an approved script (M07 gate), so a generated or revised script is
+   * an external wait for that human approval rather than a step that fails downstream with 409.
+   */
+  private scriptStatusResult(
+    scriptId: string,
+    status: unknown,
+    provided: boolean,
+  ): WorkflowStepDispatchResult {
+    const output = { scriptId };
+    if (status === "APPROVED")
+      return {
+        resultRef: scriptId,
+        resultType: "SCRIPT",
+        output,
+        ...(provided ? { skipped: true } : {}),
+      };
+    if (status === "DRAFT" || status === "REVISION_PENDING")
+      return {
+        resultRef: scriptId,
+        resultType: "SCRIPT",
+        output,
+        waitingExternal: { reason: `script ${scriptId} awaiting approval` },
+      };
+    throw new WorkflowStepError(
+      "SCRIPT_REJECTED",
+      `Script is ${String(status).toLowerCase()}; create a new run or revise the script`,
+      false,
+    );
   }
 
   private async generateSceneMedia(
@@ -209,18 +248,29 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
     return this.sceneResult(pkg);
   }
 
+  /** B3: only a complete package is success; generating is a wait; incomplete terminal fails. */
   private sceneResult(pkg: SceneMediaPackage): WorkflowStepDispatchResult {
-    if (pkg.status === "FAILED")
-      throw new WorkflowStepError("SCENE_MEDIA_FAILED", "Scene media generation failed", true);
-    return {
-      resultRef: pkg.jobId,
-      resultType: "SCENE_MEDIA_PACKAGE",
-      output: {
-        sceneMediaJobId: pkg.jobId,
-        sceneMediaScriptId: pkg.scriptId,
-        sceneMediaScriptRevision: pkg.scriptRevision,
-      },
+    const output = {
+      sceneMediaJobId: pkg.jobId,
+      sceneMediaScriptId: pkg.scriptId,
+      sceneMediaScriptRevision: pkg.scriptRevision,
     };
+    if (isCompletePackage(pkg))
+      return { resultRef: pkg.jobId, resultType: "SCENE_MEDIA_PACKAGE", output };
+    if (pkg.status === "QUEUED" || pkg.status === "RUNNING")
+      return {
+        resultRef: pkg.jobId,
+        resultType: "SCENE_MEDIA_PACKAGE",
+        output,
+        waitingExternal: { reason: `scene media ${pkg.status.toLowerCase()}` },
+      };
+    throw new WorkflowStepError(
+      pkg.status === "FAILED" ? "SCENE_MEDIA_FAILED" : "SCENE_MEDIA_INCOMPLETE",
+      pkg.status === "FAILED"
+        ? "Scene media generation failed; retry it in scene media, then retry this step"
+        : `Scene media package is ${pkg.status.toLowerCase()} and incomplete; retry the failed scenes, then retry this step`,
+      false,
+    );
   }
 
   private async composeRender(
@@ -241,14 +291,22 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
     return this.renderResult(result.id, result.status);
   }
 
+  /** B3: a queued or running render is an external wait, re-checked by the workflow poller. */
   private renderResult(renderJobId: string, status: string): WorkflowStepDispatchResult {
-    if (status === "FAILED_FINAL")
-      throw new WorkflowStepError("RENDER_FAILED_FINAL", "Render failed permanently", false);
-    if (status === "FAILED_RETRYABLE")
-      throw new WorkflowStepError("RENDER_FAILED_RETRYABLE", "Render failed temporarily", true);
-    if (status !== "SUCCEEDED")
-      throw new WorkflowStepError("RENDER_NOT_READY", `Render is ${status.toLowerCase()}`, true);
-    return { resultRef: renderJobId, resultType: "RENDER_JOB", output: { renderJobId } };
+    if (status === "SUCCEEDED")
+      return { resultRef: renderJobId, resultType: "RENDER_JOB", output: { renderJobId } };
+    if (status === "QUEUED" || status === "RUNNING")
+      return {
+        resultRef: renderJobId,
+        resultType: "RENDER_JOB",
+        output: { renderJobId },
+        waitingExternal: { reason: `render ${status.toLowerCase()}` },
+      };
+    throw new WorkflowStepError(
+      `RENDER_${status}`,
+      `Render is ${status.toLowerCase()}; handle it in composition, then retry this step`,
+      false,
+    );
   }
 
   private async deriveRenderInput(
@@ -313,7 +371,9 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
   private async qualityReview(
     input: WorkflowStepDispatchInput,
   ): Promise<WorkflowStepDispatchResult> {
-    const existingReviewId = stringValue(input.input, "qualityReviewRunId");
+    // QualityService.create takes no idempotency key: reuse this step's earlier review run.
+    const existingReviewId =
+      input.previousResultRef ?? stringValue(input.input, "qualityReviewRunId");
     const review =
       existingReviewId !== null
         ? await this.quality.get(input.context, existingReviewId)
@@ -340,11 +400,19 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
     );
   }
 
+  /**
+   * B3: the first attempt calls M13 publishNow (preflight, upload). Once an upload exists the step
+   * only reads its status and calls M13 reconcile while it is remote-processing; it never calls
+   * publishNow again.
+   */
   private async publish(input: WorkflowStepDispatchInput): Promise<WorkflowStepDispatchResult> {
     let destinationId = stringValue(input.input, "publishingDestinationId");
+    const scheduledPostId = stringValue(input.input, "scheduledPostId");
     if (destinationId === null) {
-      const scheduledPostId = requiredString(input.input, "scheduledPostId");
-      const post = await this.publishing.getScheduledPost(input.context, scheduledPostId);
+      const post = await this.publishing.getScheduledPost(
+        input.context,
+        requiredString(input.input, "scheduledPostId"),
+      );
       const destination = post.destinations[0];
       if (!destination)
         throw new WorkflowStepError(
@@ -354,18 +422,40 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
         );
       destinationId = destination.id;
     }
-    const post = await this.publishing.publishNow(input.context, destinationId);
+    const started = input.input["publishStarted"] === true || input.previousResultRef !== null;
+    let post: ScheduledPostView;
+    if (!started) {
+      post = await this.publishing.publishNow(input.context, destinationId);
+    } else {
+      const knownPostId = stringValue(input.input, "publishScheduledPostId") ?? scheduledPostId;
+      if (knownPostId === null)
+        throw new WorkflowStepError(
+          "PUBLISH_STATE_MISSING",
+          "The scheduled post for the started upload is unknown",
+          false,
+          true,
+        );
+      post = await this.publishing.getScheduledPost(input.context, knownPostId);
+      const current = post.destinations.find((item) => item.id === destinationId);
+      if (current?.status === "REMOTE_PROCESSING")
+        post = await this.publishing.reconcile(input.context, destinationId);
+    }
     const destination = post.destinations.find((item) => item.id === destinationId);
     const status = destination?.status ?? post.status;
+    const output = {
+      publishingDestinationId: destinationId,
+      publishScheduledPostId: post.id,
+      publishStarted: true,
+      publishStatus: status,
+    };
     if (status === "PUBLISHED")
+      return { resultRef: destinationId, resultType: "PUBLISHING_DESTINATION", output };
+    if (status === "PREFLIGHT" || status === "UPLOADING" || status === "REMOTE_PROCESSING")
       return {
         resultRef: destinationId,
         resultType: "PUBLISHING_DESTINATION",
-        output: {
-          publishingDestinationId: destinationId,
-          scheduledPostId: post.id,
-          publishStatus: status,
-        },
+        output,
+        waitingExternal: { reason: `publish ${status.toLowerCase()}` },
       };
     if (status === "RECONCILIATION_REQUIRED")
       throw new WorkflowStepError(
@@ -375,15 +465,22 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
         true,
       );
     throw new WorkflowStepError(
-      "PUBLISH_PENDING",
-      `Publishing destination is ${status.toLowerCase()}`,
-      true,
+      `PUBLISH_${status}`,
+      `Publishing destination is ${status.toLowerCase()}; resolve it in publishing, then retry this step`,
+      false,
     );
   }
 
   private async analyticsFollowUp(
     input: WorkflowStepDispatchInput,
   ): Promise<WorkflowStepDispatchResult> {
+    // scheduleCollection takes no idempotency key: an earlier attempt's job is reused.
+    if (input.previousResultRef !== null)
+      return {
+        resultRef: input.previousResultRef,
+        resultType: "METRIC_COLLECTION_JOB",
+        output: { analyticsJobId: input.previousResultRef },
+      };
     const result = await this.analytics.scheduleCollection(input.context, {
       channelId: requiredString(input.input, "channelId"),
       socialAccountId: requiredString(input.input, "socialAccountId"),

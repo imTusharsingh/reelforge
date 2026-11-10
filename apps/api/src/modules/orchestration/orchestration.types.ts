@@ -52,13 +52,18 @@ export type WorkflowQueueJob = Readonly<{
   correlationId: string;
   maxAttempts: number;
   delayMs: number;
+  /** Limit waits + external polls; part of the deterministic job id, never an attempt. */
+  wake?: number;
 }>;
+
+export type WorkflowQueueHealth = "CONFIGURED" | "NOT_CONFIGURED" | "UNREACHABLE";
 
 export type WorkflowQueueEnqueueResult = "ENQUEUED" | "NOT_CONFIGURED" | "DUPLICATE";
 
 export interface WorkflowQueuePort {
   readonly status: "CONFIGURED" | "NOT_CONFIGURED";
   enqueue(job: WorkflowQueueJob): Promise<WorkflowQueueEnqueueResult>;
+  health(): Promise<WorkflowQueueHealth>;
   close(): Promise<void>;
 }
 
@@ -73,6 +78,8 @@ export type WorkflowStepDispatchInput = Readonly<{
   idempotencyKey: string;
   attempt: number;
   input: WorkflowRunInput;
+  /** Domain record persisted by an earlier attempt or poll of this step, if any. */
+  previousResultRef: string | null;
 }>;
 
 export type WorkflowStepDispatchResult = Readonly<{
@@ -80,6 +87,8 @@ export type WorkflowStepDispatchResult = Readonly<{
   resultType: string;
   output?: Readonly<Record<string, unknown>>;
   waitingApproval?: boolean;
+  /** The domain record exists but is not finished; re-check it later without using an attempt. */
+  waitingExternal?: Readonly<{ reason: string; pollDelayMs?: number }>;
   skipped?: boolean;
 }>;
 
@@ -113,6 +122,10 @@ export type WorkflowLimitConfig = Readonly<{
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
   stepLeaseTtlMs: number;
+  heartbeatIntervalMs: number;
+  stallGraceMs: number;
+  minPollMs: number;
+  maxPollMs: number;
 }>;
 
 export const DEFAULT_WORKFLOW_LIMIT_CONFIG: WorkflowLimitConfig = {
@@ -125,6 +138,10 @@ export const DEFAULT_WORKFLOW_LIMIT_CONFIG: WorkflowLimitConfig = {
   retryBaseDelayMs: 1_000,
   retryMaxDelayMs: 60_000,
   stepLeaseTtlMs: 60_000,
+  heartbeatIntervalMs: 20_000,
+  stallGraceMs: 120_000,
+  minPollMs: 15_000,
+  maxPollMs: 60_000,
 };
 
 export type WorkflowRunView = Readonly<{
@@ -253,6 +270,7 @@ export type WorkflowJobProcessResult = Readonly<{
     | "RETRY_WAIT"
     | "FAILED"
     | "LIMIT_WAIT"
+    | "WAITING_EXTERNAL"
     | "RECONCILIATION_REQUIRED";
   runId: string;
   stepId: string;

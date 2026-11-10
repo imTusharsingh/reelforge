@@ -94,6 +94,7 @@ enum WorkflowStepStatus {
   CANCELED
   SKIPPED
   RECONCILIATION_REQUIRED
+  WAITING_EXTERNAL
 }
 
 enum WorkflowJobStatus {
@@ -705,6 +706,9 @@ model WorkflowStep {
   attempts       Int                @default(0)
   maxAttempts    Int                @default(3) @map("max_attempts")
   retryGeneration Int               @default(0) @map("retry_generation")
+  limitWaits     Int                @default(0) @map("limit_waits")
+  externalPolls  Int                @default(0) @map("external_polls")
+  externalDeadlineAt DateTime?      @map("external_deadline_at") @db.Timestamptz(6)
   sideEffect     Boolean            @default(false) @map("side_effect")
   idempotencyKey String             @map("idempotency_key")
   resultRef      String?            @map("result_ref")

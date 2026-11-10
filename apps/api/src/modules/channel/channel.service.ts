@@ -203,6 +203,10 @@ export class ChannelService {
     });
   }
 
+  /**
+   * @internal Cross-workspace read for the M16 scheduler tick only. It bypasses workspace
+   * scoping, so never expose it through a controller or call it with a user context.
+   */
   public async listSchedulerCandidates(): Promise<
     ReadonlyArray<{
       id: string;

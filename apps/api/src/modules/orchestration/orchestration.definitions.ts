@@ -6,26 +6,57 @@ export type WorkflowStepDefinition = Readonly<{
   sideEffect: boolean;
   maxAttempts: number;
   provider: string;
+  /** How often an external wait is re-checked (clamped to the 15-60 s policy). */
+  pollMs?: number;
+  /** Deadline for an external wait before it needs reconciliation. */
+  externalTimeoutMs?: number;
 }>;
 
 const definitions: Readonly<Record<WorkflowDefinition, readonly WorkflowStepDefinition[]>> = {
   GENERATION: [
     { key: "VERIFY_CONTEXT", sequence: 1, sideEffect: false, maxAttempts: 3, provider: "internal" },
     { key: "SELECT_IDEA", sequence: 2, sideEffect: false, maxAttempts: 3, provider: "idea" },
-    { key: "GENERATE_SCRIPT", sequence: 3, sideEffect: true, maxAttempts: 3, provider: "llm" },
+    {
+      key: "GENERATE_SCRIPT",
+      sequence: 3,
+      sideEffect: true,
+      maxAttempts: 3,
+      provider: "llm",
+      // Waits (polling, no attempts) for the M07 human script approval.
+      pollMs: 60_000,
+      externalTimeoutMs: 72 * 60 * 60 * 1000,
+    },
     {
       key: "GENERATE_SCENE_MEDIA",
       sequence: 4,
       sideEffect: true,
       maxAttempts: 3,
       provider: "media",
+      pollMs: 30_000,
+      externalTimeoutMs: 2 * 60 * 60 * 1000,
     },
-    { key: "COMPOSE_RENDER", sequence: 5, sideEffect: true, maxAttempts: 3, provider: "render" },
+    {
+      key: "COMPOSE_RENDER",
+      sequence: 5,
+      sideEffect: true,
+      maxAttempts: 3,
+      provider: "render",
+      pollMs: 30_000,
+      externalTimeoutMs: 2 * 60 * 60 * 1000,
+    },
     { key: "QUALITY_REVIEW", sequence: 6, sideEffect: true, maxAttempts: 2, provider: "quality" },
   ],
   PUBLISH: [
     { key: "VERIFY_CONTEXT", sequence: 1, sideEffect: false, maxAttempts: 3, provider: "internal" },
-    { key: "PUBLISH", sequence: 2, sideEffect: true, maxAttempts: 3, provider: "publishing" },
+    {
+      key: "PUBLISH",
+      sequence: 2,
+      sideEffect: true,
+      maxAttempts: 3,
+      provider: "publishing",
+      pollMs: 60_000,
+      externalTimeoutMs: 24 * 60 * 60 * 1000,
+    },
     {
       key: "ANALYTICS_FOLLOW_UP",
       sequence: 3,

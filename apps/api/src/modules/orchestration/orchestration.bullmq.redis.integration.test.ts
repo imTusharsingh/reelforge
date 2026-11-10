@@ -4,11 +4,7 @@ import { createDatabaseClient } from "@reelforge/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ChannelService } from "../channel/channel.service.js";
 import { UnconfiguredBudgetPolicy } from "./orchestration.budget.js";
-import {
-  BullMqWorkflowQueue,
-  parseRedisConnection,
-  redisClientAvailable,
-} from "./orchestration.bullmq.js";
+import { BullMqWorkflowQueue, parseRedisConnection } from "./orchestration.bullmq.js";
 import { WorkflowLimitsService } from "./orchestration.limits.js";
 import { deterministicJobId } from "./orchestration.queue.js";
 import { OrchestrationService } from "./orchestration.service.js";
@@ -22,11 +18,8 @@ import {
 
 const redisUrl = process.env.REDIS_URL;
 const databaseUrl = process.env.DATABASE_URL;
-// Like the FFmpeg suites, these skip unless REDIS_URL (and DATABASE_URL) are provided.
-// BullMQ 6 also needs its optional Redis client peer (ioredis/redis); see STATUS.md.
-const suite = describe.skipIf(
-  redisUrl === undefined || databaseUrl === undefined || !redisClientAvailable(),
-);
+// Skips only when REDIS_URL or DATABASE_URL is unset; ioredis 5.11.1 is a pinned dependency.
+const suite = describe.skipIf(redisUrl === undefined || databaseUrl === undefined);
 
 const workspaceId = randomUUID();
 const ownerId = randomUUID();
@@ -115,8 +108,46 @@ suite("M16 BullMQ dispatch against Redis", () => {
       maxAttempts: 3,
       delayMs: 60_000,
     };
+    await expect(queue.health()).resolves.toBe("CONFIGURED");
     await expect(queue.enqueue(job)).resolves.toBe("ENQUEUED");
     await expect(queue.enqueue(job)).resolves.toBe("DUPLICATE");
+  });
+
+  it("re-adds a finished job id so the recovery sweep can redeliver it", async () => {
+    if (!queue || !redisUrl) return;
+    const jobId = deterministicJobId(randomUUID(), randomUUID(), 1, 0);
+    const job: WorkflowQueueJob = {
+      jobId,
+      queueName,
+      workspaceId,
+      runId: randomUUID(),
+      stepId: randomUUID(),
+      attempt: 1,
+      correlationId: randomUUID(),
+      maxAttempts: 3,
+      delayMs: 0,
+    };
+    const seen: string[] = [];
+    const worker = new Worker<WorkflowQueueJob>(
+      queueName,
+      async (delivered) => {
+        seen.push(delivered.data.jobId);
+        return Promise.resolve({ status: "NOOP" });
+      },
+      { connection: parseRedisConnection(redisUrl) },
+    );
+    await expect(queue.enqueue(job)).resolves.toBe("ENQUEUED");
+    await waitFor(() => Promise.resolve(seen.length >= 1));
+    // Wait until BullMQ has recorded the job as completed before re-adding it.
+    const admin = new Queue(queueName, { connection: parseRedisConnection(redisUrl) });
+    await waitFor(
+      async () => (await admin.getJob(jobId).then((item) => item?.getState())) === "completed",
+    );
+    await expect(queue.enqueue(job)).resolves.toBe("ENQUEUED");
+    await waitFor(() => Promise.resolve(seen.length >= 2));
+    await worker.close();
+    await admin.close();
+    expect(seen).toEqual([jobId, jobId]);
   });
 
   it("dispatches a run end to end and does not repeat side effects after restart or redelivery", async () => {

@@ -128,6 +128,9 @@ suite("M16 orchestration on PostgreSQL", () => {
     const memory = queue as InMemoryWorkflowQueue;
     for (let round = 0; round < 50; round += 1) {
       const jobs = memory.take();
+      // Retry, limit and external-poll delays are real nextAttemptAt values now; move the
+      // injected clock past the longest one so the next delivery is due.
+      clockMs += 61_000;
       if (jobs.length === 0) break;
       for (const job of jobs) statuses.push((await service.processJob(job, workerId)).status);
     }
@@ -188,6 +191,11 @@ suite("M16 orchestration on PostgreSQL", () => {
     qualityStatus.clear();
     await db.workflowLimitLease.deleteMany({ where: { workspaceId } });
     await db.channel.updateMany({ where: { id: channelId }, data: { status: "ACTIVE" } });
+    // Keep the recovery sweep in each test scoped to the runs that test creates.
+    await db.workflowRun.updateMany({
+      where: { workspaceId, state: { in: ["QUEUED", "RUNNING", "RETRY_WAIT"] } },
+      data: { state: "CANCELED" },
+    });
   });
 
   afterAll(async () => {
@@ -255,31 +263,69 @@ suite("M16 orchestration on PostgreSQL", () => {
     expect(slots[0]).toMatchObject({ slotKey: "GENERATION:2026-11-10T09:00", status: "STARTED" });
   });
 
-  it("blocks scheduled runs when the budget policy is not configured but allows manual runs", async () => {
+  it("skips scheduled slots when the budget policy is not configured but allows manual runs", async () => {
     if (!db) return;
-    const { service, queue, dispatcher } = build();
+    const { service, queue } = build();
     clockMs = Date.parse("2026-11-11T14:02:00.000Z");
-    await service.runSchedulerTick(clock());
-    const scheduled = (await service.listRuns(owner)).find(
-      (run) =>
-        run.trigger === "SCHEDULED" &&
-        run.input["channelId"] === channelId &&
-        run.state === "PAUSED",
-    );
-    if (!scheduled) throw new Error("budget-blocked scheduled run missing");
-    expect(scheduled).toMatchObject({
-      budgetDecision: "NOT_CONFIGURED",
-      budgetReason: "BUDGET_POLICY_UNAVAILABLE",
-      pausedReason: "BUDGET_POLICY_UNAVAILABLE",
-      nextAction: "Configure a budget policy before scheduled generation",
+    const tick = await service.runSchedulerTick(clock());
+    expect(tick).toMatchObject({ startedRuns: 0 });
+    const slot = await db.workflowScheduleSlot.findFirst({
+      where: { channelId, slotKey: "GENERATION:2026-11-11T09:00" },
     });
+    // No PAUSED run is created, so nothing counts toward maxRunsPerDay or waits to resume.
+    expect(slot).toMatchObject({
+      status: "SKIPPED",
+      reason: "BUDGET_POLICY_UNAVAILABLE",
+      runId: null,
+    });
+    const scheduled = (await service.listRuns(owner)).filter(
+      (run) => run.trigger === "SCHEDULED" && run.createdAt >= "2026-11-11T00:00:00.000Z",
+    );
+    expect(scheduled).toHaveLength(0);
     expect((queue as InMemoryWorkflowQueue).peek()).toHaveLength(0);
-    await expect(service.resumeRun(owner, scheduled.id)).rejects.toBeInstanceOf(ConflictException);
-    expect(dispatcher.calls.filter((call) => call.runId === scheduled.id)).toHaveLength(0);
 
     const manual = await service.startManualRun(editor, generationBody());
     expect(manual).toMatchObject({ state: "QUEUED", budgetDecision: "NOT_CONFIGURED" });
     expect((queue as InMemoryWorkflowQueue).peek()).toHaveLength(1);
+  });
+
+  it("skips a scheduled slot whose input fails the manual-run schema", async () => {
+    if (!db) return;
+    const { service } = build({ budget: new StaticBudgetPolicy("ALLOWED") });
+    await db.channel.update({
+      where: { id: channelId },
+      data: { schedule: { time: "09:00", frequency: "DAILY", input: { unknownField: true } } },
+    });
+    try {
+      clockMs = Date.parse("2026-11-13T14:02:00.000Z");
+      await service.runSchedulerTick(clock());
+      const slot = await db.workflowScheduleSlot.findFirst({
+        where: { channelId, slotKey: "GENERATION:2026-11-13T09:00" },
+      });
+      expect(slot).toMatchObject({
+        status: "SKIPPED",
+        reason: "INVALID_SCHEDULE_INPUT",
+        runId: null,
+      });
+    } finally {
+      await db.channel.update({
+        where: { id: channelId },
+        data: { schedule: { time: "09:00", frequency: "DAILY", input: { ideaId } } },
+      });
+    }
+  });
+
+  it("returns the existing run for a concurrent duplicate manual idempotency key", async () => {
+    if (!db) return;
+    const { service } = build();
+    const key = `dup-${randomUUID()}`;
+    const results = await Promise.all([
+      service.startManualRun(owner, generationBody({ idempotencyKey: key })),
+      service.startManualRun(owner, generationBody({ idempotencyKey: key })),
+      service.startManualRun(owner, generationBody({ idempotencyKey: key })),
+    ]);
+    expect(new Set(results.map((run) => run.id)).size).toBe(1);
+    expect(await db.workflowRun.count({ where: { workspaceId, idempotencyKey: key } })).toBe(1);
   });
 
   it("starts no autonomous run for a paused channel and refuses manual starts on it", async () => {
@@ -610,9 +656,22 @@ suite("M16 orchestration on PostgreSQL", () => {
     expect(second.status).toBe("LIMIT_WAIT");
     expect(dispatcher.count(runA.id, "VERIFY_CONTEXT")).toBe(1);
     expect(dispatcher.count(runB.id, "VERIFY_CONTEXT")).toBe(0);
+    // A concurrency wait is counted separately and never consumes an attempt.
     const waiting = await b.service.getRun(owner, runB.id);
-    expect(waiting).toMatchObject({ state: "RETRY_WAIT", lastErrorCode: "WORKFLOW_LIMIT" });
-    expect((b.queue as InMemoryWorkflowQueue).peek()).toHaveLength(1);
+    expect(waiting).toMatchObject({
+      state: "QUEUED",
+      nextAction: "Waiting for a concurrency or rate-limit slot",
+    });
+    expect(waiting.steps[0]).toMatchObject({ status: "QUEUED", attempts: 0 });
+    const waitingStep = await db.workflowStep.findFirst({ where: { runId: runB.id, sequence: 1 } });
+    expect(waitingStep).toMatchObject({ limitWaits: 1, attempts: 0 });
+    const requeued = (b.queue as InMemoryWorkflowQueue).peek();
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]?.jobId.endsWith(".0.1.w1")).toBe(true);
+    await expect(b.service.processJob(jobB, "worker-b")).resolves.toMatchObject({
+      status: "NOOP",
+      detail: "superseded job",
+    });
   });
 
   it("denies viewer writes, allows viewer reads, and denies cross-tenant access", async () => {
@@ -659,6 +718,262 @@ suite("M16 orchestration on PostgreSQL", () => {
       expect(call.idempotencyKey).toBe(`GENERATION:${run.id}:${call.stepKey}`);
       expect(call.context.role).toBe("OWNER");
     }
+  });
+  it("fences every step write by lease owner and attempt so a stale worker's late write is a no-op", async () => {
+    if (!db) return;
+    const gate: { release: () => void } = { release: () => undefined };
+    const blocked = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const dispatcher = new FixtureDispatcher();
+    let verifyCalls = 0;
+    dispatcher.behaviors.set("VERIFY_CONTEXT", async (input) => {
+      verifyCalls += 1;
+      if (verifyCalls === 1) await blocked;
+      return { resultRef: `verify-${String(verifyCalls)}-${input.runId}`, resultType: "CHANNEL" };
+    });
+    const { service, queue } = build({ dispatcher });
+    const memory = queue as InMemoryWorkflowQueue;
+    const run = await service.startManualRun(owner, generationBody());
+    const job = memory.take()[0];
+    if (!job) throw new Error("job missing");
+    const stale = service.processJob(job, "worker-stale");
+    await sleep(150);
+    clockMs += DEFAULT_WORKFLOW_LIMIT_CONFIG.stepLeaseTtlMs + 1_000;
+    await expect(service.recoverStaleLeases(clock(), { workspaceId })).resolves.toBe(1);
+    clockMs += 5_000;
+    const retryJob = memory.take()[0];
+    if (!retryJob) throw new Error("retry job missing");
+    expect(retryJob.attempt).toBe(2);
+    await expect(service.processJob(retryJob, "worker-fresh")).resolves.toMatchObject({
+      status: "STEP_SUCCEEDED",
+    });
+    gate.release();
+    await expect(stale).resolves.toMatchObject({ status: "NOOP" });
+    const after = await service.getRun(owner, run.id);
+    const verify = after.steps[0];
+    expect(verify).toMatchObject({
+      status: "SUCCEEDED",
+      attempts: 2,
+      resultRef: `verify-2-${run.id}`,
+    });
+    expect(
+      after.events.filter(
+        (event) => event.eventType === "WORKFLOW_STEP_SUCCEEDED" && event.stepId === verify?.id,
+      ),
+    ).toHaveLength(1);
+    // The next step was queued exactly once, by the fresh worker.
+    expect(memory.peek().filter((item) => item.stepId === after.steps[1]?.id)).toHaveLength(1);
+  });
+
+  it("renews the step lease with a heartbeat while a long dispatch runs", async () => {
+    if (!db) return;
+    const gate: { release: () => void } = { release: () => undefined };
+    const blocked = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const dispatcher = new FixtureDispatcher();
+    dispatcher.behaviors.set("VERIFY_CONTEXT", async (input) => {
+      await blocked;
+      return { resultRef: input.runId, resultType: "CHANNEL" };
+    });
+    const { service, queue } = build({ dispatcher, limits: { heartbeatIntervalMs: 20 } });
+    await service.startManualRun(owner, generationBody());
+    const job = (queue as InMemoryWorkflowQueue).take()[0];
+    if (!job) throw new Error("job missing");
+    const inFlight = service.processJob(job, "worker-heartbeat");
+    await sleep(100);
+    clockMs += DEFAULT_WORKFLOW_LIMIT_CONFIG.stepLeaseTtlMs + 1_000;
+    await sleep(150);
+    await expect(service.recoverStaleLeases(clock(), { workspaceId })).resolves.toBe(0);
+    gate.release();
+    await expect(inFlight).resolves.toMatchObject({ status: "STEP_SUCCEEDED" });
+  });
+
+  it("keeps a succeeded step when the next enqueue throws and the sweep re-dispatches it", async () => {
+    if (!db) return;
+    class FlakyQueue extends InMemoryWorkflowQueue {
+      public failing = false;
+      public override enqueue(
+        job: Parameters<InMemoryWorkflowQueue["enqueue"]>[0],
+      ): ReturnType<InMemoryWorkflowQueue["enqueue"]> {
+        if (this.failing) return Promise.reject(new Error("redis connection lost"));
+        return super.enqueue(job);
+      }
+    }
+    const flaky = new FlakyQueue();
+    const { service, dispatcher } = build({ queue: flaky });
+    const run = await service.startManualRun(owner, generationBody());
+    const job = flaky.take()[0];
+    if (!job) throw new Error("job missing");
+    flaky.failing = true;
+    await expect(service.processJob(job, "worker-a")).resolves.toMatchObject({
+      status: "STEP_SUCCEEDED",
+    });
+    const stalled = await service.getRun(owner, run.id);
+    expect(stalled.state).toBe("RUNNING");
+    expect(stalled.steps[0]?.status).toBe("SUCCEEDED");
+    expect(stalled.steps[1]?.status).toBe("QUEUED");
+    expect(stalled.nextAction).toContain("Dispatch failed");
+    expect(flaky.peek()).toHaveLength(0);
+    // The sweep fails loud too while Redis is down, then recovers once it is back.
+    await expect(service.reconcileStalledWork(clock(), { workspaceId })).resolves.toBe(0);
+    flaky.failing = false;
+    await expect(service.reconcileStalledWork(clock(), { workspaceId })).resolves.toBe(1);
+    await drain(service, flaky);
+    const finished = await service.getRun(owner, run.id);
+    expect(finished.state).toBe("WAITING_APPROVAL");
+    expect(dispatcher.count(run.id, "VERIFY_CONTEXT")).toBe(1);
+    expect(dispatcher.count(run.id, "SELECT_IDEA")).toBe(1);
+  });
+
+  it("recovers a crash between step completion and advance, and a lost queue job", async () => {
+    if (!db) return;
+    const { service, queue, dispatcher } = build();
+    const memory = queue as InMemoryWorkflowQueue;
+    const crashed = await service.startManualRun(owner, generationBody());
+    const first = memory.take()[0];
+    if (!first) throw new Error("job missing");
+    await service.processJob(first, "worker-a");
+    // Simulate the state a crash before advancing used to leave: step done, nothing queued.
+    await db.workflowStep.updateMany({
+      where: { runId: crashed.id, sequence: 2 },
+      data: { status: "PENDING" },
+    });
+    memory.take();
+    // A second run whose QUEUED job was lost by Redis.
+    const lost = await service.startManualRun(owner, generationBody());
+    memory.take();
+    const sweepAt = new Date(Date.now() + DEFAULT_WORKFLOW_LIMIT_CONFIG.stallGraceMs + 5_000);
+    await expect(service.reconcileStalledWork(clock(), { workspaceId })).resolves.toBe(0);
+    clockMs = sweepAt.getTime();
+    await expect(service.reconcileStalledWork(clock(), { workspaceId })).resolves.toBe(2);
+    await expect(service.reconcileStalledWork(clock(), { workspaceId })).resolves.toBe(0);
+    await drain(service, queue);
+    for (const id of [crashed.id, lost.id]) {
+      expect((await service.getRun(owner, id)).state).toBe("WAITING_APPROVAL");
+      expect(dispatcher.count(id, "VERIFY_CONTEXT")).toBe(1);
+      expect(dispatcher.count(id, "SELECT_IDEA")).toBe(1);
+    }
+  });
+
+  it("classifies 4xx domain refusals as final and unknown side-effect errors as reconciliation", async () => {
+    if (!db) return;
+    const dispatcher = new FixtureDispatcher();
+    let mode: "conflict" | "unknown" | "pure" = "conflict";
+    dispatcher.behaviors.set("GENERATE_SCRIPT", async () => {
+      if (mode === "conflict") throw new ConflictException("script revision is not approved");
+      throw new Error("socket hang up");
+    });
+    dispatcher.behaviors.set("SELECT_IDEA", async (input) => {
+      if (mode === "pure") throw new Error("transient read failure");
+      return { resultRef: `idea-${input.runId}`, resultType: "IDEA_APPROVAL_SNAPSHOT" };
+    });
+    const { service, queue } = build({ dispatcher });
+    const refused = await service.startManualRun(owner, generationBody());
+    await drain(service, queue);
+    const refusedView = await service.getRun(owner, refused.id);
+    expect(refusedView).toMatchObject({ state: "FAILED", lastErrorCode: "DOMAIN_REJECTED_409" });
+    expect(refusedView.steps[2]).toMatchObject({ status: "FAILED", attempts: 1 });
+    expect(dispatcher.count(refused.id, "GENERATE_SCRIPT")).toBe(1);
+
+    mode = "unknown";
+    const unknown = await service.startManualRun(owner, generationBody());
+    await drain(service, queue);
+    const unknownView = await service.getRun(owner, unknown.id);
+    expect(unknownView).toMatchObject({
+      state: "FAILED",
+      lastErrorCode: "UNKNOWN_SIDE_EFFECT_OUTCOME",
+    });
+    expect(unknownView.steps[2]).toMatchObject({ status: "RECONCILIATION_REQUIRED", attempts: 1 });
+    expect(dispatcher.count(unknown.id, "GENERATE_SCRIPT")).toBe(1);
+
+    mode = "pure";
+    const pure = await service.startManualRun(owner, generationBody());
+    const memory = queue as InMemoryWorkflowQueue;
+    for (let index = 0; index < 2; index += 1) {
+      const job = memory.take()[0];
+      if (job) await service.processJob(job, "worker-a");
+    }
+    const pureView = await service.getRun(owner, pure.id);
+    expect(pureView).toMatchObject({ state: "RETRY_WAIT", lastErrorCode: "STEP_FAILED" });
+    expect(pureView.steps[1]?.status).toBe("RETRY_WAIT");
+    for (const call of dispatcher.calls.filter((item) => item.runId === pure.id))
+      expect(call.idempotencyKey).toBe(`GENERATION:${pure.id}:${call.stepKey}`);
+    memory.take();
+  });
+
+  it("parks external work in WAITING_EXTERNAL, polls without attempts, and times out to reconciliation", async () => {
+    if (!db) return;
+    const dispatcher = new FixtureDispatcher();
+    const renderPolls = new Map<string, number>();
+    dispatcher.behaviors.set("COMPOSE_RENDER", async (input) => {
+      const polls = (renderPolls.get(input.runId) ?? 0) + 1;
+      renderPolls.set(input.runId, polls);
+      const renderJobId = `render-${input.runId}`;
+      if (input.input["neverFinish"] === true || polls < 3)
+        return {
+          resultRef: renderJobId,
+          resultType: "RENDER_JOB",
+          output: { renderJobId },
+          waitingExternal: { reason: "render running" },
+        };
+      return { resultRef: renderJobId, resultType: "RENDER_JOB", output: { renderJobId } };
+    });
+    const { service, queue } = build({ dispatcher });
+    const memory = queue as InMemoryWorkflowQueue;
+    const run = await service.startManualRun(owner, generationBody());
+    for (let index = 0; index < 5; index += 1) {
+      clockMs += 61_000;
+      const job = memory.take()[0];
+      if (job) await service.processJob(job, "worker-a");
+    }
+    const waiting = await service.getRun(owner, run.id);
+    const render = waiting.steps.find((step) => step.stepKey === "COMPOSE_RENDER");
+    expect(waiting.state).toBe("RUNNING");
+    expect(waiting.input["renderJobId"]).toBe(`render-${run.id}`);
+    expect(waiting.nextAction).toContain("Waiting for external work");
+    expect(render).toMatchObject({
+      status: "WAITING_EXTERNAL",
+      attempts: 1,
+      resultRef: `render-${run.id}`,
+    });
+    const delay = Date.parse(render?.nextAttemptAt ?? "") - clockMs;
+    expect(delay).toBeGreaterThanOrEqual(15_000);
+    expect(delay).toBeLessThanOrEqual(60_000);
+    // An early delivery of the next poll is refused until it is due.
+    const early = memory.peek()[0];
+    if (!early) throw new Error("poll job missing");
+    await expect(service.processJob(early, "worker-a")).resolves.toMatchObject({
+      detail: "step is not due yet",
+    });
+    await drain(service, queue);
+    const done = await service.getRun(owner, run.id);
+    expect(done.state).toBe("WAITING_APPROVAL");
+    expect(done.steps.find((step) => step.stepKey === "COMPOSE_RENDER")).toMatchObject({
+      status: "SUCCEEDED",
+      attempts: 1,
+    });
+    expect(renderPolls.get(run.id)).toBe(3);
+
+    const stuck = await service.startManualRun(owner, generationBody({ metadata: {} }));
+    await db.workflowRun.update({
+      where: { id: stuck.id },
+      data: { input: { ...stuck.input, neverFinish: true } },
+    });
+    for (let index = 0; index < 6; index += 1) {
+      clockMs += 61_000;
+      const job = memory.take()[0];
+      if (job) await service.processJob(job, "worker-a");
+    }
+    clockMs += 3 * 60 * 60 * 1000;
+    await drain(service, queue);
+    const timedOut = await service.getRun(owner, stuck.id);
+    expect(timedOut).toMatchObject({ state: "FAILED", lastErrorCode: "EXTERNAL_WAIT_TIMEOUT" });
+    expect(timedOut.steps.find((step) => step.stepKey === "COMPOSE_RENDER")).toMatchObject({
+      status: "RECONCILIATION_REQUIRED",
+      attempts: 1,
+    });
   });
 });
 

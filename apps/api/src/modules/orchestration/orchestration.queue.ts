@@ -1,5 +1,6 @@
 import type {
   WorkflowQueueEnqueueResult,
+  WorkflowQueueHealth,
   WorkflowQueueJob,
   WorkflowQueuePort,
 } from "./orchestration.types.js";
@@ -9,18 +10,20 @@ export function deterministicJobId(
   stepId: string,
   attempt: number,
   retryGeneration = 0,
+  wake = 0,
 ): string {
-  return `${runId}.${stepId}.${retryGeneration}.${attempt}`;
+  const base = `${runId}.${stepId}.${retryGeneration}.${attempt}`;
+  return wake > 0 ? `${base}.w${wake}` : base;
 }
 
 export class NotConfiguredWorkflowQueue implements WorkflowQueuePort {
   public readonly status = "NOT_CONFIGURED" as const;
 
-  public constructor(
-    public readonly reason: "REDIS_URL_UNSET" | "REDIS_CLIENT_UNAVAILABLE" = "REDIS_URL_UNSET",
-  ) {}
-
   public enqueue(): Promise<WorkflowQueueEnqueueResult> {
+    return Promise.resolve("NOT_CONFIGURED");
+  }
+
+  public health(): Promise<WorkflowQueueHealth> {
     return Promise.resolve("NOT_CONFIGURED");
   }
 
@@ -34,11 +37,15 @@ export class InMemoryWorkflowQueue implements WorkflowQueuePort {
   private readonly jobs = new Map<string, WorkflowQueueJob>();
   private readonly delivered = new Set<string>();
 
+  /** Like BullMQ: a pending job id is a duplicate; a delivered (finished) id may be added again. */
   public enqueue(job: WorkflowQueueJob): Promise<WorkflowQueueEnqueueResult> {
-    if (this.jobs.has(job.jobId) || this.delivered.has(job.jobId))
-      return Promise.resolve("DUPLICATE");
+    if (this.jobs.has(job.jobId)) return Promise.resolve("DUPLICATE");
     this.jobs.set(job.jobId, job);
     return Promise.resolve("ENQUEUED");
+  }
+
+  public health(): Promise<WorkflowQueueHealth> {
+    return Promise.resolve("CONFIGURED");
   }
 
   public take(): readonly WorkflowQueueJob[] {
