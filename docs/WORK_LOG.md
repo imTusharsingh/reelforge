@@ -834,3 +834,17 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: M08 paid calls still reserve only through M08's `provider_budgets`, and routing them through M18 reservations needs a separate cross-module approval. The expiry sweep is not on a worker tick yet. There is no FX: mixed-currency spend fails closed.
 - Next exact action: Minu reviews the M18 PR. After M17 merges, rebase onto `origin/main` and re-verify.
 - Related status/ADR: M18 `STATUS.md`; ADR-005, ADR-007, ADR-009, ADR-010, ADR-017.
+
+## 2026-11-10 - M18 review 5839788708 fixes
+- Actor/session: Module Implementation Agent, Desktop TRACXN-LP-784, worktree `reelforge-m18`, branch `work/m18-usage-budget-and-billing-foundation`. Local only.
+- Changes made:
+  - B1: `ScriptService` and `SceneMediaService` reserve through M18 (`m08:<correlationId>`) before the M08 ledger row and before the provider call. BUDGET_EXHAUSTED or an unresolvable budget stops the call (409). NOT_CONFIGURED proceeds. A dispatched call commits actual ?? estimate; only a never-dispatched call is released.
+  - B2: failed-after-dispatch rows are charged at their estimate (`FAILED_ESTIMATED`); only provably pre-dispatch rows are skipped.
+  - M16 scheduler: a throwing budget policy marks the slot `SKIPPED/BUDGET_POLICY_ERROR`.
+  - A partial unique index on reservation correlation id.
+  - Currency-mismatch recovery is documented.
+  - Merged `origin/main` (M17, `f0feccd`) with a merge commit.
+- Commands actually run and results: typecheck, lint, format:check, build, db:validate, and fresh-DB migrate (26 migrations, M17 then M18) all passed; migrate diff shows no M17 or M18 drift. `pnpm test` with Redis: 466 passed / 5 skipped. One run hit the known M08 25 ms flake; the rerun was green.
+- Decisions/approvals: The cross-module M08 edit is Core-approved in review B1. The optional M16 PAUSE-on-BUDGET_EXHAUSTED was not done. No `PROJECT_STATE.md`/`ci.yml` change, no new dependency, no force-push.
+- Next exact action: Minu re-reviews PR #31.
+- Related status/ADR: M18 `STATUS.md`; ADR-017.
