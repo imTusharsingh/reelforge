@@ -189,6 +189,42 @@ suite("IdeaService Prisma tenant ownership", () => {
     ).rejects.toThrow("Idea changed");
   });
 
+  it("permits exactly one simultaneous status transition with the same observed version", async () => {
+    if (!db) return;
+    const id = randomUUID();
+    const initial = await db.idea.create({
+      data: {
+        id,
+        workspaceId: workspaceA,
+        channelId: channelA,
+        origin: "USER",
+        title: "Atomic version race",
+        normalizedTitle: "atomic version race",
+        topic: "race",
+        hook: "hook",
+        angle: "angle",
+        audience: "audience",
+        references: [],
+        sourceNotes: null,
+        expectedFormat: "short",
+        createdByUserId: ownerId,
+      },
+    });
+    const service = new IdeaService(db as never, { proposeIdea: async () => { throw new Error("not configured"); } });
+    const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
+    const results = await Promise.allSettled([
+      service.transition(context, id, "BACKLOG", initial.updatedAt, "DRAFT"),
+      service.transition(context, id, "REJECTED", initial.updatedAt, "DRAFT"),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const saved = await db.idea.findUniqueOrThrow({ where: { id } });
+    expect(["BACKLOG", "REJECTED"]).toContain(saved.status);
+    await expect(
+      service.transition(context, id, "APPROVED", initial.updatedAt, "DRAFT"),
+    ).rejects.toThrow("Idea changed");
+    expect(await db.ideaApprovalSnapshot.count({ where: { workspaceId: workspaceA, ideaId: id } })).toBe(0);
+  });
+
   it("enforces the workspace/channel composite foreign key", async () => {
     if (!db) return;
     await expect(
