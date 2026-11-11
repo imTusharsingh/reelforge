@@ -10,17 +10,22 @@ import { AssetPanel } from "./asset-panel";
 import { CharacterPanel, GroupPanel } from "./character-panel";
 import { ConfigurationPanel } from "./configuration-panel";
 import { GenrePanel, SeriesPanel, SnapshotsPanel } from "./content-panels";
-import { roleNotice, type ApiObject, text } from "./model";
-import { ActionForm, ChannelsScope, ResourceState, SavedData, useResource } from "./ui";
+import { canEdit, roleNotice, type ApiObject, text } from "./model";
+import { ActionForm, ChannelsScope, ResourceState, SavedData, useChannelsClient, useResource } from "./ui";
 export function ChannelDetail({ channelId }: { channelId: string }): JSX.Element {
   const workspace = useActiveWorkspace();
   return (
-    <ChannelsScope key={`${workspace.id}-${channelId}`} workspaceId={workspace.id}>
+    <ChannelsScope
+      key={`${workspace.id}-${workspace.role}-${channelId}`}
+      workspaceId={workspace.id}
+      role={workspace.role}
+    >
       <Detail channelId={channelId} />
     </ChannelsScope>
   );
 }
 function Detail({ channelId }: { channelId: string }): JSX.Element {
+  const client = useChannelsClient();
   const [revision, setRevision] = useState(0);
   const path = `channels/${segment(channelId)}`;
   const state = useResource(path, false, "channel", revision);
@@ -49,9 +54,13 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
               Refresh channel
             </Button>
           </header>
-          <Alert tone="warning" title="Read-only channel management">
-            {roleNotice}
-          </Alert>
+          {!canEdit(client.role) && (
+            <Alert tone="warning" title="Read-only channel management">
+              {client.role === "VIEWER"
+                ? "Your workspace role is Viewer. Channel editing requires Owner or Editor."
+                : roleNotice}
+            </Alert>
+          )
           <Tabs
             label="Channel configuration sections"
             items={[

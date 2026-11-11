@@ -5,12 +5,16 @@ import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
 import { parseChannel } from "./dto";
 import { useChannelsClient } from "./ui";
-import { filterChannels, roleNotice } from "./model";
+import { canEdit, filterChannels, roleNotice } from "./model";
 import { ActionForm, ChannelsScope, ResourceState, useResource } from "./ui";
 export function ChannelsWorkspace(): JSX.Element {
   const workspace = useActiveWorkspace();
   return (
-    <ChannelsScope key={workspace.id} workspaceId={workspace.id}>
+    <ChannelsScope
+      key={`${workspace.id}:${workspace.role}`}
+      workspaceId={workspace.id}
+      role={workspace.role}
+    >
       <ChannelList />
     </ChannelsScope>
   );
@@ -37,9 +41,13 @@ function ChannelList(): JSX.Element {
         <h1 id="channels-heading">Channels</h1>
         <p>Shape the identity, content and reusable creative references behind your productions.</p>
       </header>
-      <Alert tone="warning" title="Read-only channel management">
-        {roleNotice}
-      </Alert>
+      {!canEdit(client.role) && (
+        <Alert tone="warning" title="Read-only channel management">
+          {client.role === "VIEWER"
+            ? "Your workspace role is Viewer. Channel editing requires Owner or Editor."
+            : roleNotice}
+        </Alert>
+      )
       <ActionForm
         title="Create a channel"
         fields={[{ key: "name", label: "Channel name" }]}

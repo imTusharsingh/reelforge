@@ -184,7 +184,8 @@ function WorkspaceSetup({
         );
         return;
       }
-      onSelected(refreshed.find((candidate) => candidate.id === workspace.id) ?? workspace);
+      const authorized = refreshed.find((candidate) => candidate.id === workspace.id);
+      if (authorized) onSelected(authorized);
     } catch (cause) {
       if (created) setErrorTitle("Workspace created, but list refresh failed");
       setError(errorText(cause));

@@ -36,6 +36,7 @@ import {
   text,
   type FieldSpec,
   type ApiObject,
+  type Role,
 } from "./model";
 
 export const ClientContext = createContext<ChannelsClient | null>(null);
@@ -45,9 +46,11 @@ export function useRefreshResources(): () => void {
 }
 export function ChannelsScope({
   workspaceId,
+  role,
   children,
 }: {
   workspaceId: string;
+  role: Role;
   children: ReactNode;
 }): JSX.Element {
   const [client, setClient] = useState<ChannelsClient | null>(null);
@@ -74,11 +77,11 @@ export function ChannelsScope({
   }, [workspaceId]);
   useEffect(() => {
     const controller = new AbortController();
-    const next = new ChannelsClient(workspaceId, controller.signal);
+    const next = new ChannelsClient(workspaceId, controller.signal, role);
     setClient(next);
     return (): void => controller.abort();
-  }, [workspaceId]);
-  if (!client || client.workspaceId !== workspaceId)
+  }, [workspaceId, role]);
+  if (!client || client.workspaceId !== workspaceId || client.role !== role)
     return <StateMessage kind="loading" description="Loading workspace context…" />;
   return (
     <ClientContext.Provider value={client}>
