@@ -3,7 +3,7 @@ import { useState, type JSX } from "react";
 import { Button, Panel } from "../../components/ui/primitives";
 import { segment } from "./api";
 import { genreFields, seriesFields } from "./catalog";
-import { type RecordValue, text } from "./model";
+import { type ApiObject, text } from "./model";
 import {
   ActionForm,
   Picker,
@@ -160,7 +160,7 @@ export function SnapshotsPanel({
   channel,
 }: {
   channelId: string;
-  channel: RecordValue;
+  channel: ApiObject;
 }): JSX.Element {
   const path = `channels/${segment(channelId)}/snapshots`;
   const snapshots = useResource(path, true, "snapshot");

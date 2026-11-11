@@ -51,12 +51,12 @@ See `CONTRACT_CHANGE_PROPOSAL.md`. Core must approve/provide trusted role metada
 - `pnpm lint`: PASS.
 - `pnpm format:check`: PASS.
 - `pnpm typecheck`: PASS, synchronization and final workspace checks.
-- `pnpm exec vitest run apps/web`: PASS, 9 files / 50 tests, including 26 new M23 cases.
-- `pnpm test`: PASS, 83 files passed / 2 skipped; 561 tests passed / 8 skipped. Redis and explicit media-path prerequisites remain skipped by the default suite.
+- `pnpm exec vitest run apps/web`: PASS, 11 files / 67 tests, including runtime DTO and recovery cases.
+- `pnpm test`: PASS, 85 files passed / 2 skipped; 578 tests passed / 8 skipped. Redis and explicit media-path prerequisites remain skipped by the default suite.
 - `NODE_ENV=production pnpm build`: PASS, including `/channels`, `/channels/[channelId]`, `/operations` and `/`.
 - `pnpm db:validate`: PASS.
 - `pnpm db:check-migrations`: PASS, 27 ordered migrations.
-- `pnpm security:secrets`: PASS after final staging, 514 tracked files.
+- `pnpm security:secrets`: PASS after final staging, 526 tracked files.
 - `git diff --check` and `git diff --cached --check`: PASS.
 
 ### Local API and browser evidence
@@ -66,6 +66,12 @@ Used disposable accounts/workspaces and local PostgreSQL; no paid AI/social call
 Playwright with installed Chromium verified Channels list/filter/detail, all six tabs, selected character/group/asset/series inspection, direct reload, deterministic previews, disabled UNKNOWN forms, two-workspace isolation, another workspace's channel rejection, keyboard tab movement, mobile navigation and overflow, draft-discard confirmation on resource selection, preservation of Operations, and logout/session protection. No browser page errors. Captured and visually inspected desktop/mobile screenshots; fixed a duplicate React key and active-navigation contrast during this review.
 
 Artifacts and exact command logs are retained outside the repository at `/workspace/validation-reelforge/m23-*`. The first browser attempt using 127.0.0.1 hit Next development-origin restrictions; rerunning on localhost passed without a configuration bypass. Full screen-reader/WCAG assessment: NOT RUN. Authorized UI editing/revocation browser tests: BLOCKED by trusted-role contract. Redis queue testing: NOT RUN for this frontend module.
+
+## PR #49 review revision
+
+See `REVIEW_RESPONSE.md` for the requirement-by-requirement response to the owner technical comment on `659c63c`. R2–R5 are implemented: explicit route/session intents and indexed Back/Forward guards, recovery for uncertain saves, scoped series/version pickers and structured fields, mutation invalidation/pristine-vs-dirty rebasing, feature DTO parsers and mounted regression tests. R1 remains BLOCKED pending separate Core approval/implementation of trusted roles. No limited merge decision or full CRUD acceptance is inferred.
+
+Mounted Chromium verification: 16 checks passed, covering desktop/mobile/fallback history, keyboard/icon session intents, programmatic routing, edits, invalidation, snapshot/prompt activation and rollback, context/downgrade cancellation and reconciliation. Mock test roles are not real role-contract acceptance. Real API/Next smoke passed with Back cancellation and Overview/Channels/Operations preservation. Shared auth edits are limited to explicit workspace/logout intent calls; no auth contract changed.
 
 ## Handoff
 

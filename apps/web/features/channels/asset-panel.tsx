@@ -1,13 +1,40 @@
 "use client";
-import { useState, type FormEvent, type JSX } from "react";
+import { useEffect, useId, useState, type FormEvent, type JSX } from "react";
 import { Alert, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
+import { registerDraft, draftEdited } from "../../components/studio-navigation";
 import { segment } from "./api";
 import { canEdit } from "./model";
 import { SelectedRead } from "./content-panels";
-import { failure, Picker, RecordList, ResourceState, useChannelsClient, useResource } from "./ui";
+import {
+  failure,
+  Picker,
+  RecordList,
+  ResourceState,
+  useChannelsClient,
+  useResource,
+  useRefreshResources,
+} from "./ui";
 import { assetTypes, validateAsset } from "./asset-validation";
 export function AssetPanel(): JSX.Element {
   const client = useChannelsClient();
+  const invalidate = useRefreshResources();
+  const draftId = useId();
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) return;
+    return registerDraft(draftId, () => {
+      setDirty(false);
+      setFile(null);
+      setHolder("");
+      setLicense("");
+      setTerms("");
+      setAttested(false);
+    });
+  }, [dirty, draftId]);
+  const edit = (): void => {
+    draftEdited();
+    setDirty(true);
+  };
   const [rev, setRev] = useState(0);
   const assets = useResource("assets", true, "asset", rev);
   const [chosen, setChosen] = useState("");
@@ -54,11 +81,16 @@ export function AssetPanel(): JSX.Element {
       });
       if (!client.signal.aborted) {
         setNotice("Asset saved with its rights metadata.");
+        setDirty(false);
+        invalidate();
         setRev((v) => v + 1);
         setAttested(false);
       }
     } catch (e) {
-      if (!client.signal.aborted) setError(failure(e));
+      if (!client.signal.aborted) {
+        setError(failure(e));
+        invalidate();
+      }
     } finally {
       if (!client.signal.aborted) setBusy(false);
     }
@@ -102,7 +134,10 @@ export function AssetPanel(): JSX.Element {
               id="asset-mode"
               label="Upload destination"
               value={mode}
-              onChange={(e) => setMode(e.target.value)}
+              onChange={(e) => {
+                edit();
+                setMode(e.target.value);
+              }}
             >
               <option value="new">New asset</option>
               <option value="version">New version of selected asset</option>
@@ -112,33 +147,48 @@ export function AssetPanel(): JSX.Element {
               label="Media file"
               type="file"
               accept={assetTypes.join(",")}
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                edit();
+                setFile(e.target.files?.[0] ?? null);
+              }}
             />
             <Field
               id="asset-holder"
               label="Rights holder"
               value={holder}
-              onChange={(e) => setHolder(e.target.value)}
+              onChange={(e) => {
+                edit();
+                setHolder(e.target.value);
+              }}
               required
             />
             <Field
               id="asset-license"
               label="License type"
               value={license}
-              onChange={(e) => setLicense(e.target.value)}
+              onChange={(e) => {
+                edit();
+                setLicense(e.target.value);
+              }}
               required
             />
             <Field
               id="asset-terms"
               label="License terms"
               value={terms}
-              onChange={(e) => setTerms(e.target.value)}
+              onChange={(e) => {
+                edit();
+                setTerms(e.target.value);
+              }}
             />
             <label>
               <input
                 type="checkbox"
                 checked={attested}
-                onChange={(e) => setAttested(e.target.checked)}
+                onChange={(e) => {
+                  edit();
+                  setAttested(e.target.checked);
+                }}
               />{" "}
               I attest that I have documented rights to use this media.
             </label>

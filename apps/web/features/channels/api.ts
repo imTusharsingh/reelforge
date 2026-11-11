@@ -1,4 +1,6 @@
-import { canEdit, isRecord, type Channel, type RecordValue, type Role } from "./model";
+import { markPendingSave, clearPendingSave, pendingSave } from "./mutation-recovery";
+import { parseDomainResponse, parseChannel, InvalidDtoError } from "./dto";
+import { canEdit, isRecord, type Channel, type ApiObject, type Role } from "./model";
 export class ChannelApiError extends Error {
   constructor(
     public readonly status: number,
@@ -9,7 +11,7 @@ export class ChannelApiError extends Error {
   }
 }
 export type Shape = "channel" | "named" | "version" | "asset" | "snapshot" | "entity" | "record";
-export function guardRecord(value: unknown, shape: Shape, workspaceId: string): RecordValue {
+export function guardRecord(value: unknown, shape: Shape, workspaceId: string): ApiObject {
   if (!isRecord(value)) throw new ChannelApiError(502, "The service returned an invalid object.");
   if (value.workspaceId !== undefined && value.workspaceId !== workspaceId)
     throw new ChannelApiError(502, "The service returned data for another workspace.");
@@ -45,17 +47,24 @@ export class ChannelsClient {
     path: string,
     options: {
       method?: string;
-      body?: RecordValue;
+      body?: ApiObject;
       list?: boolean;
       shape?: Shape;
       readOnly?: boolean;
     } = {},
-  ): Promise<RecordValue | RecordValue[]> {
+  ): Promise<ApiObject | ApiObject[]> {
     this.signal.throwIfAborted();
     if (options.readOnly && !["config/resolve", "prompts/preview"].includes(path))
       throw new ChannelApiError(403, "This operation is not a read-only preview.");
     if (options.method && options.method !== "GET" && !options.readOnly && !canEdit(this.role))
       throw new ChannelApiError(403, "A verified owner or editor role is required.");
+    const mutation = Boolean(options.method && options.method !== "GET" && !options.readOnly);
+    if (mutation && pendingSave(this.workspaceId))
+      throw new ChannelApiError(
+        409,
+        "Review and reconcile the earlier save before submitting another change.",
+      );
+    if (mutation) markPendingSave(this.workspaceId, path);
     let response: Response;
     try {
       response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
@@ -78,6 +87,7 @@ export class ChannelsClient {
       response.status === 204 ? {} : await response.json().catch(() => undefined);
     this.signal.throwIfAborted();
     if (!response.ok) {
+      if (mutation && response.status < 500) clearPendingSave(this.workspaceId);
       const detail = isRecord(data) && typeof data.message === "string" ? data.message : "";
       const reason =
         response.status === 401
@@ -94,7 +104,15 @@ export class ChannelsClient {
     if (options.list) {
       if (!Array.isArray(data))
         throw new ChannelApiError(502, "The service returned an invalid list.");
-      return data.map((v) => guardRecord(v, options.shape ?? "named", this.workspaceId));
+      return data.map((v) => {
+        guardRecord(v, options.shape ?? "named", this.workspaceId);
+        try {
+          return parseDomainResponse(path, v, this.workspaceId);
+        } catch (e) {
+          if (e instanceof InvalidDtoError) throw new ChannelApiError(502, e.message);
+          throw e;
+        }
+      });
     }
     const shape =
       options.shape ??
@@ -117,19 +135,39 @@ export class ChannelsClient {
       throw new ChannelApiError(502, "The service returned an invalid prompt preview.");
     if (/^channels\/[^/]+$/.test(path) && value.id !== decodeURIComponent(path.split("/")[1]!))
       throw new ChannelApiError(502, "The service returned a different channel.");
-    return value;
+    if (response.status === 204) {
+      if (mutation) clearPendingSave(this.workspaceId);
+      return value;
+    }
+    try {
+      const parsed = parseDomainResponse(path, value, this.workspaceId);
+      if (mutation) clearPendingSave(this.workspaceId);
+      return parsed;
+    } catch (e) {
+      if (e instanceof InvalidDtoError) throw new ChannelApiError(502, e.message);
+      throw e;
+    }
   }
-  async list(path: string, shape: Shape = "named"): Promise<RecordValue[]> {
-    return (await this.request(path, { list: true, shape })) as RecordValue[];
+  async list(path: string, shape: Shape = "named"): Promise<ApiObject[]> {
+    const data = await this.request(path, { list: true, shape });
+    if (!Array.isArray(data))
+      throw new ChannelApiError(502, "The service returned an invalid list.");
+    return data;
   }
-  async get(path: string, shape: Shape = "record"): Promise<RecordValue> {
-    return (await this.request(path, { shape })) as RecordValue;
+  async get(path: string, shape: Shape = "record"): Promise<ApiObject> {
+    const data = await this.request(path, { shape });
+    if (Array.isArray(data))
+      throw new ChannelApiError(502, "The service returned an invalid object.");
+    return data;
   }
   async channels(): Promise<Channel[]> {
-    return (await this.list("channels", "channel")) as Channel[];
+    return (await this.list("channels", "channel")).map((v) => parseChannel(v, this.workspaceId));
   }
   async channel(id: string): Promise<Channel> {
-    return (await this.get(`channels/${encodeURIComponent(id)}`, "channel")) as Channel;
+    return parseChannel(
+      await this.get(`channels/${encodeURIComponent(id)}`, "channel"),
+      this.workspaceId,
+    );
   }
 }
 export const segment = (value: unknown): string => encodeURIComponent(String(value));

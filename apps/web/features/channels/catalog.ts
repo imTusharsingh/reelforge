@@ -15,7 +15,18 @@ export const brandFields: FieldSpec[] = [
 ];
 export const preferenceFields: FieldSpec[] = [
   { key: "goals", label: "Creative goals", kind: "object" },
-  { key: "schedule", label: "Schedule", kind: "object" },
+  {
+    key: "schedule",
+    label: "Schedule",
+    kind: "object",
+    common: [
+      { key: "frequency", label: "Schedule frequency", choices: ["DAILY", "WEEKLY"] },
+      { key: "time", label: "Local run time", kind: "time" },
+      { key: "timezone", label: "Schedule timezone" },
+      { key: "maxRunsPerDay", label: "Maximum runs per day", kind: "number" },
+    ],
+    hint: "Weekly days, multiple slots and workflow inputs remain available under Advanced. Scheduling still requires the worker and budget/safety gates.",
+  },
   { key: "automationDefaults", label: "Automation defaults", kind: "object" },
   { key: "approvalPolicy", label: "Approval policy", kind: "object" },
   {
@@ -30,19 +41,55 @@ export const genreFields: FieldSpec[] = [
   { key: "audience", label: "Audience" },
   { key: "tone", label: "Tone" },
   { key: "language", label: "Language" },
-  { key: "topicsAllowed", label: "Allowed topics", kind: "array" },
-  { key: "topicsBlocked", label: "Blocked topics", kind: "array" },
+  { key: "topicsAllowed", label: "Allowed topics", kind: "lines", hint: "One topic per line" },
+  { key: "topicsBlocked", label: "Blocked topics", kind: "lines", hint: "One topic per line" },
   { key: "structure", label: "Story structure", kind: "object" },
-  { key: "durationPreference", label: "Duration preferences", kind: "object" },
-  { key: "safetyProfile", label: "Safety profile", kind: "object" },
+  {
+    key: "durationPreference",
+    label: "Duration preferences",
+    kind: "object",
+    common: [
+      { key: "minSeconds", label: "Minimum duration (seconds)", kind: "number" },
+      { key: "maxSeconds", label: "Maximum duration (seconds)", kind: "number" },
+    ],
+  },
+  {
+    key: "safetyProfile",
+    label: "Safety profile",
+    kind: "object",
+    common: [
+      { key: "level", label: "Safety level" },
+      { key: "requiresHumanReview", label: "Require human review", kind: "boolean" },
+    ],
+  },
 ];
 export const characterFields: FieldSpec[] = [
   { key: "name", label: "Character name" },
   { key: "description", label: "Description", optional: true },
-  { key: "personality", label: "Personality", kind: "object" },
-  { key: "voicePreference", label: "Voice preferences", kind: "object" },
-  { key: "visualInvariants", label: "Visual invariants", kind: "object" },
-  { key: "variationRules", label: "Variation rules", kind: "object" },
+  {
+    key: "personality",
+    label: "Personality",
+    kind: "object",
+    common: [{ key: "traits", label: "Personality traits", kind: "lines" }],
+  },
+  {
+    key: "voicePreference",
+    label: "Voice preferences",
+    kind: "object",
+    common: [{ key: "style", label: "Voice style preference" }],
+  },
+  {
+    key: "visualInvariants",
+    label: "Visual invariants",
+    kind: "object",
+    common: [{ key: "palette", label: "Color palette", kind: "lines" }],
+  },
+  {
+    key: "variationRules",
+    label: "Variation rules",
+    kind: "object",
+    common: [{ key: "allowed", label: "Allowed variations", kind: "lines" }],
+  },
   {
     key: "referenceAssets",
     label: "Published asset references",

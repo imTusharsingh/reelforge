@@ -66,7 +66,7 @@ export function CharacterPanel(): JSX.Element {
           {selected.status !== "ARCHIVED" && (
             <>
               <ActionForm
-                key={`${chosen}-${rev}`}
+                key={chosen}
                 title="Edit character draft"
                 fields={characterFields}
                 initial={selected}
@@ -163,11 +163,10 @@ export function GroupPanel({ channelId }: { channelId: string }): JSX.Element {
             submitLabel="Assign to this channel"
             onSaved={() => setRev((v) => v + 1)}
           />
-          <ActionForm
-            title="Assign group to series"
-            fields={[{ key: "seriesId", label: "Series ID" }]}
-            path={`${path}/assignments`}
-            submitLabel="Assign to series"
+          <GroupSeriesAssignment
+            key={`${chosen}-series`}
+            groupId={chosen}
+            channelId={channelId}
             onSaved={() => setRev((v) => v + 1)}
           />
           <Panel>
@@ -181,19 +180,10 @@ export function GroupPanel({ channelId }: { channelId: string }): JSX.Element {
           </Panel>
           {character && (
             <>
-              <SelectedRead
-                key={character}
-                title="Available published versions"
-                path={`characters/${segment(character)}/versions`}
-                shape="version"
-              />
-              <ActionForm
+              <PublishedMember
                 key={`${chosen}-${character}`}
-                title="Add pinned group member"
-                fields={[{ key: "characterVersionId", label: "Published character version ID" }]}
-                fixed={{ characterId: character }}
-                path={`${path}/members`}
-                submitLabel="Add member"
+                groupId={chosen}
+                characterId={character}
                 onSaved={() => setRev((v) => v + 1)}
               />
               <ActionForm
@@ -209,7 +199,7 @@ export function GroupPanel({ channelId }: { channelId: string }): JSX.Element {
           )}
           <AssignmentRemoval groupId={chosen} revision={rev} onSaved={() => setRev((v) => v + 1)} />
           <SelectedRead
-            key={`${chosen}-${rev}`}
+            key={chosen}
             title="Group reference package"
             path={`${path}/reference-package`}
             list={false}
@@ -257,6 +247,85 @@ function AssignmentRemoval({
           method="DELETE"
           confirm="Remove this assignment?"
           submitLabel="Remove assignment"
+          onSaved={onSaved}
+        />
+      )}
+    </Panel>
+  );
+}
+
+export function GroupSeriesAssignment({
+  groupId,
+  channelId,
+  onSaved,
+}: {
+  groupId: string;
+  channelId: string;
+  onSaved: () => void;
+}): JSX.Element {
+  const series = useResource(`channels/${segment(channelId)}/series`);
+  const [chosen, setChosen] = useState("");
+  const selected = series.data.find((item) => item.id === chosen && item.channelId === channelId);
+  return (
+    <Panel>
+      <h3>Assign group to a series</h3>
+      <ResourceState {...series} empty={!series.data.length} />
+      <Picker
+        label="Assignment series"
+        items={series.data.filter((item) => item.channelId === channelId)}
+        value={chosen}
+        onChange={setChosen}
+      />
+      {selected && (
+        <ActionForm
+          key={chosen}
+          title="Assign group to series"
+          fields={[]}
+          fixed={{ seriesId: selected.id }}
+          path={`character-groups/${segment(groupId)}/assignments`}
+          submitLabel="Assign to series"
+          onSaved={onSaved}
+        />
+      )}
+    </Panel>
+  );
+}
+export function PublishedMember({
+  groupId,
+  characterId,
+  onSaved,
+}: {
+  groupId: string;
+  characterId: string;
+  onSaved: () => void;
+}): JSX.Element {
+  const versions = useResource(`characters/${segment(characterId)}/versions`, true, "version");
+  const [chosen, setChosen] = useState("");
+  const available = versions.data.filter(
+    (v) => v.status === "PUBLISHED" && v.characterId === characterId,
+  );
+  const selected = available.find((v) => v.id === chosen);
+  return (
+    <Panel>
+      <h3>Add a published character version</h3>
+      <ResourceState {...versions} empty={!available.length} />
+      <Picker
+        label="Published character version"
+        items={available.map((v) => ({
+          ...v,
+          name: `Version ${String(v.version)} — ${typeof v.profile === "object" && v.profile !== null && "name" in v.profile ? String(v.profile.name) : "Published character"}`,
+        }))}
+        value={chosen}
+        onChange={setChosen}
+      />
+      {selected && (
+        <ActionForm
+          key={chosen}
+          title="Add pinned group member"
+          fields={[]}
+          fixed={{ characterId, characterVersionId: selected.id }}
+          path={`character-groups/${segment(groupId)}/members`}
+          submitLabel="Add member"
           onSaved={onSaved}
         />
       )}

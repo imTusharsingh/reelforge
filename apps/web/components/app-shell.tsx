@@ -2,6 +2,7 @@
 
 import { useRef, type JSX, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import { StudioLink } from "./studio-link";
 import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
 
@@ -24,7 +25,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
         {destinations.map(({ name, href }) => (
           <li key={name}>
             {href ? (
-              <a
+              <StudioLink
                 className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
                 aria-current={
@@ -34,7 +35,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
                 }
               >
                 {name}
-              </a>
+              </StudioLink>
             ) : (
               <span className="rf-nav-item rf-nav-item--disabled">
                 {name} <span className="rf-nav-soon">Planned</span>

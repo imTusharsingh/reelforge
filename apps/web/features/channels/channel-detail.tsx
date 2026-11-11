@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { StudioLink as Link } from "../../components/studio-link";
 import { useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Panel } from "../../components/ui/primitives";
@@ -10,7 +10,7 @@ import { AssetPanel } from "./asset-panel";
 import { CharacterPanel, GroupPanel } from "./character-panel";
 import { ConfigurationPanel } from "./configuration-panel";
 import { GenrePanel, SeriesPanel, SnapshotsPanel } from "./content-panels";
-import { roleNotice, type RecordValue, text } from "./model";
+import { roleNotice, type ApiObject, text } from "./model";
 import { ActionForm, ChannelsScope, ResourceState, SavedData, useResource } from "./ui";
 export function ChannelDetail({ channelId }: { channelId: string }): JSX.Element {
   const workspace = useActiveWorkspace();
@@ -31,7 +31,7 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
         ← Back to channels
       </Link>
       <ResourceState {...state} empty={!channel} />
-      {!state.loading && !state.error && channel && (
+      {!state.error && channel && (
         <>
           <header className="rf-page-heading">
             <p className="rf-eyebrow">Channels / Detail</p>
@@ -71,7 +71,7 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
                 label: "Brand & identity",
                 content: (
                   <ActionForm
-                    key={`brand-${revision}`}
+                    key="brand"
                     title="Brand & identity"
                     fields={brandFields}
                     initial={channel}
@@ -95,7 +95,7 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
                       </p>
                     </Panel>
                     <ActionForm
-                      key={`preferences-${revision}`}
+                      key="preferences"
                       title="Channel content preferences"
                       fields={preferenceFields}
                       initial={preferences(channel)}
@@ -136,7 +136,7 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
     </section>
   );
 }
-function preferences(channel: RecordValue): RecordValue {
+function preferences(channel: ApiObject): ApiObject {
   return Object.fromEntries(
     preferenceFields
       .filter((f) => channel[f.key] !== null && channel[f.key] !== undefined)
@@ -148,7 +148,7 @@ function Overview({
   path,
   onSaved,
 }: {
-  channel: RecordValue;
+  channel: ApiObject;
   path: string;
   onSaved: () => void;
 }): JSX.Element {

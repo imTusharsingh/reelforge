@@ -1,9 +1,11 @@
 "use client";
-import Link from "next/link";
+import { StudioLink as Link } from "../../components/studio-link";
 import { useMemo, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
-import { filterChannels, roleNotice, type Channel } from "./model";
+import { parseChannel } from "./dto";
+import { useChannelsClient } from "./ui";
+import { filterChannels, roleNotice } from "./model";
 import { ActionForm, ChannelsScope, ResourceState, useResource } from "./ui";
 export function ChannelsWorkspace(): JSX.Element {
   const workspace = useActiveWorkspace();
@@ -14,13 +16,19 @@ export function ChannelsWorkspace(): JSX.Element {
   );
 }
 function ChannelList(): JSX.Element {
+  const client = useChannelsClient();
   const [revision, setRevision] = useState(0);
   const state = useResource("channels", true, "channel", revision);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("ALL");
   const filtered = useMemo(
-    () => filterChannels(state.data as Channel[], query, status),
-    [state.data, query, status],
+    () =>
+      filterChannels(
+        state.data.map((v) => parseChannel(v, client.workspaceId)),
+        query,
+        status,
+      ),
+    [state.data, query, status, client.workspaceId],
   );
   return (
     <section aria-labelledby="channels-heading">

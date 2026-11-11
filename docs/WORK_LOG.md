@@ -1020,3 +1020,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Kept all privileged UI writes disabled under UNKNOWN; submitted an M23-local contract proposal for trusted current-membership role metadata. No backend/shared-contract/schema/root-tooling change was made, and no roles or provider capabilities were inferred.
 - Full suite passed: 561 tests, 8 skipped. Focused frontend passed: 50 tests. Production build, lint, Prisma validation and the 27-migration guard passed; final typecheck/format/secret/diff checks are recorded in M23 STATUS. Local API and browser smoke passed for populated disposable data, previews, context isolation, direct navigation/reload, desktop/mobile keyboard behavior and Operations preservation.
 - State remains IMPLEMENTED_PENDING_REVIEW. Independent `minu-the-reviewer` review requested through the issue-linked Developer PR; no self-approval or merge authorized.
+
+## 2026-11-11 — M23 PR #49 technical review follow-up
+
+- Addressed owner comment on `659c63c` for R2–R5: explicit navigation/session intents with route/history guards, uncertain-save reconciliation, scoped series/published-version pickers, common structured controls, mutation invalidation and draft rebasing, feature-owned DTO parsers and committed mounted tests.
+- Narrow shared frontend changes preserve M29 ownership/provider and navigation; no Issue #48 header redesign, backend/schema/auth-contract change or fabricated role was included. R1 remains BLOCKED pending Core's trusted-role contract; no read-only limited-merge acceptance is assumed.
+- Full suite: 578 passed / 8 skipped. Focused frontend: 67 passed. Mounted Chromium: 16 checks passed. Production build, typecheck, lint, Prisma validation and migration guard passed. Real local API/Next smoke also passed, including Back cancellation and Operations preservation.
+- PR remains open and IMPLEMENTED_PENDING_REVIEW. Independent review remains requested from `minu-the-reviewer`; no self-approval or merge.

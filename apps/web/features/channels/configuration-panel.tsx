@@ -1,6 +1,7 @@
 "use client";
 import { useState, type JSX } from "react";
 import { Panel } from "../../components/ui/primitives";
+import { isRecord } from "./model";
 import { segment } from "./api";
 import { SelectedRead } from "./content-panels";
 import {
@@ -23,6 +24,12 @@ export function ConfigurationPanel({ channelId }: { channelId: string }): JSX.El
         <p>
           Inspect workspace defaults, immutable snapshots and locked fields. Resolution and prompt
           previews are deterministic local operations; they do not call an AI provider.
+        </p>
+        <p role="status">
+          Active workspace snapshot:{" "}
+          {isRecord(config.data[0]?.activeSnapshot)
+            ? `version ${String(config.data[0]?.activeSnapshot.version)}`
+            : "None"}
         </p>
         <ResourceState {...config} empty={!config.data.length} />
         {config.data.map((v, i) => (
@@ -95,6 +102,12 @@ function PromptPanel({ channelId }: { channelId: string }): JSX.Element {
             setVersion("");
           }}
         />
+        {chosen && (
+          <p role="status">
+            Active prompt version:{" "}
+            {String(templates.data.find((t) => t.id === chosen)?.activeVersionId ?? "None")}
+          </p>
+        )}
         {chosen && (
           <SavedData
             value={templates.data.find((t) => t.id === chosen)}

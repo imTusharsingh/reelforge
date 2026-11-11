@@ -9,7 +9,6 @@ import {
   type FormEvent,
   type JSX,
   type ReactNode,
-  type RefObject,
 } from "react";
 import {
   Alert,
@@ -20,19 +19,30 @@ import {
   StateMessage,
   TextAreaField,
 } from "../../components/ui/primitives";
+import {
+  draftEdited,
+  registerDraft,
+  requestNavigationIntent,
+} from "../../components/studio-navigation";
+import { pendingSave, clearPendingSave } from "./mutation-recovery";
+import { StructuredField } from "./structured-field";
 import { ChannelsClient, ChannelApiError, type Shape } from "./api";
 import {
   canEdit,
   channelPayload,
   formPayload,
+  initialFormValues,
   pretty,
   text,
   type FieldSpec,
-  type RecordValue,
+  type ApiObject,
 } from "./model";
 
-const ClientContext = createContext<ChannelsClient | null>(null);
-const DirtyContext = createContext<RefObject<Set<string>> | null>(null);
+export const ClientContext = createContext<ChannelsClient | null>(null);
+const RefreshContext = createContext({ revision: 0, invalidate: (): void => {} });
+export function useRefreshResources(): () => void {
+  return useContext(RefreshContext).invalidate;
+}
 export function ChannelsScope({
   workspaceId,
   children,
@@ -41,32 +51,27 @@ export function ChannelsScope({
   children: ReactNode;
 }): JSX.Element {
   const [client, setClient] = useState<ChannelsClient | null>(null);
-  const dirtyForms = useRef(new Set<string>());
+  const [revision, setRevision] = useState(0);
+  const invalidate = (): void => {
+    setRevision((v) => v + 1);
+    if (pendingSave(workspaceId)) setUncertain(true);
+  };
+  const [uncertain, setUncertain] = useState(false);
   useEffect(() => {
-    const unload = (event: BeforeUnloadEvent): void => {
-      if (dirtyForms.current.size) event.preventDefault();
-    };
-    const navigate = (event: MouseEvent): void => {
-      if (!dirtyForms.current.size) return;
-      const target =
-        event.target instanceof Element ? event.target.closest("a[href], button") : null;
-      if (
-        target &&
-        (target.matches("a[href]") ||
-          ["Switch workspace", "Sign out"].includes(target.textContent?.trim() ?? "")) &&
-        !window.confirm("Discard unsaved changes?")
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
+    const recover = (): void => {
+      if (pendingSave(workspaceId)) {
+        setUncertain(true);
+        setRevision((v) => v + 1);
       }
     };
-    window.addEventListener("beforeunload", unload);
-    document.addEventListener("click", navigate, true);
+    recover();
+    window.addEventListener("focus", recover);
+    window.addEventListener("pageshow", recover);
     return (): void => {
-      window.removeEventListener("beforeunload", unload);
-      document.removeEventListener("click", navigate, true);
+      window.removeEventListener("focus", recover);
+      window.removeEventListener("pageshow", recover);
     };
-  }, []);
+  }, [workspaceId]);
   useEffect(() => {
     const controller = new AbortController();
     const next = new ChannelsClient(workspaceId, controller.signal);
@@ -77,7 +82,31 @@ export function ChannelsScope({
     return <StateMessage kind="loading" description="Loading workspace context…" />;
   return (
     <ClientContext.Provider value={client}>
-      <DirtyContext.Provider value={dirtyForms}>{children}</DirtyContext.Provider>
+      <RefreshContext.Provider value={{ revision, invalidate }}>
+        {uncertain && (
+          <Alert title="Check the outcome of an earlier save" tone="warning">
+            A cancelled or interrupted request may already have committed. Saved data has been
+            refreshed; inspect it before retrying.
+            <Button
+              onClick={() => {
+                invalidate();
+              }}
+            >
+              Refresh saved state
+            </Button>
+            <Button
+              tone="secondary"
+              onClick={() => {
+                clearPendingSave(workspaceId);
+                setUncertain(false);
+              }}
+            >
+              I have reviewed the saved state
+            </Button>
+          </Alert>
+        )}
+        {children}
+      </RefreshContext.Provider>
     </ClientContext.Provider>
   );
 }
@@ -91,9 +120,16 @@ export function useResource(
   list = true,
   shape: Shape = "named",
   revision = 0,
-): { data: RecordValue[]; error: string; loading: boolean } {
+): { data: ApiObject[]; error: string; loading: boolean } {
   const client = useChannelsClient();
-  const [state, setState] = useState({ data: [] as RecordValue[], error: "", loading: true });
+  const refresh = useContext(RefreshContext);
+  const resourceKey = `${client.workspaceId}:${path}:${shape}:${list}`;
+  const [state, setState] = useState({
+    key: resourceKey,
+    data: [] as ApiObject[],
+    error: "",
+    loading: true,
+  });
   useEffect(() => {
     const controller = new AbortController();
     const scoped = new ChannelsClient(
@@ -101,17 +137,23 @@ export function useResource(
       AbortSignal.any([controller.signal, client.signal]),
       client.role,
     );
-    setState({ data: [], error: "", loading: true });
+    setState((previous) => ({
+      key: resourceKey,
+      data: previous.key === resourceKey ? previous.data : [],
+      error: "",
+      loading: true,
+    }));
     void (list ? scoped.list(path, shape) : scoped.get(path, shape).then((v) => [v]))
       .then((data) => {
-        if (!scoped.signal.aborted) setState({ data, error: "", loading: false });
+        if (!scoped.signal.aborted) setState({ key: resourceKey, data, error: "", loading: false });
       })
       .catch((e: unknown) => {
-        if (!scoped.signal.aborted) setState({ data: [], error: failure(e), loading: false });
+        if (!scoped.signal.aborted)
+          setState({ key: resourceKey, data: [], error: failure(e), loading: false });
       });
     return (): void => controller.abort();
-  }, [client, path, list, shape, revision]);
-  return state;
+  }, [client, path, list, shape, revision, refresh.revision, resourceKey]);
+  return state.key === resourceKey ? state : { data: [], error: "", loading: true };
 }
 export function failure(e: unknown): string {
   return e instanceof Error ? e.message : "The request failed. Please try again.";
@@ -149,7 +191,7 @@ export function SavedData({
     </details>
   );
 }
-export function RecordList({ items }: { items: RecordValue[] }): JSX.Element {
+export function RecordList({ items }: { items: ApiObject[] }): JSX.Element {
   return (
     <ul className="rf-record-list">
       {items.map((item, index) => (
@@ -172,24 +214,19 @@ export function Picker({
   allowEmpty = true,
 }: {
   label: string;
-  items: RecordValue[];
+  items: ApiObject[];
   value: string;
   onChange: (value: string) => void;
   allowEmpty?: boolean;
 }): JSX.Element {
   const id = useId();
-  const dirty = useContext(DirtyContext);
   return (
     <SelectField
       id={id}
       label={label}
       value={value}
       onChange={(e) => {
-        if (
-          dirty?.current.size &&
-          !window.confirm("Discard unsaved changes before changing selection?")
-        )
-          return;
+        if (!requestNavigationIntent("selection")) return;
         onChange(e.target.value);
       }}
     >
@@ -205,10 +242,10 @@ export function Picker({
 type ActionFormProps = {
   title: string;
   fields: readonly FieldSpec[];
-  initial?: RecordValue;
+  initial?: ApiObject;
   path: string;
   method?: string;
-  fixed?: RecordValue;
+  fixed?: ApiObject;
   readOnly?: boolean;
   confirm?: string;
   onSaved?: () => void;
@@ -236,34 +273,28 @@ function ActionEditor({
     return (): void => controller.current.abort();
   }, []);
   const base = useId();
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      fields.map((f) => [
-        f.key,
-        initial[f.key] === undefined || initial[f.key] === null
-          ? f.kind === "object"
-            ? "{}"
-            : f.kind === "array"
-              ? "[]"
-              : ""
-          : typeof initial[f.key] === "string"
-            ? String(initial[f.key])
-            : pretty(initial[f.key]),
-      ]),
-    ),
-  );
+  const incomingValues = initialFormValues(fields, initial);
+  const incomingSignature = JSON.stringify(incomingValues);
+  const [appliedSignature, setAppliedSignature] = useState(incomingSignature);
+  const [values, setValues] = useState<Record<string, string>>(incomingValues);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<RecordValue | RecordValue[] | null>(null);
+  const [result, setResult] = useState<ApiObject | ApiObject[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const dirtyForms = useContext(DirtyContext);
+  const invalidate = useRefreshResources();
   useEffect(() => {
-    if (dirty) dirtyForms?.current.add(base);
-    else dirtyForms?.current.delete(base);
-    return (): void => {
-      dirtyForms?.current.delete(base);
-    };
-  }, [dirty, dirtyForms, base]);
+    if (!dirty) return;
+    return registerDraft(base, () => {
+      setValues(JSON.parse(appliedSignature) as Record<string, string>);
+      setDirty(false);
+    });
+  }, [dirty, base, appliedSignature]);
+  useEffect(() => {
+    if (!dirty && incomingSignature !== appliedSignature) {
+      setValues(JSON.parse(incomingSignature) as Record<string, string>);
+      setAppliedSignature(incomingSignature);
+    }
+  }, [dirty, incomingSignature, appliedSignature]);
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (busy || (!readOnly && !canEdit(client.role))) return;
@@ -284,9 +315,17 @@ function ActionEditor({
       if (actionClient.signal.aborted) return;
       setResult(response);
       setDirty(false);
+      invalidate();
       onSaved?.();
     } catch (e) {
-      if (!actionClient.signal.aborted) setError(failure(e));
+      if (!actionClient.signal.aborted) {
+        setError(
+          !readOnly && e instanceof ChannelApiError && (e.status === 0 || e.status >= 500)
+            ? `${failure(e)} The save outcome is uncertain; inspect refreshed data before retrying.`
+            : failure(e),
+        );
+        if (!readOnly) invalidate();
+      }
     } finally {
       if (!actionClient.signal.aborted) setBusy(false);
     }
@@ -307,11 +346,22 @@ function ActionEditor({
               value: values[field.key] ?? "",
               onChange: (e: { target: { value: string } }): void => {
                 setValues((v) => ({ ...v, [field.key]: e.target.value }));
+                draftEdited();
                 setDirty(true);
               },
               ...(field.hint ? { hint: field.hint } : {}),
             };
-            return field.kind === "object" || field.kind === "array" ? (
+            if (field.common)
+              return (
+                <StructuredField
+                  key={field.key}
+                  id={props.id}
+                  field={field}
+                  value={props.value}
+                  onChange={(value) => props.onChange({ target: { value } })}
+                />
+              );
+            return field.kind === "object" || field.kind === "array" || field.kind === "lines" ? (
               <TextAreaField key={field.key} {...props} rows={4} />
             ) : (
               <Field
@@ -324,6 +374,23 @@ function ActionEditor({
           })}
         </fieldset>
         {dirty && <p role="status">Unsaved changes</p>}
+        {dirty && incomingSignature !== appliedSignature && (
+          <Alert title="Saved data changed" tone="warning">
+            Your edits are preserved. Review the latest server values before saving.
+            <Button
+              tone="secondary"
+              onClick={() => {
+                if (requestNavigationIntent("selection")) {
+                  setValues(incomingValues);
+                  setAppliedSignature(incomingSignature);
+                  setDirty(false);
+                }
+              }}
+            >
+              Load latest saved values
+            </Button>
+          </Alert>
+        )}
         {error && (
           <Alert title="Changes not saved" tone="danger">
             {error}
