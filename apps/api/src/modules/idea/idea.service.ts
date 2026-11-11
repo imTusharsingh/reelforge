@@ -177,15 +177,137 @@ export class IdeaService {
     return this.create(context, proposal, "AI", metadata);
   }
 
-  public async list(context: WorkspaceContext, status?: string): Promise<unknown> {
+  public async list(
+    context: WorkspaceContext,
+    status?: string,
+    includeArchived = false,
+  ): Promise<unknown> {
     return this.db.idea.findMany({
       where: {
         workspaceId: context.workspaceId,
+        ...(includeArchived ? {} : { archivedAt: null }),
         ...(status === undefined ? {} : { status: status as never }),
       },
       include: { duplicateMatches: true },
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  private writable(context: WorkspaceContext): void {
+    if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
+  }
+
+  /** The approved snapshot is immutable; editing is only available before approval. */
+  public async edit(
+    context: WorkspaceContext,
+    id: string,
+    input: IdeaInput,
+    expectedUpdatedAt: Date,
+  ): Promise<unknown> {
+    this.writable(context);
+    const idea = await this.db.idea.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+    });
+    if (!idea) throw new NotFoundException("Idea not found");
+    const approvedSnapshot = await this.db.ideaApprovalSnapshot.findUnique({
+      where: { workspaceId_ideaId: { workspaceId: context.workspaceId, ideaId: id } },
+      select: { id: true },
+    });
+    if (
+      approvedSnapshot ||
+      idea.archivedAt ||
+      !["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status)
+    )
+      throw new ConflictException("Approved, scheduled or archived ideas cannot be edited");
+
+    let channelId = input.channelId;
+    if (input.channelId !== undefined) {
+      const channel = await this.db.channel.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: input.channelId } },
+        select: { id: true },
+      });
+      if (!channel) throw new NotFoundException("Channel not found");
+    }
+    if (input.seriesId !== undefined) {
+      const series = await this.db.contentSeries.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: input.seriesId } },
+        select: { id: true, channelId: true },
+      });
+      if (!series) throw new NotFoundException("Series not found");
+      if (channelId !== undefined && channelId !== series.channelId)
+        throw new BadRequestException("channelId must match the series channel");
+      channelId = series.channelId;
+    }
+    if (!channelId) throw new BadRequestException("channelId or seriesId is required");
+    const changed = await this.db.idea.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        id,
+        updatedAt: expectedUpdatedAt,
+        archivedAt: null,
+        status: { in: ["DRAFT", "BACKLOG", "REJECTED"] },
+      },
+      data: {
+        title: input.title,
+        normalizedTitle: normalizeTitle(input.title),
+        topic: input.topic,
+        hook: input.hook,
+        angle: input.angle,
+        audience: input.audience,
+        references: input.references,
+        sourceNotes: input.sourceNotes ?? null,
+        expectedFormat: input.expectedFormat,
+        channelId,
+        seriesId: input.seriesId ?? null,
+      },
+    });
+    if (changed.count !== 1) throw new ConflictException("Idea changed; refresh before editing");
+    return this.db.idea.findUniqueOrThrow({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+      include: { duplicateMatches: true },
+    });
+  }
+
+  private async setArchive(
+    context: WorkspaceContext,
+    id: string,
+    expectedUpdatedAt: Date,
+    restore: boolean,
+  ): Promise<unknown> {
+    this.writable(context);
+    const idea = await this.db.idea.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+    });
+    if (!idea) throw new NotFoundException("Idea not found");
+    const approvedSnapshot = await this.db.ideaApprovalSnapshot.findUnique({
+      where: { workspaceId_ideaId: { workspaceId: context.workspaceId, ideaId: id } },
+      select: { id: true },
+    });
+    if (approvedSnapshot || !["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status))
+      throw new ConflictException("Previously approved or scheduled ideas cannot be archived");
+    if (restore ? !idea.archivedAt : Boolean(idea.archivedAt))
+      throw new ConflictException(restore ? "Idea is not archived" : "Idea is already archived");
+    const changed = await this.db.idea.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        id,
+        updatedAt: expectedUpdatedAt,
+        status: { in: ["DRAFT", "BACKLOG", "REJECTED"] },
+        archivedAt: restore ? { not: null } : null,
+      },
+      data: { archivedAt: restore ? null : new Date() },
+    });
+    if (changed.count !== 1) throw new ConflictException("Idea changed; refresh before retrying");
+    return this.db.idea.findUniqueOrThrow({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+      include: { duplicateMatches: true },
+    });
+  }
+  public archive(context: WorkspaceContext, id: string, expectedUpdatedAt: Date): Promise<unknown> {
+    return this.setArchive(context, id, expectedUpdatedAt, false);
+  }
+  public restore(context: WorkspaceContext, id: string, expectedUpdatedAt: Date): Promise<unknown> {
+    return this.setArchive(context, id, expectedUpdatedAt, true);
   }
 
   public async transition(
@@ -199,6 +321,8 @@ export class IdeaService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
     });
     if (!idea) throw new NotFoundException("Idea not found");
+    if (idea.archivedAt)
+      throw new ConflictException("Restore an archived idea before transitioning");
     if (!transitions[idea.status]?.has(next))
       throw new ConflictException(`Cannot transition ${idea.status} to ${next}`);
     if (next === "SCHEDULED" && scheduledAt === undefined)

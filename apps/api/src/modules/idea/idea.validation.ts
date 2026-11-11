@@ -63,3 +63,15 @@ export const transitionSchema = z
         message: "scheduledAt must be in the future",
       });
   });
+
+/** Editing and archiving use the last observed server timestamp to avoid overwriting another editor. */
+export const ideaMutationSchema = ideaSchema.extend({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+});
+export const ideaArchiveSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+});
+export const ideaListQuerySchema = z.object({
+  status: z.enum(["DRAFT", "BACKLOG", "APPROVED", "REJECTED", "SCHEDULED"]).optional(),
+  includeArchived: z.enum(["true", "false"]).optional(),
+});
