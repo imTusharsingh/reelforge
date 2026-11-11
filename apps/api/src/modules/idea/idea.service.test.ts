@@ -19,7 +19,14 @@ const input = {
 
 type Mock = ReturnType<typeof vi.fn>;
 function database(): {
-  idea: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; create: Mock; update: Mock; updateMany: Mock };
+  idea: {
+    findMany: Mock;
+    findUnique: Mock;
+    findUniqueOrThrow: Mock;
+    create: Mock;
+    update: Mock;
+    updateMany: Mock;
+  };
   channel: { findUnique: Mock };
   contentSeries: { findUnique: Mock };
   ideaApprovalSnapshot: { findUnique: Mock; create: Mock };
@@ -51,8 +58,14 @@ describe("IdeaService", () => {
   it("rejects stale status/timestamp tokens and prevents any conditional mutation", async () => {
     const db = database();
     db.idea.findUnique.mockResolvedValue({
-      id: "idea-a", workspaceId: "workspace-a", updatedAt: observedAt, status: "DRAFT",
-      archivedAt: null, channelId: "channel-a", seriesId: null, topic: "test",
+      id: "idea-a",
+      workspaceId: "workspace-a",
+      updatedAt: observedAt,
+      status: "DRAFT",
+      archivedAt: null,
+      channelId: "channel-a",
+      seriesId: null,
+      topic: "test",
     });
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
     await expect(
@@ -66,12 +79,17 @@ describe("IdeaService", () => {
     await expect(
       service.transition(context, "idea-a", "BACKLOG", observedAt, "DRAFT"),
     ).rejects.toThrow("Idea changed");
-    expect(db.idea.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        workspaceId: "workspace-a", id: "idea-a",
-        status: "DRAFT", updatedAt: observedAt, archivedAt: null,
+    expect(db.idea.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: "workspace-a",
+          id: "idea-a",
+          status: "DRAFT",
+          updatedAt: observedAt,
+          archivedAt: null,
+        }),
       }),
-    }));
+    );
     expect(db.idea.update).not.toHaveBeenCalled();
   });
 
@@ -125,9 +143,9 @@ describe("IdeaService", () => {
     });
     db.idea.findMany.mockResolvedValue([{ topic: "Habits" }]);
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
-    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT"),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects a foreign channel and mismatched series channel", async () => {
@@ -196,7 +214,14 @@ describe("IdeaService", () => {
       costCurrency: "USD",
       workspaceId: "workspace-a",
     });
-    await service.transition(context, "idea-a", "SCHEDULED", observedAt, "APPROVED", new Date(Date.now() + 60_000));
+    await service.transition(
+      context,
+      "idea-a",
+      "SCHEDULED",
+      observedAt,
+      "APPROVED",
+      new Date(Date.now() + 60_000),
+    );
     expect(db.ideaApprovalSnapshot.create).toHaveBeenCalledOnce();
     expect(persisted).toEqual(original);
     expect(await service.getApproved(context, "idea-a")).toMatchObject({
@@ -252,13 +277,19 @@ describe("IdeaService", () => {
     db.idea.findUnique.mockResolvedValue(idea);
     db.idea.findMany.mockResolvedValue([{ topic: "one" }, { topic: "one" }, { topic: "one" }]);
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
-    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toThrow("diversity");
+    await expect(
+      service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT"),
+    ).rejects.toThrow("diversity");
     db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
-    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toThrow("diversity");
+    await expect(
+      service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT"),
+    ).rejects.toThrow("diversity");
     db.idea.findMany.mockResolvedValue([{ topic: "one" }, { topic: "two" }, { topic: "three" }]);
     db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
     db.ideaApprovalSnapshot.create.mockResolvedValue({});
-    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).resolves.toBeDefined();
+    await expect(
+      service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT"),
+    ).resolves.toBeDefined();
   });
 
   it("validates an AI fixture through the same input boundary and records provenance", async () => {

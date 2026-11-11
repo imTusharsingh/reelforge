@@ -145,7 +145,9 @@ suite("IdeaService Prisma tenant ownership", () => {
     const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
     const scopedIdeas = await service.list(context);
     expect(scopedIdeas).toEqual([expect.objectContaining({ id: ideaA, workspaceId: workspaceA })]);
-    await expect(service.transition(context, ideaB, "APPROVED", new Date(), "DRAFT")).rejects.toThrow("Idea not found");
+    await expect(
+      service.transition(context, ideaB, "APPROVED", new Date(), "DRAFT"),
+    ).rejects.toThrow("Idea not found");
     await expect(
       service.create(
         context,
@@ -179,10 +181,12 @@ suite("IdeaService Prisma tenant ownership", () => {
       ),
     ).rejects.toThrow("Series not found");
     const expectedUpdatedAt = (await db.idea.findUniqueOrThrow({ where: { id: ideaA } })).updatedAt;
-    await expect(service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT")).resolves.toBeDefined();
-    await expect(service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT")).rejects.toThrow(
-      "Idea changed",
-    );
+    await expect(
+      service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT"),
+    ).resolves.toBeDefined();
+    await expect(
+      service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT"),
+    ).rejects.toThrow("Idea changed");
   });
 
   it("enforces the workspace/channel composite foreign key", async () => {

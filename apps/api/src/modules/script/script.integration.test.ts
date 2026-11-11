@@ -292,7 +292,9 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       "Script not found",
     );
     await service.approve(context, row.id, row.currentRevision);
-    await expect(service.revise(context, row.id, document, row.currentRevision)).rejects.toThrow("immutable");
+    await expect(service.revise(context, row.id, document, row.currentRevision)).rejects.toThrow(
+      "immutable",
+    );
     const exported = await service.exportApproved(context, row.id);
     expect(exported).toMatchObject({ scriptId: row.id, revision: 1 });
   });

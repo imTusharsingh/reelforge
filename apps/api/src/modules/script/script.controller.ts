@@ -17,7 +17,9 @@ import { scriptDocumentSchema } from "./script.validation.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 
 const expectedRevisionSchema = z.number().int().positive();
-const revisionWriteSchema = z.object({ expectedRevision: expectedRevisionSchema, document: scriptDocumentSchema }).strict();
+const revisionWriteSchema = z
+  .object({ expectedRevision: expectedRevisionSchema, document: scriptDocumentSchema })
+  .strict();
 const approvalWriteSchema = z.object({ expectedRevision: expectedRevisionSchema }).strict();
 const pageSchema = z.coerce.number().int().min(1).max(10000).default(1);
 function pageValue(value: unknown): number {

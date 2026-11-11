@@ -337,7 +337,12 @@ export class ScriptService {
     return row;
   }
 
-  public async revise(context: WorkspaceContext, id: string, body: unknown, expectedRevision: number): Promise<unknown> {
+  public async revise(
+    context: WorkspaceContext,
+    id: string,
+    body: unknown,
+    expectedRevision: number,
+  ): Promise<unknown> {
     this.editor(context);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
       throw new BadRequestException("expectedRevision must be a positive integer");
@@ -385,7 +390,11 @@ export class ScriptService {
     return this.get(context, id);
   }
 
-  public async approve(context: WorkspaceContext, id: string, expectedRevision: number): Promise<unknown> {
+  public async approve(
+    context: WorkspaceContext,
+    id: string,
+    expectedRevision: number,
+  ): Promise<unknown> {
     this.editor(context);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
       throw new BadRequestException("expectedRevision must be a positive integer");
