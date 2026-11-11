@@ -47,7 +47,7 @@ function ChannelList(): JSX.Element {
             ? "Your workspace role is Viewer. Channel editing requires Owner or Editor."
             : roleNotice}
         </Alert>
-      )
+      )}
       <ActionForm
         title="Create a channel"
         fields={[{ key: "name", label: "Channel name" }]}
