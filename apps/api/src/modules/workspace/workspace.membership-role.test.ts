@@ -12,7 +12,7 @@ type Row = {
   membership: { userId: string; role: MemberRole }[];
 };
 
-function fixture() {
+function fixture(): { rows: Row[]; service: WorkspaceService } {
   const rows: Row[] = [
     {
       id: "ws-owner",
@@ -96,7 +96,6 @@ function fixture() {
   const db = { workspace: { findMany } } as unknown as Database;
   return {
     rows,
-    findMany,
     service: new WorkspaceService(db, new WorkspaceRepository(db)),
   };
 }
