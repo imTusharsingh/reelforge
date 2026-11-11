@@ -64,10 +64,10 @@ describe("script tenant and authorization gates", () => {
     } as unknown as Database;
     const service = new ScriptService(scopedDb, llm, new ProviderRegistry());
     await expect(service.get(context(), "foreign-script")).rejects.toThrow("Script not found");
-    await expect(service.approve(context("VIEWER"), "foreign-script")).rejects.toBeInstanceOf(
+    await expect(service.approve(context("VIEWER"), "foreign-script", 1)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
-    await expect(service.revise(context("VIEWER"), "foreign-script", {})).rejects.toBeInstanceOf(
+    await expect(service.revise(context("VIEWER"), "foreign-script", {}, 1)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     await expect(
@@ -117,7 +117,7 @@ describe("script tenant and authorization gates", () => {
       ) => callback({ script: { updateMany: async () => ({ count: 0 }) } }),
     } as unknown as Database;
     const service = new ScriptService(concurrentDb, llm, new ProviderRegistry());
-    await expect(service.revise(context(), "script", document)).rejects.toThrow(
+    await expect(service.revise(context(), "script", document, 1)).rejects.toThrow(
       "changed concurrently",
     );
   });
