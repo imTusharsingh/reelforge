@@ -31,3 +31,7 @@ For every UI change: run lint/format/typecheck/test/build; reproduce the approve
 | Tabs keyboard interaction | NOT RUN | Requires real browser interaction |
 | WCAG contrast measurement | NOT RUN | No measurement output captured |
 | Automated screenshot diff | NOT RUN | No screenshot tooling installed or approved |
+
+## Static palette contrast evidence (2026-11-11)
+
+The M21 test `apps/web/components/ui/color-contrast.test.ts` computes sRGB WCAG luminance from the committed token CSS and asserts **at least 4.5:1** for ink on orange primary action, light paper on orange hover, warm canvas on ink, and ink on paper. These are automated **static token-pair checks only**; they cannot substitute for browser-rendered contrast, focus indicators, actual overlay opacity, and viewport verification. Mobile/dark navigation explicitly uses the light focus outline.

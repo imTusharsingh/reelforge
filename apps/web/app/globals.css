@@ -476,6 +476,12 @@ button:disabled {
   background: rgb(16 18 20 / 65%);
 }
 
+.rf-sidebar :focus-visible,
+.rf-mobile-dialog :focus-visible,
+.rf-mobile-menu .rf-button:focus-visible {
+  outline-color: var(--rf-canvas-warm);
+}
+
 .rf-mobile-dialog-header {
   display: flex;
   align-items: center;

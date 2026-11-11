@@ -23,22 +23,22 @@ On 2026-11-11 the project owner explicitly approved the M21 representative scree
 - Existing design-review artifacts: `FRONTEND_AUDIT.md`, `DESIGN_BRIEF.md`, `design-review/README.md` and four SVGs.
 - Web shell and demo: `apps/web/components/app-shell.tsx`, `apps/web/app/page.tsx`, `apps/web/app/globals.css`.
 - Components: `apps/web/components/ui/primitives.tsx`, `apps/web/components/ui/tabs.tsx`.
-- Tests/docs: `apps/web/components/ui/primitives.test.tsx`, `apps/web/docs/COMPONENT_GUIDE.md`, `apps/web/docs/VISUAL_REGRESSION.md`.
+- Tests/docs: `apps/web/components/ui/primitives.test.tsx`, `apps/web/components/ui/color-contrast.test.ts`, `apps/web/docs/COMPONENT_GUIDE.md`, `apps/web/docs/VISUAL_REGRESSION.md`.
 - M21 `STATUS.md`, append-only `docs/WORK_LOG.md`.
 - Preserved unchanged: `BrandLogo`, `design-tokens.css`, backend, contracts, schema/migrations, CI and root dependencies.
 
 ## Verification at handoff
 - Connected GitHub source inspection and branch ancestry: PASS.
 - `pnpm install --frozen-lockfile`: NOT RUN (no local repository checkout/toolchain available here).
-- `pnpm lint`: NOT RUN locally; rely on CI result at final PR head.
-- `pnpm format:check`: NOT RUN locally; rely on CI result at final PR head.
-- `pnpm typecheck`: NOT RUN locally; rely on CI result at final PR head.
-- `pnpm test`: NOT RUN locally; rely on CI result at final PR head.
-- `pnpm build`: NOT RUN locally; rely on CI result at final PR head.
-- `pnpm db:validate` / `pnpm db:migrate:deploy`: NOT RUN locally (no disposable database).
+- `pnpm lint`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
+- `pnpm format:check`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
+- `pnpm typecheck`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
+- `pnpm test`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
+- `pnpm build`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
+- `pnpm db:validate` / `pnpm db:migrate:deploy`: PASS on GitHub Actions run 42981855710 (CI disposable database); NOT RUN locally.
 - `git diff --check`: NOT RUN locally; GitHub PR diff and CI still require review.
 - Browser keyboard walkthrough 320/375/640/768/1024/1440px: NOT RUN.
-- Contrast measurement / screen reader: NOT RUN.
+- Static sRGB token contrast: locally calculated ink/orange 5.00:1, paper/hover 4.75:1, canvas/ink over 17:1; new Vitest assertions pending final CI. Browser-rendered contrast / screen reader: NOT RUN.
 - Live external provider calls: NONE.
 
 ## Known gaps / requests for Core
