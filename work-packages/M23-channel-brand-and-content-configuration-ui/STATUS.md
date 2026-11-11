@@ -1,12 +1,13 @@
 # M23 Status - Channel, Brand & Content Configuration UI
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED
 - **Assigned session/editor:** Codex M23 implementation session
 - **Branch:** `work/m23-47-channel-brand-content-ui`
 - **Issue:** #47
 - **Last updated:** 2026-11-11
 - **Independent reviewer:** `minu-the-reviewer`
-- **Approved commit:** none
+- **Integrated merge commit:** `f657f4c993337c750b6e2aab4fab43652bb07fb6`
+- **Formal independent GitHub approval:** Not recorded; merged under explicit owner request
 
 ## Branch synchronization
 
@@ -84,3 +85,13 @@ Core's verified workspace membership-role contract merged into main at `05fa1a5`
 **Evidence/remaining gates:** the new role parser has focused unit tests, with hosted CI pending on the role-wiring head. Earlier real browser smoke and mounted tests were performed **before** the contract was available to the UI; end-to-end OWNER/EDITOR/VIEWER, revocation, and real authorized browser-write smoke must not be marked PASS on that earlier evidence. No production readiness or screen-reader/WCAG sign-off is claimed. Privileged M29 action enablement remains separately tracked in Issue #52 to avoid activating unfinished budget validation/mutation handling in this milestone.
 
 The milestone remains `IMPLEMENTED_PENDING_REVIEW` until final code review/merge. After merging, update status to `INTEGRATED` with the actual merge SHA and separately list any outstanding release QA.
+
+## Main integration closeout — 2026-11-11
+
+- Core role contract: [PR #51](https://github.com/imTusharsingh/reelforge/pull/51), merged `05fa1a5c6138dea68c1a7d240fadfab4c95e8a56`; Issue #50 closed.
+- M23 implementation: [PR #49](https://github.com/imTusharsingh/reelforge/pull/49), merged `f657f4c993337c750b6e2aab4fab43652bb07fb6`; Issue #47 closed automatically through `Closes #47`.
+- Exact-head CI [43034987714](https://github.com/imTusharsingh/reelforge/actions/runs/43034987714) succeeded: unit/integration, lint/format/typecheck, build, database migrations and required aggregate check.
+- Workspace role supplied to Channels is validated from authenticated workspace-list response; no OWNER inference from browser storage, and backend remains authorization authority.
+- Post-contract authenticated OWNER/EDITOR/VIEWER browser CRUD, permission revocation, full screen-reader/WCAG and broader production security smoke were **not executed** in the connector integration. Record as remaining release QA, not as verified PASS.
+- M29 privileged role-aware operations remain deferred to [Issue #52](https://github.com/imTusharsingh/reelforge/issues/52) until budget/mutation tests; overall mobile shared UI remains [Issue #48](https://github.com/imTusharsingh/reelforge/issues/48).
+- Formal independent GitHub PR approval was unavailable under the authenticated Developer account, which authored PR #49. The owner explicitly authorized merging after code/CI review; this is not independent reviewer approval.
