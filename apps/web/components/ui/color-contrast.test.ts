@@ -7,8 +7,8 @@ const [lightTokens = "", darkTokens = ""] = tokens.split('[data-theme="dark"]');
 
 function token(name: string, dark = false): string {
   const expression = new RegExp(`--${name}: ([^;]+);`);
-  const raw = (dark ? darkTokens.match(expression)?.[1] : undefined) ??
-    lightTokens.match(expression)?.[1];
+  const fromDark = dark ? darkTokens.match(expression)?.[1] : undefined;
+  const raw = fromDark ?? lightTokens.match(expression)?.[1];
   if (!raw) throw new Error(`Missing semantic token: ${name}`);
   const reference = /^var\(--([\w-]+)\)$/.exec(raw.trim());
   if (reference) return token(reference[1]!, dark);
@@ -34,10 +34,12 @@ function contrast(foreground: string, background: string): number {
 
 describe("M21 semantic accent contrast", () => {
   it.each([false, true])("keeps primary and hover text >= 4.5:1 (dark=%s)", (dark) => {
-    expect(contrast(token("rf-on-accent", dark), token("rf-accent", dark))).toBeGreaterThanOrEqual(4.5);
-    expect(
-      contrast(token("rf-on-accent-hover", dark), token("rf-accent-hover", dark)),
-    ).toBeGreaterThanOrEqual(4.5);
+    const primaryText = token("rf-on-accent", dark);
+    const primaryBackground = token("rf-accent", dark);
+    expect(contrast(primaryText, primaryBackground)).toBeGreaterThanOrEqual(4.5);
+    const hoverText = token("rf-on-accent-hover", dark);
+    const hoverBackground = token("rf-accent-hover", dark);
+    expect(contrast(hoverText, hoverBackground)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("requires the actual component styles to consume semantic foregrounds", () => {
