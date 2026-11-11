@@ -20,7 +20,9 @@ export default function HomePage(): JSX.Element {
       <header className="rf-page-heading">
         <p className="rf-eyebrow">Studio / Overview</p>
         <h1>Your production space</h1>
-        <p>Organize creative work from first idea to final review, one clear step at a time.</p>
+        <p>
+          Organize creative work from first idea to final review, one clear step at a time.
+        </p>
       </header>
       <Panel className="rf-hero-panel">
         <div className="rf-hero-glyph" aria-hidden="true">
@@ -59,7 +61,10 @@ export default function HomePage(): JSX.Element {
               id: "loading",
               label: "Loading",
               content: (
-                <StateMessage kind="loading" description="Content would load here when available." />
+                <StateMessage
+                  kind="loading"
+                  description="Content would load here when available."
+                />
               ),
             },
             {
@@ -76,7 +81,10 @@ export default function HomePage(): JSX.Element {
               id: "success",
               label: "Success",
               content: (
-                <StateMessage kind="success" description="A completed action will be confirmed here." />
+                <StateMessage
+                  kind="success"
+                  description="A completed action will be confirmed here."
+                />
               ),
             },
             {
