@@ -9,7 +9,14 @@ const draft = {
   audience: "audience", references: [], sourceNotes: "", expectedFormat: "short",
   channelId: "channel-a",
 };
-function makeDb() {
+type Mock = ReturnType<typeof vi.fn>;
+type Fixture = {
+  idea: Record<"findUnique" | "findUniqueOrThrow" | "updateMany" | "findMany", Mock>;
+  ideaApprovalSnapshot: { findUnique: Mock };
+  channel: { findUnique: Mock };
+  contentSeries: { findUnique: Mock };
+};
+function makeDb(): Fixture {
   const row = { id: "idea-a", workspaceId: context.workspaceId, status: "DRAFT",
     archivedAt: null, updatedAt: timestamp };
   return {
