@@ -1,0 +1,133 @@
+/* ReelForge design tokens — shared source of truth.
+   Import from the web app global stylesheet. Keep feature styles semantic:
+   use --rf-* tokens rather than introducing local palette/spacing values. */
+
+:root {
+  color-scheme: light;
+
+  /* Brand palette */
+  --rf-ink: #17191c;
+  --rf-ink-deep: #101214;
+  --rf-canvas-warm: #f5f2ec;
+  --rf-paper: #fffefb;
+  --rf-slate: #62676d;
+  --rf-orange: #e85b2a;
+  --rf-orange-hover: #c9471d;
+  --rf-sage: #647b68;
+  --rf-ochre: #a66a16;
+  --rf-red: #b93832;
+  --rf-blue: #315d78;
+
+  /* Semantic light theme */
+  --rf-bg: var(--rf-canvas-warm);
+  --rf-surface: var(--rf-paper);
+  --rf-surface-raised: #ffffff;
+  --rf-surface-muted: #eeebe4;
+  --rf-text: var(--rf-ink);
+  --rf-text-muted: #555b61;
+  --rf-text-subtle: #70767c;
+  --rf-border: #dedad2;
+  --rf-border-strong: #aaa49a;
+  --rf-accent: var(--rf-orange);
+  --rf-accent-hover: var(--rf-orange-hover);
+  --rf-on-accent: #ffffff;
+  --rf-success: #41664a;
+  --rf-warning: #85510d;
+  --rf-danger: #a92f2a;
+  --rf-info: #315d78;
+  --rf-focus: #315d78;
+
+  /* Typography: replace with approved self-hosted brand fonts when selected. */
+  --rf-font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --rf-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --rf-text-xs: 0.75rem;
+  --rf-text-sm: 0.875rem;
+  --rf-text-md: 1rem;
+  --rf-text-lg: 1.125rem;
+  --rf-heading-sm: 1.25rem;
+  --rf-heading-md: 1.5rem;
+  --rf-heading-lg: clamp(1.75rem, 2.4vw, 2.25rem);
+  --rf-leading-tight: 1.2;
+  --rf-leading-normal: 1.5;
+
+  /* 4px spacing scale */
+  --rf-space-1: 0.25rem;
+  --rf-space-2: 0.5rem;
+  --rf-space-3: 0.75rem;
+  --rf-space-4: 1rem;
+  --rf-space-5: 1.25rem;
+  --rf-space-6: 1.5rem;
+  --rf-space-8: 2rem;
+  --rf-space-10: 2.5rem;
+  --rf-space-12: 3rem;
+  --rf-space-16: 4rem;
+
+  /* Shape, elevation, and layout */
+  --rf-radius-sm: 0.375rem;
+  --rf-radius-control: 0.5rem;
+  --rf-radius-panel: 0.75rem;
+  --rf-radius-xl: 1rem;
+  --rf-radius-pill: 999px;
+  --rf-shadow-overlay: 0 16px 48px rgb(16 18 20 / 16%);
+  --rf-content-max: 88rem;
+  --rf-sidebar-width: 16rem;
+  --rf-inspector-width: 20rem;
+  --rf-header-height: 4rem;
+
+  /* Motion */
+  --rf-duration-fast: 120ms;
+  --rf-duration-normal: 180ms;
+  --rf-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Opt-in dark theme. Do not force dark mode until the product theme UX is designed. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --rf-bg: #151719;
+  --rf-surface: #1d2023;
+  --rf-surface-raised: #25292d;
+  --rf-surface-muted: #292d31;
+  --rf-text: #f3f0e9;
+  --rf-text-muted: #c1c4c6;
+  --rf-text-subtle: #969da2;
+  --rf-border: #383e43;
+  --rf-border-strong: #596168;
+  --rf-accent: #f0784e;
+  --rf-accent-hover: #ff916c;
+  --rf-on-accent: #17191c;
+  --rf-success: #8ab596;
+  --rf-warning: #e3b66e;
+  --rf-danger: #f08b84;
+  --rf-info: #8ab6d0;
+  --rf-focus: #8ab6d0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--rf-font-sans);
+  background: var(--rf-bg);
+  color: var(--rf-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--rf-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgb(232 91 42 / 22%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
