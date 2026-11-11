@@ -24,10 +24,10 @@ Mobile navigation uses native `dialog.showModal()` for modal background and focu
 ## Layout and interaction
 
 - 320–1023px: dark mobile header, visible 44px Menu control, compact mark below 640px, single-column work surface.
-- 1024px+: dark sidebar, content grid and optional inspector; inspector is suppressed below 1200px.
+- 1024px+: dark sidebar and content grid; inspector becomes an accessible context dialog until 1200px, when it appears as a persistent rail.
 - Status classes and margins use shared tokens. Shared status fills derive from semantic tokens. Primary action text uses `--rf-on-accent` and hover text uses `--rf-on-accent-hover` in both light and dark theme.
 - Native buttons/select/textarea/inputs retain keyboard behavior; `:focus-visible` comes from design tokens. Motion respects global `prefers-reduced-motion`.
-- Dialog and tabs require actual keyboard/browser testing before final acceptance; component static markup tests cannot prove focus behavior or visual contrast.
+- Dialog and tabs require actual keyboard/browser testing before final acceptance; component source-contract tests cannot prove focus behavior or visual contrast.
 
 ## Future module implementation rules
 

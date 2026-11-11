@@ -23,29 +23,25 @@ On 2026-11-11 the project owner explicitly approved the M21 representative scree
 - Existing design-review artifacts: `FRONTEND_AUDIT.md`, `DESIGN_BRIEF.md`, `design-review/README.md` and four SVGs.
 - Web shell and demo: `apps/web/components/app-shell.tsx`, `apps/web/app/page.tsx`, `apps/web/app/globals.css`.
 - Components: `apps/web/components/ui/primitives.tsx`, `apps/web/components/ui/tabs.tsx`, `apps/web/components/ui/tab-navigation.ts`.
-- Tests/docs: `apps/web/components/app-shell.test.tsx`, `apps/web/components/ui/tab-navigation.test.ts`, `apps/web/components/ui/primitives.test.tsx`, `apps/web/components/ui/color-contrast.test.ts`, `apps/web/docs/COMPONENT_GUIDE.md`, `apps/web/docs/VISUAL_REGRESSION.md`.
+- Tests/docs: `apps/web/components/app-shell.test.ts`, `apps/web/components/ui/tab-navigation.test.ts`, `apps/web/components/ui/primitives.test.ts`, `apps/web/components/ui/color-contrast.test.ts`, `apps/web/docs/COMPONENT_GUIDE.md`, `apps/web/docs/VISUAL_REGRESSION.md`.
 - M21 `STATUS.md`, append-only `docs/WORK_LOG.md`, and approved-direction governance in `docs/DESIGN_SYSTEM.md`.
 - Preserved existing logo `BrandLogo`; updated semantic foregrounds in `design-tokens.css`, backend, contracts, schema/migrations, CI and root dependencies.
 
 ## Verification at handoff
-- Connected GitHub source inspection and branch ancestry: PASS.
-- `pnpm install --frozen-lockfile`: NOT RUN (no local repository checkout/toolchain available here).
-- `pnpm lint`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
-- `pnpm format:check`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
-- `pnpm typecheck`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
-- `pnpm test`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
-- `pnpm build`: PASS on GitHub Actions run 42981855710 (earlier head); final head requires CI recheck.
-- `pnpm db:validate` / `pnpm db:migrate:deploy`: PASS on GitHub Actions run 42981855710 (CI disposable database); NOT RUN locally.
-- `git diff --check`: NOT RUN locally; GitHub PR diff and CI still require review.
-- Browser keyboard walkthrough 320/375/640/768/1024/1440px: NOT RUN.
-- Contrast: light primary ink/orange ≈5.00:1; light hover paper/orange-hover ≈4.73:1; dark primary ink/orange ≈6.29:1; dark hover ink/orange ≈7.98:1, calculated from token hex values. Semantic token assertion tests require final CI on latest head. Browser-rendered contrast / screen reader: NOT RUN.
+- **GitHub Actions run [42987191629](https://github.com/imTusharsingh/reelforge/actions/runs/42987191629): SUCCESS at code head `b47f1073ceb05c96de6a4b9a75e23f605eca4cfa`.**
+- CI `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm db:validate`, `pnpm db:migrate:deploy`, `pnpm test`, `pnpm build`: **PASS** (CI execution, NOT local).
+- Test summary: **78 passed suites / 2 skipped suites; 522 passed tests / 8 skipped tests**. Verified from CI job logs. New `*.test.ts` source-contract, pure keyboard navigation and light/dark semantic contrast suites are collected. Vitest's current JSX transform cannot directly execute TSX component imports under the Next.js `jsx: preserve` settings; no shared test config was changed.
+- `git diff --check`: NOT RUN locally; source inspected via GitHub and CI passed lint/format.
+- Contrast static token calculations: light primary about 5.00:1; light hover about 4.73:1; dark primary about 6.29:1; dark hover about 7.98:1. Automated token tests PASS in CI.
+- Browser viewport screenshots at 320/375/390/640/768/1024/1199/1200/1440/1920px: **NOT RUN**. No browser-backed evidence was captured.
+- Actual keyboard, mobile/menu/context dialog focus containment/Escape/return focus, rendered contrast, screen-reader interaction: **NOT RUN**. Source-contract/unit tests are not proof of these behaviors.
 - Live external provider calls: NONE.
 
 ## Known gaps / requests for Core
 1. B1 responsive inspector is available via native dialog below 1200px; B2 colors use semantic accent foreground tokens in both themes. B3 still requires browser-based keyboard and responsive checks across viewports, real screen-reader walkthrough, and rendered contrast measurement before acceptance.
-2. B4: prior GitHub Actions run 42982706744 passed at f40c947; **current fix head CI result pending**, so do not interpret the earlier run as a final green check. Update this note or PR handoff after final CI.
+2. B4: CI results and test counts recorded from run 42987191629 at code head b47f107. This docs-only closeout requires CI verification at its final commit, separately.
 3. Future module pages must consume the shared shell/components; do not enable planned navigation until routes exist.
 4. M21 stays `IMPLEMENTED_PENDING_REVIEW`; after approval and owner merge, propose `PROJECT_STATE.md` closeout entry in a separate reviewed docs change.
 
 ## Next exact action
-Open M21 implementation PR to `main`, inspect CI and request Minu's independent review. Do not self-approve or merge.
+PR #41 remains open. Obtain actual browser/responsive/keyboard/accessibility evidence and request independent Minu re-review; do not self-approve or merge.

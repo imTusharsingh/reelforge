@@ -931,3 +931,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - B4: M21 STATUS and component/design docs refreshed; final CI run result must be taken from the new PR head after fixes.
 - Commands locally: none, no repository checkout. GitHub Actions CI to verify new commit; no provider calls.
 - Next action: review CI and request independent re-review; do not self-approve or merge.
+
+## 2026-11-11 - M21 PR #41 fix verification
+- Actor/session: M21 implementation session, branch `work/m21-frontend-foundation-design-system`.
+- Exact code head verified: `b47f1073ceb05c96de6a4b9a75e23f605eca4cfa`; CI run 42987191629 succeeded.
+- Actual CI checks: frozen install, lint, formatting, strict types, Prisma validation and migration deployment, tests, build — all PASS.
+- Test totals: 78 suites passed, 2 skipped; 522 tests passed, 8 skipped. The earlier test-discovery gap was resolved by using `*.test.ts`. Pure tab navigation and semantic contrast tests execute. TSX Vite transform does not permit direct component import under the existing Next `jsx: preserve`, so component checks are explicitly static source contracts.
+- External calls: NONE beyond the GitHub integration, no live social/AI provider calls.
+- Remaining B3: no real browser responsive screenshots, focus-trap/Escape/return focus, screen-reader or rendered contrast evidence. Do not mark accessibility acceptance passed or merge until reviewer checks.
+- Next exact action: reviewer requests/collects browser evidence; re-review current PR head after docs CI.
