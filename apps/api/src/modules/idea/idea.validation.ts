@@ -47,6 +47,8 @@ export const aiMetadataSchema = z.object({
 export const transitionSchema = z
   .object({
     status: z.enum(["BACKLOG", "APPROVED", "REJECTED", "SCHEDULED"]),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedStatus: z.enum(["DRAFT", "BACKLOG", "APPROVED", "REJECTED", "SCHEDULED"]),
     scheduledAt: z.string().datetime().optional(),
   })
   .superRefine((value, context) => {

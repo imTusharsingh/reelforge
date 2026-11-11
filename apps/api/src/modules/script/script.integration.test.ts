@@ -291,8 +291,10 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     await expect(service.get({ ...context, workspaceId: randomUUID() }, row.id)).rejects.toThrow(
       "Script not found",
     );
-    await service.approve(context, row.id);
-    await expect(service.revise(context, row.id, document)).rejects.toThrow("immutable");
+    await service.approve(context, row.id, row.currentRevision);
+    await expect(service.revise(context, row.id, document, row.currentRevision)).rejects.toThrow(
+      "immutable",
+    );
     const exported = await service.exportApproved(context, row.id);
     expect(exported).toMatchObject({ scriptId: row.id, revision: 1 });
   });
@@ -316,8 +318,8 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       orderBy: { createdAt: "desc" },
     });
     const results = await Promise.allSettled([
-      service.approve(context, row.id),
-      service.revise(context, row.id, document),
+      service.approve(context, row.id, row.currentRevision),
+      service.revise(context, row.id, document, row.currentRevision),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const final = await db.script.findUniqueOrThrow({
@@ -737,5 +739,45 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     });
     expect(reservation.status).toBe("SETTLED");
     expect(reservation.actualCost?.toString()).toBe("1");
+  });
+  it("rejects stale caller revisions under concurrent PostgreSQL revision writes", async () => {
+    if (!db) return;
+    await db.providerBudget.update({
+      where: { id: budgetId },
+      data: { reserved: 0, spent: 0, periodStart: new Date() },
+    });
+    await service.generate(context, {
+      approvedIdeaSnapshotId: snapshotId,
+      approvedIdeaChecksum: "checksum",
+      prompt: "caller version race",
+      channelId,
+      configSnapshotId,
+      promptSnapshotId,
+    });
+    const script = await db.script.findFirstOrThrow({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
+    });
+    const results = await Promise.allSettled([
+      service.revise(context, script.id, document, script.currentRevision),
+      service.revise(context, script.id, document, script.currentRevision),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const saved = await db.script.findUniqueOrThrow({
+      where: { id: script.id },
+      include: { revisions: true },
+    });
+    expect(saved.currentRevision).toBe(script.currentRevision + 1);
+    expect(saved.revisions).toHaveLength(2);
+    await expect(service.approve(context, script.id, script.currentRevision)).rejects.toThrow(
+      "Script changed since the caller",
+    );
+    expect((await db.script.findUniqueOrThrow({ where: { id: script.id } })).status).not.toBe(
+      "APPROVED",
+    );
+    await service.approve(context, script.id, saved.currentRevision);
+    await expect(
+      service.revise(context, script.id, document, saved.currentRevision),
+    ).rejects.toThrow("immutable");
   });
 });

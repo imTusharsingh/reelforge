@@ -314,6 +314,8 @@ export class IdeaService {
     context: WorkspaceContext,
     id: string,
     next: "BACKLOG" | "APPROVED" | "REJECTED" | "SCHEDULED",
+    expectedUpdatedAt: Date,
+    expectedStatus: "DRAFT" | "BACKLOG" | "APPROVED" | "REJECTED" | "SCHEDULED",
     scheduledAt?: Date,
   ): Promise<unknown> {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
@@ -321,6 +323,8 @@ export class IdeaService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
     });
     if (!idea) throw new NotFoundException("Idea not found");
+    if (idea.updatedAt.getTime() !== expectedUpdatedAt.getTime() || idea.status !== expectedStatus)
+      throw new ConflictException("Idea changed; refresh before transitioning");
     if (idea.archivedAt)
       throw new ConflictException("Restore an archived idea before transitioning");
     if (!transitions[idea.status]?.has(next))
@@ -342,17 +346,23 @@ export class IdeaService {
       approvedAt: next === "APPROVED" || next === "SCHEDULED" ? new Date() : null,
       scheduledAt: next === "SCHEDULED" ? (scheduledAt ?? null) : null,
     };
-    if (next !== "APPROVED" && next !== "SCHEDULED")
-      return this.db.idea.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
-        data: updated,
-      });
     return this.db.$transaction(async (tx) => {
       const changed = await tx.idea.updateMany({
-        where: { workspaceId: context.workspaceId, id, status: idea.status },
+        where: {
+          workspaceId: context.workspaceId,
+          id,
+          updatedAt: expectedUpdatedAt,
+          status: expectedStatus,
+          archivedAt: null,
+        },
         data: updated,
       });
-      if (changed.count !== 1) throw new ConflictException("Idea changed; retry the transition");
+      if (changed.count !== 1)
+        throw new ConflictException("Idea changed; refresh before transitioning");
+      if (next !== "APPROVED" && next !== "SCHEDULED")
+        return tx.idea.findUniqueOrThrow({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+        });
       let snapshot: { id: string; checksumSha256: string } | null;
       if (next === "APPROVED") {
         const data = this.snapshotData({ ...idea, ...updated });

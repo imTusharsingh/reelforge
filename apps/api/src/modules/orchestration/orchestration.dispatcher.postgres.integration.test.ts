@@ -424,7 +424,8 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     clockMs += 61_000;
     await drain(orchestration);
     expect(await db.script.count({ where: { workspaceId } })).toBe(1);
-    await scripts.approve(context, String(scriptId));
+    const observedScript = await db.script.findUniqueOrThrow({ where: { id: String(scriptId) } });
+    await scripts.approve(context, String(scriptId), observedScript.currentRevision);
 
     // Approved script -> real scene media (fixture image provider) -> render queued (external wait).
     clockMs += 61_000;
