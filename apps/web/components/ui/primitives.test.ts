@@ -5,7 +5,7 @@ import { Alert, Badge, Button, Field, StateMessage } from "./primitives";
 
 describe("M21 shared UI accessibility and state contracts", () => {
   it("disables a loading button and announces busy state", () => {
-    const html = renderToStaticMarkup(createElement(Button, { loading: true }, "Save"));
+    const html = renderToStaticMarkup(createElement(Button, { loading: true, children: "Save" }));
     expect(html).toContain('disabled=""');
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain("Working…");
@@ -36,7 +36,7 @@ describe("M21 shared UI accessibility and state contracts", () => {
   });
 
   it("pairs status colors with text", () => {
-    const badge = createElement(Badge, { tone: "warning" }, "Not configured");
+    const badge = createElement(Badge, { tone: "warning", children: "Not configured" });
     const html = renderToStaticMarkup(badge);
     expect(html).toContain("Not configured");
     expect(html).toContain("rf-badge--warning");
@@ -44,7 +44,7 @@ describe("M21 shared UI accessibility and state contracts", () => {
 
   it("provides an explicit alert title", () => {
     const props = { tone: "danger" as const, title: "Unable to save" };
-    const alert = createElement(Alert, props, "Check connection.");
+    const alert = createElement(Alert, { ...props, children: "Check connection." });
     const html = renderToStaticMarkup(alert);
     expect(html).toContain('role="alert"');
     expect(html).toContain("Unable to save");
