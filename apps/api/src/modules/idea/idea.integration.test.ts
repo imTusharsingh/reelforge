@@ -145,7 +145,9 @@ suite("IdeaService Prisma tenant ownership", () => {
     const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
     const scopedIdeas = await service.list(context);
     expect(scopedIdeas).toEqual([expect.objectContaining({ id: ideaA, workspaceId: workspaceA })]);
-    await expect(service.transition(context, ideaB, "APPROVED")).rejects.toThrow("Idea not found");
+    await expect(
+      service.transition(context, ideaB, "APPROVED", new Date(), "DRAFT"),
+    ).rejects.toThrow("Idea not found");
     await expect(
       service.create(
         context,
@@ -178,10 +180,55 @@ suite("IdeaService Prisma tenant ownership", () => {
         "USER",
       ),
     ).rejects.toThrow("Series not found");
-    await expect(service.transition(context, ideaA, "APPROVED")).resolves.toBeDefined();
-    await expect(service.transition(context, ideaA, "APPROVED")).rejects.toThrow(
-      "Cannot transition",
-    );
+    const expectedUpdatedAt = (await db.idea.findUniqueOrThrow({ where: { id: ideaA } })).updatedAt;
+    await expect(
+      service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT"),
+    ).resolves.toBeDefined();
+    await expect(
+      service.transition(context, ideaA, "APPROVED", expectedUpdatedAt, "DRAFT"),
+    ).rejects.toThrow("Idea changed");
+  });
+
+  it("permits exactly one simultaneous status transition with the same observed version", async () => {
+    if (!db) return;
+    const id = randomUUID();
+    const initial = await db.idea.create({
+      data: {
+        id,
+        workspaceId: workspaceA,
+        channelId: channelA,
+        origin: "USER",
+        title: "Atomic version race",
+        normalizedTitle: "atomic version race",
+        topic: "race",
+        hook: "hook",
+        angle: "angle",
+        audience: "audience",
+        references: [],
+        sourceNotes: null,
+        expectedFormat: "short",
+        createdByUserId: ownerId,
+      },
+    });
+    const service = new IdeaService(db as never, {
+      proposeIdea: async (): Promise<never> => {
+        throw new Error("not configured");
+      },
+    });
+    const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
+    const results = await Promise.allSettled([
+      service.transition(context, id, "BACKLOG", initial.updatedAt, "DRAFT"),
+      service.transition(context, id, "REJECTED", initial.updatedAt, "DRAFT"),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const saved = await db.idea.findUniqueOrThrow({ where: { id } });
+    expect(["BACKLOG", "REJECTED"]).toContain(saved.status);
+    await expect(
+      service.transition(context, id, "APPROVED", initial.updatedAt, "DRAFT"),
+    ).rejects.toThrow("Idea changed");
+    expect(
+      await db.ideaApprovalSnapshot.count({ where: { workspaceId: workspaceA, ideaId: id } }),
+    ).toBe(0);
   });
 
   it("enforces the workspace/channel composite foreign key", async () => {

@@ -133,6 +133,8 @@ export class IdeaController {
         context,
         ideaId,
         parsed.data.status,
+        new Date(parsed.data.expectedUpdatedAt),
+        parsed.data.expectedStatus,
         parsed.data.scheduledAt === undefined ? undefined : new Date(parsed.data.scheduledAt),
       ),
     );

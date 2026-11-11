@@ -337,8 +337,15 @@ export class ScriptService {
     return row;
   }
 
-  public async revise(context: WorkspaceContext, id: string, body: unknown): Promise<unknown> {
+  public async revise(
+    context: WorkspaceContext,
+    id: string,
+    body: unknown,
+    expectedRevision: number,
+  ): Promise<unknown> {
     this.editor(context);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
+      throw new BadRequestException("expectedRevision must be a positive integer");
     const document = parseScriptDocument(body);
     validateScript(document);
     const [genre, row] = await Promise.all([
@@ -356,13 +363,15 @@ export class ScriptService {
     validateGenrePolicy(document, genre, row.snapshot.references);
     await this.validateCharacters(context, document);
     if (row.status === "APPROVED") throw new ConflictException("Approved scripts are immutable");
+    if (row.currentRevision !== expectedRevision)
+      throw new ConflictException("Script changed since the caller observed it");
     await this.db.$transaction(async (tx) => {
       const claimed = await tx.script.updateMany({
         where: {
           workspaceId: context.workspaceId,
           id,
-          currentRevision: row.currentRevision,
-          status: { not: "APPROVED" },
+          currentRevision: expectedRevision,
+          status: row.status,
         },
         data: { currentRevision: { increment: 1 }, status: "REVISION_PENDING" },
       });
@@ -372,7 +381,7 @@ export class ScriptService {
         data: {
           workspaceId: context.workspaceId,
           scriptId: id,
-          revision: row.currentRevision + 1,
+          revision: expectedRevision + 1,
           document,
           createdByUserId: context.userId,
         },
@@ -381,8 +390,14 @@ export class ScriptService {
     return this.get(context, id);
   }
 
-  public async approve(context: WorkspaceContext, id: string): Promise<unknown> {
+  public async approve(
+    context: WorkspaceContext,
+    id: string,
+    expectedRevision: number,
+  ): Promise<unknown> {
     this.editor(context);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
+      throw new BadRequestException("expectedRevision must be a positive integer");
     const row = await this.db.script.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
       include: {
@@ -391,6 +406,8 @@ export class ScriptService {
       },
     });
     if (!row) throw new NotFoundException("Script not found");
+    if (row.currentRevision !== expectedRevision)
+      throw new ConflictException("Script changed since the caller observed it");
     if (
       !row.revisions[0] ||
       row.snapshot.checksumSha256 !== row.approvedIdeaChecksum ||
@@ -399,12 +416,13 @@ export class ScriptService {
       throw new ConflictException("Approved idea snapshot is stale or no longer approved");
     }
     // The conditional claim binds approval to exactly the revision validated above.
+    if (row.status === "APPROVED") throw new ConflictException("Script already approved");
     const claimed = await this.db.script.updateMany({
       where: {
         workspaceId: context.workspaceId,
         id,
-        currentRevision: row.currentRevision,
-        status: { not: "APPROVED" },
+        currentRevision: expectedRevision,
+        status: row.status,
       },
       data: { status: "APPROVED", approvedAt: new Date() },
     });
