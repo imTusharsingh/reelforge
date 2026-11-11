@@ -2,8 +2,8 @@
 
 - **State:** IMPLEMENTED_PENDING_REVIEW (estimate ~85%: T05 blocked on owner authorization; T04 partial at the provider boundary; T07 PROJECT_STATE update proposed, not edited)
 - **Assigned session/editor:** Minu backup implementation session (local, Desktop TRACXN-LP-784, no cloud agent), run in parallel with the VS Code session on the main checkout.
-- **Branch/worktree:** `work/m20-core-integration-and-release-gate-minu` in worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m20-minu`, from `origin/main` `97dd104413d1107f3d26b85b8dfa3c33d10e5e94`. Pushed; **no PR opened** (owner chooses which M20 implementation lands).
-- **Last updated:** 2026-11-10 (IST)
+- **Branch/worktree:** `work/m20-core-integration-and-release-gate-minu` in worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m20-minu`, merged with latest `origin/main` `cd2ab662b727471ce65739f3db1d729c2d8229e3`; final local candidate `3eac5d2dcadf68065af1beaaef5143e4a0e0750a`.
+- **Last updated:** 2026-11-11 (IST)
 - **Reviewer:** Core Architect/Reviewer (Minu)
 - **Approved commit:** none
 
@@ -13,7 +13,7 @@ Core integration review and release gate for M00–M19: approval records, cross-
 ## Task checklist
 - [x] **M20-T01** Approval matrix for all 20 modules (`INTEGRATION_REVIEW.md` T01). 20/20 have a written approval record; 6 are COMMENTED written approvals (M00–M04 under `imTusharsingh`, M09 author-blocked) and M06 PR #14 was merged before review and corrected by approved PR #15. Re-verified with `gh api .../pulls/<n>/reviews` on 2026-11-10 20:42 IST.
 - [x] **M20-T02** Contracts and schema (`INTEGRATION_REVIEW.md` T02). Event registry vs code: findings E1–E6. Schema drift: 84 lines pre-existing, identical before/after (S1–S6). M20 changed no shared file and adds no migration. Migration ordering is now enforced by `release-gate.migrations.test.ts`.
-- [x] **M20-T03** Full checks run (see "Commands and evidence").
+- [x] **M20-T03** Full checks run after merging latest `origin/main` (see "Commands and evidence").
 - [~] **M20-T04** Local end-to-end, **partial**. Real local rendering: with `FFMPEG_PATH`/`FFPROBE_PATH` set to FFmpeg 7.0.2-static the full suite runs **518/518 with 0 skips**, so the M10 real-render and M11 probe paths ran against real FFmpeg. The content pipeline cannot run idea → script → media → publish offline without fake success, because no AI adapter is bound (ADR-007). `release-gate.provider-boundary.integration.test.ts` proves the boundary fails clearly: every default AI / email / billing / Instagram adapter is NOT_CONFIGURED and rejects, the registry is empty, every AI capability has a `null` cost model, and an AI idea proposal over HTTP creates no idea, no ledger row and no reservation. Fixtures are marked in each test.
 - [ ] **M20-T05** Live provider verification: **BLOCKED, not authorized**. Gate 4 checklist written in `RELEASE_CHECKLIST.md`; nothing live was run.
 - [x] **M20-T06** Security / tenant isolation / cost / idempotency / failure recovery (`INTEGRATION_REVIEW.md` T06). Tenant sweep covers 159 `:workspaceId` routes as another workspace's OWNER; representative valid-payload channel create/update mutations assert 403 and zero victim-side effects; all 159 return 401 without a session; unscoped routes pinned to a reviewed allowlist of 8. Findings C1 (HIGH), C2 (LOW), C3 (owner gates). M10–M19 residuals and PR #36 N1–N4 carried.
@@ -31,7 +31,7 @@ Core integration review and release gate for M00–M19: approval records, cross-
 Tests only, under a new test folder; there is no new Nest module, no `app.module.ts` change, no product code change, no dependency, no migration, no `schema.prisma`, `packages/contracts/**`, `ci.yml` or `PROJECT_STATE.md` change.
 
 ## Commands and evidence
-Run in the worktree with Node 24.22.2 / pnpm 12.16.1, disposable Postgres 18.6 `reelforge-m20-minu-db` on 127.0.0.1:55438 and Redis 7 `reelforge-m20-minu-redis` on 127.0.0.1:56380 (all three ports were free). Raw output: `.local-data/m20-verify.log` (final run) and `m20-verify-run1.log` (first run).
+Run after merging `origin/main` `cd2ab66` with Node 24.22.2 / pnpm 12.16.1, disposable Postgres 18.6 `reelforge-m20-minu-db` on 127.0.0.1:55438 and Redis 7 `reelforge-m20-minu-redis` on 127.0.0.1:56380. Raw output is in ignored `.local-data/m20-*.log` files.
 
 | # | Command | Result |
 |---|---|---|
@@ -43,14 +43,14 @@ Run in the worktree with Node 24.22.2 / pnpm 12.16.1, disposable Postgres 18.6 `
 | 6 | `pnpm db:validate` | PASS |
 | 7 | `pnpm db:migrate:deploy` on a freshly dropped/created DB | PASS, "27 migrations found", all applied |
 | 8 | `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` | 84 lines, byte-identical to the pre-change baseline (no new drift) |
-| 9 | `pnpm test` with `DATABASE_URL` + `REDIS_URL` | PASS: 75 files passed / 1 skipped; **513 passed / 5 skipped** (FFmpeg) |
-| 10 | `pnpm test` with `DATABASE_URL`, no `REDIS_URL` | PASS: 74 files / 2 skipped; **510 passed / 8 skipped** |
-| 11 | `pnpm test` with `FFMPEG_PATH`/`FFPROBE_PATH` (FFmpeg 7.0.2-static from the main checkout's `.local-tools/`) + Redis | PASS: 76 files; **518 passed / 0 skipped** |
-| 12 | API smoke `node apps/api/dist/main.js` on `PORT=3005` (Postgres 55438, Redis 56380) | PASS: `/health`, `probe=liveness`, `probe=readiness` (`database: OK`) 200; `/ops/metrics` 404 without token, 404 with a wrong token, 200 Prometheus text with the token; register 201, login 201, create workspace 201; WORKSPACE emergency stop on 200 / off 200; audit list 200 (3 rows); second user on the first user's channels / audit / stop 403; unauthenticated 401. M20 adds no route. |
+| 9 | `pnpm test` with `DATABASE_URL` + `REDIS_URL` | PASS: 75 files passed / 1 skipped; **514 passed / 5 skipped** (FFmpeg) |
+| 10 | `pnpm test` with `DATABASE_URL`, no `REDIS_URL` | PASS: 74 files / 2 skipped; **511 passed / 8 skipped** |
+| 11 | `pnpm test` with `FFMPEG_PATH`/`FFPROBE_PATH` set to the main checkout's read-only `.local-tools/` + Redis | PASS after the documented M08 prior-day flake rerun: **518 passed / 1 initial failure**, then the focused 14-test file rerun passed; the M20 release-gate suite passed 11/11. |
+| 12 | API smoke on `PORT=3005` | PASS for post-merge health/liveness/readiness (200, database OK), metrics without token (404), unauthenticated `/workspaces` (401), and registration/login (201). Full workspace creation/cross-tenant flow was not rerun because this API uses session cookies rather than a response token; the dedicated HTTP integration suite covers 403/401 tenant behavior. |
 | 13 | `pnpm audit --prod` | "No known vulnerabilities found" |
 | 14 | `git diff --check origin/main...HEAD` | clean |
 
-First run (`m20-verify-run1.log`): with Redis, 2 failures; without Redis, 1. (a) The known M08 25 ms prior-day flake (`script.integration.test.ts`, "keeps a prior-day response auditable…"); it passed on the rerun. (b) M19 `admin.http.integration.test.ts` "audits config…" failed because my first draft of the tenant sweep wrote hundreds of DENIED rows into the shared append-only `audit_events` table, and that M19 test reads the table by time window without a workspace filter. Fixed in commit `37c167a`: the release-gate apps bind an in-memory audit sink at the test seam (the real interceptor still runs). The full rerun above is green. The VS Code session's draft has the same interference; see Core decision 10.
+The first FFmpeg-enabled post-merge run had the known M08 prior-day flake; the focused 14-test rerun passed. A separate M17 schedule timeout also passed on a focused rerun. The M20 release-gate suite passed 3 files / 11 tests. Earlier audit-table interference was fixed in commit `37c167a` by binding an in-memory audit sink at the test seam.
 
 ## Contract/schema proposals
 - None applied. Proposed only (Core decisions 5 and 6): registry consumer correction / outbox relay, and an optional drift-reconcile migration `20261119010000_m20_schema_drift_reconcile`.
