@@ -921,3 +921,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Decisions: owner design direction approved; no production release permission. No new dependency or backend/schema/CI changes.
 - Risks: browser-only focus trap, keyboard controls, 320–1440px responsive behavior and contrast still require independent measured evidence.
 - Next exact action: open the M21 PR, verify CI, request Minu independent review, no self-merge.
+
+## 2026-11-11 - M21 PR #41 review fixes B1–B4
+- Actor/session: M21 implementation session, branch `work/m21-frontend-foundation-design-system`.
+- Review request: Minu requested changes on PR #41 (review 5855644795).
+- B1: responsive View context control uses native dialog with Close/Escape and focus return; context remains available below 1200px instead of being hidden.
+- B2: shared semantic accent/on-accent foreground pair and hover pair align between token source and CSS across light/dark themes.
+- B3: added static shell accessibility contracts and pure keyboard tab tests; documented browser viewport/focus/contrast walkthrough. **Actual browser interaction and visual screenshot evidence NOT RUN in this session.**
+- B4: M21 STATUS and component/design docs refreshed; final CI run result must be taken from the new PR head after fixes.
+- Commands locally: none, no repository checkout. GitHub Actions CI to verify new commit; no provider calls.
+- Next action: review CI and request independent re-review; do not self-approve or merge.

@@ -11,11 +11,11 @@ Capture these viewports in a supported browser at 100% zoom: 320×720, 375×812,
 ## Manual acceptance walkthrough
 
 1. At 320px width ensure no horizontal page scrollbar, no clipped controls; at 375/640/768/1024/1440 repeat and record PASS/FAIL for each.
-2. Keyboard: Tab first reaches "Skip to content"; Enter moves focus to main. At 390px Tab reaches Menu; Enter opens modal; focus stays inside; Escape closes; focus returns to Menu. Repeat using Close button. A browser is required to prove this.
-3. At the state tabs use ArrowRight, ArrowLeft, Home, End; ensure tab focus/selection and `aria-selected` agree; use Tab to reach the panel.
-4. Inspect focus-visible and confirm contrast against WCAG 2.2 AA (normal text 4.5:1, large text 3:1, non-text UI boundaries 3:1). Record actual measured foreground/background pairs and method. No assumed passing scores.
-5. Toggle reduced motion and inspect transitions. Confirm screen reader announcement for status/error and accessible mark label.
-6. Refresh/close menu; no phantom navigation or fake provider action should occur.
+2. At 320px, 390px, 1024px and 1199px activate **View context**, ensure the context is visible in the native modal, focus stays inside, Escape and Close both return focus to the trigger; repeat at 1200px to confirm the fixed context rail replaces the drawer.\n3. Keyboard: Tab first reaches "Skip to content"; Enter moves focus to main. At 390px Tab reaches Menu; Enter opens modal; focus stays inside; Escape closes; focus returns to Menu. Repeat using Close button. A browser is required to prove this.
+4. At the state tabs use ArrowRight, ArrowLeft, Home, End; ensure tab focus/selection and `aria-selected` agree; use Tab to reach the panel.
+5. Inspect focus-visible and confirm contrast against WCAG 2.2 AA (normal text 4.5:1, large text 3:1, non-text UI boundaries 3:1). Record actual measured foreground/background pairs and method. No assumed passing scores.
+6. Toggle reduced motion and inspect transitions. Confirm screen reader announcement for status/error and accessible mark label.
+7. Refresh/close menu; no phantom navigation or fake provider action should occur.
 
 ## Change control
 
@@ -27,11 +27,11 @@ For every UI change: run lint/format/typecheck/test/build; reproduce the approve
 |---|---|---|
 | Component semantic markup tests | See latest M21 STATUS / PR CI | Static HTML checks only |
 | Manual 320–1920px viewport screenshots | NOT RUN | No browser-backed visual session was performed |
-| Dialog focus trap and Escape/return focus | NOT RUN | Requires real browser interaction |
-| Tabs keyboard interaction | NOT RUN | Requires real browser interaction |
-| WCAG contrast measurement | NOT RUN | No measurement output captured |
+| Navigation and inspector dialog focus, Escape/return focus | NOT RUN | Requires real browser interaction; markup and CSS contract tests added |
+| Tabs keyboard interaction | PARTIAL | Pure navigation keys tested; real browser focus still NOT RUN |
+| Semantic light/dark sRGB accent contrast | TESTED IN CI | Actual semantic token pairs and CSS consumption asserted; rendered contrast and screen reader NOT RUN |
 | Automated screenshot diff | NOT RUN | No screenshot tooling installed or approved |
 
 ## Static palette contrast evidence (2026-11-11)
 
-The M21 test `apps/web/components/ui/color-contrast.test.ts` computes sRGB WCAG luminance from the committed token CSS and asserts **at least 4.5:1** for ink on orange primary action, light paper on orange hover, warm canvas on ink, and ink on paper. These are automated **static token-pair checks only**; they cannot substitute for browser-rendered contrast, focus indicators, actual overlay opacity, and viewport verification. Mobile/dark navigation explicitly uses the light focus outline.
+The M21 test `apps/web/components/ui/color-contrast.test.ts` computes sRGB WCAG luminance from the committed token CSS and asserts **at least 4.5:1** for semantic primary and hover foreground/background pairs in light **and** dark themes. It also checks the component stylesheet consumes those semantic foreground tokens. These are automated **static token-pair checks only**; they cannot substitute for browser-rendered contrast, focus indicators, actual overlay opacity, and viewport verification. Mobile/dark navigation explicitly uses the light focus outline.

@@ -17,13 +17,15 @@ Use semantic HTML. Text inputs require an explicit unique `id` and `label`. Erro
 
 `Tabs` uses semantic tablist/tab/tabpanel roles. Arrow Left/Right and Home/End move focus and activate a tab, Tab moves to the selected panel. Provide stable unique item IDs and concise labels. The tablist scrolls horizontally on narrow screens.
 
+At widths below 1200px, the context rail remains reachable through **View context** in the header: the control opens a right-aligned native modal `<dialog>` and the close control/ Escape return focus to the trigger. The desktop rail remains visible at >=1200px. Native dialog focus containment is subject to browser verification.
+
 Mobile navigation uses native `dialog.showModal()` for modal background and focus containment. Escape closes the dialog by browser default; the close button and `onClose` return focus to the Menu trigger. For semantic accuracy, future feature destinations are rendered as **non-clickable planned labels**; they are not navigable links or working routes.
 
 ## Layout and interaction
 
 - 320–1023px: dark mobile header, visible 44px Menu control, compact mark below 640px, single-column work surface.
 - 1024px+: dark sidebar, content grid and optional inspector; inspector is suppressed below 1200px.
-- Status classes and margins use shared tokens. Raw status surface fills in the shared CSS are foundation constants and should be moved to semantic tokens through review before adding more variants.
+- Status classes and margins use shared tokens. Shared status fills derive from semantic tokens. Primary action text uses `--rf-on-accent` and hover text uses `--rf-on-accent-hover` in both light and dark theme.
 - Native buttons/select/textarea/inputs retain keyboard behavior; `:focus-visible` comes from design tokens. Motion respects global `prefers-reduced-motion`.
 - Dialog and tabs require actual keyboard/browser testing before final acceptance; component static markup tests cannot prove focus behavior or visual contrast.
 
