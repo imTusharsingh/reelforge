@@ -10,7 +10,42 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type ResponseGuard<T> = (payload: unknown) => payload is T;
+
+function isRecord(payload: unknown): payload is Record<string, unknown> {
+  return typeof payload === "object" && payload !== null;
+}
+
+function isAuthResponse(payload: unknown): payload is { userId: string } {
+  return isRecord(payload) && typeof payload.userId === "string" && payload.userId.length > 0;
+}
+
+function isWorkspace(payload: unknown): payload is Workspace {
+  return (
+    isRecord(payload) &&
+    typeof payload.id === "string" &&
+    payload.id.length > 0 &&
+    typeof payload.name === "string" &&
+    payload.name.length > 0 &&
+    (payload.archivedAt === undefined ||
+      payload.archivedAt === null ||
+      typeof payload.archivedAt === "string")
+  );
+}
+
+function isWorkspaceList(payload: unknown): payload is Workspace[] {
+  return Array.isArray(payload) && payload.every(isWorkspace);
+}
+
+function isLogoutResponse(payload: unknown): payload is { ok: true } {
+  return isRecord(payload) && payload.ok === true;
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit | undefined,
+  guard: ResponseGuard<T>,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api/v1${path}`, {
@@ -33,22 +68,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
             : "The request could not be completed.";
     throw new ApiError(response.status, message);
   }
-  return payload as T;
+  if (!guard(payload)) throw new ApiError(502, "The service returned an invalid response.");
+  return payload;
 }
 
 export const api = {
   login: (email: string, password: string): Promise<{ userId: string }> =>
-    request<{ userId: string }>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
+    request(
+      "/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      },
+      isAuthResponse,
+    ),
   register: (email: string, password: string, displayName: string): Promise<{ userId: string }> =>
-    request<{ userId: string }>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, displayName }),
-    }),
-  logout: (): Promise<{ ok: true }> => request<{ ok: true }>("/auth/logout", { method: "POST" }),
-  listWorkspaces: (): Promise<Workspace[]> => request<Workspace[]>("/workspaces"),
+    request(
+      "/auth/register",
+      {
+        method: "POST",
+        body: JSON.stringify({ email, password, displayName }),
+      },
+      isAuthResponse,
+    ),
+  logout: (): Promise<{ ok: true }> =>
+    request("/auth/logout", { method: "POST" }, isLogoutResponse),
+  listWorkspaces: (): Promise<Workspace[]> => request("/workspaces", undefined, isWorkspaceList),
   createWorkspace: (name: string): Promise<Workspace> =>
-    request<Workspace>("/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
+    request("/workspaces", { method: "POST", body: JSON.stringify({ name }) }, isWorkspace),
 };

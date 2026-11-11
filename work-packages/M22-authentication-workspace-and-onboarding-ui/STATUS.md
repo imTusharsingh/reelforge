@@ -37,6 +37,7 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - PASS — frozen install via Corepack pnpm 12.16.1 (host Node 24.22.1 vs pinned 24.22.2).
 - PASS — lint, format:check, root typecheck with a syntactically valid DATABASE_URL, and web build.
 - PASS — focused M21/M22 frontend tests: 5 files, 13 tests.
+- PASS — review-fix frontend tests: 6 files, 16 tests, including logout policy and malformed response guards.
 - FAIL/BLOCKED — initial repository-wide test: 43 suites / 213 tests passed, 36 failed because generated Prisma client was absent; after generation, no full rerun was completed.
 - BLOCKED — db:validate: no disposable PostgreSQL instance was available.
 - NOT RUN — browser screenshots, keyboard/dialog walkthrough, screen reader, rendered contrast and end-to-end API smoke.
@@ -47,19 +48,22 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - Verified workspace list/create/update/archive under `/api/v1`; list returns `id`, `name`, `archivedAt` but not membership role.
 - Safe browser strategy: relative `/api/v1` calls through the Next rewrite; credentials included; no token in browser storage.
 - Missing contracts requiring Core approval: password recovery; authenticated-user profile GET/PATCH; workspace membership role metadata. Do not implement these as client-side fiction.
+- Security disposition: SameSite=Strict and same-origin proxying are not treated as complete CSRF/origin protection. Production security acceptance is blocked pending a Core-approved strategy; no backend change was made in M22.
 
 ## Blockers / risks / unknowns
 
 - Profile edits and password recovery remain unavailable until backend contracts exist.
 - Privileged role-aware navigation is withheld because roles are not returned by the workspace list.
 - No explicit CSRF layer was found; Core security review should decide whether one is required before production.
+- Logout keeps the authenticated view on transport/5xx failure and only clears local state for confirmed logout or an already-invalid 401 session.
+- Runtime response guards reject malformed auth, logout and workspace payloads with a safe client error.
 - Browser visual/accessibility evidence and live API smoke remain outstanding.
 
 
 
 ## Next exact action
 
-Run the browser walkthrough at required viewports, review the diff and security/contract gaps, then request independent review from `minu-the-reviewer`; do not merge or mark approved.
+Run the browser walkthrough at required viewports, obtain Core approval for the CSRF/origin strategy, and request independent review from an account distinct from the PR author; do not merge or mark approved.
 
 ## Handoff notes
 

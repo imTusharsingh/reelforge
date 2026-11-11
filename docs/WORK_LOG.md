@@ -950,3 +950,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Security: no localStorage/sessionStorage tokens or bearer workaround; only workspace ID preference is stored. Relative same-origin requests include credentials. CSRF hardening remains a Core decision because the API has no explicit CSRF layer.
 - Risks/blockers: password recovery, profile mutation and role-aware privileged navigation require backend contracts; no production capability is fabricated. Browser visual/focus/accessibility evidence remains outstanding.
 - Next exact action: Core review of the diff and security/contract gaps, then browser walkthrough and independent review by `minu-the-reviewer`; do not self-approve or merge.
+
+## 2026-11-11 - M22 review fixes B1–B5 in progress
+- Review: PR #44 requested changes by `imTusharsingh` in review `5856669977` on head `3637ead`; CI run `42995779987` passed on the prior head.
+- B1/B2: logout now distinguishes already-invalid 401 sessions from transport/5xx failures; failed revocation keeps the authenticated studio visible with an explicit error. Workspace refresh/creation handles 401 centrally, clears stale workspace preference and selects only after refresh succeeds.
+- B3: added hand-written runtime guards for auth, logout and workspace responses; malformed JSON or payload shapes become safe client errors. Added malformed-response and logout/session-policy tests.
+- B4: documented that SameSite=Strict and same-origin proxying are not complete CSRF/origin acceptance; production security remains blocked on Core’s strategy. No backend/shared-contract files changed.
+- B5: next commit identity is set to the Developer GitHub profile (`imTusharsingh`, `rajputtushar309@gmail.com`), not the reviewer profile. Independent-reviewer eligibility remains an open PR-handoff check because PR #44 was originally opened under the reviewer identity.
+- Verification after fixes: web typecheck PASS; focused frontend tests 6 files/16 tests PASS. Browser, live API and database validation remain open.

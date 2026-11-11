@@ -5,6 +5,7 @@ import { AppShell } from "./app-shell";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type Workspace } from "../lib/api";
 import { validateAuth, type AuthMode } from "../lib/auth-validation";
+import { isAlreadyInvalidSession, sessionFailureMessage } from "../lib/session-policy";
 
 type View = "auth" | "onboarding" | "studio";
 
@@ -137,7 +138,7 @@ function WorkspaceSetup({
 }: {
   workspaces: Workspace[];
   onSelected: (workspace: Workspace) => void;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<Workspace[] | null>;
 }): JSX.Element {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -152,8 +153,8 @@ function WorkspaceSetup({
     setError("");
     try {
       const workspace = await api.createWorkspace(name.trim());
-      onSelected(workspace);
-      await onRefresh();
+      const refreshed = await onRefresh();
+      if (refreshed !== null) onSelected(workspace);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -215,10 +216,12 @@ function Studio({
   workspace,
   onSwitch,
   onLogout,
+  logoutError,
 }: {
   workspace: Workspace;
   onSwitch: () => void;
   onLogout: () => Promise<void>;
+  logoutError: string;
 }): JSX.Element {
   return (
     <AppShell
@@ -251,6 +254,11 @@ function Studio({
         <h1>{workspace.name}</h1>
         <p>Your production space is ready for its next deliberate step.</p>
       </header>
+      {logoutError && (
+        <Alert tone="danger" title="Sign out did not complete">
+          {logoutError}
+        </Alert>
+      )}
       <div className="rf-studio-grid">
         <Panel>
           <p className="rf-eyebrow">Workspace</p>
@@ -287,14 +295,30 @@ export function AuthWorkspace(): JSX.Element {
   const [selected, setSelected] = useState<Workspace | null>(null);
   const [booting, setBooting] = useState(true);
   const [sessionError, setSessionError] = useState("");
-  const refresh = async (): Promise<Workspace[]> => {
-    const items = await api.listWorkspaces();
-    setWorkspaces(items);
-    return items;
+  const [logoutError, setLogoutError] = useState("");
+  const clearSession = (): void => {
+    window.localStorage.removeItem("reelforge.activeWorkspace");
+    setSelected(null);
+    setView("auth");
+  };
+  const refresh = async (): Promise<Workspace[] | null> => {
+    try {
+      const items = await api.listWorkspaces();
+      setWorkspaces(items);
+      return items;
+    } catch (cause) {
+      if (isAlreadyInvalidSession(cause)) {
+        clearSession();
+        setSessionError(sessionFailureMessage(cause));
+        return null;
+      }
+      throw cause;
+    }
   };
   const loadSession = async (): Promise<void> => {
     try {
       const items = await refresh();
+      if (items === null) return;
       const saved = window.localStorage.getItem("reelforge.activeWorkspace");
       const item = items.find((candidate) => candidate.id === saved);
       if (item) {
@@ -317,14 +341,14 @@ export function AuthWorkspace(): JSX.Element {
     setView("studio");
   };
   const logout = async (): Promise<void> => {
+    setLogoutError("");
     try {
       await api.logout();
-    } catch {
-      /* expired sessions are already invalidated */
+      clearSession();
+    } catch (cause) {
+      if (isAlreadyInvalidSession(cause)) clearSession();
+      else setLogoutError(sessionFailureMessage(cause));
     }
-    window.localStorage.removeItem("reelforge.activeWorkspace");
-    setSelected(null);
-    setView("auth");
   };
   const message = useMemo(
     () =>
@@ -347,22 +371,20 @@ export function AuthWorkspace(): JSX.Element {
         <AuthForm
           onAuthenticated={async () => {
             setSessionError("");
-            await refresh();
-            setView("onboarding");
+            if ((await refresh()) !== null) setView("onboarding");
           }}
         />
         {message}
       </>
     );
   if (view === "onboarding" || !selected)
-    return (
-      <WorkspaceSetup
-        workspaces={workspaces}
-        onSelected={choose}
-        onRefresh={async () => {
-          await refresh();
-        }}
-      />
-    );
-  return <Studio workspace={selected} onSwitch={() => setView("onboarding")} onLogout={logout} />;
+    return <WorkspaceSetup workspaces={workspaces} onSelected={choose} onRefresh={refresh} />;
+  return (
+    <Studio
+      workspace={selected}
+      onSwitch={() => setView("onboarding")}
+      onLogout={logout}
+      logoutError={logoutError}
+    />
+  );
 }
