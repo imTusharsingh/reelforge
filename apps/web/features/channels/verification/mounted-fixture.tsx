@@ -162,7 +162,7 @@ function Fixture(): JSX.Element {
   };
   const client = new ChannelsClient(workspace, controller.signal, role);
   return (
-    <ChannelsScope key={`${workspace}-${role}`} workspaceId={workspace}>
+    <ChannelsScope key={`${workspace}-${role}`} workspaceId={workspace} role={role}>
       <ClientContext.Provider value={client}>
         <h1>Mounted M23 test fixture</h1>
         <p data-testid="workspace">{workspace}</p>
