@@ -413,7 +413,7 @@ export class ScriptService {
         workspaceId: context.workspaceId,
         id,
         currentRevision: expectedRevision,
-        status: row.status === "APPROVED" ? "DRAFT" : row.status,
+        status: row.status,
       },
       data: { status: "APPROVED", approvedAt: new Date() },
     });
