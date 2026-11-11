@@ -211,7 +211,7 @@ suite("IdeaService Prisma tenant ownership", () => {
       },
     });
     const service = new IdeaService(db as never, {
-      proposeIdea: async () => {
+      proposeIdea: async (): Promise<never> => {
         throw new Error("not configured");
       },
     });
