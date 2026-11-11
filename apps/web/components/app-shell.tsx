@@ -45,9 +45,11 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
 export function AppShell({
   children,
   inspector,
+  shellActions,
 }: {
   children: ReactNode;
   inspector?: ReactNode;
+  shellActions?: ReactNode;
 }): JSX.Element {
   const menu = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -76,6 +78,7 @@ export function AppShell({
           </div>
           <span className="rf-breadcrumb">{breadcrumb}</span>
           <span className="rf-shell-label">Design foundation</span>
+          {shellActions}
           {inspector && (
             <button
               ref={inspectorTrigger}

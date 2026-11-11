@@ -996,3 +996,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Owner feedback: remove remaining milestone identifiers from product code after the structural refactor.
 - Changes: renamed Operations context/data/API/error/loader identifiers, test labels, DOM IDs and user-facing copy from M29 terminology to Operations terminology. Historical work-package references remain only in governance documentation.
 - Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests) and diff check PASS.
+
+## 2026-11-11 - M29 latest review UX and route-boundary fixes
+- Review fixes: moved workspace switch/sign-out into persistent AppShell controls so Operations retains authenticated session actions; replaced pathname/Operations boolean branching with a typed `StudioRoute` content registry supplied by each URL page.
+- QA: added source-contract tests for enabled Operations navigation, active-page semantics, shared shell actions, and route-boundary registration. Focused frontend suite now passes 8 files / 24 tests; web typecheck, lint and format:check pass. Browser/session-expiry smoke remains NOT RUN.

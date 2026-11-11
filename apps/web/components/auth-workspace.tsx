@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { AppShell } from "./app-shell";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type Workspace } from "../lib/api";
@@ -234,15 +242,54 @@ function WorkspaceSetup({
   );
 }
 
+type StudioRoute = "overview" | "operations";
+
+function OverviewContent({ workspace }: { workspace: Workspace }): JSX.Element {
+  return (
+    <>
+      <header className="rf-page-heading">
+        <p className="rf-eyebrow">Studio / Overview</p>
+        <h1>{workspace.name}</h1>
+        <p>Your production space is ready for its next deliberate step.</p>
+      </header>
+      <div className="rf-studio-grid">
+        <Panel>
+          <p className="rf-eyebrow">Workspace</p>
+          <h2>Keep the room focused.</h2>
+          <p className="rf-muted">
+            You are working in <strong>{workspace.name}</strong>. Workspace access is enforced by
+            the API for every request.
+          </p>
+        </Panel>
+        <Panel>
+          <p className="rf-eyebrow">Account settings</p>
+          <h2>Profile settings unavailable</h2>
+          <p className="rf-muted">
+            The current API does not expose an authenticated-user profile endpoint, so account edits
+            are intentionally unavailable.
+          </p>
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+const studioContent: Record<StudioRoute, (workspace: Workspace) => JSX.Element> = {
+  overview: (workspace) => <OverviewContent workspace={workspace} />,
+  operations: (workspace) => (
+    <OperationsDashboard context={{ workspaceId: workspace.id, role: "UNKNOWN" }} />
+  ),
+};
+
 function Studio({
   workspace,
-  operations,
+  content,
   onSwitch,
   onLogout,
   logoutError,
 }: {
   workspace: Workspace;
-  operations: boolean;
+  content: ReactNode;
   onSwitch: () => void;
   onLogout: () => Promise<void>;
   logoutError: string;
@@ -272,61 +319,34 @@ function Studio({
           </p>
         </>
       }
+      shellActions={
+        <div className="rf-actions">
+          <Button onClick={onSwitch} tone="secondary">
+            Switch workspace
+          </Button>
+          <Button onClick={onLogout} tone="ghost">
+            Sign out
+          </Button>
+        </div>
+      }
     >
-      {!operations && (
-        <header className="rf-page-heading">
-          <p className="rf-eyebrow">Studio / Overview</p>
-          <h1>{workspace.name}</h1>
-          <p>Your production space is ready for its next deliberate step.</p>
-        </header>
-      )}
       {logoutError && (
         <Alert tone="danger" title="Sign out did not complete">
           {logoutError}
         </Alert>
       )}
-      {operations ? (
-        <OperationsDashboard context={{ workspaceId: workspace.id, role: "UNKNOWN" }} />
-      ) : (
-        <div className="rf-studio-grid">
-          <Panel>
-            <p className="rf-eyebrow">Workspace</p>
-            <h2>Keep the room focused.</h2>
-            <p className="rf-muted">
-              You are working in <strong>{workspace.name}</strong>. Workspace access is enforced by
-              the API for every request.
-            </p>
-            <div className="rf-actions">
-              <Button onClick={onSwitch} tone="secondary">
-                Switch workspace
-              </Button>
-              <Button onClick={onLogout} tone="ghost">
-                Sign out
-              </Button>
-            </div>
-          </Panel>
-          <Panel>
-            <p className="rf-eyebrow">Account settings</p>
-            <h2>Profile settings unavailable</h2>
-            <p className="rf-muted">
-              The current API does not expose an authenticated-user profile endpoint, so account
-              edits are intentionally unavailable.
-            </p>
-          </Panel>
-        </div>
-      )}
+      {content}
     </AppShell>
   );
 }
 
-export function AuthWorkspace(): JSX.Element {
+export function AuthWorkspace({ route = "overview" }: { route?: StudioRoute }): JSX.Element {
   const [view, setView] = useState<View>("auth");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selected, setSelected] = useState<Workspace | null>(null);
   const [booting, setBooting] = useState(true);
   const [sessionError, setSessionError] = useState("");
   const [logoutError, setLogoutError] = useState("");
-  const [operations, setOperations] = useState(false);
   const generation = useRef(0);
   const clearSession = (): void => {
     generation.current += 1;
@@ -383,20 +403,17 @@ export function AuthWorkspace(): JSX.Element {
     }
   };
   useEffect(() => {
-    setOperations(window.location.pathname === "/operations");
     void loadSession();
   }, []);
   const choose = (workspace: Workspace): void => {
     generation.current += 1;
     window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
     setSelected(workspace);
-    setOperations(window.location.pathname === "/operations");
     setView("studio");
   };
   const switchWorkspace = (): void => {
     generation.current += 1;
     setSelected(null);
-    setOperations(false);
     setView("onboarding");
   };
   const retryWorkspaceLoad = async (): Promise<void> => {
@@ -481,7 +498,7 @@ export function AuthWorkspace(): JSX.Element {
     <Studio
       workspace={selected}
       onSwitch={switchWorkspace}
-      operations={operations}
+      content={studioContent[route](selected)}
       onLogout={logout}
       logoutError={logoutError}
     />

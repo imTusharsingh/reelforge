@@ -51,7 +51,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `corepack pnpm --config.engine-strict=false --filter @reelforge/web typecheck`: PASS after Operations integration.
 - `corepack pnpm --config.engine-strict=false lint`: PASS after Operations integration.
 - `corepack pnpm --config.engine-strict=false format:check`: PASS after Operations integration.
-- `corepack pnpm exec vitest run apps/web/components apps/web/lib`: PASS, 8 files / 21 tests.
+- `corepack pnpm exec vitest run apps/web/components apps/web/lib`: PASS, 8 files / 24 tests.
 
 ## Contract/schema proposals
 
@@ -67,6 +67,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - Current GitHub credential is `minu-the-reviewer`; commits use the repository-local developer identity `imTusharsingh` as requested.
 - Re-review fixes: retry now uses actual M16 `FAILED`/`RECONCILIATION_REQUIRED` step states; approval-waiting runs expose resume; mutation continuations are generation-guarded; jobs and events are displayed individually; HTTP status errors are mapped before body parsing; period/scope/currency values are strict; owner-only budget editing is available in minor units.
 - Latest review M1-M4 and product integration: merged current `origin/main` without overwriting M22 files; mutation requests abort on context changes and guard finalizers; budget edits select the existing workspace budget, preserve currency/version, and send `expectedVersion`; Operations route/navigation uses verified workspace selection and M29 renders inside the existing AppShell main landmark.
+- Latest UX/architecture review: workspace switch/sign-out are now persistent AppShell controls; route selection is provided by the URL page through a typed `StudioRoute` content registry rather than `window.location.pathname` or an Operations boolean. Focused source-contract coverage now includes active navigation and route-boundary behavior (8 files / 24 tests).
 
 
 
