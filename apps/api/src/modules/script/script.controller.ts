@@ -13,8 +13,12 @@ import { z } from "zod";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { ScriptService } from "./script.service.js";
+import { scriptDocumentSchema } from "./script.validation.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 
+const expectedRevisionSchema = z.number().int().positive();
+const revisionWriteSchema = z.object({ expectedRevision: expectedRevisionSchema, document: scriptDocumentSchema }).strict();
+const approvalWriteSchema = z.object({ expectedRevision: expectedRevisionSchema }).strict();
 const pageSchema = z.coerce.number().int().min(1).max(10000).default(1);
 function pageValue(value: unknown): number {
   const parsed = pageSchema.safeParse(value);
@@ -77,9 +81,12 @@ export class ScriptController {
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Param("scriptId") scriptId: string,
+    @Body() body: unknown,
   ): Promise<unknown> {
+    const parsed = approvalWriteSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     return this.context(request, workspaceId).then((context) =>
-      this.scripts.approve(context, scriptId),
+      this.scripts.approve(context, scriptId, parsed.data.expectedRevision),
     );
   }
   @Post(":scriptId/revisions") public revise(
@@ -88,8 +95,10 @@ export class ScriptController {
     @Param("scriptId") scriptId: string,
     @Body() body: unknown,
   ): Promise<unknown> {
+    const parsed = revisionWriteSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     return this.context(request, workspaceId).then((context) =>
-      this.scripts.revise(context, scriptId, body),
+      this.scripts.revise(context, scriptId, parsed.data.document, parsed.data.expectedRevision),
     );
   }
   @Get(":scriptId/export") public export(
