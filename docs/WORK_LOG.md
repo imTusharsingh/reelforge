@@ -959,3 +959,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - B5: next commit identity is set to the Developer GitHub profile (`imTusharsingh`, `rajputtushar309@gmail.com`), not the reviewer profile. Independent-reviewer eligibility remains an open PR-handoff check because PR #44 was originally opened under the reviewer identity.
 - Verification after fixes: web typecheck PASS; focused frontend tests 6 files/16 tests PASS. Browser, live API and database validation remain open.
 - Final-head CI: run `42997824300` passed on `3c9739f2a06bc7bdcfea675ed028210000571baf`; quality, migrations, dependency audit, production build, unit/integration tests and required CI all passed.
+
+## 2026-11-11 - M22 review fixes R1–R3
+- Review: independent Core re-review `5856845143` requested changes on head `20f6eb8`; B4 remains explicitly CORE-BLOCKED and browser/live API evidence remains open.
+- R1: added a monotonic authenticated-request generation guard. Logout, 401/403 expiry and workspace switching invalidate prior responses; stale list results cannot repopulate workspaces or restore a selected studio.
+- R2: workspace creation now reconciles against the refreshed authorized list by workspace ID before selection. Post-create refresh errors are labeled as reconciliation failures, not creation failures. Authenticated post-login workspace-load failures remain recoverable with retry UI.
+- R3: refresh policy now clears protected state on 401 and 403, while transport/invalid-response failures remain recoverable rather than being treated as logout.
+- Verification: web typecheck PASS; focused tests 7 files/17 tests PASS; lint, format:check, web build and diff check PASS. Current-head CI is pending after this fix commit.

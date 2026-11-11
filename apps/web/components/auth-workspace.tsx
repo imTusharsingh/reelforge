@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX } from "react";
 import { AppShell } from "./app-shell";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type Workspace } from "../lib/api";
 import { validateAuth, type AuthMode } from "../lib/auth-validation";
-import { isAlreadyInvalidSession, sessionFailureMessage } from "../lib/session-policy";
+import {
+  isAlreadyInvalidSession,
+  isCurrentGeneration,
+  sessionFailureMessage,
+} from "../lib/session-policy";
 
 type View = "auth" | "onboarding" | "studio";
 
@@ -143,6 +147,7 @@ function WorkspaceSetup({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [errorTitle, setErrorTitle] = useState("Workspace not created");
   const create = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (!name.trim()) {
@@ -151,11 +156,23 @@ function WorkspaceSetup({
     }
     setBusy(true);
     setError("");
+    setErrorTitle("Workspace not created");
+    let created = false;
     try {
       const workspace = await api.createWorkspace(name.trim());
+      created = true;
       const refreshed = await onRefresh();
-      if (refreshed !== null) onSelected(workspace);
+      if (refreshed === null) return;
+      if (!refreshed.some((candidate) => candidate.id === workspace.id)) {
+        setErrorTitle("Workspace needs attention");
+        setError(
+          "The workspace was created, but it is not in the authorized workspace list. Reload and try again.",
+        );
+        return;
+      }
+      onSelected(refreshed.find((candidate) => candidate.id === workspace.id) ?? workspace);
     } catch (cause) {
+      if (created) setErrorTitle("Workspace created, but list refresh failed");
       setError(errorText(cause));
     } finally {
       setBusy(false);
@@ -191,7 +208,7 @@ function WorkspaceSetup({
       <Panel>
         <h2>{workspaces.length ? "Or create another" : "Create your first workspace"}</h2>
         {error && (
-          <Alert tone="danger" title="Workspace not created">
+          <Alert tone="danger" title={errorTitle}>
             {error}
           </Alert>
         )}
@@ -296,20 +313,32 @@ export function AuthWorkspace(): JSX.Element {
   const [booting, setBooting] = useState(true);
   const [sessionError, setSessionError] = useState("");
   const [logoutError, setLogoutError] = useState("");
+  const generation = useRef(0);
   const clearSession = (): void => {
+    generation.current += 1;
     window.localStorage.removeItem("reelforge.activeWorkspace");
+    setWorkspaces([]);
     setSelected(null);
     setView("auth");
   };
   const refresh = async (): Promise<Workspace[] | null> => {
+    const requestGeneration = generation.current;
     try {
       const items = await api.listWorkspaces();
+      if (!isCurrentGeneration(generation.current, requestGeneration)) return null;
       setWorkspaces(items);
       return items;
     } catch (cause) {
-      if (isAlreadyInvalidSession(cause)) {
+      if (
+        isCurrentGeneration(generation.current, requestGeneration) &&
+        (isAlreadyInvalidSession(cause) || (cause instanceof ApiError && cause.status === 403))
+      ) {
         clearSession();
-        setSessionError(sessionFailureMessage(cause));
+        setSessionError(
+          cause instanceof ApiError && cause.status === 403
+            ? "Your workspace access was denied."
+            : sessionFailureMessage(cause),
+        );
         return null;
       }
       throw cause;
@@ -336,9 +365,27 @@ export function AuthWorkspace(): JSX.Element {
     void loadSession();
   }, []);
   const choose = (workspace: Workspace): void => {
+    generation.current += 1;
     window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
     setSelected(workspace);
     setView("studio");
+  };
+  const switchWorkspace = (): void => {
+    generation.current += 1;
+    setSelected(null);
+    setView("onboarding");
+  };
+  const retryWorkspaceLoad = async (): Promise<void> => {
+    setSessionError("");
+    setBooting(true);
+    try {
+      const items = await refresh();
+      if (items !== null) setView("onboarding");
+    } catch (cause) {
+      setSessionError(errorText(cause));
+    } finally {
+      setBooting(false);
+    }
   };
   const logout = async (): Promise<void> => {
     setLogoutError("");
@@ -355,6 +402,10 @@ export function AuthWorkspace(): JSX.Element {
       sessionError ? (
         <Alert tone="danger" title="Could not restore your session">
           {sessionError}
+          <br />
+          <Button tone="secondary" onClick={() => void retryWorkspaceLoad()}>
+            Retry workspace load
+          </Button>
         </Alert>
       ) : null,
     [sessionError],
@@ -371,7 +422,13 @@ export function AuthWorkspace(): JSX.Element {
         <AuthForm
           onAuthenticated={async () => {
             setSessionError("");
-            if ((await refresh()) !== null) setView("onboarding");
+            try {
+              if ((await refresh()) !== null) setView("onboarding");
+            } catch (cause) {
+              setSessionError(
+                `Your session is active, but workspaces could not be loaded: ${errorText(cause)}`,
+              );
+            }
           }}
         />
         {message}
@@ -382,7 +439,7 @@ export function AuthWorkspace(): JSX.Element {
   return (
     <Studio
       workspace={selected}
-      onSwitch={() => setView("onboarding")}
+      onSwitch={switchWorkspace}
       onLogout={logout}
       logoutError={logoutError}
     />

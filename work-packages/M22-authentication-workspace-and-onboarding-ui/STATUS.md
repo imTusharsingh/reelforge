@@ -39,6 +39,8 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - PASS — focused M21/M22 frontend tests: 5 files, 13 tests.
 - PASS — review-fix frontend tests: 6 files, 16 tests, including logout policy and malformed response guards.
 - PASS — GitHub Actions CI run `42997824300` on head `3c9739f`: quality, migrations, dependency audit, production build, unit/integration tests and required CI.
+- PASS — latest review-fix frontend tests: 7 files, 17 tests, including request-generation invalidation.
+- PASS — local review-fix lint, format:check, typecheck, web build and diff check.
 - FAIL/BLOCKED — initial repository-wide test: 43 suites / 213 tests passed, 36 failed because generated Prisma client was absent; after generation, no full rerun was completed.
 - BLOCKED — db:validate: no disposable PostgreSQL instance was available.
 - NOT RUN — browser screenshots, keyboard/dialog walkthrough, screen reader, rendered contrast and end-to-end API smoke.
@@ -50,6 +52,7 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - Safe browser strategy: relative `/api/v1` calls through the Next rewrite; credentials included; no token in browser storage.
 - Missing contracts requiring Core approval: password recovery; authenticated-user profile GET/PATCH; workspace membership role metadata. Do not implement these as client-side fiction.
 - Security disposition: SameSite=Strict and same-origin proxying are not treated as complete CSRF/origin protection. Production security acceptance is blocked pending a Core-approved strategy; no backend change was made in M22.
+- Review fixes: authenticated requests carry a monotonic generation guard; stale responses cannot restore state after logout, expiry or workspace switch. Workspace creation verifies the created ID in the refreshed authorized list before selection. 401/403 refresh failures clear protected state; transport failures remain recoverable.
 
 ## Blockers / risks / unknowns
 
@@ -59,6 +62,7 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - Logout keeps the authenticated view on transport/5xx failure and only clears local state for confirmed logout or an already-invalid 401 session.
 - Runtime response guards reject malformed auth, logout and workspace payloads with a safe client error.
 - Browser visual/accessibility evidence and live API smoke remain outstanding.
+- Latest-head CI for the current review-fix commit is not yet verified; the prior code-head CI was `42997824300`.
 
 
 
