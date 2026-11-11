@@ -72,7 +72,7 @@ M20 changed no shared file: no root config, no `packages/contracts/**`, no `sche
 
 ### Offline evidence added by M20
 
-- **Tenant isolation:** every one of the **159** `:workspaceId` routes in the booted `AppModule` was called as another workspace's OWNER: 0 returned 2xx or 5xx (GET only 403/404). The sweep wrote nothing into the victim tenant (no channel, run, provider request, or successful audit row by the attacker).
+- **Tenant isolation:** every one of the **159** `:workspaceId` routes in the booted `AppModule` was checked as another workspace's OWNER; the broad sweep returned no 2xx or 5xx (GET only 403/404). Separate valid-payload channel create and update requests returned 403 and left the victim row/count unchanged. The checks wrote nothing into the victim tenant (no channel, run, provider request, or successful audit row by the attacker).
 - **Authentication:** all 159 workspace routes return 401 without a session. The only unscoped routes are the reviewed list `GET /health`, `GET /ops/metrics` (404 when `OPS_METRICS_TOKEN` is unset), `GET /social-accounts/oauth/:platform/callback`, `GET|POST /workspaces` (401 without a session), `POST /auth/login|logout|register`. A new unscoped route now fails the release-gate test until reviewed.
 - **No live calls:** `fetch` is a throwing spy in all release-gate tests and is never called.
 - **No fake success:** with the default runtime bindings every AI boundary (M06 idea LLM, M07 script LLM, M09 image/video/TTS, M11 quality review, M15 insight LLM), the M17 email sender, the M18 billing provider and the M12 Instagram connector are NOT_CONFIGURED and reject; the provider registry is empty, and every AI capability has a `null` cost model so the M08/M18 preflight cannot dispatch.

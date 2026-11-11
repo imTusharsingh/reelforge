@@ -132,6 +132,7 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
   let victimToken = "";
   let attackerToken = "";
   const auditSink = new CapturingAuditService();
+  const previousLogLevel = process.env["LOG_LEVEL"];
   const fetchSpy = vi.fn(async (): Promise<Response> => {
     throw new Error("M20 release gate: live network call attempted");
   });
@@ -181,7 +182,8 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
   afterAll(async () => {
     await app?.close();
     vi.unstubAllGlobals();
-    delete process.env["LOG_LEVEL"];
+    if (previousLogLevel === undefined) delete process.env["LOG_LEVEL"];
+    else process.env["LOG_LEVEL"] = previousLogLevel;
     if (!db) return;
     await db.outboxEvent.deleteMany({
       where: { workspaceId: { in: [victimWorkspaceId, attackerWorkspaceId] } },
@@ -193,7 +195,32 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
     await db.$disconnect();
   });
 
-  it("denies another workspace's OWNER on every workspace-scoped route without a 2xx or 5xx (T06)", async () => {
+  it("denies valid cross-tenant mutations before validation or writes (T06)", async () => {
+    if (!db) return;
+    const beforeChannels = await db.channel.count({ where: { workspaceId: victimWorkspaceId } });
+    const beforeVictim = await db.channel.findUnique({ where: { id: victimChannelId } });
+
+    await request(server())
+      .post(`${PREFIX}/workspaces/${victimWorkspaceId}/channels`)
+      .set("authorization", `Bearer ${attackerToken}`)
+      .send({ name: "cross-tenant-valid-create", description: "valid fixture payload" })
+      .expect(403);
+    await request(server())
+      .patch(`${PREFIX}/workspaces/${victimWorkspaceId}/channels/${victimChannelId}`)
+      .set("authorization", `Bearer ${attackerToken}`)
+      .send({ name: "cross-tenant-valid-update" })
+      .expect(403);
+
+    expect(await db.channel.count({ where: { workspaceId: victimWorkspaceId } })).toBe(
+      beforeChannels,
+    );
+    expect(await db.channel.findUnique({ where: { id: victimChannelId } })).toMatchObject({
+      name: beforeVictim?.name,
+      description: beforeVictim?.description,
+    });
+  });
+
+  it("checks every workspace-scoped route for cross-tenant access (T06)", async () => {
     if (!db) return;
     const routes = collectRoutes(app!).filter((route) => route.path.includes(":workspaceId"));
     // Guard against a silently empty sweep: M01–M19 register well over 60 workspace routes.

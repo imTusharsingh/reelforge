@@ -68,6 +68,7 @@ async function rejects(call: () => unknown): Promise<unknown> {
 
 suite("M20 release gate: provider boundaries fail clearly with no charge and no network", () => {
   const db = databaseUrl === undefined ? undefined : createDatabaseClient(databaseUrl);
+  const previousLogLevel = process.env["LOG_LEVEL"];
   let app: INestApplication | undefined;
   let token = "";
   const auditSink = new CapturingAuditService();
@@ -111,7 +112,8 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
   afterAll(async () => {
     await app?.close();
     vi.unstubAllGlobals();
-    delete process.env["LOG_LEVEL"];
+    if (previousLogLevel === undefined) delete process.env["LOG_LEVEL"];
+    else process.env["LOG_LEVEL"] = previousLogLevel;
     if (!db) return;
     await db.workspace.deleteMany({ where: { id: workspaceId } });
     await db.user.deleteMany({ where: { id: ownerId } });

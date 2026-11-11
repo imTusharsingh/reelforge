@@ -16,7 +16,7 @@ Core integration review and release gate for M00–M19: approval records, cross-
 - [x] **M20-T03** Full checks run (see "Commands and evidence").
 - [~] **M20-T04** Local end-to-end, **partial**. Real local rendering: with `FFMPEG_PATH`/`FFPROBE_PATH` set to FFmpeg 7.0.2-static the full suite runs **518/518 with 0 skips**, so the M10 real-render and M11 probe paths ran against real FFmpeg. The content pipeline cannot run idea → script → media → publish offline without fake success, because no AI adapter is bound (ADR-007). `release-gate.provider-boundary.integration.test.ts` proves the boundary fails clearly: every default AI / email / billing / Instagram adapter is NOT_CONFIGURED and rejects, the registry is empty, every AI capability has a `null` cost model, and an AI idea proposal over HTTP creates no idea, no ledger row and no reservation. Fixtures are marked in each test.
 - [ ] **M20-T05** Live provider verification: **BLOCKED, not authorized**. Gate 4 checklist written in `RELEASE_CHECKLIST.md`; nothing live was run.
-- [x] **M20-T06** Security / tenant isolation / cost / idempotency / failure recovery (`INTEGRATION_REVIEW.md` T06). Tenant sweep: 159 `:workspaceId` routes as another workspace's OWNER, 0 leaks (no 2xx/5xx; GET only 403/404); all 159 return 401 without a session; unscoped routes pinned to a reviewed allowlist of 8. Findings C1 (HIGH), C2 (LOW), C3 (owner gates). M10–M19 residuals and PR #36 N1–N4 carried.
+- [x] **M20-T06** Security / tenant isolation / cost / idempotency / failure recovery (`INTEGRATION_REVIEW.md` T06). Tenant sweep covers 159 `:workspaceId` routes as another workspace's OWNER; representative valid-payload channel create/update mutations assert 403 and zero victim-side effects; all 159 return 401 without a session; unscoped routes pinned to a reviewed allowlist of 8. Findings C1 (HIGH), C2 (LOW), C3 (owner gates). M10–M19 residuals and PR #36 N1–N4 carried.
 - [~] **M20-T07** This `STATUS.md`, `INTEGRATION_REVIEW.md`, `RELEASE_CHECKLIST.md`, and a `docs/WORK_LOG.md` entry are done. `docs/PROJECT_STATE.md` was **not** edited (standing rule: no PROJECT_STATE edit in a product PR); the proposed change is below for the docs-only closeout.
 
 ## Files changed
@@ -70,9 +70,9 @@ All are conservative and OPEN; nothing below was implemented.
 11. **C2:** map unconfigured M06/M07 LLM errors to a clear NOT_CONFIGURED 4xx/503 instead of HTTP 500.
 
 ## Blockers / risks / unknowns
-- T05 blocked on owner authorization. Production release blocked on Core decisions 1–4 and 7.
+- T05 blocked on owner authorization. Production release blocked on Core decisions 1–4 and 7; Gate 3 duplicate side-effect criterion remains BLOCKED by the M16 crash-retry caveat.
 - The end-to-end pipeline is proven only up to the provider boundary plus real FFmpeg rendering of fixture inputs; nothing here is live integration evidence (ADR-007/010).
-- The tenant sweep calls each route with an empty body and random ids, so it proves the tenant check runs before any write; it does not prove deep authorization inside valid same-tenant bodies.
+- The tenant sweep uses empty bodies and random ids for broad route coverage. Separate valid-payload channel create/update checks assert authorization before mutation and verify zero victim-side effects; this does not prove deep authorization for every mutating route.
 - Carried residuals: M19 R3, R4, R6–R14; PR #36 N1–N4; M10–M18 residual notes in `PROJECT_STATE.md` (by module in `INTEGRATION_REVIEW.md`).
 
 ## Proposed PROJECT_STATE.md change (for the docs-only closeout, not applied)

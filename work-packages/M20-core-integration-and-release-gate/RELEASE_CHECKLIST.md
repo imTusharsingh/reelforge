@@ -26,7 +26,7 @@ The release decision belongs to Minu (Core) and the owner. This checklist does n
 | Schema matches migrations | PASS* | `migrate diff` shows the same 84-line pre-existing drift as the baseline (S1–S6); no new drift. |
 | Cross-module state transitions work | PASS* | Module integration suites (M07→M09→M10→M11→M13→M14→M15/M16/M17/M18/M19) pass offline. End-to-end through real providers is not possible (no adapter bound). |
 | Failure and retry paths exercised offline | PASS | Existing module suites (M10 retry/recovery, M13 reconcile, M16 resume/retry, M17 delivery retry, M18 dispatched-vs-not-dispatched). |
-| No duplicate publish/generation side effects on retry/restart | PASS* | Outbox and publish attempts are idempotency-keyed; M13 refuses a second insert. Caveats: M16 crash-retry may create a new script/QA/analytics record; worker concurrency must stay 1 until a per-claim token exists. |
+| No duplicate publish/generation side effects on retry/restart | **BLOCKED** | M13 outbox and publish attempts are idempotency-keyed, but M16 crash-retry may create a new script/QA/analytics record because BullMQ re-add is not atomic. Per-claim token work and explicit Core acceptance are required before this criterion can pass. |
 | Build, lint, typecheck, unit, contract, integration tests pass | PASS | See `STATUS.md` "Commands and evidence". |
 
 ## Gate 4 - Live provider verification (T05)
@@ -47,7 +47,7 @@ The release decision belongs to Minu (Core) and the owner. This checklist does n
 
 | Item | Result | Evidence |
 |---|---|---|
-| Critical/blocking security findings resolved | PASS* | No CRITICAL finding (`INTEGRATION_REVIEW.md` T06). Tenant sweep: 159 workspace routes, 0 leaks; 401 on all without a session; unscoped routes are a reviewed allowlist. Open HIGH: C1 (gate on binding AI adapters). |
+| Critical/blocking security findings resolved | PASS* | No CRITICAL finding (`INTEGRATION_REVIEW.md` T06). Tenant sweep covers 159 workspace routes and 401 on all without a session; representative valid-payload mutations assert 403 and zero victim-side effects; unscoped routes are a reviewed allowlist. Open HIGH: C1 (gate on binding AI adapters). |
 | Budget and rate-limit protections active | PASS* | M18 reservation before paid script / scene-media calls (ADR-018); M16 provider limits per workspace; emergency stop refuses `reservePaidCall`. Caveat C1. |
 | Publishing requires approval policy and hard gates | PASS | M13 re-checks M11 approval and all hard gates at publish time (`publishing.service.test.ts` "rechecks approved and rejected reviews through M11 at publish time", "denies scheduling and budget checks rather than fabricating approval"). |
 | Emergency pause works | PASS* | M19 `emergency-stop.postgres.integration.test.ts` and `admin.http.integration.test.ts`. Caveats R6 (mid-step stop fails instead of pausing), R10, R13 (GLOBAL env on both processes). |
