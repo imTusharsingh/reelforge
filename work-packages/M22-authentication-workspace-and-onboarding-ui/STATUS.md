@@ -38,6 +38,7 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 - PASS — lint, format:check, root typecheck with a syntactically valid DATABASE_URL, and web build.
 - PASS — focused M21/M22 frontend tests: 5 files, 13 tests.
 - PASS — review-fix frontend tests: 6 files, 16 tests, including logout policy and malformed response guards.
+- PASS — GitHub Actions CI run `42997824300` on head `3c9739f`: quality, migrations, dependency audit, production build, unit/integration tests and required CI.
 - FAIL/BLOCKED — initial repository-wide test: 43 suites / 213 tests passed, 36 failed because generated Prisma client was absent; after generation, no full rerun was completed.
 - BLOCKED — db:validate: no disposable PostgreSQL instance was available.
 - NOT RUN — browser screenshots, keyboard/dialog walkthrough, screen reader, rendered contrast and end-to-end API smoke.
