@@ -14,7 +14,10 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
         {destinations.map((name, index) => (
           <li key={name}>
             {index === 0 ? (
-              <span className="rf-nav-item rf-nav-item--current" aria-label="Overview, current view">
+              <span
+                className="rf-nav-item rf-nav-item--current"
+                aria-label="Overview, current view"
+              >
                 {name}
               </span>
             ) : (
