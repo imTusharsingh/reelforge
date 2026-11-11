@@ -12,9 +12,8 @@ describe("M21 shared UI accessibility and state contracts", () => {
   });
 
   it("associates field labels and validation errors", () => {
-    const html = renderToStaticMarkup(
-      createElement(Field, { id: "name", label: "Workspace name", error: "Name required" }),
-    );
+    const field = createElement(Field, { id: "name", label: "Workspace name", error: "Name required" });
+    const html = renderToStaticMarkup(field);
     expect(html).toContain('for="name"');
     expect(html).toContain('aria-invalid="true"');
     expect(html).toContain('aria-describedby="name-help"');
@@ -33,17 +32,14 @@ describe("M21 shared UI accessibility and state contracts", () => {
   });
 
   it("pairs status colors with text", () => {
-    const html = renderToStaticMarkup(
-      createElement(Badge, { tone: "warning" }, "Not configured"),
-    );
+    const html = renderToStaticMarkup(createElement(Badge, { tone: "warning" }, "Not configured"));
     expect(html).toContain("Not configured");
     expect(html).toContain("rf-badge--warning");
   });
 
   it("provides an explicit alert title", () => {
-    const html = renderToStaticMarkup(
-      createElement(Alert, { tone: "danger", title: "Unable to save" }, "Check connection."),
-    );
+    const alert = createElement(Alert, { tone: "danger", title: "Unable to save" }, "Check connection.");
+    const html = renderToStaticMarkup(alert);
     expect(html).toContain('role="alert"');
     expect(html).toContain("Unable to save");
   });
