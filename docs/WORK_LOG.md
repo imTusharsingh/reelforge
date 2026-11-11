@@ -1052,3 +1052,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Generation and scene asset assignment remain visibly unavailable where current server contracts cannot support them. No provider calls, fabricated saved records/history, backend/schema/shared-contract/root configuration changes, force pushes or production changes.
 - Quality evidence: workspace typecheck/lint/format and explicit production build pass; full suite 612 passed / 8 skipped; 21 M24 unit/adapter tests; 4 actual PostgreSQL scenarios; 13 mounted browser scenarios; 6 actual Next/API/PostgreSQL browser scenarios covering real 409 reconciliation, saved reloads, archive/restore, immutable approvals, tenant/Viewer enforcement and preserved navigation. Exact commands and limitations are in M24 STATUS and verification README.
 - Core follow-up required for atomic client expected-revision/status tokens, safe generation readiness/configuration, persisted scene assets and repeated character-version pins. Client preflight cannot eliminate the M07 final race. State is IMPLEMENTED_PENDING_REVIEW; independent Core review and exact-head CI required, no self-approval/merge.
+
+### M24 multiline editor follow-up
+
+- Preserved line breaks while typing brief references and scene audio cues; normalize blank/whitespace-only references only at the API boundary. Added mounted keyboard-entry regression coverage and payload normalization assertion. Focused 21 tests and 13 browser scenarios pass; final frontend checks rerun before push.

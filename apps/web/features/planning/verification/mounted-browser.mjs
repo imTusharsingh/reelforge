@@ -72,6 +72,12 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
 try {
   await test("targeted scene edit persists without altering other scenes, and survives reload of editor", async (p) => {
     await p.getByLabel("Scene dialogue", { exact: true }).fill("Targeted revision");
+    const cues = p.getByLabel("Audio cues — one per line", { exact: true });
+    await cues.fill("Birdsong");
+    await cues.press("End");
+    await cues.press("Enter");
+    await cues.pressSequentially("Soft piano");
+    assert.equal(await cues.inputValue(), "Birdsong\nSoft piano");
     await p.getByRole("button", { name: "Save script revision", exact: true }).click();
     await p.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
     assert.equal(
@@ -168,6 +174,15 @@ try {
     "idea brief edit persists and refreshed props never roll back save",
     async (p) => {
       await p.getByLabel("Title", { exact: true }).fill("Edited brief");
+      const references = p.getByLabel("References — one per line", { exact: true });
+      await references.fill("https://example.com/one");
+      await references.press("End");
+      await references.press("Enter");
+      await references.pressSequentially("https://example.com/two");
+      assert.equal(
+        await references.inputValue(),
+        "https://example.com/one\nhttps://example.com/two",
+      );
       await p.getByRole("button", { name: "Save brief", exact: true }).click();
       await p.getByText("Idea saved by the server.", { exact: true }).waitFor();
       assert.equal(await p.getByLabel("Title", { exact: true }).inputValue(), "Edited brief");

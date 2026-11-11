@@ -141,15 +141,7 @@ export function IdeaForm({
             id={`${baseId}-sources`}
             label="References — one per line"
             value={draft.references.join("\n")}
-            onChange={(e) =>
-              edit(
-                "references",
-                e.target.value
-                  .split("\n")
-                  .map((v) => v.trim())
-                  .filter(Boolean),
-              )
-            }
+            onChange={(e) => edit("references", e.target.value.split("\n"))}
             rows={3}
             hint="Sources are retained with an approved idea snapshot."
           />

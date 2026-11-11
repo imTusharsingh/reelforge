@@ -459,7 +459,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
               id={`${id}-cues`}
               label="Audio cues — one per line"
               value={scene.audioCues.join("\n")}
-              onChange={(e) => editScene({ audioCues: e.target.value.split("\n").filter(Boolean) })}
+              onChange={(e) => editScene({ audioCues: e.target.value.split("\n") })}
             />
           </fieldset>
           <CharacterAssignments

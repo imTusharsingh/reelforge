@@ -46,6 +46,12 @@ describe("M24 planning contracts and safe targeted revisions", () => {
       references: idea.references,
       channelId: idea.channelId,
     });
+    expect(
+      ideaPayload({
+        ...draftFromIdea(idea),
+        references: [" https://example.com/one ", "", "https://example.com/two"],
+      }).references,
+    ).toEqual(["https://example.com/one", "https://example.com/two"]);
     expect(() => ideaPayload({ ...draftFromIdea(idea), channelId: "", seriesId: "" })).toThrow();
   });
   it("uses only existing status transitions and verified roles", () => {

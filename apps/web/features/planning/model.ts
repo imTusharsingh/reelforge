@@ -516,7 +516,7 @@ export function ideaPayload(draft: IdeaDraft): Record<string, unknown> {
     angle: draft.angle.trim(),
     audience: draft.audience.trim(),
     expectedFormat: draft.expectedFormat.trim(),
-    references: draft.references,
+    references: draft.references.map((reference) => reference.trim()).filter(Boolean),
     sourceNotes: draft.sourceNotes,
     ...(draft.channelId ? { channelId: draft.channelId } : {}),
     ...(draft.seriesId ? { seriesId: draft.seriesId } : {}),
