@@ -25,9 +25,13 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
           <li key={name}>
             {href ? (
               <a
-                className={`rf-nav-item ${(pathname === href || (href === "/channels" && pathname.startsWith("/channels/"))) ? "rf-nav-item--current" : ""}`.trim()}
+                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
-                aria-current={(pathname === href || (href === "/channels" && pathname.startsWith("/channels/"))) ? "page" : undefined}
+                aria-current={
+                  pathname === href || (href === "/channels" && pathname.startsWith("/channels/"))
+                    ? "page"
+                    : undefined
+                }
               >
                 {name}
               </a>
@@ -63,7 +67,9 @@ export function AppShell({
   const pathname = usePathname();
   const breadcrumb = pathname.startsWith("/channels")
     ? "Studio / Channels"
-    : pathname === "/operations" ? "Studio / Operations" : "Studio / Overview";
+    : pathname === "/operations"
+      ? "Studio / Operations"
+      : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">

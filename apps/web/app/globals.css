@@ -121,10 +121,6 @@ button:disabled {
   color: var(--rf-canvas-warm);
 }
 
-.rf-nav-item {
-  text-decoration: none;
-  color: inherit;
-}
 .rf-channel-create {
   margin-bottom: var(--rf-space-8);
 }
@@ -925,4 +921,62 @@ button:disabled {
   .rf-create-form {
     grid-template-columns: 1fr;
   }
+}
+
+/* M23 channel workspaces share the studio shell and semantic design tokens. */
+.rf-channel-stack {
+  display: grid;
+  gap: var(--rf-space-4, 16px);
+  min-width: 0;
+}
+.rf-channel-fields {
+  display: grid;
+  gap: var(--rf-space-4, 16px);
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.rf-channel-fields:disabled {
+  opacity: 0.7;
+}
+.rf-record-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--rf-space-4, 16px);
+}
+.rf-record-list > li {
+  border-bottom: 1px solid var(--rf-border);
+  padding-block: 12px;
+  min-width: 0;
+}
+.rf-saved-data {
+  margin-block: 12px;
+  max-width: 100%;
+}
+.rf-saved-data summary {
+  cursor: pointer;
+  color: var(--rf-text);
+  padding: 8px;
+}
+.rf-saved-data pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  background: var(--rf-bg);
+  max-height: 480px;
+  overflow: auto;
+  font-size: 13px;
+}
+.rf-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

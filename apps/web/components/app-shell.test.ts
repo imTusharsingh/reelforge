@@ -28,7 +28,9 @@ describe("M21 responsive shell source contracts", () => {
 
   it("keeps Operations as a real enabled route with active-page semantics", () => {
     expect(shell).toContain('{ name: "Operations", href: "/operations" }');
-    expect(shell).toContain('aria-current={pathname === href ? "page" : undefined}');
+    expect(shell).toContain('{ name: "Channels", href: "/channels" }');
+    expect(shell).toContain('pathname.startsWith("/channels/")');
+    expect(shell).toContain("aria-current={");
     expect(shell).toContain("shellActions");
   });
 });
