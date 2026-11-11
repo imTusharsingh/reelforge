@@ -1,7 +1,7 @@
 import type {
   AuditRecord,
   Budget,
-  M29Data,
+  OperationsData,
   Notification,
   NotificationPreference,
   UsageSummary,
@@ -11,54 +11,55 @@ import type {
   WorkflowStep,
 } from "./operations-types";
 
-export type M29Context = Readonly<{
+export type OperationsContext = Readonly<{
   workspaceId: string;
   role: "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN";
 }>;
-export class M29ApiError extends Error {
+export class OperationsApiError extends Error {
   public constructor(
     public readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = "M29ApiError";
+    this.name = "OperationsApiError";
   }
 }
 const record = (value: unknown, label: string): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new M29ApiError(200, `Invalid ${label}`);
+    throw new OperationsApiError(200, `Invalid ${label}`);
   return value as Record<string, unknown>;
 };
 const string = (value: unknown, label: string): string => {
   if (typeof value !== "string" || value.length === 0)
-    throw new M29ApiError(200, `Invalid ${label}`);
+    throw new OperationsApiError(200, `Invalid ${label}`);
   return value;
 };
 const nullableString = (value: unknown, label: string): string | null => {
-  if (value !== null && typeof value !== "string") throw new M29ApiError(200, `Invalid ${label}`);
+  if (value !== null && typeof value !== "string")
+    throw new OperationsApiError(200, `Invalid ${label}`);
   return value;
 };
 const number = (value: unknown, label: string): number => {
   if (typeof value !== "number" || !Number.isFinite(value))
-    throw new M29ApiError(200, `Invalid ${label}`);
+    throw new OperationsApiError(200, `Invalid ${label}`);
   return value;
 };
 const array = (value: unknown, label: string): readonly unknown[] => {
-  if (!Array.isArray(value)) throw new M29ApiError(200, `Invalid ${label}`);
+  if (!Array.isArray(value)) throw new OperationsApiError(200, `Invalid ${label}`);
   return value;
 };
 const date = (value: unknown, label: string): string => {
   const parsed = string(value, label);
-  if (Number.isNaN(Date.parse(parsed))) throw new M29ApiError(200, `Invalid ${label}`);
+  if (Number.isNaN(Date.parse(parsed))) throw new OperationsApiError(200, `Invalid ${label}`);
   return parsed;
 };
 const bool = (value: unknown, label: string): boolean => {
-  if (typeof value !== "boolean") throw new M29ApiError(200, `Invalid ${label}`);
+  if (typeof value !== "boolean") throw new OperationsApiError(200, `Invalid ${label}`);
   return value;
 };
 const currencyCode = (value: unknown, label: string): string => {
   const code = string(value, label);
-  if (!/^[A-Z]{3}$/.test(code)) throw new M29ApiError(200, `Invalid ${label}`);
+  if (!/^[A-Z]{3}$/.test(code)) throw new OperationsApiError(200, `Invalid ${label}`);
   return code;
 };
 function parseStep(value: unknown): WorkflowStep {
@@ -112,7 +113,7 @@ export function parseRun(value: unknown): WorkflowRun {
     "CANCELED",
   ] as const;
   if (!allowed.includes(state as (typeof allowed)[number]))
-    throw new M29ApiError(200, "Invalid run.state");
+    throw new OperationsApiError(200, "Invalid run.state");
   return {
     id: string(v.id, "run.id"),
     state: state as WorkflowRun["state"],
@@ -159,11 +160,12 @@ function parseBudget(value: unknown): Budget {
   const v = record(value, "budget");
   const scope = v.scope;
   if (scope !== "CHANNEL" && scope !== "WORKSPACE")
-    throw new M29ApiError(200, "Invalid budget.scope");
+    throw new OperationsApiError(200, "Invalid budget.scope");
   const periods = array(v.periods, "budget.periods").map((item) => {
     const p = record(item, "budget period");
     const period = string(p.period, "budget period.period");
-    if (period !== "DAY" && period !== "MONTH") throw new M29ApiError(200, "Invalid budget period");
+    if (period !== "DAY" && period !== "MONTH")
+      throw new OperationsApiError(200, "Invalid budget period");
     return {
       period: period as "DAY" | "MONTH",
       limitMinor: number(p.limitMinor, "budget limit"),
@@ -185,7 +187,8 @@ function parseBudget(value: unknown): Budget {
 function parseUsage(value: unknown): UsageSummary {
   const v = record(value, "usage");
   const period = v.period;
-  if (period !== "DAY" && period !== "MONTH") throw new M29ApiError(200, "Invalid usage.period");
+  if (period !== "DAY" && period !== "MONTH")
+    throw new OperationsApiError(200, "Invalid usage.period");
   const totals = record(v.totals, "usage.totals");
   const currencies = array(totals.currencies, "usage currencies").map((item) => {
     const c = record(item, "currency");
@@ -248,13 +251,13 @@ async function request<T>(
     if (signal) requestInit.signal = signal;
     response = await fetch(`/api/v1${path}`, requestInit);
   } catch {
-    throw new M29ApiError(
+    throw new OperationsApiError(
       0,
       "The request could not be completed. Check your connection and try again.",
     );
   }
   if (!response.ok)
-    throw new M29ApiError(
+    throw new OperationsApiError(
       response.status,
       response.status === 403
         ? "You do not have permission for this action."
@@ -266,13 +269,13 @@ async function request<T>(
   try {
     body = await response.json();
   } catch {
-    throw new M29ApiError(response.status, "The server returned an invalid response.");
+    throw new OperationsApiError(response.status, "The server returned an invalid response.");
   }
   return parse(body);
 }
 const parseRuns = (value: unknown): readonly WorkflowRun[] =>
   array(value, "workflow runs").map(parseRun);
-const parseNotifications = (value: unknown): M29Data["notifications"] => {
+const parseNotifications = (value: unknown): OperationsData["notifications"] => {
   const v = record(value, "notifications");
   return {
     items: array(v.items, "notifications.items").map(parseNotification),
@@ -285,7 +288,10 @@ const parseBudgets = (value: unknown): readonly Budget[] =>
   array(value, "budgets").map(parseBudget);
 const parseAudits = (value: unknown): readonly AuditRecord[] =>
   array(value, "audit list").map(parseAudit);
-export function loadM29Data(context: M29Context, signal?: AbortSignal): Promise<M29Data> {
+export function loadOperationsData(
+  context: OperationsContext,
+  signal?: AbortSignal,
+): Promise<OperationsData> {
   const base = `/workspaces/${encodeURIComponent(context.workspaceId)}`;
   return Promise.all([
     request(`${base}/orchestration/runs`, parseRuns, undefined, signal),
@@ -304,7 +310,7 @@ export function loadM29Data(context: M29Context, signal?: AbortSignal): Promise<
   }));
 }
 export function runAction(
-  context: M29Context,
+  context: OperationsContext,
   runId: string,
   action: "cancel" | "retry" | "resume",
   signal?: AbortSignal,
@@ -317,7 +323,7 @@ export function runAction(
   );
 }
 export function markNotificationRead(
-  context: M29Context,
+  context: OperationsContext,
   id: string,
   signal?: AbortSignal,
 ): Promise<Notification> {
@@ -329,7 +335,7 @@ export function markNotificationRead(
   );
 }
 export function markAllNotificationsRead(
-  context: M29Context,
+  context: OperationsContext,
   signal?: AbortSignal,
 ): Promise<{ updated: number }> {
   return request(
@@ -343,7 +349,7 @@ export function markAllNotificationsRead(
   );
 }
 export function savePreferences(
-  context: M29Context,
+  context: OperationsContext,
   preferences: readonly NotificationPreference[],
   signal?: AbortSignal,
 ): Promise<readonly NotificationPreference[]> {
@@ -365,7 +371,7 @@ export function savePreferences(
 }
 
 export function saveBudget(
-  context: M29Context,
+  context: OperationsContext,
   input: Readonly<{
     currency: string;
     dailyLimitMinor?: number;

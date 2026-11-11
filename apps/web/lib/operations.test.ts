@@ -34,7 +34,7 @@ const run = (state: WorkflowRun["state"], stepStatus = "SUCCEEDED"): WorkflowRun
   events: [],
 });
 
-describe("M29 contracts and permissions", () => {
+describe("Operations contracts and permissions", () => {
   it("does not expose workflow mutations to viewers", () => {
     expect(safeActions(run("RUNNING"), "VIEWER")).toEqual([]);
     expect(safeActions(run("RUNNING"), "EDITOR")).toEqual(["cancel"]);

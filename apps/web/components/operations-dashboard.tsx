@@ -3,15 +3,20 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import {
-  loadM29Data,
+  loadOperationsData,
   markAllNotificationsRead,
   markNotificationRead,
   runAction,
   saveBudget,
   savePreferences,
-  type M29Context,
+  type OperationsContext,
 } from "../lib/operations-api";
-import type { Budget, M29Data, NotificationPreference, WorkflowRun } from "../lib/operations-types";
+import type {
+  Budget,
+  OperationsData,
+  NotificationPreference,
+  WorkflowRun,
+} from "../lib/operations-types";
 import { redacted, safeActions } from "../lib/operations-logic";
 import styles from "./operations-dashboard.module.css";
 
@@ -24,7 +29,7 @@ function RunCard({
   onChanged,
   isCurrent,
 }: {
-  context: M29Context;
+  context: OperationsContext;
   run: WorkflowRun;
   onChanged: () => void;
   isCurrent: () => boolean;
@@ -139,7 +144,7 @@ function Preferences({
   isCurrent,
   createSignal,
 }: {
-  context: M29Context;
+  context: OperationsContext;
   initial: readonly NotificationPreference[];
   onError: (message: string) => void;
   isCurrent: () => boolean;
@@ -217,7 +222,7 @@ function BudgetEditor({
   createSignal,
   isCurrent,
 }: {
-  context: M29Context;
+  context: OperationsContext;
   existing: readonly Budget[];
   onSaved: () => void;
   onError: (message: string) => void;
@@ -273,21 +278,21 @@ function BudgetEditor({
       </p>
       <div className={styles.editor}>
         <Field
-          id="m29-budget-currency"
+          id="operations-budget-currency"
           label="Currency"
           value={currencyCode}
           maxLength={3}
           onChange={(event) => setCurrencyCode(event.target.value.toUpperCase())}
         />
         <Field
-          id="m29-budget-monthly"
+          id="operations-budget-monthly"
           label="Monthly limit (minor units)"
           inputMode="numeric"
           value={monthly}
           onChange={(event) => setMonthly(event.target.value)}
         />
         <Field
-          id="m29-budget-reason"
+          id="operations-budget-reason"
           label="Reason"
           value={reason}
           onChange={(event) => setReason(event.target.value)}
@@ -300,8 +305,8 @@ function BudgetEditor({
   );
 }
 
-export function OperationsDashboard({ context }: { context: M29Context }): JSX.Element {
-  const [data, setData] = useState<M29Data | null>(null);
+export function OperationsDashboard({ context }: { context: OperationsContext }): JSX.Element {
+  const [data, setData] = useState<OperationsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -319,13 +324,13 @@ export function OperationsDashboard({ context }: { context: M29Context }): JSX.E
     setLoading(true);
     setError(null);
     setData(null);
-    void loadM29Data(context, controller.signal)
+    void loadOperationsData(context, controller.signal)
       .then((next) => {
         if (current === version.current) setData(next);
       })
       .catch((e: unknown) => {
         if (current === version.current && !(e instanceof DOMException && e.name === "AbortError"))
-          setError(e instanceof Error ? e.message : "M29 data could not be loaded.");
+          setError(e instanceof Error ? e.message : "Operations data could not be loaded.");
       })
       .finally(() => {
         if (current === version.current) setLoading(false);
@@ -353,17 +358,17 @@ export function OperationsDashboard({ context }: { context: M29Context }): JSX.E
     return (
       <StateMessage
         kind="unavailable"
-        description="M29 needs an authenticated workspace context from M22."
+        description="Operations needs an authenticated workspace context from M22."
       />
     );
   const currentGeneration = version.current;
   const isCurrent = (): boolean => currentGeneration === version.current;
   return (
-    <section className={styles.dashboard} aria-labelledby="m29-title">
+    <section className={styles.dashboard} aria-labelledby="operations-title">
       <header className={styles.heading}>
         <div>
-          <p className="rf-eyebrow">Operations / M29</p>
-          <h1 id="m29-title">Workflow control room</h1>
+          <p className="rf-eyebrow">Operations</p>
+          <h1 id="operations-title">Workflow control room</h1>
           <p className={styles.muted}>
             Monitor durable runs, notifications, and usage consumption.
           </p>

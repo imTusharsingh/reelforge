@@ -991,3 +991,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Owner feedback: remove the milestone-specific `apps/web/features/m29/` product structure and follow M22's normal frontend organization.
 - Changes: moved Operations dashboard UI and scoped stylesheet into `apps/web/components/`; moved Operations API, validation logic, types and focused tests into `apps/web/lib/`; updated the authenticated workspace integration and status paths. No behavior or backend contract changes.
 - Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests), and web build PASS.
+
+## 2026-11-11 - Operations terminology cleanup
+- Owner feedback: remove remaining milestone identifiers from product code after the structural refactor.
+- Changes: renamed Operations context/data/API/error/loader identifiers, test labels, DOM IDs and user-facing copy from M29 terminology to Operations terminology. Historical work-package references remain only in governance documentation.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests) and diff check PASS.

@@ -1,4 +1,4 @@
-export type M29Role = "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN";
+export type OperationsRole = "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN";
 export type WorkflowState =
   | "CREATED"
   | "QUEUED"
@@ -108,7 +108,7 @@ export type AuditRecord = Readonly<{
   reason: string;
   createdAt: string;
 }>;
-export type M29Data = Readonly<{
+export type OperationsData = Readonly<{
   runs: readonly WorkflowRun[];
   notifications: Readonly<{ items: readonly Notification[]; unreadCount: number }>;
   preferences: readonly NotificationPreference[];

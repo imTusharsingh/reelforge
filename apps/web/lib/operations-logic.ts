@@ -1,4 +1,4 @@
-import type { M29Context } from "./operations-api";
+import type { OperationsContext } from "./operations-api";
 import type { WorkflowRun } from "./operations-types";
 
 export function redacted(message: string | null): string {
@@ -13,7 +13,7 @@ export function redacted(message: string | null): string {
 
 export function safeActions(
   run: WorkflowRun,
-  role: M29Context["role"],
+  role: OperationsContext["role"],
 ): readonly ("cancel" | "retry" | "resume")[] {
   if (role !== "OWNER" && role !== "EDITOR") return [];
   if (run.state === "WAITING_APPROVAL") return ["resume", "cancel"];
