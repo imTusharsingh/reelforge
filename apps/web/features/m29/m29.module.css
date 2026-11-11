@@ -66,6 +66,19 @@
   border-inline-start: 4px solid var(--rf-danger);
   padding-inline-start: 12px;
 }
+.currency {
+  border-top: 1px solid var(--rf-border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.currency h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.details summary {
+  cursor: pointer;
+  font-weight: 650;
+}
 .details {
   display: grid;
   gap: 8px;

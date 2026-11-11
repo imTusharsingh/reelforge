@@ -1,14 +1,17 @@
 import type {
+  AuditRecord,
   Budget,
   M29Data,
   Notification,
   NotificationPreference,
   UsageSummary,
+  WorkflowJob,
+  WorkflowEvent,
   WorkflowRun,
+  WorkflowStep,
 } from "./types";
 
 export type M29Context = Readonly<{ workspaceId: string; role: "OWNER" | "EDITOR" | "VIEWER" }>;
-
 export class M29ApiError extends Error {
   public constructor(
     public readonly status: number,
@@ -18,125 +21,331 @@ export class M29ApiError extends Error {
     this.name = "M29ApiError";
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-const isString = (value: unknown): value is string => typeof value === "string";
-const isNullableString = (value: unknown): value is string | null =>
-  value === null || isString(value);
-const isArray = (value: unknown): value is readonly unknown[] => Array.isArray(value);
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new M29ApiError(200, `Invalid ${label} response`);
+const record = (value: unknown, label: string): Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new M29ApiError(200, `Invalid ${label}`);
+  return value as Record<string, unknown>;
+};
+const string = (value: unknown, label: string): string => {
+  if (typeof value !== "string" || value.length === 0)
+    throw new M29ApiError(200, `Invalid ${label}`);
   return value;
-}
-
-function requireString(record: Record<string, unknown>, key: string, label: string): string {
-  const value = record[key];
-  if (!isString(value)) throw new M29ApiError(200, `Invalid ${label}.${key}`);
+};
+const nullableString = (value: unknown, label: string): string | null => {
+  if (value !== null && typeof value !== "string") throw new M29ApiError(200, `Invalid ${label}`);
   return value;
-}
-
-function parseRun(value: unknown): WorkflowRun {
-  const record = requireRecord(value, "workflow run");
-  const steps = record.steps;
-  const jobs = record.jobs;
-  const events = record.events;
-  if (!isArray(steps) || !isArray(jobs) || !isArray(events))
-    throw new M29ApiError(200, "Invalid workflow detail");
+};
+const number = (value: unknown, label: string): number => {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new M29ApiError(200, `Invalid ${label}`);
+  return value;
+};
+const array = (value: unknown, label: string): readonly unknown[] => {
+  if (!Array.isArray(value)) throw new M29ApiError(200, `Invalid ${label}`);
+  return value;
+};
+const date = (value: unknown, label: string): string => {
+  const parsed = string(value, label);
+  if (Number.isNaN(Date.parse(parsed))) throw new M29ApiError(200, `Invalid ${label}`);
+  return parsed;
+};
+const bool = (value: unknown, label: string): boolean => {
+  if (typeof value !== "boolean") throw new M29ApiError(200, `Invalid ${label}`);
+  return value;
+};
+function parseStep(value: unknown): WorkflowStep {
+  const v = record(value, "workflow step");
   return {
-    id: requireString(record, "id", "run"),
-    state: requireString(record, "state", "run"),
-    dispatchStatus: requireString(record, "dispatchStatus", "run"),
-    budgetDecision: requireString(record, "budgetDecision", "run"),
-    budgetReason: isNullableString(record.budgetReason) ? record.budgetReason : null,
-    currentStepKey: isNullableString(record.currentStepKey) ? record.currentStepKey : null,
-    nextAction: isNullableString(record.nextAction) ? record.nextAction : null,
-    pausedReason: isNullableString(record.pausedReason) ? record.pausedReason : null,
-    lastErrorCode: isNullableString(record.lastErrorCode) ? record.lastErrorCode : null,
-    lastErrorMessage: isNullableString(record.lastErrorMessage) ? record.lastErrorMessage : null,
-    createdAt: requireString(record, "createdAt", "run"),
-    updatedAt: requireString(record, "updatedAt", "run"),
-    steps: steps as WorkflowRun["steps"],
-    jobs: jobs as WorkflowRun["jobs"],
-    events: events as WorkflowRun["events"],
+    id: string(v.id, "step.id"),
+    stepKey: string(v.stepKey, "step.stepKey"),
+    status: string(v.status, "step.status"),
+    attempts: number(v.attempts, "step.attempts"),
+    maxAttempts: number(v.maxAttempts, "step.maxAttempts"),
+    sideEffect: bool(v.sideEffect, "step.sideEffect"),
+    errorCode: nullableString(v.errorCode, "step.errorCode"),
+    errorMessage: nullableString(v.errorMessage, "step.errorMessage"),
+    startedAt: v.startedAt === null ? null : date(v.startedAt, "step.startedAt"),
+    completedAt: v.completedAt === null ? null : date(v.completedAt, "step.completedAt"),
   };
 }
-
-function parseNotifications(value: unknown): M29Data["notifications"] {
-  const record = requireRecord(value, "notifications");
-  if (!isArray(record.items) || typeof record.unreadCount !== "number")
-    throw new M29ApiError(200, "Invalid notifications response");
-  return { items: record.items as readonly Notification[], unreadCount: record.unreadCount };
+function parseJob(value: unknown): WorkflowJob {
+  const v = record(value, "workflow job");
+  return {
+    id: string(v.id, "job.id"),
+    status: string(v.status, "job.status"),
+    attempt: number(v.attempt, "job.attempt"),
+    errorCode: nullableString(v.errorCode, "job.errorCode"),
+    errorMessage: nullableString(v.errorMessage, "job.errorMessage"),
+  };
 }
-
+function parseEvent(value: unknown): WorkflowEvent {
+  const v = record(value, "workflow event");
+  return {
+    id: string(v.id, "event.id"),
+    eventType: string(v.eventType, "event.eventType"),
+    occurredAt: date(v.occurredAt, "event.occurredAt"),
+  };
+}
+export function parseRun(value: unknown): WorkflowRun {
+  const v = record(value, "workflow run");
+  const steps = array(v.steps, "run.steps").map(parseStep);
+  const jobs = array(v.jobs, "run.jobs").map(parseJob);
+  const events = array(v.events, "run.events").map(parseEvent);
+  const state = string(v.state, "run.state");
+  const allowed = [
+    "CREATED",
+    "QUEUED",
+    "RUNNING",
+    "WAITING_APPROVAL",
+    "SUCCEEDED",
+    "PAUSED",
+    "RETRY_WAIT",
+    "FAILED",
+    "CANCELED",
+  ] as const;
+  if (!allowed.includes(state as (typeof allowed)[number]))
+    throw new M29ApiError(200, "Invalid run.state");
+  return {
+    id: string(v.id, "run.id"),
+    state: state as WorkflowRun["state"],
+    dispatchStatus: string(v.dispatchStatus, "run.dispatchStatus"),
+    budgetDecision: string(v.budgetDecision, "run.budgetDecision"),
+    budgetReason: nullableString(v.budgetReason, "run.budgetReason"),
+    currentStepKey: nullableString(v.currentStepKey, "run.currentStepKey"),
+    nextAction: nullableString(v.nextAction, "run.nextAction"),
+    pausedReason: nullableString(v.pausedReason, "run.pausedReason"),
+    lastErrorCode: nullableString(v.lastErrorCode, "run.lastErrorCode"),
+    lastErrorMessage: nullableString(v.lastErrorMessage, "run.lastErrorMessage"),
+    createdAt: date(v.createdAt, "run.createdAt"),
+    updatedAt: date(v.updatedAt, "run.updatedAt"),
+    steps,
+    jobs,
+    events,
+  };
+}
+function parseNotification(value: unknown): Notification {
+  const v = record(value, "notification");
+  return {
+    id: string(v.id, "notification.id"),
+    eventType: string(v.eventType, "notification.eventType"),
+    title: string(v.title, "notification.title"),
+    body: string(v.body, "notification.body"),
+    link: nullableString(v.link, "notification.link"),
+    readAt: v.readAt === null ? null : date(v.readAt, "notification.readAt"),
+    createdAt: date(v.createdAt, "notification.createdAt"),
+  };
+}
+function parsePreference(value: unknown): NotificationPreference {
+  const v = record(value, "preference");
+  return {
+    eventType: string(v.eventType, "preference.eventType"),
+    sourceModule: string(v.sourceModule, "preference.sourceModule"),
+    description: string(v.description, "preference.description"),
+    audience: string(v.audience, "preference.audience"),
+    inApp: bool(v.inApp, "preference.inApp"),
+    email: bool(v.email, "preference.email"),
+    isDefault: bool(v.isDefault, "preference.isDefault"),
+  };
+}
+function parseBudget(value: unknown): Budget {
+  const v = record(value, "budget");
+  const periods = array(v.periods, "budget.periods").map((item) => {
+    const p = record(item, "budget period");
+    const period = string(p.period, "budget period.period");
+    if (period !== "DAY" && period !== "MONTH") throw new M29ApiError(200, "Invalid budget period");
+    return {
+      period: period as "DAY" | "MONTH",
+      limitMinor: number(p.limitMinor, "budget limit"),
+      consumedMinor: number(p.consumedMinor, "budget consumed"),
+      remainingMinor: number(p.remainingMinor, "budget remaining"),
+      exhausted: bool(p.exhausted, "budget exhausted"),
+    };
+  });
+  return {
+    budgetId: string(v.budgetId, "budget.id"),
+    scope: v.scope === "CHANNEL" ? "CHANNEL" : "WORKSPACE",
+    channelId: nullableString(v.channelId, "budget.channelId"),
+    currency: string(v.currency, "budget.currency"),
+    timezone: string(v.timezone, "budget.timezone"),
+    periods,
+  };
+}
+function parseUsage(value: unknown): UsageSummary {
+  const v = record(value, "usage");
+  const totals = record(v.totals, "usage.totals");
+  const currencies = array(totals.currencies, "usage currencies").map((item) => {
+    const c = record(item, "currency");
+    return {
+      currency: string(c.currency, "currency.code"),
+      totalMinor: number(c.totalMinor, "currency.total"),
+      actualMinor: number(c.actualMinor, "currency.actual"),
+      estimatedMinor: number(c.estimatedMinor, "currency.estimated"),
+      failedEstimatedMinor: number(c.failedEstimatedMinor, "currency.failedEstimated"),
+      reservedMinor: number(c.reservedMinor, "currency.reserved"),
+      committedMinor: number(c.committedMinor, "currency.committed"),
+      adjustmentNetMinor: number(c.adjustmentNetMinor, "currency.adjustment"),
+      byCategory: array(c.byCategory, "currency.categories").map((category) => {
+        const d = record(category, "category");
+        return {
+          category: string(d.category, "category.name"),
+          totalMinor: number(d.totalMinor, "category.total"),
+        };
+      }),
+    };
+  });
+  return {
+    period: v.period === "DAY" ? "DAY" : "MONTH",
+    periodKey: string(v.periodKey, "usage.periodKey"),
+    periodStart: date(v.periodStart, "usage.periodStart"),
+    periodEnd: date(v.periodEnd, "usage.periodEnd"),
+    timezone: string(v.timezone, "usage.timezone"),
+    currencies,
+    unknownCostRequests: number(totals.unknownCostRequests, "usage.unknown"),
+    unpricedRequests: number(totals.unpricedRequests, "usage.unpriced"),
+    notDispatchedRequests: number(totals.notDispatchedRequests, "usage.notDispatched"),
+  };
+}
+function parseAudit(value: unknown): AuditRecord {
+  const v = record(value, "audit");
+  return {
+    id: string(v.id, "audit.id"),
+    action: string(v.action, "audit.action"),
+    reason: string(v.reason, "audit.reason"),
+    createdAt: date(v.createdAt, "audit.createdAt"),
+  };
+}
 async function request<T>(
   path: string,
+  parse: (value: unknown) => T,
   init?: RequestInit,
-  parse?: (value: unknown) => T,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, {
-    ...init,
-    credentials: "include",
-    headers: { Accept: "application/json", ...(init?.headers ?? {}) },
-  });
+  let response: Response;
+  try {
+    const requestInit: RequestInit = {
+      ...init,
+      credentials: "include",
+      headers: new Headers({
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      }),
+    };
+    if (signal) requestInit.signal = signal;
+    response = await fetch(`/api/v1${path}`, requestInit);
+  } catch {
+    throw new M29ApiError(
+      0,
+      "The request could not be completed. Check your connection and try again.",
+    );
+  }
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    body = null;
+    throw new M29ApiError(response.status, "The server returned an invalid response.");
   }
   if (!response.ok)
     throw new M29ApiError(
       response.status,
       response.status === 403
         ? "You do not have permission for this action."
-        : `Request failed (${response.status})`,
+        : response.status === 409
+          ? "The data changed. Refresh and try again."
+          : `Request failed (${response.status})`,
     );
-  return parse ? parse(body) : (body as T);
+  return parse(body);
 }
-
-export function loadM29Data(context: M29Context): Promise<M29Data> {
+const parseRuns = (value: unknown): readonly WorkflowRun[] =>
+  array(value, "workflow runs").map(parseRun);
+const parseNotifications = (value: unknown): M29Data["notifications"] => {
+  const v = record(value, "notifications");
+  return {
+    items: array(v.items, "notifications.items").map(parseNotification),
+    unreadCount: number(v.unreadCount, "notifications.unreadCount"),
+  };
+};
+const parsePreferences = (value: unknown): readonly NotificationPreference[] =>
+  array(value, "preferences").map(parsePreference);
+const parseBudgets = (value: unknown): readonly Budget[] =>
+  array(value, "budgets").map(parseBudget);
+const parseAudits = (value: unknown): readonly AuditRecord[] =>
+  array(value, "audit list").map(parseAudit);
+export function loadM29Data(context: M29Context, signal?: AbortSignal): Promise<M29Data> {
   const base = `/workspaces/${encodeURIComponent(context.workspaceId)}`;
   return Promise.all([
-    request<unknown>(`${base}/orchestration/runs`, undefined, (value) => {
-      if (!isArray(value)) throw new M29ApiError(200, "Invalid workflow list response");
-      return value.map(parseRun);
-    }),
-    request(`${base}/notifications`, undefined, parseNotifications),
-    request<readonly NotificationPreference[]>(`${base}/notifications/preferences`),
-    request<UsageSummary>(`${base}/usage/summary`),
-    request<readonly Budget[]>(`${base}/usage/budgets`),
-  ]).then(([runs, notifications, preferences, usage, budgets]) => ({
-    runs: runs as readonly WorkflowRun[],
+    request(`${base}/orchestration/runs`, parseRuns, undefined, signal),
+    request(`${base}/notifications`, parseNotifications, undefined, signal),
+    request(`${base}/notifications/preferences`, parsePreferences, undefined, signal),
+    request(`${base}/usage/summary`, parseUsage, undefined, signal),
+    request(`${base}/usage/budgets`, parseBudgets, undefined, signal),
+    request(`${base}/usage/audit`, parseAudits, undefined, signal),
+  ]).then(([runs, notifications, preferences, usage, budgets, audit]) => ({
+    runs,
     notifications,
     preferences,
     usage,
     budgets,
+    audit,
   }));
 }
-
 export function runAction(
   context: M29Context,
   runId: string,
   action: "cancel" | "retry" | "resume",
+  signal?: AbortSignal,
 ): Promise<WorkflowRun> {
-  const base = `/workspaces/${encodeURIComponent(context.workspaceId)}/orchestration/runs/${encodeURIComponent(runId)}/${action}`;
-  return request(base, { method: "POST" }, parseRun);
+  return request(
+    `/workspaces/${encodeURIComponent(context.workspaceId)}/orchestration/runs/${encodeURIComponent(runId)}/${action}`,
+    parseRun,
+    { method: "POST" },
+    signal,
+  );
 }
-
 export function markNotificationRead(
   context: M29Context,
-  notificationId: string,
+  id: string,
+  signal?: AbortSignal,
 ): Promise<Notification> {
   return request(
-    `/workspaces/${encodeURIComponent(context.workspaceId)}/notifications/${encodeURIComponent(notificationId)}/read`,
+    `/workspaces/${encodeURIComponent(context.workspaceId)}/notifications/${encodeURIComponent(id)}/read`,
+    parseNotification,
     { method: "POST" },
-  ) as Promise<Notification>;
+    signal,
+  );
 }
-
-export function markAllNotificationsRead(context: M29Context): Promise<{ updated: number }> {
-  return request(`/workspaces/${encodeURIComponent(context.workspaceId)}/notifications/read-all`, {
-    method: "POST",
-  });
+export function markAllNotificationsRead(
+  context: M29Context,
+  signal?: AbortSignal,
+): Promise<{ updated: number }> {
+  return request(
+    `/workspaces/${encodeURIComponent(context.workspaceId)}/notifications/read-all`,
+    (value) => {
+      const v = record(value, "read-all");
+      return { updated: number(v.updated, "read-all.updated") };
+    },
+    { method: "POST" },
+    signal,
+  );
+}
+export function savePreferences(
+  context: M29Context,
+  preferences: readonly NotificationPreference[],
+  signal?: AbortSignal,
+): Promise<readonly NotificationPreference[]> {
+  return request(
+    `/workspaces/${encodeURIComponent(context.workspaceId)}/notifications/preferences`,
+    parsePreferences,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        preferences: preferences.map(({ eventType, inApp, email }) => ({
+          eventType,
+          inApp,
+          email,
+        })),
+      }),
+    },
+    signal,
+  );
 }

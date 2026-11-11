@@ -1,6 +1,6 @@
 # M29 Status - Workflow Monitoring, Notifications & Usage Dashboard
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (partial integration)
+- **State:** IMPLEMENTED_PENDING_REVIEW (partial integration; review fixes prepared)
 - **Assigned session/editor:** Codex
 - **Branch/worktree:** work/m29-workflow-notifications-usage-dashboard
 - **Last updated:** 2026-11-11
@@ -13,7 +13,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Completion estimate
 
-75% - isolated M29 feature surface is implemented; live shell/auth integration is blocked until M22 is integrated.
+90% - review blockers B1-B6 addressed in isolated feature code; live shell/auth integration is blocked until M22 is integrated.
 
 ## Task checklist
 
@@ -54,6 +54,8 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `M29Dashboard` requires verified `{ workspaceId, role }` from its eventual M22 consumer; it does not discover or fabricate tenant context.
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
 - PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
+- Review fixes: nested per-currency M18 totals and unknown/unpriced counters are validated and displayed without currency mixing; M16 enum/state/role action gates and step/job/event details are shown; M17 preference PUT/read UI and notification mutation error states are present; usage audit history is loaded; AbortController/version guards prevent stale workspace responses; focused M29 tests cover validation, redaction and permission actions.
+- Current GitHub credential is `minu-the-reviewer`; developer account authentication is unavailable in this environment, so the fix commit is intentionally not pushed under the reviewer identity.
 
 
 

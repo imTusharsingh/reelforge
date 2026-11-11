@@ -1,36 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import {
   loadM29Data,
   markAllNotificationsRead,
   markNotificationRead,
   runAction,
+  savePreferences,
   type M29Context,
 } from "./api";
-import type { M29Data, WorkflowRun } from "./types";
+import type { M29Data, NotificationPreference, WorkflowRun } from "./types";
+import { redacted, safeActions } from "./logic";
 import styles from "./m29.module.css";
 
-const currency = (minor: number, code: string): string =>
+export const currency = (minor: number, code: string): string =>
   new Intl.NumberFormat(undefined, { style: "currency", currency: code }).format(minor / 100);
-
-function redacted(message: string | null): string {
-  if (!message) return "No additional detail was provided.";
-  return message
-    .replace(
-      /(bearer\s+|api[_-]?key|token|secret|password|authorization)[^\s,;]*/gi,
-      "$1[redacted]",
-    )
-    .slice(0, 240);
-}
-
-function safeActions(run: WorkflowRun): readonly ("cancel" | "retry" | "resume")[] {
-  if (run.state === "RUNNING" || run.state === "WAITING") return ["cancel"];
-  if (run.state === "FAILED") return ["retry"];
-  if (run.state === "PAUSED") return ["resume", "cancel"];
-  return [];
-}
 
 function RunCard({
   context,
@@ -71,8 +56,24 @@ function RunCard({
           </p>
         )}
         {run.nextAction && <p className={styles.muted}>Next: {run.nextAction}</p>}
+        <details className={styles.details}>
+          <summary>Steps, jobs and events</summary>
+          {run.steps.map((step) => (
+            <div key={step.id}>
+              <span>
+                {step.stepKey} · {step.status}
+              </span>
+              <small>
+                {step.attempts}/{step.maxAttempts} attempts
+              </small>
+            </div>
+          ))}
+          <p className={styles.muted}>
+            {run.jobs.length} jobs · {run.events.length} events
+          </p>
+        </details>
         <div className={styles.actions}>
-          {safeActions(run).map((action) => (
+          {safeActions(run, context.role).map((action) => (
             <Button
               key={action}
               tone={action === "cancel" ? "secondary" : "primary"}
@@ -98,23 +99,103 @@ function RunCard({
   );
 }
 
+function Preferences({
+  context,
+  initial,
+  onError,
+}: {
+  context: M29Context;
+  initial: readonly NotificationPreference[];
+  onError: (message: string) => void;
+}): JSX.Element {
+  const [preferences, setPreferences] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setPreferences(initial), [initial]);
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    onError("");
+    try {
+      await savePreferences(context, preferences);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Preferences could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel className={styles.panel}>
+      <h2>Notification preferences</h2>
+      <ul className={styles.list}>
+        {preferences.map((preference, index) => (
+          <li className={styles.row} key={preference.eventType}>
+            <div>
+              <strong>{preference.eventType}</strong>
+              <small>{preference.description}</small>
+            </div>
+            <label>
+              <input
+                type="checkbox"
+                checked={preference.inApp}
+                onChange={(event) =>
+                  setPreferences(
+                    preferences.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, inApp: event.target.checked } : item,
+                    ),
+                  )
+                }
+              />{" "}
+              In-app
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={preference.email}
+                onChange={(event) =>
+                  setPreferences(
+                    preferences.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, email: event.target.checked } : item,
+                    ),
+                  )
+                }
+              />{" "}
+              Email
+            </label>
+          </li>
+        ))}
+      </ul>
+      <Button disabled={busy} onClick={() => void save()}>
+        {busy ? "Saving…" : "Save preferences"}
+      </Button>
+    </Panel>
+  );
+}
+
 export function M29Dashboard({ context }: { context: M29Context }): JSX.Element {
   const [data, setData] = useState<M29Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState("");
   const [loading, setLoading] = useState(true);
+  const version = useRef(0);
   const refresh = useCallback(() => {
+    const current = ++version.current;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-    void loadM29Data(context)
-      .then(setData)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "M29 data could not be loaded."),
-      )
-      .finally(() => setLoading(false));
+    setData(null);
+    void loadM29Data(context, controller.signal)
+      .then((next) => {
+        if (current === version.current) setData(next);
+      })
+      .catch((e: unknown) => {
+        if (current === version.current && !(e instanceof DOMException && e.name === "AbortError"))
+          setError(e instanceof Error ? e.message : "M29 data could not be loaded.");
+      })
+      .finally(() => {
+        if (current === version.current) setLoading(false);
+      });
+    return (): void => controller.abort();
   }, [context]);
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => refresh(), [refresh]);
   if (loading)
     return (
       <StateMessage kind="loading" description="Loading workflow, notification, and usage data…" />
@@ -138,13 +219,6 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
         description="M29 needs an authenticated workspace context from M22."
       />
     );
-  const budget = data.budgets
-    .flatMap((item) => item.periods)
-    .find((period) => period.period === "MONTH");
-  const used =
-    budget && budget.limitMinor > 0
-      ? Math.min(100, (budget.consumedMinor / budget.limitMinor) * 100)
-      : 0;
   return (
     <main className={styles.dashboard} aria-labelledby="m29-title">
       <header className={styles.heading}>
@@ -159,10 +233,17 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
           Refresh
         </Button>
       </header>
+      {mutationError && (
+        <Alert tone="danger" title="Change not saved">
+          {mutationError}
+        </Alert>
+      )}
       <div className={styles.grid}>
         <Panel className={styles.panel}>
           <h2>Workflow runs</h2>
-          <p className={styles.muted}>Actions are confirmed by the backend state machine.</p>
+          <p className={styles.muted}>
+            Actions are permission- and state-gated; the backend remains authoritative.
+          </p>
           <ul className={styles.list}>
             {data.runs.length ? (
               data.runs.map((run) => (
@@ -181,7 +262,16 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
             <Button
               tone="secondary"
               disabled={!data.notifications.unreadCount}
-              onClick={() => void markAllNotificationsRead(context).then(refresh)}
+              onClick={() => {
+                setMutationError("");
+                void markAllNotificationsRead(context)
+                  .then(refresh)
+                  .catch((e: unknown) =>
+                    setMutationError(
+                      e instanceof Error ? e.message : "Notifications could not be updated.",
+                    ),
+                  );
+              }}
             >
               Mark all read
             </Button>
@@ -198,9 +288,16 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
                   {!notification.readAt && (
                     <Button
                       tone="ghost"
-                      onClick={() =>
-                        void markNotificationRead(context, notification.id).then(refresh)
-                      }
+                      onClick={() => {
+                        setMutationError("");
+                        void markNotificationRead(context, notification.id)
+                          .then(refresh)
+                          .catch((e: unknown) =>
+                            setMutationError(
+                              e instanceof Error ? e.message : "Notification could not be updated.",
+                            ),
+                          );
+                      }}
                     >
                       Mark read
                     </Button>
@@ -215,50 +312,85 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
         <Panel className={`${styles.panel} ${styles.wide}`}>
           <h2>Usage and budget</h2>
           <p className={styles.muted}>
-            Consumption and budget accounting only — this is not subscription billing or an invoice.
+            Consumption and budget accounting only — not subscription billing or invoices. Period:{" "}
+            {data.usage.periodKey} ({data.usage.timezone}).
           </p>
-          <div className={styles.details}>
-            <div>
-              <span>Recorded usage</span>
-              <strong>{currency(data.usage.totalMinor, data.usage.currency)}</strong>
-            </div>
-            <div>
-              <span>Actual / estimated</span>
-              <strong>
-                {currency(data.usage.actualMinor, data.usage.currency)} /{" "}
-                {currency(data.usage.estimatedMinor, data.usage.currency)}
-              </strong>
-            </div>
-            {budget && (
-              <div>
-                <span>Monthly budget</span>
-                <strong>
-                  {currency(budget.consumedMinor, data.usage.currency)} /{" "}
-                  {currency(budget.limitMinor, data.usage.currency)}
-                </strong>
+          {data.usage.currencies.length ? (
+            data.usage.currencies.map((item) => (
+              <div className={styles.currency} key={item.currency}>
+                <h3>{item.currency}</h3>
+                <div className={styles.details}>
+                  <div>
+                    <span>Recorded</span>
+                    <strong>{currency(item.totalMinor, item.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>Actual / estimated</span>
+                    <strong>
+                      {currency(item.actualMinor, item.currency)} /{" "}
+                      {currency(item.estimatedMinor + item.failedEstimatedMinor, item.currency)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Reserved</span>
+                    <strong>{currency(item.reservedMinor, item.currency)}</strong>
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-          {budget && (
-            <>
-              <div
-                className={styles.meter}
-                aria-label={`${Math.round(used)} percent of monthly budget consumed`}
-              >
-                <span style={{ width: `${used}%` }} />
-              </div>
-              <small className={styles.muted}>
-                {budget.exhausted
-                  ? "Budget exhausted; paid work is blocked."
-                  : `${currency(budget.remainingMinor, data.usage.currency)} remaining`}
-              </small>
-            </>
+            ))
+          ) : (
+            <StateMessage kind="empty" description="No priced usage recorded for this period." />
           )}
+          <p className={styles.muted}>
+            Unknown cost: {data.usage.unknownCostRequests}; unpriced: {data.usage.unpricedRequests};
+            not dispatched: {data.usage.notDispatchedRequests}.
+          </p>
+          {data.budgets.map((budget) => (
+            <div className={styles.currency} key={budget.budgetId}>
+              <h3>
+                {budget.scope} budget · {budget.currency}
+              </h3>
+              {budget.periods.map((period) => (
+                <div className={styles.details} key={period.period}>
+                  <div>
+                    <span>{period.period}</span>
+                    <strong>
+                      {currency(period.consumedMinor, budget.currency)} /{" "}
+                      {currency(period.limitMinor, budget.currency)}
+                    </strong>
+                  </div>
+                  <small>
+                    {period.exhausted
+                      ? "Budget exhausted; paid work is blocked."
+                      : `${currency(period.remainingMinor, budget.currency)} remaining`}
+                  </small>
+                </div>
+              ))}
+            </div>
+          ))}
         </Panel>
       </div>
+      <Preferences context={context} initial={data.preferences} onError={setMutationError} />
+      <Panel className={styles.panel}>
+        <h2>Budget history</h2>
+        <ul className={styles.list}>
+          {data.audit.length ? (
+            data.audit.map((item) => (
+              <li className={styles.row} key={item.id}>
+                <span>
+                  {item.action}: {item.reason}
+                </span>
+                <small>{new Date(item.createdAt).toLocaleString()}</small>
+              </li>
+            ))
+          ) : (
+            <StateMessage kind="empty" description="No budget audit records." />
+          )}
+        </ul>
+      </Panel>
       {context.role !== "OWNER" && (
         <Alert tone="info" title="Budget settings are owner-only">
-          You can view usage and budget status. Only workspace owners can change caps or record
+          You can view usage and history. Only workspace owners can change caps or record
           adjustments.
         </Alert>
       )}
