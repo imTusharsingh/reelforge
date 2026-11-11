@@ -1073,3 +1073,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Real PostgreSQL/API/browser evidence covers stale timestamp/status/revision rejection, two authenticated editors, explicit draft rebase, targeted scene preservation, persisted order/timing/character pins, stale approval prevention, correct approval/export/reload, Viewer/tenant enforcement and committed-response-loss recovery without replay. The character fixture was corrected to the actual persisted profile contract after an initial API 500.
 - Validation: full workspace typecheck/lint/production build pass; 636 tests passed / 8 skipped (41 M24 tests), 17 mounted browser scenarios, 11 real Next/API/PostgreSQL scenarios and 4 PostgreSQL persistence scenarios pass. Final formatting/hosted CI is checked after source completion.
 - AI proposals/new-script generation and scene asset assignment remain unavailable under current backend capabilities. State remains IMPLEMENTED_PENDING_REVIEW; independent review requested, no self-approval or merge.
+
+## 2026-11-12 — M25 mandatory audit blocked on Core contracts
+
+- Started isolated `feat/m25-generation-studio` at main `7a81e07`, the confirmed M24 PR #55 merge. No product code changed.
+- Published endpoint/DTO, permission, provider readiness and safe invocation matrix plus scoped implementation plan in `docs/M25_CAPABILITY_AUDIT.md`.
+- Raised Core issues #59 (authorized media delivery) and #60 (discovery and safe pinned scene mutation contracts), assigned to minu-the-reviewer. Storage keys are not URLs; scene replace regenerates rather than assigns an asset; providers are NotConfigured.
+- M25 is BLOCKED before coding under #58's mandatory stop rule. All T01–T10 remain unchecked. No implementation PR, self-approval, merge or issue closure.
+- Verification is static audit only; required implementation lint/format/typecheck/test/build/DB/browser gates were not run. Exact command results and continuation steps are in M25 STATUS.
