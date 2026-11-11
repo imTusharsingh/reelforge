@@ -940,3 +940,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: NONE beyond the GitHub integration, no live social/AI provider calls.
 - Remaining B3: no real browser responsive screenshots, focus-trap/Escape/return focus, screen-reader or rendered contrast evidence. Do not mark accessibility acceptance passed or merge until reviewer checks.
 - Next exact action: reviewer requests/collects browser evidence; re-review current PR head after docs CI.
+
+## 2026-11-11 - M22 authentication, workspace and onboarding UI implementation
+- Actor/session: Codex implementation session; branch `work/m22-auth-workspace-onboarding`, based on `origin/main` `09c1e76` with M21 PR #41 merged.
+- Work package: M22-T01–T07 authorized frontend scope.
+- Changes: Added cookie-session auth and registration forms, backend-compatible validation, same-origin `/api/v1` Next rewrite, workspace list/create/select/switch flows, active-workspace preference, onboarding, setup checklist, safe unavailable states for recovery/profile/role metadata, and logout/session/network error handling. Reused M21 shell, primitives and tokens.
+- API audit: Auth endpoints return `userId` and HttpOnly SameSite=Strict `reelforge_session`; workspace list/create/update/archive are available; list omits membership roles. No recovery or authenticated profile endpoint was found. No backend/shared-contract files changed.
+- Verification: frozen install via Corepack pnpm 12.16.1 PASS; lint PASS; format:check PASS; root typecheck with a syntactically valid DATABASE_URL PASS; web build PASS; focused frontend tests 5 files/13 tests PASS. Full test run initially had 43 passing suites/213 tests and 36 failures from absent generated Prisma client; db validation and browser verification were not run.
+- Security: no localStorage/sessionStorage tokens or bearer workaround; only workspace ID preference is stored. Relative same-origin requests include credentials. CSRF hardening remains a Core decision because the API has no explicit CSRF layer.
+- Risks/blockers: password recovery, profile mutation and role-aware privileged navigation require backend contracts; no production capability is fabricated. Browser visual/focus/accessibility evidence remains outstanding.
+- Next exact action: Core review of the diff and security/contract gaps, then browser walkthrough and independent review by `minu-the-reviewer`; do not self-approve or merge.

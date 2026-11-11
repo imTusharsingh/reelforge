@@ -1,5 +1,14 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${process.env.REFORGE_API_ORIGIN ?? "http://localhost:3001"}/api/v1/:path*`,
+      },
+    ];
+  },
+};
 
 export default nextConfig;
