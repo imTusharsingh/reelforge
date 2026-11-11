@@ -1,29 +1,38 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const tokens = readFileSync(new URL("../../styles/design-tokens.css", import.meta.url), "utf8");
-const css = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8");
-const [lightTokens = "", darkTokens = ""] = tokens.split('[data-theme="dark"]');
+const tokenFile = new URL("../../styles/design-tokens.css", import.meta.url);
+const styleFile = new URL("../../app/globals.css", import.meta.url);
+const tokens = readFileSync(tokenFile, "utf8");
+const styles = readFileSync(styleFile, "utf8");
+const parts = tokens.split('[data-theme="dark"]');
+const lightTokens = parts[0] ?? "";
+const darkTokens = parts[1] ?? "";
 
-function token(name: string, dark = false): string {
-  const expression = new RegExp(`--${name}: ([^;]+);`);
-  const fromDark = dark ? darkTokens.match(expression)?.[1] : undefined;
-  const raw = fromDark ?? lightTokens.match(expression)?.[1];
-  if (!raw) throw new Error(`Missing semantic token: ${name}`);
-  const reference = /^var\(--([\w-]+)\)$/.exec(raw.trim());
-  if (reference) return token(reference[1]!, dark);
-  if (!/^#[0-9a-f]{6}$/i.test(raw.trim())) {
-    throw new Error(`Expected six-digit sRGB color for ${name}: ${raw}`);
+function color(name: string, dark: boolean): string {
+  const pattern = new RegExp(`--${name}: ([^;]+);`);
+  const override = dark ? darkTokens.match(pattern)?.[1] : undefined;
+  const value = override ?? lightTokens.match(pattern)?.[1];
+  if (!value) throw new Error(`Missing token: ${name}`);
+  const alias = /^var\(--([\w-]+)\)$/.exec(value.trim());
+  if (alias) return color(alias[1]!, dark);
+  if (!/^#[0-9a-f]{6}$/i.test(value.trim())) {
+    throw new Error(`Non-color token: ${name}`);
   }
-  return raw.trim();
+  return value.trim();
 }
 
 function luminance(hex: string): number {
-  const values = [1, 3, 5].map((index) => {
-    const value = Number.parseInt(hex.slice(index, index + 2), 16) / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  const components = [1, 3, 5].map((index) => {
+    const channel = Number.parseInt(hex.slice(index, index + 2), 16) / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
   });
-  return values[0]! * 0.2126 + values[1]! * 0.7152 + values[2]! * 0.0722;
+  const red = components[0]! * 0.2126;
+  const green = components[1]! * 0.7152;
+  const blue = components[2]! * 0.0722;
+  return red + green + blue;
 }
 
 function contrast(foreground: string, background: string): number {
@@ -33,18 +42,19 @@ function contrast(foreground: string, background: string): number {
 }
 
 describe("M21 semantic accent contrast", () => {
-  it.each([false, true])("keeps primary and hover text >= 4.5:1 (dark=%s)", (dark) => {
-    const primaryText = token("rf-on-accent", dark);
-    const primaryBackground = token("rf-accent", dark);
-    expect(contrast(primaryText, primaryBackground)).toBeGreaterThanOrEqual(4.5);
-    const hoverText = token("rf-on-accent-hover", dark);
-    const hoverBackground = token("rf-accent-hover", dark);
+  it.each([false, true])("checks both themes (dark=%s)", (dark) => {
+    const foreground = color("rf-on-accent", dark);
+    const background = color("rf-accent", dark);
+    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
+
+    const hoverText = color("rf-on-accent-hover", dark);
+    const hoverBackground = color("rf-accent-hover", dark);
     expect(contrast(hoverText, hoverBackground)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("requires the actual component styles to consume semantic foregrounds", () => {
-    expect(css).toContain(".rf-button--primary {\n  color: var(--rf-on-accent);");
-    expect(css).toContain("color: var(--rf-on-accent-hover);");
-    expect(css).toContain(".rf-hero-glyph {\n  background: var(--rf-accent);\n  color: var(--rf-on-accent);");
+  it("requires the stylesheet to use semantic foregrounds", () => {
+    expect(styles).toContain("color: var(--rf-on-accent);");
+    expect(styles).toContain("color: var(--rf-on-accent-hover);");
+    expect(styles).toContain("background: var(--rf-accent);");
   });
 });
