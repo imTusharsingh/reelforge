@@ -47,7 +47,9 @@ describe("verified workspace role contract", () => {
   it("accepts a role-free create acknowledgement but rejects it as a membership list", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "w-1", name: "Studio" }))),
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: "w-1", name: "Studio" })),
+      ),
     );
     await expect(api.createWorkspace("Studio")).resolves.toEqual({ id: "w-1", name: "Studio" });
     await expect(api.listWorkspaces()).rejects.toMatchObject({ status: 502 });
