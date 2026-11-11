@@ -11,7 +11,7 @@ import {
   savePreferences,
   type M29Context,
 } from "./api";
-import type { M29Data, NotificationPreference, WorkflowRun } from "./types";
+import type { Budget, M29Data, NotificationPreference, WorkflowRun } from "./types";
 import { redacted, safeActions } from "./logic";
 import styles from "./m29.module.css";
 
@@ -31,18 +31,23 @@ function RunCard({
 }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const actionController = useRef<AbortController | null>(null);
+  useEffect((): (() => void) => () => actionController.current?.abort(), []);
   const act = async (action: "cancel" | "retry" | "resume"): Promise<void> => {
     if (!window.confirm(`${action[0]?.toUpperCase()}${action.slice(1)} this workflow?`)) return;
     setBusy(true);
     setMessage(null);
+    actionController.current?.abort();
+    const controller = new AbortController();
+    actionController.current = controller;
     try {
-      await runAction(context, run.id, action);
-      onChanged();
+      await runAction(context, run.id, action, controller.signal);
+      if (isCurrent()) onChanged();
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       setMessage(error instanceof Error ? error.message : "The action could not be completed.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
   return (
@@ -132,25 +137,28 @@ function Preferences({
   initial,
   onError,
   isCurrent,
+  createSignal,
 }: {
   context: M29Context;
   initial: readonly NotificationPreference[];
   onError: (message: string) => void;
   isCurrent: () => boolean;
+  createSignal: () => AbortSignal;
 }): JSX.Element {
   const [preferences, setPreferences] = useState(initial);
   const [busy, setBusy] = useState(false);
   useEffect(() => setPreferences(initial), [initial]);
   const save = async (): Promise<void> => {
+    const signal = createSignal();
     setBusy(true);
     onError("");
     try {
-      await savePreferences(context, preferences);
+      await savePreferences(context, preferences, signal);
     } catch (error) {
       if (!isCurrent()) return;
       onError(error instanceof Error ? error.message : "Preferences could not be saved.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
   return (
@@ -203,18 +211,27 @@ function Preferences({
 
 function BudgetEditor({
   context,
+  existing,
   onSaved,
   onError,
+  createSignal,
+  isCurrent,
 }: {
   context: M29Context;
+  existing: readonly Budget[];
   onSaved: () => void;
   onError: (message: string) => void;
+  createSignal: () => AbortSignal;
+  isCurrent: () => boolean;
 }): JSX.Element {
-  const [currencyCode, setCurrencyCode] = useState("USD");
-  const [monthly, setMonthly] = useState("");
+  const workspaceBudget = existing.find((budget) => budget.scope === "WORKSPACE");
+  const monthlyPeriod = workspaceBudget?.periods.find((period) => period.period === "MONTH");
+  const [currencyCode, setCurrencyCode] = useState(workspaceBudget?.currency ?? "");
+  const [monthly, setMonthly] = useState(monthlyPeriod ? String(monthlyPeriod.limitMinor) : "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const save = async (): Promise<void> => {
+    const signal = createSignal();
     const monthlyLimitMinor = Number(monthly);
     if (
       !/^[A-Z]{3}$/.test(currencyCode) ||
@@ -230,24 +247,29 @@ function BudgetEditor({
     setBusy(true);
     onError("");
     try {
-      await saveBudget(context, {
-        currency: currencyCode,
-        monthlyLimitMinor,
-        reason: reason.trim(),
-      });
+      await saveBudget(
+        context,
+        {
+          currency: currencyCode,
+          monthlyLimitMinor,
+          reason: reason.trim(),
+          ...(workspaceBudget ? { expectedVersion: workspaceBudget.version } : {}),
+        },
+        signal,
+      );
       onSaved();
     } catch (error) {
       onError(error instanceof Error ? error.message : "Budget could not be saved.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
   return (
     <Panel className={styles.panel}>
       <h2>Budget settings</h2>
       <p className={styles.muted}>
-        Owner-only. Limits use minor currency units and are accounting caps, not subscription
-        charges.
+        Owner-only workspace budget. Limits use minor currency units; currency is immutable after
+        creation and this is not subscription billing.
       </p>
       <div className={styles.editor}>
         <Field
@@ -284,6 +306,13 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
   const [mutationError, setMutationError] = useState("");
   const [loading, setLoading] = useState(true);
   const version = useRef(0);
+  const mutationController = useRef<AbortController | null>(null);
+  const createSignal = useCallback((): AbortSignal => {
+    mutationController.current?.abort();
+    mutationController.current = new AbortController();
+    return mutationController.current.signal;
+  }, []);
+  useEffect((): (() => void) => () => mutationController.current?.abort(), [context]);
   const refresh = useCallback(() => {
     const current = ++version.current;
     const controller = new AbortController();
@@ -383,7 +412,8 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
               onClick={() => {
                 setMutationError("");
                 const generation = version.current;
-                void markAllNotificationsRead(context)
+                const signal = createSignal();
+                void markAllNotificationsRead(context, signal)
                   .then(() => {
                     if (generation === version.current) refresh();
                   })
@@ -413,7 +443,8 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
                       onClick={() => {
                         setMutationError("");
                         const generation = version.current;
-                        void markNotificationRead(context, notification.id)
+                        const signal = createSignal();
+                        void markNotificationRead(context, notification.id, signal)
                           .then(() => {
                             if (generation === version.current) refresh();
                           })
@@ -505,16 +536,20 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
           if (isCurrent()) setMutationError(message);
         }}
         isCurrent={isCurrent}
+        createSignal={createSignal}
       />
       {context.role === "OWNER" && (
         <BudgetEditor
           context={context}
+          existing={data.budgets}
           onSaved={() => {
             if (isCurrent()) refresh();
           }}
           onError={(message) => {
             if (isCurrent()) setMutationError(message);
           }}
+          createSignal={createSignal}
+          isCurrent={isCurrent}
         />
       )}
       <Panel className={styles.panel}>

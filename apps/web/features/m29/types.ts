@@ -99,6 +99,7 @@ export type Budget = Readonly<{
   channelId: string | null;
   currency: string;
   timezone: string;
+  version: number;
   periods: readonly BudgetPeriod[];
 }>;
 export type AuditRecord = Readonly<{

@@ -175,6 +175,7 @@ function parseBudget(value: unknown): Budget {
     channelId: nullableString(v.channelId, "budget.channelId"),
     currency: currencyCode(v.currency, "budget.currency"),
     timezone: string(v.timezone, "budget.timezone"),
+    version: number(v.version, "budget.version"),
     periods,
   };
 }
@@ -368,6 +369,7 @@ export function saveBudget(
     monthlyLimitMinor?: number;
     timezone?: string;
     reason: string;
+    expectedVersion?: number;
   }>,
   signal?: AbortSignal,
 ): Promise<Budget> {

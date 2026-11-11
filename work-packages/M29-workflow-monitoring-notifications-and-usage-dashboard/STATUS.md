@@ -50,13 +50,14 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Blockers / risks / unknowns
 
-- M22 auth/session/workspace navigation is absent from this branch. No route or shell wiring was added because M29 cannot safely obtain verified workspace context here.
+- M22 auth/session/workspace navigation is integrated on current `main`; M29 still has no runtime route/shell wiring because integration requires an approved seam for trusted workspace role metadata (M22 workspace list does not expose membership role).
 - `M29Dashboard` requires verified `{ workspaceId, role }` from its eventual M22 consumer; it does not discover or fabricate tenant context.
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
 - PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
 - Review fixes: nested per-currency M18 totals and unknown/unpriced counters are validated and displayed without currency mixing; M16 enum/state/role action gates and step/job/event details are shown; M17 preference PUT/read UI and notification mutation error states are present; usage audit history is loaded; AbortController/version guards prevent stale workspace responses; focused M29 tests cover validation, redaction and permission actions.
 - Current GitHub credential is `minu-the-reviewer`; commits use the repository-local developer identity `imTusharsingh` as requested.
 - Re-review fixes: retry now uses actual M16 `FAILED`/`RECONCILIATION_REQUIRED` step states; approval-waiting runs expose resume; mutation continuations are generation-guarded; jobs and events are displayed individually; HTTP status errors are mapped before body parsing; period/scope/currency values are strict; owner-only budget editing is available in minor units.
+- Latest review M1-M4: merged current `origin/main` (including M22) without overwriting M22 files; mutation requests now abort on context changes and guard finalizers; budget edits select the existing workspace budget, preserve currency/version, and send `expectedVersion`; focused QA coverage remains limited and browser/API smoke is pending.
 
 
 

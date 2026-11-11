@@ -948,3 +948,34 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: web typecheck, lint, format:check, full monorepo typecheck, build and db:validate PASS. Full test command after Prisma generation failed in 20 API suites / 19 tests because the configured local PostgreSQL database was not migrated; 58 suites passed, 2 skipped, 363 tests passed, 148 skipped. Environment required `--config.engine-strict=false` because Node is 24.22.1 while the repository pins 24.22.2.
 - Blocker: M22 auth/session/workspace wiring is not present on this branch, so the feature is not user-integrated and browser/authenticated API verification remains pending.
 - Next action: integrate `M29Dashboard` from M22's verified workspace route; independent review requested from `minu-the-reviewer`; do not self-approve or merge.
+## 2026-11-11 - M22 authentication, workspace and onboarding UI implementation
+- Actor/session: Codex implementation session; branch `work/m22-auth-workspace-onboarding`, based on `origin/main` `09c1e76` with M21 PR #41 merged.
+- Work package: M22-T01–T07 authorized frontend scope.
+- Changes: Added cookie-session auth and registration forms, backend-compatible validation, same-origin `/api/v1` Next rewrite, workspace list/create/select/switch flows, active-workspace preference, onboarding, setup checklist, safe unavailable states for recovery/profile/role metadata, and logout/session/network error handling. Reused M21 shell, primitives and tokens.
+- API audit: Auth endpoints return `userId` and HttpOnly SameSite=Strict `reelforge_session`; workspace list/create/update/archive are available; list omits membership roles. No recovery or authenticated profile endpoint was found. No backend/shared-contract files changed.
+- Verification: frozen install via Corepack pnpm 12.16.1 PASS; lint PASS; format:check PASS; root typecheck with a syntactically valid DATABASE_URL PASS; web build PASS; focused frontend tests 5 files/13 tests PASS. Full test run initially had 43 passing suites/213 tests and 36 failures from absent generated Prisma client; db validation and browser verification were not run.
+- Security: no localStorage/sessionStorage tokens or bearer workaround; only workspace ID preference is stored. Relative same-origin requests include credentials. CSRF hardening remains a Core decision because the API has no explicit CSRF layer.
+- Risks/blockers: password recovery, profile mutation and role-aware privileged navigation require backend contracts; no production capability is fabricated. Browser visual/focus/accessibility evidence remains outstanding.
+- Next exact action: Core review of the diff and security/contract gaps, then browser walkthrough and independent review by `minu-the-reviewer`; do not self-approve or merge.
+
+## 2026-11-11 - M22 review fixes B1–B5 in progress
+- Review: PR #44 requested changes by `imTusharsingh` in review `5856669977` on head `3637ead`; CI run `42995779987` passed on the prior head.
+- B1/B2: logout now distinguishes already-invalid 401 sessions from transport/5xx failures; failed revocation keeps the authenticated studio visible with an explicit error. Workspace refresh/creation handles 401 centrally, clears stale workspace preference and selects only after refresh succeeds.
+- B3: added hand-written runtime guards for auth, logout and workspace responses; malformed JSON or payload shapes become safe client errors. Added malformed-response and logout/session-policy tests.
+- B4: documented that SameSite=Strict and same-origin proxying are not complete CSRF/origin acceptance; production security remains blocked on Core’s strategy. No backend/shared-contract files changed.
+- B5: next commit identity is set to the Developer GitHub profile (`imTusharsingh`, `rajputtushar309@gmail.com`), not the reviewer profile. Independent-reviewer eligibility remains an open PR-handoff check because PR #44 was originally opened under the reviewer identity.
+- Verification after fixes: web typecheck PASS; focused frontend tests 6 files/16 tests PASS. Browser, live API and database validation remain open.
+- Final-head CI: run `42997824300` passed on `3c9739f2a06bc7bdcfea675ed028210000571baf`; quality, migrations, dependency audit, production build, unit/integration tests and required CI all passed.
+
+## 2026-11-11 - M22 review fixes R1–R3
+- Review: independent Core re-review `5856845143` requested changes on head `20f6eb8`; B4 remains explicitly CORE-BLOCKED and browser/live API evidence remains open.
+- R1: added a monotonic authenticated-request generation guard. Logout, 401/403 expiry and workspace switching invalidate prior responses; stale list results cannot repopulate workspaces or restore a selected studio.
+- R2: workspace creation now reconciles against the refreshed authorized list by workspace ID before selection. Post-create refresh errors are labeled as reconciliation failures, not creation failures. Authenticated post-login workspace-load failures remain recoverable with retry UI.
+- R3: refresh policy now clears protected state on 401 and 403, while transport/invalid-response failures remain recoverable rather than being treated as logout.
+- Verification: web typecheck PASS; focused tests 7 files/17 tests PASS; lint, format:check, web build and diff check PASS. Current-head CI is pending after this fix commit.
+
+## 2026-11-11 - M22 stale rejection and creation race fix
+- Review: Minu feedback in issue comment `6792795917` identified stale rejected refreshes and old workspace-creation completions bypassing the generation guard.
+- Fix: captured one generation for each full async operation; `resolveCurrentRequest` suppresses both stale successes and stale rejections. Load, retry, login completion and finalization updates are generation-checked. Workspace creation reconciles using its original generation, preventing an obsolete submit from selecting after a switch.
+- Tests: deterministic deferred success/rejection tests added; focused suite now 7 files/18 tests PASS. Lint, format:check, web typecheck, web build and diff check PASS.
+- Security/QA: CSRF remains CORE-BLOCKED; browser, screen-reader and live API smoke remain NOT RUN. Prior exact-head CI `42999228949` passed on `bc06b38`; CI for this new head is pending.
