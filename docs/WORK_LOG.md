@@ -1027,3 +1027,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Narrow shared frontend changes preserve M29 ownership/provider and navigation; no Issue #48 header redesign, backend/schema/auth-contract change or fabricated role was included. R1 remains BLOCKED pending Core's trusted-role contract; no read-only limited-merge acceptance is assumed.
 - Full suite: 578 passed / 8 skipped. Focused frontend: 67 passed. Mounted Chromium: 16 checks passed. Production build, typecheck, lint, Prisma validation and migration guard passed. Real local API/Next smoke also passed, including Back cancellation and Operations preservation.
 - PR remains open and IMPLEMENTED_PENDING_REVIEW. Independent review remains requested from `minu-the-reviewer`; no self-approval or merge.
+
+## 2026-11-11 — M23 role contract integration after Core #51
+
+- Core PR #51 merged into main, exposing verified current-principal workspace roles in GET /workspaces. M23 branch merge commit: 668816e.
+- Shared frontend workspace DTO now requires OWNER/EDITOR/VIEWER from the authenticated listing; a role-free creation response cannot be selected as authorized context.
+- M23 ChannelsScope receives trusted role via WorkspaceProvider; owner/editor forms are enabled, viewer writes remain disabled; server is still the source of authorization.
+- M29 Operations remains deliberately read-only for privileged actions pending Issue #52 budget validation, mutation reconciliation and role-state behavior tests.
+- Hosted exact-head CI must pass on the final branch head. Earlier browser evidence predates production role wiring; authorized role/browser acceptance not independently rerun in this GitHub connector-only integration pass.
+- No self-approval is possible on the Developer-authored PR; owner-requested merge is distinct from Minu's formal independent approval.
