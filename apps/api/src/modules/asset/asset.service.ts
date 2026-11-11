@@ -26,6 +26,14 @@ import {
   validateRights,
   validateUploadPayload,
 } from "./asset.validation.js";
+import {
+  defaultContentFilename,
+  deliverableMediaType,
+  IMMUTABLE_ASSET_CACHE_CONTROL,
+  readVerifiedStorageObject,
+  sanitizeContentFilename,
+} from "./content-delivery.js";
+import type { MediaContent } from "./content-delivery.js";
 import { STORAGE_PORT } from "./storage/storage.port.js";
 import type { StoragePort } from "./storage/storage.port.js";
 
@@ -311,6 +319,55 @@ export class AssetService {
       licenseType: asset.licenseType,
       licenseTerms: asset.licenseTerms,
       rightsHolder: asset.rightsHolder,
+    };
+  }
+
+  /**
+   * Resolves one exact immutable asset version and returns verified bytes.
+   * `assetId` may be the exact version row or its root asset ID. There is no
+   * implicit "latest" lookup on this delivery path.
+   */
+  public async getContent(
+    context: WorkspaceContext,
+    assetId: string,
+    version: number,
+  ): Promise<MediaContent> {
+    if (!isUuid(assetId)) throw new BadRequestException("assetId must be a UUID");
+    if (!Number.isInteger(version) || version < 1)
+      throw new BadRequestException("version must be a positive integer");
+    const asset = await this.db.asset.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        version,
+        OR: [{ id: assetId }, { rootAssetId: assetId }],
+      },
+    });
+    if (!asset) throw new NotFoundException("Asset version not found");
+    if (asset.status !== "PUBLISHED")
+      throw new ConflictException("Asset version is not published and cannot be delivered");
+    const mediaType = deliverableMediaType(asset.mediaType);
+    if (mediaType === undefined)
+      throw new ConflictException("Asset media type is not supported for delivery");
+    if (asset.byteSize === null || asset.checksumSha256 === null)
+      throw new ConflictException("Asset version is missing byte size or checksum");
+    const body = await readVerifiedStorageObject({
+      storage: this.storage,
+      workspaceId: context.workspaceId,
+      objectKey: asset.objectKey,
+      byteSize: asset.byteSize,
+      checksumSha256: asset.checksumSha256,
+      label: "Asset",
+    });
+    return {
+      body,
+      mediaType,
+      filename: sanitizeContentFilename(
+        asset.filename,
+        defaultContentFilename(mediaType, `asset-v${version}`),
+      ),
+      byteSize: asset.byteSize,
+      checksumSha256: asset.checksumSha256,
+      cacheControl: IMMUTABLE_ASSET_CACHE_CONTROL,
     };
   }
 

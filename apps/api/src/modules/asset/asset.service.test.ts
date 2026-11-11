@@ -10,6 +10,7 @@ import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { AssetRecord } from "./asset.types.js";
 import { AssetService } from "./asset.service.js";
 import { sha256Hex } from "./storage/checksum.js";
+import { StorageObjectNotFoundError } from "./storage/storage.port.js";
 import type { StoragePort, StoragePutInput, StoragePutResult } from "./storage/storage.port.js";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
@@ -23,6 +24,7 @@ function context(role: WorkspaceContext["role"] = "OWNER"): WorkspaceContext {
 class MemoryStorage implements StoragePort {
   public readonly objects = new Map<string, Buffer>();
   public fail = false;
+  public failGet = false;
 
   public async putObject(input: StoragePutInput): Promise<StoragePutResult> {
     if (this.fail) throw new Error("simulated storage outage");
@@ -35,8 +37,9 @@ class MemoryStorage implements StoragePort {
   }
 
   public async getObject(input: { workspaceId: string; objectKey: string }): Promise<Buffer> {
+    if (this.failGet) throw new Error("simulated storage outage");
     const body = this.objects.get(`${input.workspaceId}/${input.objectKey}`);
-    if (!body) throw new Error("not found");
+    if (!body) throw new StorageObjectNotFoundError();
     return body;
   }
 
@@ -276,5 +279,86 @@ describe("AssetService", () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(db.createCalls).toBe(0);
+  });
+
+  it("delivers viewer read access to an exact immutable asset version", async () => {
+    const db = new FakeAssetDb();
+    const storage = new MemoryStorage();
+    const row = db.seed({});
+    storage.objects.set(`${workspaceId}/${row.objectKey}`, png);
+    const content = await service(db, storage).getContent(context("VIEWER"), row.id, 1);
+    expect(content).toMatchObject({
+      mediaType: "image/png",
+      byteSize: png.byteLength,
+      checksumSha256: sha256Hex(png),
+      filename: "file.png",
+      cacheControl: "private, max-age=31536000, immutable",
+    });
+    expect(content.body).toEqual(png);
+  });
+
+  it("delivers each asset version by root ID without changing older bytes", async () => {
+    const db = new FakeAssetDb();
+    const storage = new MemoryStorage();
+    const first = db.seed({});
+    const secondBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const second = db.seed({
+      rootAssetId: first.id,
+      version: 2,
+      objectKey: "assets/root/v2/second.png",
+      byteSize: secondBytes.byteLength,
+      checksumSha256: sha256Hex(secondBytes),
+      filename: "second.png",
+    });
+    storage.objects.set(`${workspaceId}/${first.objectKey}`, png);
+    storage.objects.set(`${workspaceId}/${second.objectKey}`, secondBytes);
+    const assets = service(db, storage);
+    expect((await assets.getContent(context(), first.id, 1)).body).toEqual(png);
+    expect((await assets.getContent(context(), first.id, 2)).body).toEqual(secondBytes);
+    expect((await assets.getContent(context(), second.id, 2)).body).toEqual(secondBytes);
+  });
+
+  it("denies cross-tenant asset content without revealing existence", async () => {
+    const db = new FakeAssetDb();
+    const storage = new MemoryStorage();
+    const row = db.seed({ workspaceId: otherWorkspaceId });
+    storage.objects.set(`${otherWorkspaceId}/${row.objectKey}`, png);
+    await expect(service(db, storage).getContent(context(), row.id, 1)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it("rejects unpublished asset content", async () => {
+    const db = new FakeAssetDb();
+    const row = db.seed({ status: "PENDING" });
+    await expect(
+      service(db, new MemoryStorage()).getContent(context(), row.id, 1),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("reports missing asset bytes as not found and corrupt bytes as a conflict", async () => {
+    const db = new FakeAssetDb();
+    const missing = db.seed({});
+    const assets = service(db, new MemoryStorage());
+    await expect(assets.getContent(context(), missing.id, 1)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    const corruptDb = new FakeAssetDb();
+    const corrupt = corruptDb.seed({});
+    const storage = new MemoryStorage();
+    storage.objects.set(`${workspaceId}/${corrupt.objectKey}`, Buffer.from("different bytes"));
+    await expect(
+      service(corruptDb, storage).getContent(context(), corrupt.id, 1),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("reports a storage outage as unavailable rather than missing", async () => {
+    const db = new FakeAssetDb();
+    const row = db.seed({});
+    const storage = new MemoryStorage();
+    storage.failGet = true;
+    await expect(service(db, storage).getContent(context(), row.id, 1)).rejects.toThrow(
+      /storage could not be read/,
+    );
   });
 });

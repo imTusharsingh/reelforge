@@ -3,15 +3,25 @@ import {
   Body,
   Controller,
   Get,
+  Head,
   Param,
   Post,
+  Query,
   Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { AssetService } from "./asset.service.js";
 import type { AssetReferenceRequest } from "./asset.types.js";
+import {
+  parseDownloadQuery,
+  parsePositiveInteger,
+  sendMediaContent,
+  singleHeaderValue,
+} from "./content-delivery.js";
 import {
   configuredMaxAssetBytes,
   decodeBase64Upload,
@@ -113,5 +123,44 @@ export class AssetController {
     @Param("assetId") assetId: string,
   ): Promise<unknown> {
     return this.assets.listUsage(await this.context(request, workspaceId), assetId);
+  }
+
+  @Get(":assetId/versions/:version/content") public async content(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("assetId") assetId: string,
+    @Param("version") version: string,
+    @Query("download") download: unknown,
+    @Res() response: Response,
+  ): Promise<void> {
+    const content = await this.assets.getContent(
+      await this.context(request, workspaceId),
+      assetId,
+      parsePositiveInteger(version, "version"),
+    );
+    sendMediaContent(response, content, {
+      download: parseDownloadQuery(download),
+      rangeHeader: singleHeaderValue(request.headers.range),
+      ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
+    });
+  }
+
+  @Head(":assetId/versions/:version/content") public async contentHead(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("assetId") assetId: string,
+    @Param("version") version: string,
+    @Query("download") download: unknown,
+    @Res() response: Response,
+  ): Promise<void> {
+    const content = await this.assets.getContent(
+      await this.context(request, workspaceId),
+      assetId,
+      parsePositiveInteger(version, "version"),
+    );
+    sendMediaContent(response, content, {
+      download: parseDownloadQuery(download),
+      head: true,
+    });
   }
 }
