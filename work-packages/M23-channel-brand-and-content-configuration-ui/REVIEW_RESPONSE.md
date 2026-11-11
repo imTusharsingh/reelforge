@@ -46,3 +46,11 @@ New fixtures contain realistic M02–M05 payloads and malformed/foreign ownershi
 - Format, secret scan (526 tracked files) and diff checks: **PASS**. Exact-head hosted CI is checked after push; no pre-push hosted success is assumed.
 
 The shared changes are confined to the navigation helper/link/guard, two explicit session-action calls, root guard installation and form styles. Authentication ownership, WorkspaceProvider, Overview and Operations remain intact. No self-approval or merge.
+
+## 2026-11-11 — R1 backend contract integrated into M23 branch
+
+Core-owned authenticated workspace-role contract [PR #51](https://github.com/imTusharsingh/reelforge/pull/51) merged to main at `05fa1a5c6138dea68c1a7d240fadfab4c95e8a56`. M23's branch merged that main commit, then updated the authenticated workspace list parser to **require** a server-issued OWNER/EDITOR/VIEWER role. Workspace creation's role-free acknowledgement is no longer eligible for selection; the UI requires a successful authenticated list refresh. Shared WorkspaceProvider passes that verified role into ChannelsScope. OWNER/EDITOR frontend forms may now submit, VIEWER remains read-only, and backend authorization stays authoritative.
+
+This changes the prior R1 status from **blocked by missing API contract** to **role-aware wiring implemented, awaiting role-aware browser acceptance**. Do not claim live OWNER/EDITOR/VIEWER and revocation browser checks are passed unless actually run against the merged backend. The existing mounted fixture checks used mock roles. Revalidation after membership revocation and 403 feedback remain important follow-ups.
+
+M29 privileged UI enablement is **deferred** to [Issue #52](https://github.com/imTusharsingh/reelforge/issues/52) because the dormant BudgetEditor and shared mutation cancellation paths have unresolved review findings. M23 deliberately retains Operations' existing UNKNOWN/read-only guard rather than enabling those actions without independent regression testing.
