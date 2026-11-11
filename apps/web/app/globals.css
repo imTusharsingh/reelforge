@@ -224,7 +224,7 @@ button:disabled {
 
 .rf-hero-glyph {
   background: var(--rf-accent);
-  color: var(--rf-ink);
+  color: var(--rf-on-accent);
   border-radius: var(--rf-radius-panel);
   display: grid;
   place-items: center;
@@ -278,13 +278,13 @@ button:disabled {
 }
 
 .rf-button--primary {
-  color: var(--rf-ink);
+  color: var(--rf-on-accent);
   background: var(--rf-accent);
 }
 
 .rf-button--primary:hover:not(:disabled) {
   background: var(--rf-accent-hover);
-  color: var(--rf-paper);
+  color: var(--rf-on-accent-hover);
 }
 
 .rf-button--secondary,
@@ -459,6 +459,41 @@ button:disabled {
   border-color: var(--rf-warning);
 }
 
+.rf-inspector-trigger {
+  display: none;
+}
+
+.rf-context-dialog {
+  width: min(360px, 94vw);
+  max-width: 100vw;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  margin: 0 0 0 auto;
+  overflow-y: auto;
+  border: 0;
+  padding: var(--rf-space-6);
+  background: var(--rf-surface);
+  color: var(--rf-text);
+  box-shadow: var(--rf-shadow-overlay);
+}
+
+.rf-context-dialog::backdrop {
+  background: rgb(16 18 20 / 65%);
+}
+
+.rf-context-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rf-space-3);
+  margin-bottom: var(--rf-space-8);
+}
+
+.rf-context-dialog p {
+  color: var(--rf-text-muted);
+  line-height: var(--rf-leading-normal);
+}
+
 .rf-mobile-dialog {
   border: 0;
   padding: var(--rf-space-6);
@@ -515,6 +550,10 @@ button:disabled {
   .rf-inspector {
     display: none;
   }
+
+  .rf-inspector-trigger {
+    display: inline-flex;
+  }
 }
 
 @media (max-width: 1023px) {
@@ -538,6 +577,13 @@ button:disabled {
     display: block;
   }
 
+  .rf-inspector-trigger {
+    margin-left: auto;
+    color: var(--rf-canvas-warm);
+    background: transparent;
+    border-color: var(--rf-border-strong);
+  }
+
   .rf-mobile-menu .rf-button {
     color: var(--rf-canvas-warm);
     background: transparent;
@@ -557,6 +603,11 @@ button:disabled {
   .rf-workspace {
     padding: var(--rf-space-4);
   }
+
+  .rf-inspector-trigger {
+    padding: var(--rf-space-2);
+  }
+
 
   .rf-panel {
     padding: var(--rf-space-6);
