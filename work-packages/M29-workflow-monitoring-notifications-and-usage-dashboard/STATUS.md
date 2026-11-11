@@ -4,7 +4,7 @@
 - **Assigned session/editor:** Codex
 - **Branch/worktree:** work/m29-workflow-notifications-usage-dashboard
 - **Last updated:** 2026-11-11
-- **Reviewer:** minu-the-reviewer (independent review requested)
+- **Reviewer:** minu-the-reviewer (request attempted; GitHub rejected it because the PR author is minu-the-reviewer)
 - **Approved commit:** none
 
 ## Current objective
@@ -53,6 +53,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - M22 auth/session/workspace navigation is absent from this branch. No route or shell wiring was added because M29 cannot safely obtain verified workspace context here.
 - `M29Dashboard` requires verified `{ workspaceId, role }` from its eventual M22 consumer; it does not discover or fabricate tenant context.
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
+- PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
 
 
 
