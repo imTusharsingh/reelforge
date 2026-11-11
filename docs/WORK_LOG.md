@@ -1036,3 +1036,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - M29 Operations remains deliberately read-only for privileged actions pending Issue #52 budget validation, mutation reconciliation and role-state behavior tests.
 - Hosted exact-head CI must pass on the final branch head. Earlier browser evidence predates production role wiring; authorized role/browser acceptance not independently rerun in this GitHub connector-only integration pass.
 - No self-approval is possible on the Developer-authored PR; owner-requested merge is distinct from Minu's formal independent approval.
+
+## 2026-11-11 — Core role contract #51 and M23 #49 integrated on main
+
+- Core backend PR #51 merged to main (`05fa1a5`), adding authenticated per-principal workspace role with scoped membership selection; exact-head CI 43032066441 passed.
+- M23 PR #49 merged to main (`f657f4c`) after merging Core fix, updating M22 workspace response validation and M23 channel role-aware UI; exact-head required CI 43034987714 passed.
+- Issue #47 auto-closed; milestone STATUS is INTEGRATED. User explicitly authorized merges; no formal independent GitHub approval was recorded because Developer is the PR author and currently connected identity.
+- Real post-contract owner/editor/viewer browser CRUD and membership-revocation smoke, full screen-reader check and release security QA are not claimed as run.
+- Privileged M29 Operations remains safely restricted pending Issue #52; cross-app mobile responsiveness remains Issue #48.
