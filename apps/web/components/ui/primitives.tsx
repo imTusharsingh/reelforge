@@ -200,10 +200,7 @@ export function Alert({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div
-      className={`rf-alert rf-alert--${tone}`}
-      role={tone === "danger" ? "alert" : "status"}
-    >
+    <div className={`rf-alert rf-alert--${tone}`} role={tone === "danger" ? "alert" : "status"}>
       <strong>{title}</strong>
       <p>{children}</p>
     </div>
