@@ -9,7 +9,7 @@ import type {
   WorkflowEvent,
   WorkflowRun,
   WorkflowStep,
-} from "./types";
+} from "./operations-types";
 
 export type M29Context = Readonly<{
   workspaceId: string;

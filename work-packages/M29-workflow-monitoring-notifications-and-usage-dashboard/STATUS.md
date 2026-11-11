@@ -26,11 +26,12 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Files changed
 
-- `apps/web/features/m29/types.ts`
-- `apps/web/features/m29/api.ts`
-- `apps/web/features/m29/dashboard.tsx`
-- `apps/web/features/m29/m29.module.css`
-- `apps/web/features/m29/index.ts`
+- `apps/web/lib/operations-types.ts`
+- `apps/web/lib/operations-api.ts`
+- `apps/web/lib/operations-logic.ts`
+- `apps/web/lib/operations.test.ts`
+- `apps/web/components/operations-dashboard.tsx`
+- `apps/web/components/operations-dashboard.module.css`
 - `apps/web/app/operations/page.tsx`
 - `apps/web/components/app-shell.tsx` (Operations navigation link and active breadcrumb)
 - `apps/web/components/auth-workspace.tsx` (verified selected workspace handoff; read-only UNKNOWN role)
@@ -50,7 +51,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `corepack pnpm --config.engine-strict=false --filter @reelforge/web typecheck`: PASS after Operations integration.
 - `corepack pnpm --config.engine-strict=false lint`: PASS after Operations integration.
 - `corepack pnpm --config.engine-strict=false format:check`: PASS after Operations integration.
-- `corepack pnpm exec vitest run apps/web/components apps/web/lib apps/web/features/m29`: PASS, 8 files / 21 tests.
+- `corepack pnpm exec vitest run apps/web/components apps/web/lib`: PASS, 8 files / 21 tests.
 
 ## Contract/schema proposals
 
@@ -59,7 +60,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 ## Blockers / risks / unknowns
 
 - M22 auth/session/workspace navigation is integrated on current `main`; Operations now has a real `/operations` route and normal AppShell navigation. M22 workspace list does not expose membership role, so M29 runs in explicit read-only UNKNOWN-role mode and does not expose privileged actions.
-- `M29Dashboard` requires verified `{ workspaceId, role }` from its eventual M22 consumer; it does not discover or fabricate tenant context.
+- `OperationsDashboard` requires verified `{ workspaceId, role }` from its M22 consumer; it does not discover or fabricate tenant context.
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
 - PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
 - Review fixes: nested per-currency M18 totals and unknown/unpriced counters are validated and displayed without currency mixing; M16 enum/state/role action gates and step/job/event details are shown; M17 preference PUT/read UI and notification mutation error states are present; usage audit history is loaded; AbortController/version guards prevent stale workspace responses; focused M29 tests cover validation, redaction and permission actions.

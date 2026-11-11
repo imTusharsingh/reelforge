@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
-import { Alert, Badge, Button, Field, Panel, StateMessage } from "../../components/ui/primitives";
+import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import {
   loadM29Data,
   markAllNotificationsRead,
@@ -10,10 +10,10 @@ import {
   saveBudget,
   savePreferences,
   type M29Context,
-} from "./api";
-import type { Budget, M29Data, NotificationPreference, WorkflowRun } from "./types";
-import { redacted, safeActions } from "./logic";
-import styles from "./m29.module.css";
+} from "../lib/operations-api";
+import type { Budget, M29Data, NotificationPreference, WorkflowRun } from "../lib/operations-types";
+import { redacted, safeActions } from "../lib/operations-logic";
+import styles from "./operations-dashboard.module.css";
 
 export const currency = (minor: number, code: string): string =>
   new Intl.NumberFormat(undefined, { style: "currency", currency: code }).format(minor / 100);
@@ -300,7 +300,7 @@ function BudgetEditor({
   );
 }
 
-export function M29Dashboard({ context }: { context: M29Context }): JSX.Element {
+export function OperationsDashboard({ context }: { context: M29Context }): JSX.Element {
   const [data, setData] = useState<M29Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState("");

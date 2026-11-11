@@ -1,5 +1,5 @@
-import type { M29Context } from "./api";
-import type { WorkflowRun } from "./types";
+import type { M29Context } from "./operations-api";
+import type { WorkflowRun } from "./operations-types";
 
 export function redacted(message: string | null): string {
   if (!message) return "No additional detail was provided.";

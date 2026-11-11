@@ -11,7 +11,7 @@ import {
   resolveCurrentRequest,
   sessionFailureMessage,
 } from "../lib/session-policy";
-import { M29Dashboard } from "../features/m29";
+import { OperationsDashboard } from "./operations-dashboard";
 
 type View = "auth" | "onboarding" | "studio";
 
@@ -286,7 +286,7 @@ function Studio({
         </Alert>
       )}
       {operations ? (
-        <M29Dashboard context={{ workspaceId: workspace.id, role: "UNKNOWN" }} />
+        <OperationsDashboard context={{ workspaceId: workspace.id, role: "UNKNOWN" }} />
       ) : (
         <div className="rf-studio-grid">
           <Panel>

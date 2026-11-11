@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseRun } from "./api";
-import { redacted, safeActions } from "./logic";
-import type { WorkflowRun } from "./types";
+import { parseRun } from "./operations-api";
+import { redacted, safeActions } from "./operations-logic";
+import type { WorkflowRun } from "./operations-types";
 
 const run = (state: WorkflowRun["state"], stepStatus = "SUCCEEDED"): WorkflowRun => ({
   id: "run-1",

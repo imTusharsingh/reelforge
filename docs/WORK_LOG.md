@@ -986,3 +986,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Security: No query-string or unverified localStorage workspace context is used. OWNER/EDITOR workflow and budget actions remain disabled when role is unknown. No backend, contract, schema or migration changes.
 - Verification: web typecheck, lint, format:check and focused frontend tests pass (8 files / 21 tests). Authenticated browser/API smoke and screen-reader evidence remain NOT RUN. Current PR CI must be checked on the new head.
 - Next action: Core approves the trusted membership-role API seam, then the role-aware actions can be enabled; reviewer re-checks the integrated Operations screen and exact-head CI. Do not self-approve or merge.
+
+## 2026-11-11 - M29 frontend structure aligned with M22
+- Owner feedback: remove the milestone-specific `apps/web/features/m29/` product structure and follow M22's normal frontend organization.
+- Changes: moved Operations dashboard UI and scoped stylesheet into `apps/web/components/`; moved Operations API, validation logic, types and focused tests into `apps/web/lib/`; updated the authenticated workspace integration and status paths. No behavior or backend contract changes.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests), and web build PASS.
