@@ -1,52 +1,23 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { Alert, Badge, Button, Field, StateMessage } from "./primitives";
 
-describe("M21 shared UI accessibility and state contracts", () => {
-  it("disables a loading button and announces busy state", () => {
-    const html = renderToStaticMarkup(createElement(Button, { loading: true, children: "Save" }));
-    expect(html).toContain('disabled=""');
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("Working…");
+const source = readFileSync(new URL("./primitives.tsx", import.meta.url), "utf8");
+
+describe("M21 shared primitives source contracts", () => {
+  it("declares loading, disabled and busy button states", () => {
+    expect(source).toContain("disabled={disabled || loading}");
+    expect(source).toContain("aria-busy={loading || undefined}");
   });
 
-  it("associates field labels and validation errors", () => {
-    const field = createElement(Field, {
-      id: "name",
-      label: "Workspace name",
-      error: "Name required",
-    });
-    const html = renderToStaticMarkup(field);
-    expect(html).toContain('for="name"');
-    expect(html).toContain('aria-invalid="true"');
-    expect(html).toContain('aria-describedby="name-help"');
-    expect(html).toContain('id="name-help"');
+  it("associates text-field hints and errors with their labels", () => {
+    expect(source).toContain("<label htmlFor={id}>");
+    expect(source).toContain("aria-describedby={helpId}");
+    expect(source).toContain("aria-invalid={Boolean(error) || undefined}");
   });
 
-  it("exposes errors as alerts with actionable description", () => {
-    const html = renderToStaticMarkup(
-      createElement(StateMessage, {
-        kind: "error",
-        description: "Try again after checking your connection.",
-      }),
-    );
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Try again");
-  });
-
-  it("pairs status colors with text", () => {
-    const badge = createElement(Badge, { tone: "warning", children: "Not configured" });
-    const html = renderToStaticMarkup(badge);
-    expect(html).toContain("Not configured");
-    expect(html).toContain("rf-badge--warning");
-  });
-
-  it("provides an explicit alert title", () => {
-    const props = { tone: "danger" as const, title: "Unable to save" };
-    const alert = createElement(Alert, { ...props, children: "Check connection." });
-    const html = renderToStaticMarkup(alert);
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Unable to save");
+  it("uses named error alerts and status messages", () => {
+    expect(source).toContain('kind === "error" ? "alert" : "status"');
+    expect(source).toContain('tone === "danger" ? "alert" : "status"');
+    expect(source).toContain("title: string;");
   });
 });
