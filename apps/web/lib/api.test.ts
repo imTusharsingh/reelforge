@@ -19,38 +19,29 @@ describe("API response boundaries", () => {
 });
 
 describe("verified workspace role contract", () => {
-  it.each(["OWNER", "EDITOR", "VIEWER"] as const)("accepts %s membership", async (role) => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify([{ id: "w-1", name: "Studio", archivedAt: null, role }])),
-      ),
-    );
-    await expect(api.listWorkspaces()).resolves.toMatchObject([{ role }]);
+  it("accepts OWNER, EDITOR and VIEWER memberships", async () => {
+    for (const role of ["OWNER", "EDITOR", "VIEWER"] as const) {
+      const payload = [{ id: "w-1", name: "Studio", role }];
+      const response = new Response(JSON.stringify(payload));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+      await expect(api.listWorkspaces()).resolves.toMatchObject([{ role }]);
+    }
     vi.unstubAllGlobals();
   });
 
-  it.each([undefined, "UNKNOWN", "ADMIN", null, 1])(
-    "rejects missing or untrusted role %s",
-    async (role) => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(
-          new Response(JSON.stringify([{ id: "w-1", name: "Studio", archivedAt: null, role }])),
-        ),
-      );
+  it("rejects missing or untrusted roles", async () => {
+    for (const role of [undefined, "UNKNOWN", "ADMIN", null, 1]) {
+      const payload = [{ id: "w-1", name: "Studio", role }];
+      const response = new Response(JSON.stringify(payload));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
       await expect(api.listWorkspaces()).rejects.toMatchObject({ status: 502 });
-      vi.unstubAllGlobals();
-    },
-  );
+    }
+    vi.unstubAllGlobals();
+  });
 
-  it("accepts a role-free create acknowledgement but rejects it as a membership list", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ id: "w-1", name: "Studio" })),
-      ),
-    );
+  it("requires a verified list after workspace creation", async () => {
+    const response = new Response(JSON.stringify({ id: "w-1", name: "Studio" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
     await expect(api.createWorkspace("Studio")).resolves.toEqual({ id: "w-1", name: "Studio" });
     await expect(api.listWorkspaces()).rejects.toMatchObject({ status: 502 });
     vi.unstubAllGlobals();
