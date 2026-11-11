@@ -20,9 +20,7 @@ export default function HomePage(): JSX.Element {
       <header className="rf-page-heading">
         <p className="rf-eyebrow">Studio / Overview</p>
         <h1>Your production space</h1>
-        <p>
-          Organize creative work from first idea to final review, one clear step at a time.
-        </p>
+        <p>Organize creative work from first idea to final review, one clear step at a time.</p>
       </header>
       <Panel className="rf-hero-panel">
         <div className="rf-hero-glyph" aria-hidden="true">
