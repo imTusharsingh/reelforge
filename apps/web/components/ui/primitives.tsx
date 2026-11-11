@@ -67,7 +67,13 @@ export function Field({ id, label, hint, error, ...props }: FieldProps): JSX.Ele
   return (
     <div className="rf-field">
       <label htmlFor={id}>{label}</label>
-      <input {...props} id={id} className="rf-input" aria-invalid={Boolean(error) || undefined} aria-describedby={helpId} />
+      <input
+        {...props}
+        id={id}
+        className="rf-input"
+        aria-invalid={Boolean(error) || undefined}
+        aria-describedby={helpId}
+      />
       {helpId && (
         <p id={helpId} className={error ? "rf-field-error" : "rf-field-hint"}>
           {error || hint}
@@ -194,7 +200,10 @@ export function Alert({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div className={`rf-alert rf-alert--${tone}`} role={tone === "danger" ? "alert" : "status"}>
+    <div
+      className={`rf-alert rf-alert--${tone}`}
+      role={tone === "danger" ? "alert" : "status"}
+    >
       <strong>{title}</strong>
       <p>{children}</p>
     </div>
