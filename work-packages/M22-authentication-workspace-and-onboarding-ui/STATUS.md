@@ -1,11 +1,12 @@
 # M22 Status - Authentication, Workspace & Onboarding UI
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (partial: unsupported backend capabilities remain unavailable)
+- **State:** INTEGRATED (PR #44 merged; unsupported backend capabilities and production gates remain open)
 - **Assigned session/editor:** Codex implementation session
 - **Branch/worktree:** `work/m22-auth-workspace-onboarding` / `/workspace/reelforge`
 - **Last updated:** 2026-11-11
 - **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- **Approved commit:** `4786bd5a71e411c4e806725130e8cc8646faffd7`
+- **Merge commit:** `3782c2e74f2ff59d4453db2d218b38b6e97eac26`
 
 ## Current objective
 
@@ -79,4 +80,7 @@ Implementation is ready for Core review with documented unsupported capabilities
 
 ## Reviewer decision
 
-- Pending.
+- APPROVED by `imTusharsingh` on M22 head `4786bd5a71e411c4e806725130e8cc8646faffd7` (GitHub review `5857054960`); exact-head CI run `43000401126` completed successfully.
+- INTEGRATED into `main` via PR #44 at merge commit `3782c2e74f2ff59d4453db2d218b38b6e97eac26` by explicit owner authorization.
+- This is **code integration only**, not production security approval or complete feature acceptance. Recovery, profile mutation and verified role-aware navigation await backend contracts; Core CSRF/origin design and browser accessibility/API smoke evidence are still open.
+
