@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Body,
   Controller,
   Get,
@@ -85,11 +86,12 @@ export class ScriptController {
     @Param("scriptId") scriptId: string,
     @Body() body: unknown,
   ): Promise<unknown> {
-    const parsed = approvalWriteSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return this.context(request, workspaceId).then((context) =>
-      this.scripts.approve(context, scriptId, parsed.data.expectedRevision),
-    );
+    return this.context(request, workspaceId).then((context) => {
+      if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
+      const parsed = approvalWriteSchema.safeParse(body);
+      if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+      return this.scripts.approve(context, scriptId, parsed.data.expectedRevision);
+    });
   }
   @Post(":scriptId/revisions") public revise(
     @Req() request: AuthenticatedRequest,
@@ -97,11 +99,12 @@ export class ScriptController {
     @Param("scriptId") scriptId: string,
     @Body() body: unknown,
   ): Promise<unknown> {
-    const parsed = revisionWriteSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return this.context(request, workspaceId).then((context) =>
-      this.scripts.revise(context, scriptId, parsed.data.document, parsed.data.expectedRevision),
-    );
+    return this.context(request, workspaceId).then((context) => {
+      if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
+      const parsed = revisionWriteSchema.safeParse(body);
+      if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+      return this.scripts.revise(context, scriptId, parsed.data.document, parsed.data.expectedRevision);
+    });
   }
   @Get(":scriptId/export") public export(
     @Req() request: AuthenticatedRequest,
