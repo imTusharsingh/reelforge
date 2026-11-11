@@ -11,8 +11,10 @@ describe("M21 responsive context access", () => {
     const html = renderToStaticMarkup(
       createElement(
         AppShell,
-        { inspector: createElement("p", null, "Selected item details") },
-        createElement("h1", null, "Overview"),
+        {
+          inspector: createElement("p", null, "Selected item details"),
+          children: createElement("h1", null, "Overview"),
+        },
       ),
     );
     expect(html).toContain("View context");
@@ -25,7 +27,7 @@ describe("M21 responsive context access", () => {
 
   it("omits context dialog and trigger when no inspector exists", () => {
     const html = renderToStaticMarkup(
-      createElement(AppShell, null, createElement("h1", null, "Overview")),
+      createElement(AppShell, { children: createElement("h1", null, "Overview") }),
     );
     expect(html).not.toContain("View context");
     expect(html).not.toContain('aria-label="Context panel"');
