@@ -48,6 +48,33 @@ function database(): {
 }
 
 describe("IdeaService", () => {
+  it("rejects stale status/timestamp tokens and prevents any conditional mutation", async () => {
+    const db = database();
+    db.idea.findUnique.mockResolvedValue({
+      id: "idea-a", workspaceId: "workspace-a", updatedAt: observedAt, status: "DRAFT",
+      archivedAt: null, channelId: "channel-a", seriesId: null, topic: "test",
+    });
+    const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
+    await expect(
+      service.transition(context, "idea-a", "BACKLOG", observedAt, "APPROVED"),
+    ).rejects.toThrow("Idea changed");
+    await expect(
+      service.transition(context, "idea-a", "BACKLOG", new Date(observedAt.getTime() - 1), "DRAFT"),
+    ).rejects.toThrow("Idea changed");
+    expect(db.idea.updateMany).not.toHaveBeenCalled();
+    db.idea.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      service.transition(context, "idea-a", "BACKLOG", observedAt, "DRAFT"),
+    ).rejects.toThrow("Idea changed");
+    expect(db.idea.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        workspaceId: "workspace-a", id: "idea-a",
+        status: "DRAFT", updatedAt: observedAt, archivedAt: null,
+      }),
+    }));
+    expect(db.idea.update).not.toHaveBeenCalled();
+  });
+
   it("normalizes titles and records duplicate candidates instead of dropping them", async () => {
     const db = database();
     db.idea.findMany.mockResolvedValue([
