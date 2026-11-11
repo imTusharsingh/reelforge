@@ -26,6 +26,21 @@ Each module is one independently assignable block. Each block gets one coding-ed
 | M19 | Admin, Security, Audit & Observability | M00 and all modules incrementally. | Provide operational safety, audit history, health checks, and diagnostic visibility. |
 | M20 | Core Integration & Release Gate | All modules as they become review-ready. | Core Architect/Reviewer only: integrate modules, verify cross-module behavior, and release. |
 
+| M21 | Frontend Foundation, Brand Identity & Design System | M00; existing frontend baseline. | Establish a human-led, approved visual system and reusable frontend foundation. |
+| M22 | Authentication, Workspace & Onboarding UI | M01, M21. | Provide the entry, workspace and first-run experience. |
+| M23 | Channel, Brand & Content Configuration UI | M02-M05, M21-M22. | Expose channel and content configuration through the product UI. |
+| M24 | Ideas, Scripts & Storyboard Workspace | M06-M07, M21, M23. | Provide the creator planning and storyboard workspace. |
+| M25 | Generation Studio & Video Production UI | M08-M10, M16, M18, M21, M24. | Expose generation, scene management, preview and export. |
+| M26 | Quality Review, Approval & Regeneration | M11, M21, M24-M25. | Provide review and approval before publishing. |
+| M27 | Social Accounts, Publishing & Content Calendar | M12-M13, M21, M25-M26. | Expose supported account connections and publishing workflows. |
+| M28 | Analytics, Insights & Recommendations | M14-M15, M21, M27. | Present verified performance and explainable recommendations. |
+| M29 | Workflow Monitoring, Notifications & Usage Dashboard | M16-M18, M21. | Expose jobs, notifications, usage and budgets. |
+| M30 | Production Hardening & Launch Readiness | M00-M29 as applicable. | Verify production infrastructure, security, operations and release readiness. |
+| M31 | Subscription & SaaS Billing | M18, M30; explicit commercial approval. | Add deferred subscription and payment collection. |
+| M32 | Team Collaboration & Shared Workspaces | M01-M02, M21. | Enable multi-user collaboration with workspace-safe permissions. |
+| M33 | Research, Trends & Source Verification | M05-M07, M21. | Add traceable research and source-aware content planning. |
+| M34 | Localization & Multi-Platform Content Outputs | M07, M09-M10, M12-M13, M21. | Support localized and platform-specific content variants. |
+
 ## Dependency order (high level)
 
 ```text
