@@ -210,7 +210,11 @@ suite("IdeaService Prisma tenant ownership", () => {
         createdByUserId: ownerId,
       },
     });
-    const service = new IdeaService(db as never, { proposeIdea: async () => { throw new Error("not configured"); } });
+    const service = new IdeaService(db as never, {
+      proposeIdea: async () => {
+        throw new Error("not configured");
+      },
+    });
     const context = { workspaceId: workspaceA, userId: ownerId, role: "OWNER" as const };
     const results = await Promise.allSettled([
       service.transition(context, id, "BACKLOG", initial.updatedAt, "DRAFT"),
@@ -222,7 +226,9 @@ suite("IdeaService Prisma tenant ownership", () => {
     await expect(
       service.transition(context, id, "APPROVED", initial.updatedAt, "DRAFT"),
     ).rejects.toThrow("Idea changed");
-    expect(await db.ideaApprovalSnapshot.count({ where: { workspaceId: workspaceA, ideaId: id } })).toBe(0);
+    expect(
+      await db.ideaApprovalSnapshot.count({ where: { workspaceId: workspaceA, ideaId: id } }),
+    ).toBe(0);
   });
 
   it("enforces the workspace/channel composite foreign key", async () => {

@@ -769,9 +769,9 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     });
     expect(saved.currentRevision).toBe(script.currentRevision + 1);
     expect(saved.revisions).toHaveLength(2);
-    await expect(
-      service.approve(context, script.id, script.currentRevision),
-    ).rejects.toThrow("Script changed since the caller");
+    await expect(service.approve(context, script.id, script.currentRevision)).rejects.toThrow(
+      "Script changed since the caller",
+    );
     expect((await db.script.findUniqueOrThrow({ where: { id: script.id } })).status).not.toBe(
       "APPROVED",
     );
@@ -780,6 +780,4 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       service.revise(context, script.id, document, saved.currentRevision),
     ).rejects.toThrow("immutable");
   });
-
-
 });
