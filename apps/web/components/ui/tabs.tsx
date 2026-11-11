@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type JSX, type KeyboardEvent, type ReactNode } from "react";
+import { nextTabIndex } from "./tab-navigation";
 
 type TabItem = { id: string; label: string; content: ReactNode };
 
@@ -20,12 +21,8 @@ export function Tabs({
     document.getElementById(`${baseId}-tab-${index}`)?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
-    let next = index;
-    if (event.key === "ArrowRight") next = (index + 1) % items.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + items.length) % items.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = items.length - 1;
-    else return;
+    const next = nextTabIndex(event.key, index, items.length);
+    if (next === null) return;
     event.preventDefault();
     activate(next);
   };
