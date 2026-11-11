@@ -30,7 +30,8 @@
   --rf-border-strong: #aaa49a;
   --rf-accent: var(--rf-orange);
   --rf-accent-hover: var(--rf-orange-hover);
-  --rf-on-accent: #ffffff;
+  --rf-on-accent: var(--rf-ink);
+  --rf-on-accent-hover: var(--rf-paper);
   --rf-success: #41664a;
   --rf-warning: #85510d;
   --rf-danger: #a92f2a;
@@ -94,7 +95,8 @@
   --rf-border-strong: #596168;
   --rf-accent: #f0784e;
   --rf-accent-hover: #ff916c;
-  --rf-on-accent: #17191c;
+  --rf-on-accent: var(--rf-ink);
+  --rf-on-accent-hover: var(--rf-ink);
   --rf-success: #8ab596;
   --rf-warning: #e3b66e;
   --rf-danger: #f08b84;
