@@ -966,3 +966,9 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - R2: workspace creation now reconciles against the refreshed authorized list by workspace ID before selection. Post-create refresh errors are labeled as reconciliation failures, not creation failures. Authenticated post-login workspace-load failures remain recoverable with retry UI.
 - R3: refresh policy now clears protected state on 401 and 403, while transport/invalid-response failures remain recoverable rather than being treated as logout.
 - Verification: web typecheck PASS; focused tests 7 files/17 tests PASS; lint, format:check, web build and diff check PASS. Current-head CI is pending after this fix commit.
+
+## 2026-11-11 - M22 stale rejection and creation race fix
+- Review: Minu feedback in issue comment `6792795917` identified stale rejected refreshes and old workspace-creation completions bypassing the generation guard.
+- Fix: captured one generation for each full async operation; `resolveCurrentRequest` suppresses both stale successes and stale rejections. Load, retry, login completion and finalization updates are generation-checked. Workspace creation reconciles using its original generation, preventing an obsolete submit from selecting after a switch.
+- Tests: deterministic deferred success/rejection tests added; focused suite now 7 files/18 tests PASS. Lint, format:check, web typecheck, web build and diff check PASS.
+- Security/QA: CSRF remains CORE-BLOCKED; browser, screen-reader and live API smoke remain NOT RUN. Prior exact-head CI `42999228949` passed on `bc06b38`; CI for this new head is pending.

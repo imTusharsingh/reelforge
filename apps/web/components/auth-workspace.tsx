@@ -8,6 +8,7 @@ import { validateAuth, type AuthMode } from "../lib/auth-validation";
 import {
   isAlreadyInvalidSession,
   isCurrentGeneration,
+  resolveCurrentRequest,
   sessionFailureMessage,
 } from "../lib/session-policy";
 
@@ -139,10 +140,12 @@ function WorkspaceSetup({
   workspaces,
   onSelected,
   onRefresh,
+  generation,
 }: {
   workspaces: Workspace[];
   onSelected: (workspace: Workspace) => void;
-  onRefresh: () => Promise<Workspace[] | null>;
+  onRefresh: (generation: number) => Promise<Workspace[] | null>;
+  generation: number;
 }): JSX.Element {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -157,11 +160,12 @@ function WorkspaceSetup({
     setBusy(true);
     setError("");
     setErrorTitle("Workspace not created");
+    const operationGeneration = generation;
     let created = false;
     try {
       const workspace = await api.createWorkspace(name.trim());
       created = true;
-      const refreshed = await onRefresh();
+      const refreshed = await onRefresh(operationGeneration);
       if (refreshed === null) return;
       if (!refreshed.some((candidate) => candidate.id === workspace.id)) {
         setErrorTitle("Workspace needs attention");
@@ -320,12 +324,17 @@ export function AuthWorkspace(): JSX.Element {
     setWorkspaces([]);
     setSelected(null);
     setView("auth");
+    setBooting(false);
   };
-  const refresh = async (): Promise<Workspace[] | null> => {
-    const requestGeneration = generation.current;
+  const refresh = async (expectedGeneration = generation.current): Promise<Workspace[] | null> => {
+    const requestGeneration = expectedGeneration;
     try {
-      const items = await api.listWorkspaces();
-      if (!isCurrentGeneration(generation.current, requestGeneration)) return null;
+      const items = await resolveCurrentRequest(
+        api.listWorkspaces(),
+        () => generation.current,
+        requestGeneration,
+      );
+      if (items === null) return null;
       setWorkspaces(items);
       return items;
     } catch (cause) {
@@ -345,8 +354,9 @@ export function AuthWorkspace(): JSX.Element {
     }
   };
   const loadSession = async (): Promise<void> => {
+    const operationGeneration = generation.current;
     try {
-      const items = await refresh();
+      const items = await refresh(operationGeneration);
       if (items === null) return;
       const saved = window.localStorage.getItem("reelforge.activeWorkspace");
       const item = items.find((candidate) => candidate.id === saved);
@@ -355,10 +365,11 @@ export function AuthWorkspace(): JSX.Element {
         setView("studio");
       } else setView("onboarding");
     } catch (cause) {
+      if (!isCurrentGeneration(generation.current, operationGeneration)) return;
       if (cause instanceof ApiError && cause.status !== 401) setSessionError(errorText(cause));
       setView("auth");
     } finally {
-      setBooting(false);
+      if (isCurrentGeneration(generation.current, operationGeneration)) setBooting(false);
     }
   };
   useEffect(() => {
@@ -376,15 +387,18 @@ export function AuthWorkspace(): JSX.Element {
     setView("onboarding");
   };
   const retryWorkspaceLoad = async (): Promise<void> => {
+    const operationGeneration = generation.current;
     setSessionError("");
     setBooting(true);
     try {
-      const items = await refresh();
+      const items = await refresh(operationGeneration);
+      if (!isCurrentGeneration(generation.current, operationGeneration)) return;
       if (items !== null) setView("onboarding");
     } catch (cause) {
+      if (!isCurrentGeneration(generation.current, operationGeneration)) return;
       setSessionError(errorText(cause));
     } finally {
-      setBooting(false);
+      if (isCurrentGeneration(generation.current, operationGeneration)) setBooting(false);
     }
   };
   const logout = async (): Promise<void> => {
@@ -422,9 +436,16 @@ export function AuthWorkspace(): JSX.Element {
         <AuthForm
           onAuthenticated={async () => {
             setSessionError("");
+            generation.current += 1;
+            const operationGeneration = generation.current;
             try {
-              if ((await refresh()) !== null) setView("onboarding");
+              if (
+                (await refresh(operationGeneration)) !== null &&
+                isCurrentGeneration(generation.current, operationGeneration)
+              )
+                setView("onboarding");
             } catch (cause) {
+              if (!isCurrentGeneration(generation.current, operationGeneration)) return;
               setSessionError(
                 `Your session is active, but workspaces could not be loaded: ${errorText(cause)}`,
               );
@@ -435,7 +456,14 @@ export function AuthWorkspace(): JSX.Element {
       </>
     );
   if (view === "onboarding" || !selected)
-    return <WorkspaceSetup workspaces={workspaces} onSelected={choose} onRefresh={refresh} />;
+    return (
+      <WorkspaceSetup
+        workspaces={workspaces}
+        onSelected={choose}
+        onRefresh={refresh}
+        generation={generation.current}
+      />
+    );
   return (
     <Studio
       workspace={selected}

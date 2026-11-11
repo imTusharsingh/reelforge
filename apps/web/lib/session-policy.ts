@@ -12,3 +12,17 @@ export function sessionFailureMessage(error: unknown): string {
 export function isCurrentGeneration(current: number, requestGeneration: number): boolean {
   return current === requestGeneration;
 }
+
+export async function resolveCurrentRequest<T>(
+  request: Promise<T>,
+  getCurrentGeneration: () => number,
+  requestGeneration: number,
+): Promise<T | null> {
+  try {
+    const result = await request;
+    return isCurrentGeneration(getCurrentGeneration(), requestGeneration) ? result : null;
+  } catch (error) {
+    if (!isCurrentGeneration(getCurrentGeneration(), requestGeneration)) return null;
+    throw error;
+  }
+}
