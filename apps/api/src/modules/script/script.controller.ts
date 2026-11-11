@@ -1,8 +1,16 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { z } from "zod";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { ScriptService } from "./script.service.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
+
+const pageSchema = z.coerce.number().int().min(1).max(10000).default(1);
+function pageValue(value: unknown): number {
+  const parsed = pageSchema.safeParse(value);
+  if (!parsed.success) throw new BadRequestException("Invalid page number");
+  return parsed.data;
+}
 
 @Controller("workspaces/:workspaceId/scripts")
 @UseGuards(AuthGuard)
@@ -23,6 +31,26 @@ export class ScriptController {
     return this.context(request, workspaceId).then((context) =>
       this.scripts.generate(context, body),
     );
+  }
+
+  @Get()
+  public list(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query("page") page?: string,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then(context =>
+      this.scripts.list(context, pageValue(page)));
+  }
+  @Get(":scriptId/revisions")
+  public revisions(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("scriptId") scriptId: string,
+    @Query("page") page?: string,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then(context =>
+      this.scripts.revisions(context, scriptId, pageValue(page)));
   }
   @Get(":scriptId") public get(
     @Req() request: AuthenticatedRequest,
