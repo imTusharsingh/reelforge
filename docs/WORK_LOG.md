@@ -941,6 +941,13 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Remaining B3: no real browser responsive screenshots, focus-trap/Escape/return focus, screen-reader or rendered contrast evidence. Do not mark accessibility acceptance passed or merge until reviewer checks.
 - Next exact action: reviewer requests/collects browser evidence; re-review current PR head after docs CI.
 
+## 2026-11-11 - M29 isolated frontend implementation
+- Actor/session: Codex; branch `work/m29-workflow-notifications-usage-dashboard` from `d34bdca`.
+- Changes: Added isolated typed M29 API adapter, workflow monitoring/recovery UI, redacted failures, personal notification actions, usage/budget dashboard, and M22 integration seam under `apps/web/features/m29/**`.
+- Boundaries: No shell, auth/session, navigation, root config, backend, contracts, schema, migrations, or other work-package files changed. No fabricated workspace context or runtime data.
+- Verification: web typecheck, lint, format:check, full monorepo typecheck, build and db:validate PASS. Full test command after Prisma generation failed in 20 API suites / 19 tests because the configured local PostgreSQL database was not migrated; 58 suites passed, 2 skipped, 363 tests passed, 148 skipped. Environment required `--config.engine-strict=false` because Node is 24.22.1 while the repository pins 24.22.2.
+- Blocker: M22 auth/session/workspace wiring is not present on this branch, so the feature is not user-integrated and browser/authenticated API verification remains pending.
+- Next action: integrate `M29Dashboard` from M22's verified workspace route; independent review requested from `minu-the-reviewer`; do not self-approve or merge.
 ## 2026-11-11 - M22 authentication, workspace and onboarding UI implementation
 - Actor/session: Codex implementation session; branch `work/m22-auth-workspace-onboarding`, based on `origin/main` `09c1e76` with M21 PR #41 merged.
 - Work package: M22-T01–T07 authorized frontend scope.
@@ -980,3 +987,28 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: web typecheck PASS; `eslint apps/web` PASS; web tests PASS (7 files / 18 tests); Prettier check PASS; `git diff --check` PASS. Full repository test remains blocked by absent generated Prisma client and Prisma checksum endpoint HTTP 403; checksum verification was not disabled.
 - External access: Git read/fetch PASS. Issue #47 API returned 403 and private issue page returned 404, so the checked-in M23 work package and owner-provided assignment were used. Browser/live API verification was not run.
 - Handoff: State is `IMPLEMENTED_PENDING_REVIEW`; independent Core review, push/PR creation, and `minu-the-reviewer` request remain outstanding. Do not self-approve or merge.
+## 2026-11-11 - M29 normal Operations screen integration
+- Review direction: Minu requested normal product integration on PR #46 after M22 merged, rather than an inaccessible standalone milestone screen.
+- Changes: Added `/operations` App Router entry using the existing authenticated `AuthWorkspace` flow; enabled Operations in the existing AppShell desktop/mobile navigation with active state and breadcrumb; composed M29 inside the existing AppShell main landmark; passed the verified selected workspace ID from M22 and explicitly used UNKNOWN/read-only role mode because M22 does not expose membership role.
+- Security: No query-string or unverified localStorage workspace context is used. OWNER/EDITOR workflow and budget actions remain disabled when role is unknown. No backend, contract, schema or migration changes.
+- Verification: web typecheck, lint, format:check and focused frontend tests pass (8 files / 21 tests). Authenticated browser/API smoke and screen-reader evidence remain NOT RUN. Current PR CI must be checked on the new head.
+- Next action: Core approves the trusted membership-role API seam, then the role-aware actions can be enabled; reviewer re-checks the integrated Operations screen and exact-head CI. Do not self-approve or merge.
+
+## 2026-11-11 - M29 frontend structure aligned with M22
+- Owner feedback: remove the milestone-specific `apps/web/features/m29/` product structure and follow M22's normal frontend organization.
+- Changes: moved Operations dashboard UI and scoped stylesheet into `apps/web/components/`; moved Operations API, validation logic, types and focused tests into `apps/web/lib/`; updated the authenticated workspace integration and status paths. No behavior or backend contract changes.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests), and web build PASS.
+
+## 2026-11-11 - Operations terminology cleanup
+- Owner feedback: remove remaining milestone identifiers from product code after the structural refactor.
+- Changes: renamed Operations context/data/API/error/loader identifiers, test labels, DOM IDs and user-facing copy from M29 terminology to Operations terminology. Historical work-package references remain only in governance documentation.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 21 tests) and diff check PASS.
+
+## 2026-11-11 - M29 latest review UX and route-boundary fixes
+- Review fixes: moved workspace switch/sign-out into persistent AppShell controls so Operations retains authenticated session actions; replaced pathname/Operations boolean branching with a typed `StudioRoute` content registry supplied by each URL page.
+- QA: added source-contract tests for enabled Operations navigation, active-page semantics, shared shell actions, and route-boundary registration. Focused frontend suite now passes 8 files / 24 tests; web typecheck, lint and format:check pass. Browser/session-expiry smoke remains NOT RUN.
+
+## 2026-11-11 - M29 architecture review follow-up
+- Extracted page ownership from the authentication state machine. `AuthWorkspace` now accepts page-owned children, keeps session bootstrap/workspace switching/logout and shared AppShell controls, and provides the verified selected workspace through `WorkspaceProvider`.
+- Overview and Operations now render separate screen components from their URL pages; no route registry, pathname check, or route boolean remains inside authentication. Future M23–M28 pages can be URL-owned while UNKNOWN-role read-only safety remains intact.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 24 tests), and web production build PASS. Root recursive typecheck is unavailable because installed pnpm 11.25.0 / Node 24.22.1 do not match repository engine pins; web typecheck is PASS. Browser/session-expiry/accessibility smoke remains NOT RUN.

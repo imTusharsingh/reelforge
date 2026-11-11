@@ -1,28 +1,34 @@
 "use client";
 
 import { useRef, type JSX, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
 
 const destinations = [
   { name: "Overview", href: "/" },
   { name: "Channels", href: "/channels" },
-  { name: "Production", href: "#" },
-  { name: "Review queue", href: "#" },
-  { name: "Publishing", href: "#" },
-  { name: "Insights", href: "#" },
-  { name: "Operations", href: "#" },
+  { name: "Operations", href: "/operations" },
+  { name: "Production", href: null },
+  { name: "Review queue", href: null },
+  { name: "Publishing", href: null },
+  { name: "Insights", href: null },
 ];
 
 function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
+  const pathname = usePathname();
   return (
     <nav aria-label={mobile ? "Mobile studio navigation" : "Studio navigation"}>
       <p className="rf-nav-caption">Studio</p>
       <ul className="rf-nav-list">
-        {destinations.map(({ name, href }, index) => (
+        {destinations.map(({ name, href }) => (
           <li key={name}>
-            {index < 2 ? (
-              <a className={`rf-nav-item ${index === 0 ? "rf-nav-item--current" : ""}`} href={href}>
+            {href ? (
+              <a
+                className={`rf-nav-item ${(pathname === href || (href === "/channels" && pathname.startsWith("/channels/"))) ? "rf-nav-item--current" : ""}`.trim()}
+                href={href}
+                aria-current={(pathname === href || (href === "/channels" && pathname.startsWith("/channels/"))) ? "page" : undefined}
+              >
                 {name}
               </a>
             ) : (
@@ -40,9 +46,11 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
 export function AppShell({
   children,
   inspector,
+  shellActions,
 }: {
   children: ReactNode;
   inspector?: ReactNode;
+  shellActions?: ReactNode;
 }): JSX.Element {
   const menu = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -52,6 +60,10 @@ export function AppShell({
   const inspectorTrigger = useRef<HTMLButtonElement>(null);
   const openInspector = (): void => inspectorDialog.current?.showModal();
   const closeInspector = (): void => inspectorDialog.current?.close();
+  const pathname = usePathname();
+  const breadcrumb = pathname.startsWith("/channels")
+    ? "Studio / Channels"
+    : pathname === "/operations" ? "Studio / Operations" : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
@@ -67,8 +79,9 @@ export function AppShell({
           <div className="rf-mobile-brand">
             <BrandLogo inverse />
           </div>
-          <span className="rf-breadcrumb">Studio / Overview</span>
+          <span className="rf-breadcrumb">{breadcrumb}</span>
           <span className="rf-shell-label">Design foundation</span>
+          {shellActions}
           {inspector && (
             <button
               ref={inspectorTrigger}
