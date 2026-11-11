@@ -1,9 +1,9 @@
 # ReelForge Design System
-**Version:** 1.0 (proposed foundation)  
+**Version:** 1.1 (M21 review candidate)  
 **Owner:** Product / Design  
 **Applies to:** M21-M30 core product UI; M31-M34 extensions inherit the same system.
 
-> Status: proposed design direction. The system is a consistent starting point, not a substitute for owner review of wireframes and high-fidelity screens in M21. Do not treat the proposed identity as finally approved until that review happens.
+> Status: owner approved the M21 representative design direction on 2026-11-11. Component implementation and accessibility evidence remain subject to independent Core review; this document does not declare M21 integrated.
 
 ## 1. Product and brand character
 
@@ -45,7 +45,7 @@ The CSS source of truth is `apps/web/styles/design-tokens.css`. Components must 
 - `--rf-bg`: page canvas; `--rf-surface`: default panel; `--rf-surface-raised`: popover/dialog.
 - `--rf-text`: primary text; `--rf-text-muted`: secondary text; `--rf-text-subtle`: tertiary metadata.
 - `--rf-border`: standard separators; `--rf-border-strong`: focused/important boundaries.
-- `--rf-accent`: primary action only; use sparingly so it remains recognizable.
+- `--rf-accent`: primary action only; use sparingly so it remains recognizable.\n- `--rf-on-accent`: the semantic foreground for default primary accents (dark ink in light and dark themes); `--rf-on-accent-hover`: the foreground for the hover accent (light paper in the light theme, dark ink in the dark theme). Never use hardcoded white text on Signal Orange.
 - `--rf-success`, `--rf-warning`, `--rf-danger`, `--rf-info`: status meaning, never decoration.
 
 Colour must never be the only way to communicate status. Pair status colour with text, an icon, or another non-colour cue. Verify text and control contrast against WCAG 2.2 AA before release. The token values are design starting points; accessibility checks take precedence over visual preference.
@@ -65,7 +65,7 @@ Use a modern, highly legible sans-serif for interface text and a restrained mono
 
 - Use the 4px spacing scale; compose layouts from the named spacing tokens.
 - Prefer clear alignment and whitespace over nested card stacks.
-- Use a persistent application shell: navigation, contextual page header, content canvas, and optional inspector/detail rail.
+- Use a persistent application shell: navigation, contextual page header, content canvas, and optional inspector/detail rail. The inspector remains accessible via a modal disclosure at widths below 1200px; do not hide meaningful context without an alternative.
 - Use a responsive content width; long-form editors and tables should not stretch edge-to-edge on wide displays.
 - Use 8px as the default control radius, 12px for larger panels, and full pills only for compact status/segmented controls where appropriate.
 - Borders define structure; shadows are reserved for overlays and meaningful elevation.

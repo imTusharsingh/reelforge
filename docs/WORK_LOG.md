@@ -903,3 +903,40 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: T05 not authorized; retention ADR, KMS/hosting, AI vendor and email sender pending; finding C1 (M06/M11/M15 AI ports bypass M08 ledger / M18 reservation) must be fixed before those adapters are bound; event-registry drift E1–E5; schema drift S1–S6.
 - Next exact action: Minu compares this branch with the VS Code M20 PR and picks one to land; then the owner answers the release-gate decisions.
 - Related status/ADR: M20 `STATUS.md`, `INTEGRATION_REVIEW.md`, `RELEASE_CHECKLIST.md`; ADR-007, ADR-010, ADR-013, ADR-018, ADR-019.
+
+## 2026-11-11 - M21 design-review checkpoint (not completed)
+- Actor/session: ChatGPT implementation session, M21 only; branch `work/m21-frontend-foundation-design-system` based on `5463226`.
+- Changes: M21 frontend audit, proposed design brief, four editable desktop/mobile/empty/unavailable SVG review mockups, and M21 STATUS. No production UI, backend, contracts, root config, schema, CI or dependencies changed.
+- Verification: GitHub main parent chain confirms PR #38, #40, #39 ancestry. Source inspection performed; install/lint/format/typecheck/tests/build/browser/contrast checks NOT RUN at this design gate.
+- Owner decision: pending. T03 is not approved; T04–T06 are blocked pending owner screen-direction approval.
+- Next exact action: owner reviews four mockups, requests revisions or explicitly approves; continue this same M21 branch only after approval. No production release or PR merge claimed.
+
+## 2026-11-11 - M21 owner design approval and UI foundation implementation
+- Actor/session: ChatGPT M21 implementation session; branch `work/m21-frontend-foundation-design-system`.
+- Starting state: M21 design review artifacts committed at c38822c; explicit owner approval received in ChatGPT conversation on 2026-11-11.
+- Changes: Responsive application shell, native dialog mobile navigation, reusable typed UI primitives, keyboard-oriented tabs, six static status examples, shared component docs, manual visual regression conventions and semantic markup tests.
+- Files changed: `apps/web/app/{page.tsx,globals.css}`, `apps/web/components/{app-shell.tsx,ui/**}`, `apps/web/docs/{COMPONENT_GUIDE.md,VISUAL_REGRESSION.md}`, M21 design brief/status, append-only work log.
+- Evidence: GitHub source inspection. Local install/lint/format/typecheck/test/build and browser interaction NOT RUN because the repository/toolchain were not locally available in this execution environment; GitHub CI verification required after PR creation.
+- External calls: GitHub repository actions only; no AI/social provider calls, uploads or payments.
+- Decisions: owner design direction approved; no production release permission. No new dependency or backend/schema/CI changes.
+- Risks: browser-only focus trap, keyboard controls, 320–1440px responsive behavior and contrast still require independent measured evidence.
+- Next exact action: open the M21 PR, verify CI, request Minu independent review, no self-merge.
+
+## 2026-11-11 - M21 PR #41 review fixes B1–B4
+- Actor/session: M21 implementation session, branch `work/m21-frontend-foundation-design-system`.
+- Review request: Minu requested changes on PR #41 (review 5855644795).
+- B1: responsive View context control uses native dialog with Close/Escape and focus return; context remains available below 1200px instead of being hidden.
+- B2: shared semantic accent/on-accent foreground pair and hover pair align between token source and CSS across light/dark themes.
+- B3: added static shell accessibility contracts and pure keyboard tab tests; documented browser viewport/focus/contrast walkthrough. **Actual browser interaction and visual screenshot evidence NOT RUN in this session.**
+- B4: M21 STATUS and component/design docs refreshed; final CI run result must be taken from the new PR head after fixes.
+- Commands locally: none, no repository checkout. GitHub Actions CI to verify new commit; no provider calls.
+- Next action: review CI and request independent re-review; do not self-approve or merge.
+
+## 2026-11-11 - M21 PR #41 fix verification
+- Actor/session: M21 implementation session, branch `work/m21-frontend-foundation-design-system`.
+- Exact code head verified: `b47f1073ceb05c96de6a4b9a75e23f605eca4cfa`; CI run 42987191629 succeeded.
+- Actual CI checks: frozen install, lint, formatting, strict types, Prisma validation and migration deployment, tests, build — all PASS.
+- Test totals: 78 suites passed, 2 skipped; 522 tests passed, 8 skipped. The earlier test-discovery gap was resolved by using `*.test.ts`. Pure tab navigation and semantic contrast tests execute. TSX Vite transform does not permit direct component import under the existing Next `jsx: preserve`, so component checks are explicitly static source contracts.
+- External calls: NONE beyond the GitHub integration, no live social/AI provider calls.
+- Remaining B3: no real browser responsive screenshots, focus-trap/Escape/return focus, screen-reader or rendered contrast evidence. Do not mark accessibility acceptance passed or merge until reviewer checks.
+- Next exact action: reviewer requests/collects browser evidence; re-review current PR head after docs CI.
