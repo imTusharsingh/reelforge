@@ -59,13 +59,40 @@ export class WorkspaceService {
     return workspace;
   }
 
+  /**
+   * Authenticated workspace list: expose only the requesting principal's role.
+   * The role comes from a filtered database membership, never from the request.
+   * Mutations still re-check live membership through the backend authorization path.
+   */
   public async list(
     userId: string,
-  ): Promise<Array<{ id: string; name: string; archivedAt: Date | null }>> {
-    return this.db.workspace.findMany({
+  ): Promise<
+    Array<{
+      id: string;
+      name: string;
+      archivedAt: Date | null;
+      role: "OWNER" | "EDITOR" | "VIEWER";
+    }>
+  > {
+    const workspaces = await this.db.workspace.findMany({
       where: { archivedAt: null, memberships: { some: { userId } } },
-      select: { id: true, name: true, archivedAt: true },
+      select: {
+        id: true,
+        name: true,
+        archivedAt: true,
+        memberships: {
+          where: { userId },
+          select: { role: true },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: "asc" },
+    });
+    // The membership must be present in the same query result; never
+    // fabricate an OWNER role for a missing or concurrently revoked member.
+    return workspaces.flatMap(({ memberships, ...workspace }) => {
+      const role = memberships[0]?.role;
+      return role ? [{ ...workspace, role }] : [];
     });
   }
 
