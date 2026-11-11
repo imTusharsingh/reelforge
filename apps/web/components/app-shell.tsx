@@ -1,0 +1,96 @@
+"use client";
+
+import { useRef, type JSX, type ReactNode } from "react";
+import { BrandLogo } from "./brand-logo";
+import { IconButton } from "./ui/primitives";
+
+const destinations = ["Overview", "Production", "Review queue", "Publishing", "Insights"];
+
+function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
+  return (
+    <nav aria-label={mobile ? "Mobile studio navigation" : "Studio navigation"}>
+      <p className="rf-nav-caption">Studio</p>
+      <ul className="rf-nav-list">
+        {destinations.map((name, index) => (
+          <li key={name}>
+            {index === 0 ? (
+              <span className="rf-nav-item rf-nav-item--current" aria-label="Overview, current view">
+                {name}
+              </span>
+            ) : (
+              <span className="rf-nav-item rf-nav-item--disabled">
+                {name} <span className="rf-nav-soon">Planned</span>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+export function AppShell({
+  children,
+  inspector,
+}: {
+  children: ReactNode;
+  inspector?: ReactNode;
+}): JSX.Element {
+  const menu = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const openMenu = (): void => menu.current?.showModal();
+  const closeMenu = (): void => menu.current?.close();
+  return (
+    <div className="rf-shell">
+      <a className="rf-skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <aside className="rf-sidebar" aria-label="Studio frame">
+        <BrandLogo inverse />
+        <Navigation />
+        <p className="rf-sidebar-note">Foundation preview · M21</p>
+      </aside>
+      <div className="rf-shell-body">
+        <header className="rf-shell-header">
+          <div className="rf-mobile-brand">
+            <BrandLogo inverse />
+          </div>
+          <span className="rf-breadcrumb">Studio / Overview</span>
+          <span className="rf-shell-label">Design foundation</span>
+          <div className="rf-mobile-menu">
+            <span ref={trigger}>
+              <IconButton label="Open studio navigation" tone="ghost" onClick={openMenu}>
+                Menu
+              </IconButton>
+            </span>
+          </div>
+        </header>
+        <div className="rf-workspace">
+          <main id="main-content" className="rf-workspace-main" tabIndex={-1}>
+            {children}
+          </main>
+          {inspector && (
+            <aside className="rf-inspector" aria-label="Context panel">
+              {inspector}
+            </aside>
+          )}
+        </div>
+      </div>
+      <dialog
+        ref={menu}
+        className="rf-mobile-dialog"
+        aria-label="Studio navigation"
+        onClose={() => trigger.current?.focus()}
+      >
+        <div className="rf-mobile-dialog-header">
+          <strong>Studio navigation</strong>
+          <IconButton label="Close studio navigation" tone="ghost" onClick={closeMenu}>
+            Close
+          </IconButton>
+        </div>
+        <Navigation mobile />
+        <p className="rf-sidebar-note">Other sections arrive in later milestones.</p>
+      </dialog>
+    </div>
+  );
+}
