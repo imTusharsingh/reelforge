@@ -940,3 +940,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - External calls: NONE beyond the GitHub integration, no live social/AI provider calls.
 - Remaining B3: no real browser responsive screenshots, focus-trap/Escape/return focus, screen-reader or rendered contrast evidence. Do not mark accessibility acceptance passed or merge until reviewer checks.
 - Next exact action: reviewer requests/collects browser evidence; re-review current PR head after docs CI.
+
+## 2026-11-11 - M29 isolated frontend implementation
+- Actor/session: Codex; branch `work/m29-workflow-notifications-usage-dashboard` from `d34bdca`.
+- Changes: Added isolated typed M29 API adapter, workflow monitoring/recovery UI, redacted failures, personal notification actions, usage/budget dashboard, and M22 integration seam under `apps/web/features/m29/**`.
+- Boundaries: No shell, auth/session, navigation, root config, backend, contracts, schema, migrations, or other work-package files changed. No fabricated workspace context or runtime data.
+- Verification: web typecheck, lint, format:check, full monorepo typecheck, build and db:validate PASS. Full test command after Prisma generation failed in 20 API suites / 19 tests because the configured local PostgreSQL database was not migrated; 58 suites passed, 2 skipped, 363 tests passed, 148 skipped. Environment required `--config.engine-strict=false` because Node is 24.22.1 while the repository pins 24.22.2.
+- Blocker: M22 auth/session/workspace wiring is not present on this branch, so the feature is not user-integrated and browser/authenticated API verification remains pending.
+- Next action: integrate `M29Dashboard` from M22's verified workspace route; independent review requested from `minu-the-reviewer`; do not self-approve or merge.
