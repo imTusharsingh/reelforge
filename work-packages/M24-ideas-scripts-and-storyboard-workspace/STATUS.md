@@ -39,6 +39,13 @@ Build idea discovery/list/create/edit/archive/search/filter/status; idea brief; 
 
 - None. Shared API/schema changes require proposal and approval.
 
+## Backend dependency clarification (separate Core branch)
+
+- M06/M07 planning contract gaps were identified before M24 frontend integration: editable/archivable idea briefs, script library, and true revision history.
+- Separate Core fix branch: `fix/m24-planning-api-contract` (not part of M24 frontend implementation). API and migration documentation: `docs/M24_BACKEND_PLANNING_CONTRACT.md`.
+- This M24 workpackage remains `NOT_STARTED` until frontend implementation begins. The backend PR must pass CI, independent review, and be merged before M24 uses the added routes.
+- The M24 frontend branch `work/m24-ideas-scripts-storyboard-ui` contains exploratory model work; synchronize it with new main after Core merge and validate compatibility before extending it.
+
 ## Blockers / risks / unknowns
 
 - Inspect current repository code and existing M00-M20 contracts before implementation.
