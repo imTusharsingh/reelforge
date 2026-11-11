@@ -3,7 +3,6 @@ import type {
   HTMLAttributes,
   InputHTMLAttributes,
   JSX,
-  LabelHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
