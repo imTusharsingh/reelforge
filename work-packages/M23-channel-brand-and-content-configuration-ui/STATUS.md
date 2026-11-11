@@ -76,3 +76,11 @@ Mounted Chromium verification: 16 checks passed, covering desktop/mobile/fallbac
 ## Handoff
 
 Request independent review from `minu-the-reviewer` on the Developer-authored PR against main, with `Closes #47`. Do not self-approve or merge. Core should decide the role proposal and verify M23/M29 shared-context compatibility before enabling writes. Historical published versions and safety/rights gates must remain enforced.
+
+## Core role contract integration (after PR #51)
+
+Core's verified workspace membership-role contract merged into main at `05fa1a5`. This M23 branch merged main in `668816e` and wired the backend-confirmed role through M22's workspace response parser and provider into Channels. Unknown/malformed roles fail closed; a role-free POST /workspaces acknowledgement is only used to confirm creation, never to authorize a selected workspace. Owners and Editors can now reach their channel mutation forms, while Viewers cannot; all API mutation authorization remains server-enforced.
+
+**Evidence/remaining gates:** the new role parser has focused unit tests, with hosted CI pending on the role-wiring head. Earlier real browser smoke and mounted tests were performed **before** the contract was available to the UI; end-to-end OWNER/EDITOR/VIEWER, revocation, and real authorized browser-write smoke must not be marked PASS on that earlier evidence. No production readiness or screen-reader/WCAG sign-off is claimed. Privileged M29 action enablement remains separately tracked in Issue #52 to avoid activating unfinished budget validation/mutation handling in this milestone.
+
+The milestone remains `IMPLEMENTED_PENDING_REVIEW` until final code review/merge. After merging, update status to `INTEGRATED` with the actual merge SHA and separately list any outstanding release QA.
