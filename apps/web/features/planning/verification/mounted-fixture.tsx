@@ -1,8 +1,8 @@
 /** Isolated browser fixture: requests are deterministic, in-memory test doubles, never providers. */
 import { useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
-import { PlanningContext } from "../session";
-import { PlanningClient, type Script, type Idea } from "../model";
+import { PlanningContext, PendingSaveRecovery } from "../session";
+import { PlanningClient, pendingSave, type Script, type Idea } from "../model";
 import { ScriptEditor, ScriptWorkspace } from "../script-workspace";
 import { IdeaForm } from "../idea-form";
 import { PlanningLibrary } from "../library";
@@ -18,11 +18,20 @@ let savedIdea = structuredClone(idea);
 const calls: { path: string; method: string; body: unknown }[] = [];
 let fail = 0;
 let failReads = false;
+let pauseReads = false;
+let releaseReads: (() => void) | undefined;
+let loseCommitResponse = false;
+if (mode === "recovery")
+  sessionStorage.setItem("reelforge.planning.pending:workspace-one", "ideas/idea-one");
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const path = String(input).split("/workspaces/workspace-one/")[1] ?? "";
   const method = init?.method ?? "GET";
   const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
   calls.push({ path, method, body });
+  if (method === "GET" && pauseReads)
+    await new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
   if (method === "GET" && failReads)
     return new Response(JSON.stringify({ message: "Read unavailable" }), { status: 503 });
   if (method !== "GET" && fail)
@@ -48,6 +57,10 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   else if (path === "ideas/idea-one" && method === "PATCH") {
     savedIdea = { ...savedIdea, ...(body as Partial<Idea>), updatedAt: "2026-11-11T12:00:00.000Z" };
     result = savedIdea;
+    if (loseCommitResponse)
+      return new Response(JSON.stringify({ message: "Response lost after commit" }), {
+        status: 503,
+      });
   } else if (path === "channels")
     result = [{ id: "channel-one", workspaceId: idea.workspaceId, name: "Creator studio" }];
   else if (path === "characters")
@@ -72,8 +85,18 @@ let rerender: (() => void) | undefined;
 Object.assign(window, {
   m24Fixture: {
     calls,
-    failReads: (): void => {
-      failReads = true;
+    failReads: (value = true): void => {
+      failReads = value;
+    },
+    pauseReads: (): void => {
+      pauseReads = true;
+    },
+    releaseReads: (): void => {
+      pauseReads = false;
+      releaseReads?.();
+    },
+    loseCommitResponse: (): void => {
+      loseCommitResponse = true;
     },
     fail: (status: number): void => {
       fail = status;
@@ -113,7 +136,14 @@ function Fixture(): JSX.Element {
         <button onClick={() => requestNavigationIntent("workspace")}>
           Test workspace navigation
         </button>
-        {mode === "idea" ? (
+        {pendingSave(idea.workspaceId) && (
+          <PendingSaveRecovery
+            client={client}
+            revision={revision}
+            onReconciled={() => setRevision((v) => v + 1)}
+          />
+        )}
+        {mode === "idea" || mode === "recovery" ? (
           <IdeaForm idea={savedIdea} onSaved={() => setRevision((v) => v + 1)} />
         ) : mode === "library" ? (
           <PlanningLibrary />

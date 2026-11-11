@@ -1,6 +1,6 @@
 # M24 Status — Ideas, Scripts & Storyboard Workspace
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** IMPLEMENTED_PENDING_REVIEW — release blocked by Core #56
 - **Assigned engineer:** Developer `imTusharsingh`
 - **Branch:** `work/m24-ideas-scripts-storyboard-ui`
 - **Updated:** 2026-11-11
@@ -36,7 +36,7 @@ All nine task surfaces implemented to the currently persisted backend boundary. 
 - `apps/web/components/app-shell.tsx`: narrow navigation/breadcrumb integration only.
 - This STATUS and `docs/WORK_LOG.md`.
 
-## Executed verification
+## Initial implementation verification (before review changes)
 
 Node 24.22.2, pnpm 12.16.1; actual disposable PostgreSQL, all 28 existing migrations deployed; no pending migration. No Redis or paid provider required.
 
@@ -69,3 +69,28 @@ Observed/fixed validation failures: initial unqualified build inherited developm
 ## Review requirements / next action
 
 Independent Core review must assess boundaries, concurrency limitations, permission/tenant enforcement, request shapes and real persistence, responsive/keyboard behavior, unsupported capability copy and exact-head CI. Resolve required findings on this branch. Do not self-approve or merge. Provider/atomic-concurrency blockers must be resolved separately before claiming the entire idea-to-new-script acceptance flow is production ready.
+
+## Review follow-up — R1, R2 and R3 (2026-11-11)
+
+This section supersedes the baseline task coverage above where operations are now gated. Review: [COMMENT review](https://github.com/imTusharsingh/reelforge/pull/55#pullrequestreview-5862174805); no formal independent approval was recorded.
+
+- **R1 fixed:** Removed unconditional pending-marker clearing. Recovery explicitly fetches uncached state for the affected idea (including archived records), script, or unfiltered collection when an interrupted create has no confirmed ID. The validated saved values are displayed for comparison. Confirmation is disabled before/during reads and after failed/missing/malformed/foreign responses. A client-owned one-use receipt binds confirmation to that exact pending operation; a new nonce invalidates stale comparisons even for the same resource path. Known in-flight writes cannot be reconciled. Refresh, unmount, workspace cancellation and retry invalidate the UI comparison. Pending markers remain until an explicit successful comparison. Saved script inspection omits dispatched prompt text/provider fields.
+- **R2 safely narrowed / Core dependency tracked:** Separate [Core issue #56](https://github.com/imTusharsingh/reelforge/issues/56) specifies atomic caller expectedRevision on script revision/approval and expectedUpdatedAt/status preconditions on idea transitions, transaction semantics, PostgreSQL interleaving regressions and release criteria. No backend/shared-contract change is authorized in this frontend PR. Script revision saves, script approval and idea status transitions are disabled both in UI and client methods (no GET/POST preflight race remains reachable from this client). Local script/scene/character drafting, script/history reads, idea creation, and timestamp-protected brief edit/archive/restore remain available. Character pins and scene changes cannot be persisted from this UI until the gate opens. Generation and asset assignment remain unavailable. **T01 status and T03/T06/T07/T08 script persistence are release-blocked, not complete.**
+- **R3 fixed:** The planning storyboard is explicitly sequential: it begins at zero and each scene starts at the prior scene's end (1e-6-second numeric tolerance). Gaps and overlaps are reported without silently rewriting scenes. “Reflow scene starts” is the explicit corrective action; the target-duration tolerance remains one second. Existing persisted documents can still be inspected; inconsistent drafts cannot pass validation.
+
+### Release gate — mandatory independent Core follow-up
+
+Do not re-enable the fail-closed client/UI gates, mark M24 integrated, or claim concurrent-edit safety until #56 has a separately approved backend implementation, independent review, merge, documented atomic request contract, frontend caller-token integration and actual interleaving regression evidence. Tracking the issue does not resolve the backend limitation. Do not merge this PR without required independent review and CI gates.
+
+### Review regression evidence
+
+- Added resource-specific recovery tests for no-read/failed/deferred reads, missing/foreign data, unknown-ID creates, stale receipts, replayed confirmations, prompt-text omission and known in-flight writes.
+- Added owner/editor no-dispatch tests for all gated mutations, and gap/overlap validation/reflow tests.
+- Mounted browser tests cover lost-acknowledgement-but-committed idea edits, comparison locking, preserved drafts, safe gates, local storyboard edits and sequential timing, alongside existing responsive/navigation checks.
+- The real browser runner now verifies gated script writes and unchanged database documents rather than claiming those writes are enabled. The separate service persistence runner still tests the existing backend; it does not bypass the production frontend gate.
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `NODE_ENV=production pnpm build`: PASS.
+- `pnpm test`: PASS — **624 passed, 8 skipped**, including **33 M24 unit/adapter/recovery regressions**.
+- `PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright ESBUILD_MODULE=/workspace/validation-reelforge/browser/node_modules/esbuild node apps/web/features/planning/verification/mounted-browser.mjs`: PASS — **15 scenarios**, no page errors.
+- `M24_TEST_DATABASE_URL="$DATABASE_URL" PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright node apps/web/features/planning/verification/live-browser.mjs`: PASS — **6 actual Next/API/PostgreSQL scenarios**, including release-gated writes, preserved persisted data, Viewer/tenant enforcement and valid idea CAS reconciliation.
+- `M24_TEST_DATABASE_URL="$DATABASE_URL" node apps/web/features/planning/verification/persistence.mjs`: PASS — **4 existing-backend PostgreSQL scenarios**; not a claim that gated frontend mutations are enabled.
+- No live paid providers invoked; no schema/backend/root changes. Exact-head hosted CI is checked after pushing the review fix.

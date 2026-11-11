@@ -70,7 +70,7 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
   }
 }
 try {
-  await test("targeted scene edit persists without altering other scenes, and survives reload of editor", async (p) => {
+  await test("local targeted edits and history remain available while unsafe script saves are blocked", async (p) => {
     await p.getByLabel("Scene dialogue", { exact: true }).fill("Targeted revision");
     const cues = p.getByLabel("Audio cues — one per line", { exact: true });
     await cues.fill("Birdsong");
@@ -78,17 +78,25 @@ try {
     await cues.press("Enter");
     await cues.pressSequentially("Soft piano");
     assert.equal(await cues.inputValue(), "Birdsong\nSoft piano");
-    await p.getByRole("button", { name: "Save script revision", exact: true }).click();
-    await p.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
+    assert.equal(
+      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(
+      await p.getByRole("button", { name: "Approve saved script", exact: true }).isDisabled(),
+      true,
+    );
+    await p.getByRole("button", { name: "Scene 2 · 10s", exact: true }).click();
     assert.equal(
       await p.getByLabel("Scene dialogue", { exact: true }).inputValue(),
-      "Targeted revision",
+      "Then continue",
     );
-    const calls = await p.evaluate(() => window.m24Fixture.calls);
-    const body = calls.find((c) => c.method === "POST").body;
-    assert.equal(body.scenes[1].dialogue, "Then continue");
-    assert.equal(body.scenes[0].startSeconds, 0);
-    await p.getByRole("button", { name: "Inspect revision 2", exact: true }).click();
+    assert.equal(
+      (await p.evaluate(() => window.m24Fixture.calls)).filter((c) => c.method !== "GET").length,
+      0,
+    );
+    p.once("dialog", (d) => d.accept());
+    await p.getByRole("button", { name: "Inspect revision 1", exact: true }).click();
     assert.equal(await p.getByLabel("Scene dialogue", { exact: true }).isDisabled(), true);
   });
   await test("reordering, duration validation and keyboard scene selection", async (p) => {
@@ -101,7 +109,7 @@ try {
     );
     await p.getByRole("button", { name: "Use scene total as target" }).click();
     assert.equal(
-      await p.getByRole("button", { name: "Save script revision", exact: true }).isEnabled(),
+      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
       true,
     );
     const scene = p.getByRole("button", { name: "Scene 1 · 10s", exact: true });
@@ -117,8 +125,11 @@ try {
     await p.getByLabel("Published scene character version").selectOption("version-one");
     assert.equal(await p.getByRole("option", { name: "Version 2", exact: true }).count(), 0);
     await p.getByRole("button", { name: "Assign published character" }).click();
-    await p.getByRole("button", { name: "Save script revision", exact: true }).click();
-    await p.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
+    await p.getByRole("button", { name: "Remove character reference", exact: true }).waitFor();
+    assert.equal(
+      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
+      true,
+    );
     assert.equal(await p.getByRole("button", { name: /Assign scene asset/ }).isDisabled(), true);
   });
   await test(
@@ -156,19 +167,86 @@ try {
       true,
     );
   });
-  await test("uncertain response preserves local draft and prevents automatic replay", async (p) => {
-    await p.getByLabel("Scene dialogue", { exact: true }).fill("Uncertain work");
-    await p.evaluate(() => window.m24Fixture.fail(503));
-    await p.getByRole("button", { name: "Save script revision", exact: true }).click();
-    await p.getByText("Save interrupted", { exact: true }).waitFor();
-    assert.equal(
-      await p.getByLabel("Scene dialogue", { exact: true }).inputValue(),
-      "Uncertain work",
-    );
-    assert.equal(
-      await p.evaluate(() => sessionStorage.getItem("reelforge.planning.pending:workspace-one")),
-      "scripts/script-one/revisions",
-    );
+  await test(
+    "lost acknowledgement preserves the draft and requires successful affected-resource comparison",
+    async (p) => {
+      await p.getByLabel("Title", { exact: true }).fill("Committed despite response loss");
+      await p.evaluate(() => window.m24Fixture.loseCommitResponse());
+      await p.getByRole("button", { name: "Save brief", exact: true }).click();
+      await p.getByText("Response lost after commit", { exact: true }).waitFor();
+      const confirm = p.getByRole("button", {
+        name: "I have compared the fetched saved state",
+        exact: true,
+      });
+      assert.equal(await confirm.isDisabled(), true);
+      assert.equal(
+        await p.getByRole("button", { name: "Save brief", exact: true }).isDisabled(),
+        true,
+      );
+      assert.equal(
+        (await p.evaluate(() => window.m24Fixture.calls)).filter((c) => c.method === "PATCH")
+          .length,
+        1,
+      );
+      await p.getByRole("button", { name: "Fetch affected saved resource", exact: true }).click();
+      await p.getByText("Fetched saved state: Idea idea-one", { exact: true }).waitFor();
+      assert(
+        (await p.locator("details pre").textContent()).includes("Committed despite response loss"),
+      );
+      assert(
+        await p.evaluate(() => sessionStorage.getItem("reelforge.planning.pending:workspace-one")),
+      );
+      await confirm.click();
+      assert.equal(
+        await p.evaluate(() => sessionStorage.getItem("reelforge.planning.pending:workspace-one")),
+        null,
+      );
+    },
+    "mode=idea",
+  );
+  await test(
+    "reconciliation cannot clear before a read, after a failed read, or during a deferred read",
+    async (p) => {
+      const confirm = p.getByRole("button", {
+        name: "I have compared the fetched saved state",
+        exact: true,
+      });
+      assert.equal(await confirm.isDisabled(), true);
+      await p.evaluate(() => window.m24Fixture.failReads());
+      await p.getByRole("button", { name: "Fetch affected saved resource", exact: true }).click();
+      await p.getByText(/Reconciliation failed: Read unavailable/).waitFor();
+      assert.equal(await confirm.isDisabled(), true);
+      assert(
+        await p.evaluate(() => sessionStorage.getItem("reelforge.planning.pending:workspace-one")),
+      );
+      await p.evaluate(() => {
+        window.m24Fixture.failReads(false);
+        window.m24Fixture.pauseReads();
+      });
+      await p.getByRole("button", { name: "Fetch affected saved resource", exact: true }).click();
+      assert.equal(await confirm.isDisabled(), true);
+      await p.evaluate(() => window.m24Fixture.releaseReads());
+      await p.getByText("Fetched saved state: Idea idea-one", { exact: true }).waitFor();
+      assert.equal(await confirm.isEnabled(), true);
+      await confirm.click();
+      assert.equal(
+        await p.evaluate(() => sessionStorage.getItem("reelforge.planning.pending:workspace-one")),
+        null,
+      );
+    },
+    "mode=recovery",
+  );
+  await test("sequential storyboard reports gaps and overlaps until explicit reflow", async (p) => {
+    await p.getByRole("button", { name: "Scene 2 · 10s", exact: true }).click();
+    for (const start of ["5", "15"]) {
+      await p.getByLabel("Scene start (seconds)").fill(start);
+      await p
+        .getByText(/This storyboard uses sequential scenes without gaps or overlaps/)
+        .waitFor();
+      assert.equal(await p.getByLabel("Scene start (seconds)").inputValue(), start);
+      await p.getByRole("button", { name: "Reflow scene starts", exact: true }).click();
+      assert.equal(await p.getByLabel("Scene start (seconds)").inputValue(), "10");
+    }
   });
   await test(
     "idea brief edit persists and refreshed props never roll back save",
@@ -194,7 +272,7 @@ try {
     async (p) => {
       await p.getByLabel("Scene dialogue", { exact: true }).fill("Recover this draft");
       await p.evaluate(() => window.m24Fixture.failReads());
-      await p.getByRole("button", { name: "Save script revision", exact: true }).click();
+      await p.evaluate(() => window.m24Fixture.remote());
       await p.getByText("Planning data unavailable", { exact: true }).first().waitFor();
       assert.equal(
         await p.getByLabel("Scene dialogue", { exact: true }).inputValue(),

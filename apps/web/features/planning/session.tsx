@@ -11,7 +11,7 @@ import {
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { draftEdited, registerDraft } from "../../components/studio-navigation";
 import { Alert, Button, StateMessage } from "../../components/ui/primitives";
-import { PlanningClient, pendingSave, clearPendingSave } from "./model";
+import { PlanningClient, pendingSave, type SaveReconciliation } from "./model";
 export const PlanningContext = createContext<{
   client: PlanningClient;
   revision: number;
@@ -79,22 +79,100 @@ function Scope({
         </Alert>
       )}
       {uncertain && (
-        <Alert tone="warning" title="Reconcile an interrupted save">
-          The server may have committed the earlier request. Current data is being fetched; inspect
-          it before retrying.<Button onClick={refresh}>Refresh saved data</Button>
-          <Button
-            tone="secondary"
-            onClick={() => {
-              clearPendingSave(workspaceId);
-              setUncertain(false);
-            }}
-          >
-            I have compared the saved state
-          </Button>
-        </Alert>
+        <PendingSaveRecovery
+          client={client}
+          revision={revision}
+          onReconciled={() => {
+            setUncertain(false);
+            refresh();
+          }}
+        />
       )}
       {children}
     </PlanningContext.Provider>
+  );
+}
+export function PendingSaveRecovery({
+  client,
+  revision,
+  onReconciled,
+}: {
+  client: PlanningClient;
+  revision: number;
+  onReconciled: () => void;
+}): JSX.Element {
+  const [result, setResult] = useState<SaveReconciliation | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current += 1;
+    setResult(null);
+    setError("");
+    setLoading(false);
+    return (): void => {
+      generation.current += 1;
+    };
+  }, [client, revision]);
+  const fetchAffected = async (): Promise<void> => {
+    const operation = ++generation.current;
+    setResult(null);
+    setError("");
+    setLoading(true);
+    try {
+      const next = await client.reconcilePendingSave();
+      if (operation === generation.current && !client.signal.aborted) setResult(next);
+    } catch (cause) {
+      if (operation === generation.current && !client.signal.aborted) setError(message(cause));
+    } finally {
+      if (operation === generation.current && !client.signal.aborted) setLoading(false);
+    }
+  };
+  return (
+    <Alert tone="warning" title="Reconcile an interrupted save">
+      <p>
+        The server may have committed the earlier request. Fetch the affected resource and compare
+        the saved values below with your draft. No request will be retried automatically.
+      </p>
+      <Button onClick={() => void fetchAffected()} loading={loading} disabled={loading}>
+        Fetch affected saved resource
+      </Button>
+      {error && (
+        <p role="alert">Reconciliation failed: {error}. The pending save remains blocked.</p>
+      )}
+      {result && (
+        <details open>
+          <summary>Fetched saved state: {result.resource}</summary>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              maxHeight: "24rem",
+              overflow: "auto",
+            }}
+          >
+            {JSON.stringify(result.snapshot, null, 2)}
+          </pre>
+        </details>
+      )}
+      <Button
+        tone="secondary"
+        disabled={loading || !result}
+        onClick={() => {
+          if (!result) return;
+          try {
+            client.acknowledgePendingSave(result);
+            setResult(null);
+            onReconciled();
+          } catch (cause) {
+            setResult(null);
+            setError(message(cause));
+          }
+        }}
+      >
+        I have compared the fetched saved state
+      </Button>
+    </Alert>
   );
 }
 export function usePlanning(): {

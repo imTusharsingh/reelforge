@@ -5,6 +5,8 @@ import { requestNavigationIntent, draftEdited } from "../../components/studio-na
 import { Alert, Badge, Button, Field, Panel, TextAreaField } from "../../components/ui/primitives";
 import {
   canWrite,
+  atomicPlanningWritesAvailable,
+  atomicPlanningWriteNotice,
   mergeRevision,
   moveScene,
   normalizeSceneTimings,
@@ -80,7 +82,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
     }
   };
   const save = async (): Promise<void> => {
-    if (readonly || validation || remote) return;
+    if (!atomicPlanningWritesAvailable || readonly || validation || remote) return;
     setBusy(true);
     setError("");
     try {
@@ -102,6 +104,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
   };
   const approve = async (): Promise<void> => {
     if (
+      !atomicPlanningWritesAvailable ||
       readonly ||
       dirty ||
       remote ||
@@ -149,7 +152,13 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
           </Button>
           <Button
             onClick={() => void save()}
-            disabled={readonly || !dirty || Boolean(validation) || Boolean(remote)}
+            disabled={
+              !atomicPlanningWritesAvailable ||
+              readonly ||
+              !dirty ||
+              Boolean(validation) ||
+              Boolean(remote)
+            }
             loading={busy}
           >
             Save script revision
@@ -157,12 +166,17 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
           <Button
             tone="secondary"
             onClick={() => void approve()}
-            disabled={readonly || dirty || Boolean(remote)}
+            disabled={!atomicPlanningWritesAvailable || readonly || dirty || Boolean(remote)}
           >
             Approve saved script
           </Button>
         </div>
       </header>
+      {!atomicPlanningWritesAvailable && (
+        <Alert tone="warning" title="Saving awaits a safe version contract">
+          {atomicPlanningWriteNotice}
+        </Alert>
+      )}
       {dirty && <p role="status">Unsaved script changes</p>}
       {notice && <p role="status">{notice}</p>}
       {error && (
@@ -345,6 +359,10 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
         <div className={styles.header}>
           <div>
             <h2>Storyboard</h2>
+            <p>
+              Scenes run sequentially, starting at zero with no gaps or overlaps. Reflow scene
+              starts explicitly aligns timing after duration edits.
+            </p>
             <p>
               {visible.scenes.length} scenes ·{" "}
               {visible.scenes.reduce((sum, s) => sum + s.durationSeconds, 0)} seconds

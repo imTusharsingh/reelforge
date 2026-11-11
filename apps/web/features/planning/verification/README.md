@@ -19,9 +19,11 @@ M24_TEST_DATABASE_URL="$DATABASE_URL" PLAYWRIGHT_MODULE=/path/to/playwright node
 
 Coverage:
 
-- Vitest: runtime/scoped DTO guards, actual API request shapes, timestamps, roles, cancellation, paging, duration validation, targeted scene preservation, reorder, explicit three-way conflict rebasing and pending-save replay prevention.
-- Mounted Chromium: 13 scenarios covering ideas/search/filter requests, manual edits, persisted-response rebasing, storyboard selection/order/timing, published character pins, disabled assets, viewer restrictions, navigation confirmation, stale revisions, uncertain writes and failed-refresh draft retention; 390/768/1440px screenshots in `/tmp`.
+- Vitest: runtime/scoped DTO guards, actual API request shapes, timestamps, roles, cancellation, paging, duration validation, targeted scene preservation, reorder, explicit three-way conflict rebasing, sequential timing, gated unsafe writes, and successful resource-specific pending-save comparison with failure and in-flight protection.
+- Mounted Chromium: 15 scenarios covering ideas/search/filter requests, manual idea edits, persisted-response rebasing, local storyboard selection/order/timing, local published-character pins, disabled assets, viewer restrictions, navigation confirmation, stale revisions, uncertain writes and failed-refresh draft retention; 390/768/1440px screenshots in `/tmp`.
 - Real PostgreSQL: four M06/M07 service scenarios, including stale timestamp rejection, archive/restore, historical approval locks, scene revision persistence, true history, approval immutability and tenant/role rejection.
-- Real Next/API/PostgreSQL Chromium: six scenarios covering create/edit/reload/archive/restore, actual HTTP 409 compare/resubmit, script save/reload/history, unchanged unrelated scene, approved/readiness locks, authenticated Viewer UI and HTTP write denial, cross-tenant denial, mobile overflow and existing navigation.
+- Real Next/API/PostgreSQL Chromium: six scenarios covering create/edit/reload/archive/restore, actual HTTP 409 compare/resubmit, gated script writes, local script drafts, unchanged persisted documents, approved/readiness locks, authenticated Viewer UI and HTTP write denial, cross-tenant denial, mobile overflow and existing navigation.
+
+Core issue #56 is a release gate: script revision saves/approval and idea status transitions are disabled until atomic caller preconditions are independently approved, merged and integrated. Historical earlier test counts do not imply these writes are currently enabled.
 
 The mounted harness replaces only Next routing and HTTP with explicit test doubles. The live runner uses the actual production web build, API guards, services and migrated PostgreSQL. Neither result implies live AI-provider readiness. Full screen-reader and exhaustive browser-engine testing remain independent review work.

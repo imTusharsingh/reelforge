@@ -1056,3 +1056,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ### M24 multiline editor follow-up
 
 - Preserved line breaks while typing brief references and scene audio cues; normalize blank/whitespace-only references only at the API boundary. Added mounted keyboard-entry regression coverage and payload normalization assertion. Focused 21 tests and 13 browser scenarios pass; final frontend checks rerun before push.
+
+## 2026-11-11 — M24 PR #55 review changes
+
+- R1: replaced unconditional interrupted-save acknowledgement with successful resource-specific reads, visible comparison and a client-owned one-use receipt tied to the pending nonce. Failed/deferred reads, unknown/missing/foreign resources and known in-flight writes cannot unlock retries; refresh/unmount invalidate comparisons. Provider prompt fields are omitted from the comparison.
+- R2: opened separate Core issue #56 for atomic client preconditions on script revisions/approval and idea status transitions. Fail-closed UI and client gates disable these unsafe writes until the independently approved Core contract is merged and integrated. Preserved local drafting and safe timestamp-protected idea edits/archive/restore; no backend/shared-contract/root changes.
+- R3: defined sequential storyboard timing and added gap/overlap validation with explicit reflow. No automatic changes to unrelated scenes.
+- State remains IMPLEMENTED_PENDING_REVIEW and release-blocked by #56; no self-approval or merge. Follow-up regression evidence is recorded in M24 STATUS.
+
+- Review validation: full typecheck/lint/format/production build pass; 624 tests passed / 8 skipped (33 M24 tests), 15 mounted browser scenarios, 6 real Next/API/PostgreSQL browser scenarios and 4 existing-backend persistence scenarios pass. Recovery reads explicitly bypass caches.

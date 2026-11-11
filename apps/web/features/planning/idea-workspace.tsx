@@ -3,7 +3,13 @@ import { useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { requestNavigationIntent } from "../../components/studio-navigation";
 import { Alert, Badge, Button, Field, Panel, TextAreaField } from "../../components/ui/primitives";
-import { canWrite, nextStatus, type IdeaStatus } from "./model";
+import {
+  canWrite,
+  nextStatus,
+  atomicPlanningWritesAvailable,
+  atomicPlanningWriteNotice,
+  type IdeaStatus,
+} from "./model";
 import { usePlanning, useLoad, message } from "./session";
 import { IdeaForm } from "./idea-form";
 import { Choice, json, LoadState, SafeReferences } from "./common";
@@ -18,6 +24,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
   const idea = state.data;
   const act = async (kind: IdeaStatus | "archive" | "restore"): Promise<void> => {
     if (
+      (kind !== "archive" && kind !== "restore" && !atomicPlanningWritesAvailable) ||
       !idea ||
       !canWrite(client.role) ||
       suspended ||
@@ -118,6 +125,11 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
               </Panel>
               <Panel>
                 <h2>Status & archive</h2>
+                {!atomicPlanningWritesAvailable && (
+                  <Alert title="Status changes temporarily unavailable" tone="warning">
+                    {atomicPlanningWriteNotice}
+                  </Alert>
+                )}
                 <p>
                   Archiving preserves the record and its status. An approval snapshot permanently
                   protects the original brief.
@@ -129,6 +141,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
                       <Button
                         key={status}
                         disabled={
+                          !atomicPlanningWritesAvailable ||
                           !canWrite(client.role) ||
                           suspended ||
                           busy ||
@@ -154,7 +167,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
                     type="datetime-local"
                     value={scheduledAt}
                     onChange={(e) => setScheduledAt(e.target.value)}
-                    disabled={!canWrite(client.role) || suspended}
+                    disabled={!atomicPlanningWritesAvailable || !canWrite(client.role) || suspended}
                   />
                 )}
                 <Button

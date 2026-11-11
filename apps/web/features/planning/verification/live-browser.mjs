@@ -216,23 +216,31 @@ try {
   await page.getByRole("button", { name: "Archive idea", exact: true }).waitFor();
   console.log("PASS real Next/M06 create, edit, reload, archive and restore");
   await page.goto(`${base}/planning/scripts/${script.id}`);
-  await page.getByLabel("Scene dialogue", { exact: true }).fill("Live targeted scene revision");
-  await page.getByRole("button", { name: "Save script revision", exact: true }).click();
-  await page.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
-  await page.reload();
+  await page
+    .getByLabel("Scene dialogue", { exact: true })
+    .fill("Local draft while Core release gate is closed");
+  assert.equal(
+    await page.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Approve saved script", exact: true }).isDisabled(),
+    true,
+  );
+  const persisted = await db.scriptRevision.findFirstOrThrow({
+    where: { workspaceId, scriptId: script.id, revision: 1 },
+  });
+  assert.deepEqual(persisted.document, document);
+  await page.getByRole("button", { name: "Scene 2 · 10s", exact: true }).click();
   assert.equal(
     await page.getByLabel("Scene dialogue", { exact: true }).inputValue(),
-    "Live targeted scene revision",
+    "Unrelated second scene",
   );
-  await page.getByRole("button", { name: "Inspect revision 1", exact: true }).waitFor();
-  const persisted = await db.scriptRevision.findFirstOrThrow({
-    where: { workspaceId, scriptId: script.id, revision: 2 },
-  });
-  assert.deepEqual(persisted.document.scenes[1], document.scenes[1]);
   await page.screenshot({ path: "/tmp/m24-live-desktop.png", fullPage: true });
   console.log(
-    "PASS real Next/M07 targeted scene save, reload, untouched second scene and persisted history",
+    "PASS script local drafts stay editable while unsafe revision and approval writes are disabled",
   );
+  page.once("dialog", (dialog) => dialog.accept());
   await page.goto(`${base}/planning/ideas/${approved.id}`);
   await page.getByText("Script generation is not configured", { exact: true }).waitFor();
   assert.equal(
@@ -240,6 +248,10 @@ try {
     true,
   );
   assert.equal(await page.getByLabel("Title", { exact: true }).isDisabled(), true);
+  assert.equal(
+    await page.getByRole("button", { name: "Schedule idea", exact: true }).isDisabled(),
+    true,
+  );
   console.log("PASS approved brief is locked and unconfigured generation cannot dispatch");
   const viewer = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await viewer.addCookies([

@@ -225,6 +225,12 @@ export function validateDocument(document: ScriptDocument): string | null {
     })
   )
     return "Claims need text and a valid HTTP or HTTPS source URL.";
+  let expectedStart = 0;
+  for (const scene of document.scenes) {
+    if (Math.abs(scene.startSeconds - expectedStart) > 0.000001)
+      return "This storyboard uses sequential scenes without gaps or overlaps. Use Reflow scene starts to align the draft before saving.";
+    expectedStart += scene.durationSeconds;
+  }
   const refs = document.scenes.flatMap((s) => s.characterRefs.map((r) => r.versionId));
   if (new Set(refs).size !== refs.length)
     return "The current service accepts a character version only once per script. Remove repeated assignments before saving.";
@@ -242,6 +248,30 @@ export class PlanningApiError extends Error {
     super(message);
   }
 }
+// Core #56 release gate: remove only after the approved atomic API contract is merged and consumed.
+export const atomicPlanningWritesAvailable = false;
+export const atomicPlanningWriteNotice =
+  "Script saves, script approval and idea status changes are temporarily unavailable until Core provides atomic version checks. Local script drafts remain editable; idea brief edits and archives are available.";
+function ideaReconciliationState(idea: Idea): unknown {
+  return {
+    ...draftFromIdea(idea),
+    id: idea.id,
+    status: idea.status,
+    updatedAt: idea.updatedAt,
+    archivedAt: idea.archivedAt,
+    scheduledAt: idea.scheduledAt,
+  };
+}
+function scriptReconciliationState(script: Script): unknown {
+  return {
+    id: script.id,
+    status: script.status,
+    currentRevision: script.currentRevision,
+    revisions: script.revisions.map(({ revision, document }) => ({ revision, document })),
+  };
+}
+export type SaveReconciliation = { resource: string; snapshot: unknown };
+const activeWrites = new Set<string>();
 export class PlanningClient {
   constructor(
     readonly workspaceId: string,
@@ -249,6 +279,7 @@ export class PlanningClient {
     readonly signal: AbortSignal,
     readonly accessDenied: () => void = () => {},
   ) {}
+  private readonly reconciliations = new WeakMap<SaveReconciliation, string>();
   private async request(path: string, method = "GET", body?: unknown): Promise<unknown> {
     this.signal.throwIfAborted();
     if (method !== "GET" && !canWrite(this.role))
@@ -260,6 +291,7 @@ export class PlanningClient {
         {
           method,
           credentials: "include",
+          cache: "no-store",
           signal: this.signal,
           headers: { "Content-Type": "application/json" },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -300,6 +332,7 @@ export class PlanningClient {
     if (pendingSave(this.workspaceId))
       throw new PlanningApiError(409, "Reconcile the earlier save before sending another change.");
     markPendingSave(this.workspaceId, path);
+    activeWrites.add(this.workspaceId);
     try {
       const value = parse(await this.request(path, method, body));
       clearPendingSave(this.workspaceId);
@@ -308,6 +341,8 @@ export class PlanningClient {
       if (error instanceof PlanningApiError && error.status >= 400 && error.status < 500)
         clearPendingSave(this.workspaceId);
       throw error;
+    } finally {
+      activeWrites.delete(this.workspaceId);
     }
   }
   async ideas(status?: IdeaStatus, includeArchived = false): Promise<Idea[]> {
@@ -342,15 +377,10 @@ export class PlanningClient {
     );
   }
   async transitionIdea(idea: Idea, status: IdeaStatus, scheduledAt?: string): Promise<Idea> {
-    const latest = await this.idea(idea.id);
-    if (latest.updatedAt !== idea.updatedAt)
-      throw new PlanningApiError(409, "Idea changed. Refresh and compare before changing status.");
-    return this.write(
-      `ideas/${encodeURIComponent(idea.id)}/status`,
-      "PATCH",
-      { status, ...(scheduledAt ? { scheduledAt } : {}) },
-      (v) => parseIdea(v, this.workspaceId),
-    );
+    void idea;
+    void status;
+    void scheduledAt;
+    throw new PlanningApiError(503, atomicPlanningWriteNotice);
   }
   async approvedIdea(ideaId: string): Promise<ApprovedIdea | null> {
     let result: unknown;
@@ -395,28 +425,65 @@ export class PlanningClient {
     );
   }
   async reviseScript(base: Script, document: ScriptDocument): Promise<Script> {
-    const latest = await this.script(base.id);
-    if (latest.currentRevision !== base.currentRevision || latest.status !== base.status)
-      throw new PlanningApiError(
-        409,
-        "A newer script revision exists. Refresh and compare before saving.",
-      );
-    const error = validateDocument(document);
-    if (error) throw new Error(error);
-    return this.write(`scripts/${encodeURIComponent(base.id)}/revisions`, "POST", document, (v) =>
-      parseScript(v, this.workspaceId, base.id),
-    );
+    void base;
+    void document;
+    throw new PlanningApiError(503, atomicPlanningWriteNotice);
   }
   async approveScript(base: Script): Promise<Script> {
-    const latest = await this.script(base.id);
-    if (latest.currentRevision !== base.currentRevision)
-      throw new PlanningApiError(409, "Script changed. Refresh before approving.");
-    await this.write(`scripts/${encodeURIComponent(base.id)}/approve`, "POST", undefined, (v) => {
-      if (!record(v) || v.scriptId !== base.id || v.revision !== base.currentRevision)
-        throw new Error("Invalid approval acknowledgement.");
-      return v;
-    });
-    return this.script(base.id);
+    void base;
+    throw new PlanningApiError(503, atomicPlanningWriteNotice);
+  }
+  async reconcilePendingSave(): Promise<SaveReconciliation> {
+    const marker = readPendingMarker(this.workspaceId);
+    const path = pendingSave(this.workspaceId);
+    if (!marker || !path || activeWrites.has(this.workspaceId))
+      throw new Error("Wait for the active save to finish before reconciliation.");
+    let snapshot: unknown;
+    let resource: string;
+    if (path === "ideas") {
+      resource = "Idea library including archives (the interrupted create has no confirmed ID)";
+      snapshot = (await this.ideas(undefined, true)).map(ideaReconciliationState);
+    } else if (/^ideas\/[^/]+(?:\/(?:restore|status))?$/.test(path)) {
+      const id = decodeURIComponent(path.split("/")[1]!);
+      resource = `Idea ${id}`;
+      snapshot = ideaReconciliationState(await this.idea(id));
+    } else if (/^scripts\/[^/]+\/(?:revisions|approve)$/.test(path)) {
+      const id = decodeURIComponent(path.split("/")[1]!);
+      resource = `Script ${id}`;
+      snapshot = scriptReconciliationState(await this.script(id));
+    } else if (path === "scripts") {
+      resource = "Script library (the interrupted create has no confirmed ID)";
+      const items: Script[] = [];
+      let page: number | null = 1;
+      while (page !== null) {
+        if (page > 10000) throw new Error("Script library exceeds the reconciliation page limit.");
+        const result: Page<Script> = await this.scripts(page);
+        items.push(...result.items);
+        page = result.nextPage;
+      }
+      snapshot = items.map(scriptReconciliationState);
+    } else
+      throw new Error("Unknown interrupted operation. Keep writes blocked and contact support.");
+    this.signal.throwIfAborted();
+    if (marker !== readPendingMarker(this.workspaceId) || activeWrites.has(this.workspaceId))
+      throw new Error("The pending operation changed. Fetch the affected resource again.");
+    const reconciliation = { resource, snapshot };
+    this.reconciliations.set(reconciliation, marker);
+    return reconciliation;
+  }
+  acknowledgePendingSave(reconciliation: SaveReconciliation): void {
+    this.signal.throwIfAborted();
+    const marker = this.reconciliations.get(reconciliation);
+    if (
+      !marker ||
+      marker !== readPendingMarker(this.workspaceId) ||
+      activeWrites.has(this.workspaceId)
+    )
+      throw new Error(
+        "Fetch and compare the current affected resource before clearing the pending save.",
+      );
+    this.reconciliations.delete(reconciliation);
+    clearPendingSave(this.workspaceId);
   }
   async generateScript(input: GenerationInput): Promise<Script> {
     return this.write("scripts", "POST", input, (result) => {
@@ -609,7 +676,7 @@ export function mergeRevision(
 
 const pendingMemory = new Map<string, string>();
 const pendingKey = (workspaceId: string): string => `reelforge.planning.pending:${workspaceId}`;
-export function pendingSave(workspaceId: string): string | null {
+function readPendingMarker(workspaceId: string): string | null {
   try {
     return typeof window === "undefined"
       ? null
@@ -618,10 +685,21 @@ export function pendingSave(workspaceId: string): string | null {
     return pendingMemory.get(workspaceId) ?? null;
   }
 }
-function markPendingSave(workspaceId: string, path: string): void {
-  if (typeof window !== "undefined") pendingMemory.set(workspaceId, path);
+export function pendingSave(workspaceId: string): string | null {
+  const marker = readPendingMarker(workspaceId);
+  if (!marker) return null;
   try {
-    if (typeof window !== "undefined") sessionStorage.setItem(pendingKey(workspaceId), path);
+    const parsed: unknown = JSON.parse(marker);
+    return record(parsed) && string(parsed.path) ? parsed.path : marker;
+  } catch {
+    return marker;
+  }
+}
+function markPendingSave(workspaceId: string, path: string): void {
+  const marker = JSON.stringify({ path, nonce: crypto.randomUUID() });
+  if (typeof window !== "undefined") pendingMemory.set(workspaceId, marker);
+  try {
+    if (typeof window !== "undefined") sessionStorage.setItem(pendingKey(workspaceId), marker);
   } catch {
     /* Requests are never automatically replayed. */
   }
