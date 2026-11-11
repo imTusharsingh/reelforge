@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { validateAuth } from "../lib/auth-validation";
 import { ApiError } from "../lib/api";
 import { isAlreadyInvalidSession, sessionFailureMessage } from "../lib/session-policy";
+import { readFileSync } from "node:fs";
+
+const workspaceSource = readFileSync(new URL("./auth-workspace.tsx", import.meta.url), "utf8");
 
 describe("authentication form validation", () => {
   it("requires a valid email and the backend password minimum", () => {
@@ -21,5 +24,20 @@ describe("authentication form validation", () => {
     expect(isAlreadyInvalidSession(new ApiError(401, "expired"))).toBe(true);
     expect(isAlreadyInvalidSession(new ApiError(503, "unavailable"))).toBe(false);
     expect(sessionFailureMessage(new ApiError(503, "unavailable"))).toContain("sign you out");
+  });
+});
+
+describe("authenticated studio route boundary", () => {
+  it("uses route content registration instead of pathname-specific booleans", () => {
+    expect(workspaceSource).toContain("children: ReactNode");
+    expect(workspaceSource).toContain("content={children}");
+    expect(workspaceSource).toContain("WorkspaceProvider");
+    expect(workspaceSource).not.toContain("window.location.pathname");
+  });
+
+  it("keeps session actions in the shared shell", () => {
+    expect(workspaceSource).toContain("Switch workspace");
+    expect(workspaceSource).toContain("Sign out");
+    expect(workspaceSource).toContain("shellActions");
   });
 });

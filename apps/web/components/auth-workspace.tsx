@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type JSX } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { AppShell } from "./app-shell";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type Workspace } from "../lib/api";
@@ -11,6 +19,7 @@ import {
   resolveCurrentRequest,
   sessionFailureMessage,
 } from "../lib/session-policy";
+import { WorkspaceProvider } from "./studio-workspace-context";
 
 type View = "auth" | "onboarding" | "studio";
 
@@ -235,11 +244,13 @@ function WorkspaceSetup({
 
 function Studio({
   workspace,
+  content,
   onSwitch,
   onLogout,
   logoutError,
 }: {
   workspace: Workspace;
+  content: ReactNode;
   onSwitch: () => void;
   onLogout: () => Promise<void>;
   logoutError: string;
@@ -269,48 +280,30 @@ function Studio({
           </p>
         </>
       }
+      shellActions={
+        <div className="rf-actions">
+          <Button onClick={onSwitch} tone="secondary">
+            Switch workspace
+          </Button>
+          <Button onClick={onLogout} tone="ghost">
+            Sign out
+          </Button>
+        </div>
+      }
     >
-      <header className="rf-page-heading">
-        <p className="rf-eyebrow">Studio / Overview</p>
-        <h1>{workspace.name}</h1>
-        <p>Your production space is ready for its next deliberate step.</p>
-      </header>
-      {logoutError && (
-        <Alert tone="danger" title="Sign out did not complete">
-          {logoutError}
-        </Alert>
-      )}
-      <div className="rf-studio-grid">
-        <Panel>
-          <p className="rf-eyebrow">Workspace</p>
-          <h2>Keep the room focused.</h2>
-          <p className="rf-muted">
-            You are working in <strong>{workspace.name}</strong>. Workspace access is enforced by
-            the API for every request.
-          </p>
-          <div className="rf-actions">
-            <Button onClick={onSwitch} tone="secondary">
-              Switch workspace
-            </Button>
-            <Button onClick={onLogout} tone="ghost">
-              Sign out
-            </Button>
-          </div>
-        </Panel>
-        <Panel>
-          <p className="rf-eyebrow">Account settings</p>
-          <h2>Profile settings unavailable</h2>
-          <p className="rf-muted">
-            The current API does not expose an authenticated-user profile endpoint, so account edits
-            are intentionally unavailable.
-          </p>
-        </Panel>
-      </div>
+      <WorkspaceProvider workspace={workspace}>
+        {logoutError && (
+          <Alert tone="danger" title="Sign out did not complete">
+            {logoutError}
+          </Alert>
+        )}
+        {content}
+      </WorkspaceProvider>
     </AppShell>
   );
 }
 
-export function AuthWorkspace(): JSX.Element {
+export function AuthWorkspace({ children }: { children: ReactNode }): JSX.Element {
   const [view, setView] = useState<View>("auth");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selected, setSelected] = useState<Workspace | null>(null);
@@ -468,6 +461,7 @@ export function AuthWorkspace(): JSX.Element {
     <Studio
       workspace={selected}
       onSwitch={switchWorkspace}
+      content={children}
       onLogout={logout}
       logoutError={logoutError}
     />
