@@ -7,7 +7,11 @@ type BrandLogoProps = {
 };
 
 /** Shared brand identity for desktop wordmark and mobile/sidebar compact usage. */
-export function BrandLogo({ compact = false, inverse = false, className = "" }: BrandLogoProps): JSX.Element {
+export function BrandLogo({
+  compact = false,
+  inverse = false,
+  className = "",
+}: BrandLogoProps): JSX.Element {
   return (
     <span className={`rf-brand ${className}`.trim()} role="img" aria-label="ReelForge">
       <img
@@ -18,7 +22,11 @@ export function BrandLogo({ compact = false, inverse = false, className = "" }: 
         height={44}
         aria-hidden="true"
       />
-      {!compact && <span className="rf-brand__wordmark" aria-hidden="true">Reel<span>Forge</span></span>}
+      {!compact && (
+        <span className="rf-brand__wordmark" aria-hidden="true">
+          Reel<span>Forge</span>
+        </span>
+      )}
     </span>
   );
 }
