@@ -979,3 +979,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Fix: captured one generation for each full async operation; `resolveCurrentRequest` suppresses both stale successes and stale rejections. Load, retry, login completion and finalization updates are generation-checked. Workspace creation reconciles using its original generation, preventing an obsolete submit from selecting after a switch.
 - Tests: deterministic deferred success/rejection tests added; focused suite now 7 files/18 tests PASS. Lint, format:check, web typecheck, web build and diff check PASS.
 - Security/QA: CSRF remains CORE-BLOCKED; browser, screen-reader and live API smoke remain NOT RUN. Prior exact-head CI `42999228949` passed on `bc06b38`; CI for this new head is pending.
+
+## 2026-11-11 - M29 normal Operations screen integration
+- Review direction: Minu requested normal product integration on PR #46 after M22 merged, rather than an inaccessible standalone milestone screen.
+- Changes: Added `/operations` App Router entry using the existing authenticated `AuthWorkspace` flow; enabled Operations in the existing AppShell desktop/mobile navigation with active state and breadcrumb; composed M29 inside the existing AppShell main landmark; passed the verified selected workspace ID from M22 and explicitly used UNKNOWN/read-only role mode because M22 does not expose membership role.
+- Security: No query-string or unverified localStorage workspace context is used. OWNER/EDITOR workflow and budget actions remain disabled when role is unknown. No backend, contract, schema or migration changes.
+- Verification: web typecheck, lint, format:check and focused frontend tests pass (8 files / 21 tests). Authenticated browser/API smoke and screen-reader evidence remain NOT RUN. Current PR CI must be checked on the new head.
+- Next action: Core approves the trusted membership-role API seam, then the role-aware actions can be enabled; reviewer re-checks the integrated Operations screen and exact-head CI. Do not self-approve or merge.

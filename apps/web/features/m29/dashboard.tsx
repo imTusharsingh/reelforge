@@ -359,7 +359,7 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
   const currentGeneration = version.current;
   const isCurrent = (): boolean => currentGeneration === version.current;
   return (
-    <main className={styles.dashboard} aria-labelledby="m29-title">
+    <section className={styles.dashboard} aria-labelledby="m29-title">
       <header className={styles.heading}>
         <div>
           <p className="rf-eyebrow">Operations / M29</p>
@@ -569,12 +569,18 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
           )}
         </ul>
       </Panel>
-      {context.role !== "OWNER" && (
+      {context.role === "UNKNOWN" && (
+        <Alert tone="warning" title="Read-only operations mode">
+          Your workspace role is not available from the current authenticated context. Privileged
+          workflow and budget actions are disabled until Core exposes a trusted role contract.
+        </Alert>
+      )}
+      {context.role !== "OWNER" && context.role !== "UNKNOWN" && (
         <Alert tone="info" title="Budget settings are owner-only">
           You can view usage and history. Only workspace owners can change caps or record
           adjustments.
         </Alert>
       )}
-    </main>
+    </section>
   );
 }

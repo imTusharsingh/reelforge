@@ -1,25 +1,35 @@
 "use client";
 
 import { useRef, type JSX, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
 
-const destinations = ["Overview", "Production", "Review queue", "Publishing", "Insights"];
+const destinations = [
+  { name: "Overview", href: "/" },
+  { name: "Operations", href: "/operations" },
+  { name: "Production", href: null },
+  { name: "Review queue", href: null },
+  { name: "Publishing", href: null },
+  { name: "Insights", href: null },
+];
 
 function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
+  const pathname = usePathname();
   return (
     <nav aria-label={mobile ? "Mobile studio navigation" : "Studio navigation"}>
       <p className="rf-nav-caption">Studio</p>
       <ul className="rf-nav-list">
-        {destinations.map((name, index) => (
+        {destinations.map(({ name, href }) => (
           <li key={name}>
-            {index === 0 ? (
-              <span
-                className="rf-nav-item rf-nav-item--current"
-                aria-label="Overview, current view"
+            {href ? (
+              <a
+                className={`rf-nav-item ${pathname === href ? "rf-nav-item--current" : ""}`.trim()}
+                href={href}
+                aria-current={pathname === href ? "page" : undefined}
               >
                 {name}
-              </span>
+              </a>
             ) : (
               <span className="rf-nav-item rf-nav-item--disabled">
                 {name} <span className="rf-nav-soon">Planned</span>
@@ -47,6 +57,8 @@ export function AppShell({
   const inspectorTrigger = useRef<HTMLButtonElement>(null);
   const openInspector = (): void => inspectorDialog.current?.showModal();
   const closeInspector = (): void => inspectorDialog.current?.close();
+  const pathname = usePathname();
+  const breadcrumb = pathname === "/operations" ? "Studio / Operations" : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
@@ -62,7 +74,7 @@ export function AppShell({
           <div className="rf-mobile-brand">
             <BrandLogo inverse />
           </div>
-          <span className="rf-breadcrumb">Studio / Overview</span>
+          <span className="rf-breadcrumb">{breadcrumb}</span>
           <span className="rf-shell-label">Design foundation</span>
           {inspector && (
             <button

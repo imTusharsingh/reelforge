@@ -15,7 +15,7 @@ export function safeActions(
   run: WorkflowRun,
   role: M29Context["role"],
 ): readonly ("cancel" | "retry" | "resume")[] {
-  if (role === "VIEWER") return [];
+  if (role !== "OWNER" && role !== "EDITOR") return [];
   if (run.state === "WAITING_APPROVAL") return ["resume", "cancel"];
   if (["RUNNING", "QUEUED", "RETRY_WAIT"].includes(run.state)) return ["cancel"];
   if (

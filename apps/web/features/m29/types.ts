@@ -1,4 +1,4 @@
-export type M29Role = "OWNER" | "EDITOR" | "VIEWER";
+export type M29Role = "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN";
 export type WorkflowState =
   | "CREATED"
   | "QUEUED"

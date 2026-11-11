@@ -1,6 +1,6 @@
 # M29 Status - Workflow Monitoring, Notifications & Usage Dashboard
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (partial integration; re-review fixes prepared)
+- **State:** IMPLEMENTED_PENDING_REVIEW (normal Operations screen integrated; role-aware writes pending Core contract)
 - **Assigned session/editor:** Codex
 - **Branch/worktree:** work/m29-workflow-notifications-usage-dashboard
 - **Last updated:** 2026-11-11
@@ -13,7 +13,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Completion estimate
 
-95% - review blockers B1-B6 and re-review items R1-R4 addressed in isolated feature code; live shell/auth integration is blocked until M22 is integrated.
+100% of authorized frontend scope - Operations is integrated into the authenticated AppShell; privileged writes remain disabled in explicit UNKNOWN-role mode until Core provides trusted membership role metadata.
 
 ## Task checklist
 
@@ -31,6 +31,10 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `apps/web/features/m29/dashboard.tsx`
 - `apps/web/features/m29/m29.module.css`
 - `apps/web/features/m29/index.ts`
+- `apps/web/app/operations/page.tsx`
+- `apps/web/components/app-shell.tsx` (Operations navigation link and active breadcrumb)
+- `apps/web/components/auth-workspace.tsx` (verified selected workspace handoff; read-only UNKNOWN role)
+- `apps/web/app/globals.css` (navigation link reset)
 
 ## Commands and evidence
 
@@ -43,6 +47,10 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `PATH=/tmp/reelforge-bin:$PATH DATABASE_URL=postgresql://postgres:postgres@localhost:5432/reelforge pnpm --config.engine-strict=false build`: PASS.
 - `PATH=/tmp/reelforge-bin:$PATH DATABASE_URL=postgresql://postgres:postgres@localhost:5432/reelforge pnpm --config.engine-strict=false db:validate`: PASS.
 - `corepack pnpm --config.engine-strict=false test` after Prisma generation: FAIL: 20 API suites / 19 tests failed because the configured local PostgreSQL database is not migrated; 58 suites passed, 2 skipped, 363 tests passed, 148 skipped. No M29 suite failed.
+- `corepack pnpm --config.engine-strict=false --filter @reelforge/web typecheck`: PASS after Operations integration.
+- `corepack pnpm --config.engine-strict=false lint`: PASS after Operations integration.
+- `corepack pnpm --config.engine-strict=false format:check`: PASS after Operations integration.
+- `corepack pnpm exec vitest run apps/web/components apps/web/lib apps/web/features/m29`: PASS, 8 files / 21 tests.
 
 ## Contract/schema proposals
 
@@ -50,24 +58,24 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Blockers / risks / unknowns
 
-- M22 auth/session/workspace navigation is integrated on current `main`; M29 still has no runtime route/shell wiring because integration requires an approved seam for trusted workspace role metadata (M22 workspace list does not expose membership role).
+- M22 auth/session/workspace navigation is integrated on current `main`; Operations now has a real `/operations` route and normal AppShell navigation. M22 workspace list does not expose membership role, so M29 runs in explicit read-only UNKNOWN-role mode and does not expose privileged actions.
 - `M29Dashboard` requires verified `{ workspaceId, role }` from its eventual M22 consumer; it does not discover or fabricate tenant context.
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
 - PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
 - Review fixes: nested per-currency M18 totals and unknown/unpriced counters are validated and displayed without currency mixing; M16 enum/state/role action gates and step/job/event details are shown; M17 preference PUT/read UI and notification mutation error states are present; usage audit history is loaded; AbortController/version guards prevent stale workspace responses; focused M29 tests cover validation, redaction and permission actions.
 - Current GitHub credential is `minu-the-reviewer`; commits use the repository-local developer identity `imTusharsingh` as requested.
 - Re-review fixes: retry now uses actual M16 `FAILED`/`RECONCILIATION_REQUIRED` step states; approval-waiting runs expose resume; mutation continuations are generation-guarded; jobs and events are displayed individually; HTTP status errors are mapped before body parsing; period/scope/currency values are strict; owner-only budget editing is available in minor units.
-- Latest review M1-M4: merged current `origin/main` (including M22) without overwriting M22 files; mutation requests now abort on context changes and guard finalizers; budget edits select the existing workspace budget, preserve currency/version, and send `expectedVersion`; focused QA coverage remains limited and browser/API smoke is pending.
+- Latest review M1-M4 and product integration: merged current `origin/main` without overwriting M22 files; mutation requests abort on context changes and guard finalizers; budget edits select the existing workspace budget, preserve currency/version, and send `expectedVersion`; Operations route/navigation uses verified workspace selection and M29 renders inside the existing AppShell main landmark.
 
 
 
 ## Next exact action
 
-Integrate `M29Dashboard` from the M22 authenticated workspace route using verified workspace context, then run browser/accessibility checks against authenticated API responses.
+Obtain Core approval for a trusted membership-role API seam, then enable OWNER/EDITOR actions from that verified role; run authenticated browser/accessibility/API smoke checks.
 
 ## Handoff notes
 
-M29 feature code is ready for independent review, but is not user-integrated until M22 supplies auth/session/workspace wiring.
+M29 is user-integrated at `/operations` with read-only safety when role metadata is unavailable; it is not APPROVED or MERGED.
 
 ## Reviewer decision
 

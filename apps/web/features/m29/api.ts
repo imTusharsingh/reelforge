@@ -11,7 +11,10 @@ import type {
   WorkflowStep,
 } from "./types";
 
-export type M29Context = Readonly<{ workspaceId: string; role: "OWNER" | "EDITOR" | "VIEWER" }>;
+export type M29Context = Readonly<{
+  workspaceId: string;
+  role: "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN";
+}>;
 export class M29ApiError extends Error {
   public constructor(
     public readonly status: number,
