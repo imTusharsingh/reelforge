@@ -5,7 +5,12 @@ import { ScriptService } from "./script.service.js";
 
 const context = { workspaceId: "workspace-a", userId: "user-a", role: "VIEWER" as const };
 const llm = { capability: {} } as never;
-function makeDb() {
+type Mock = ReturnType<typeof vi.fn>;
+type Fixture = {
+  script: { findMany: Mock; findUnique: Mock };
+  scriptRevision: { findMany: Mock };
+};
+function makeDb(): Fixture {
   return {
     script: {
       findMany: vi.fn().mockResolvedValue([{ id: "script-a" }]),
