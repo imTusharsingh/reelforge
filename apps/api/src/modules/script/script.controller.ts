@@ -103,7 +103,12 @@ export class ScriptController {
       if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
       const parsed = revisionWriteSchema.safeParse(body);
       if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-      return this.scripts.revise(context, scriptId, parsed.data.document, parsed.data.expectedRevision);
+      return this.scripts.revise(
+        context,
+        scriptId,
+        parsed.data.document,
+        parsed.data.expectedRevision,
+      );
     });
   }
   @Get(":scriptId/export") public export(
