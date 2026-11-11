@@ -972,3 +972,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Fix: captured one generation for each full async operation; `resolveCurrentRequest` suppresses both stale successes and stale rejections. Load, retry, login completion and finalization updates are generation-checked. Workspace creation reconciles using its original generation, preventing an obsolete submit from selecting after a switch.
 - Tests: deterministic deferred success/rejection tests added; focused suite now 7 files/18 tests PASS. Lint, format:check, web typecheck, web build and diff check PASS.
 - Security/QA: CSRF remains CORE-BLOCKED; browser, screen-reader and live API smoke remain NOT RUN. Prior exact-head CI `42999228949` passed on `bc06b38`; CI for this new head is pending.
+
+## 2026-11-11 - M23 channel, brand and content configuration UI implementation
+- Actor/session: Codex M23 implementation session; branch `work/m23-47-channel-brand-content-ui`, based on `origin/main` `d5cfe1b`.
+- Changes: Added `/channels` and `/channels/[channelId]`, workspace-scoped guarded API methods, channel create/edit/status/archive flows, search/status filters, brand identity and content preference views, genres/series, character and asset visibility, M05 configuration/snapshot/prompt visibility, loading/empty/error/forbidden states, and Channels navigation while retaining Operations.
+- Boundaries: Frontend files only; no backend, schema, migration, shared contract, or root configuration changes.
+- Verification: web typecheck PASS; `eslint apps/web` PASS; web tests PASS (7 files / 18 tests); Prettier check PASS; `git diff --check` PASS. Full repository test remains blocked by absent generated Prisma client and Prisma checksum endpoint HTTP 403; checksum verification was not disabled.
+- External access: Git read/fetch PASS. Issue #47 API returned 403 and private issue page returned 404, so the checked-in M23 work package and owner-provided assignment were used. Browser/live API verification was not run.
+- Handoff: State is `IMPLEMENTED_PENDING_REVIEW`; independent Core review, push/PR creation, and `minu-the-reviewer` request remain outstanding. Do not self-approve or merge.

@@ -4,22 +4,27 @@ import { useRef, type JSX, type ReactNode } from "react";
 import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
 
-const destinations = ["Overview", "Production", "Review queue", "Publishing", "Insights"];
+const destinations = [
+  { name: "Overview", href: "/" },
+  { name: "Channels", href: "/channels" },
+  { name: "Production", href: "#" },
+  { name: "Review queue", href: "#" },
+  { name: "Publishing", href: "#" },
+  { name: "Insights", href: "#" },
+  { name: "Operations", href: "#" },
+];
 
 function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
   return (
     <nav aria-label={mobile ? "Mobile studio navigation" : "Studio navigation"}>
       <p className="rf-nav-caption">Studio</p>
       <ul className="rf-nav-list">
-        {destinations.map((name, index) => (
+        {destinations.map(({ name, href }, index) => (
           <li key={name}>
-            {index === 0 ? (
-              <span
-                className="rf-nav-item rf-nav-item--current"
-                aria-label="Overview, current view"
-              >
+            {index < 2 ? (
+              <a className={`rf-nav-item ${index === 0 ? "rf-nav-item--current" : ""}`} href={href}>
                 {name}
-              </span>
+              </a>
             ) : (
               <span className="rf-nav-item rf-nav-item--disabled">
                 {name} <span className="rf-nav-soon">Planned</span>

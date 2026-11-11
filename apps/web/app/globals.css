@@ -119,6 +119,152 @@ button:disabled {
   color: var(--rf-canvas-warm);
 }
 
+.rf-nav-item {
+  text-decoration: none;
+  color: inherit;
+}
+.rf-channel-create {
+  margin-bottom: var(--rf-space-8);
+}
+.rf-channel-form,
+.rf-filter-row,
+.rf-action-row,
+.rf-two-column,
+.rf-inline-create {
+  display: flex;
+  gap: var(--rf-space-4);
+  align-items: end;
+  flex-wrap: wrap;
+}
+.rf-channel-form .rf-field {
+  flex: 1 1 20rem;
+}
+.rf-channel-toolbar {
+  align-items: end;
+}
+.rf-filter-row .rf-field {
+  min-width: 12rem;
+}
+.rf-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--rf-space-4);
+}
+.rf-channel-card {
+  display: block;
+  padding: var(--rf-space-6);
+  color: var(--rf-text);
+  text-decoration: none;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius-panel);
+  transition:
+    border-color var(--rf-duration-fast) var(--rf-ease-standard),
+    transform var(--rf-duration-fast) var(--rf-ease-standard);
+}
+.rf-channel-card:hover {
+  border-color: var(--rf-accent);
+  transform: translateY(-2px);
+}
+.rf-channel-card__top,
+.rf-channel-title,
+.rf-data-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--rf-space-3);
+}
+.rf-channel-card h3 {
+  margin: var(--rf-space-6) 0 var(--rf-space-2);
+}
+.rf-channel-card p,
+.rf-channel-card dd {
+  color: var(--rf-text-muted);
+}
+.rf-channel-card dl {
+  display: grid;
+  gap: var(--rf-space-2);
+  margin: var(--rf-space-6) 0 0;
+  font-size: var(--rf-text-sm);
+}
+.rf-channel-card dt {
+  color: var(--rf-text-subtle);
+}
+.rf-channel-card dd {
+  margin: 0;
+}
+.rf-channel-title {
+  align-items: start;
+}
+.rf-detail-form {
+  display: grid;
+  gap: var(--rf-space-5);
+  max-width: 56rem;
+}
+.rf-detail-form h2,
+.rf-tab-panel h2 {
+  margin-top: 0;
+}
+.rf-two-column {
+  align-items: start;
+}
+.rf-two-column .rf-field {
+  flex: 1 1 14rem;
+}
+.rf-action-row {
+  align-items: center;
+}
+.rf-preference-grid,
+.rf-config-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--rf-space-4);
+  margin: var(--rf-space-6) 0;
+}
+.rf-preference-grid .rf-panel {
+  padding: var(--rf-space-5);
+}
+.rf-inline-create {
+  align-items: end;
+  margin-block: var(--rf-space-6);
+}
+.rf-inline-create form {
+  display: flex;
+  align-items: end;
+  gap: var(--rf-space-3);
+  flex: 1 1 20rem;
+}
+.rf-inline-create .rf-field {
+  flex: 1;
+}
+.rf-data-list {
+  display: grid;
+  gap: var(--rf-space-3);
+}
+.rf-data-list h3 {
+  margin: var(--rf-space-6) 0 var(--rf-space-2);
+}
+.rf-data-row {
+  padding: var(--rf-space-4);
+  border-bottom: 1px solid var(--rf-border);
+}
+.rf-data-row span {
+  color: var(--rf-text-muted);
+  font-size: var(--rf-text-sm);
+}
+.rf-config-summary .rf-panel {
+  min-width: 0;
+  padding: var(--rf-space-5);
+}
+.rf-config-summary pre {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--rf-text-muted);
+  font: var(--rf-text-sm)/1.5 var(--rf-font-mono);
+}
+
 .rf-shell-body {
   min-width: 0;
 }
