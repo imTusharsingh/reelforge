@@ -43,6 +43,10 @@ export function AppShell({
   const trigger = useRef<HTMLButtonElement>(null);
   const openMenu = (): void => menu.current?.showModal();
   const closeMenu = (): void => menu.current?.close();
+  const inspectorDialog = useRef<HTMLDialogElement>(null);
+  const inspectorTrigger = useRef<HTMLButtonElement>(null);
+  const openInspector = (): void => inspectorDialog.current?.showModal();
+  const closeInspector = (): void => inspectorDialog.current?.close();
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
@@ -60,6 +64,17 @@ export function AppShell({
           </div>
           <span className="rf-breadcrumb">Studio / Overview</span>
           <span className="rf-shell-label">Design foundation</span>
+          {inspector && (
+            <button
+              ref={inspectorTrigger}
+              type="button"
+              className="rf-button rf-button--secondary rf-inspector-trigger"
+              onClick={openInspector}
+              aria-haspopup="dialog"
+            >
+              View context
+            </button>
+          )}
           <div className="rf-mobile-menu">
             <button
               ref={trigger}
@@ -83,6 +98,22 @@ export function AppShell({
           )}
         </div>
       </div>
+      {inspector && (
+        <dialog
+          ref={inspectorDialog}
+          className="rf-context-dialog"
+          aria-label="Context panel"
+          onClose={() => inspectorTrigger.current?.focus()}
+        >
+          <div className="rf-context-dialog-header">
+            <strong>Context panel</strong>
+            <IconButton label="Close context panel" tone="ghost" onClick={closeInspector}>
+              Close
+            </IconButton>
+          </div>
+          {inspector}
+        </dialog>
+      )}
       <dialog
         ref={menu}
         className="rf-mobile-dialog"
