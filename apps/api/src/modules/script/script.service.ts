@@ -283,7 +283,6 @@ export class ScriptService {
     });
   }
 
-
   /** Bounded, workspace-scoped discovery, with the latest revision only. */
   public async list(context: WorkspaceContext, page = 1): Promise<unknown> {
     const rows = await this.db.script.findMany({
@@ -291,8 +290,13 @@ export class ScriptService {
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * 50,
       take: 51,
-      include: { revisions: { orderBy: { revision: "desc" }, take: 1,
-        select: { revision: true, document: true, createdAt: true } } },
+      include: {
+        revisions: {
+          orderBy: { revision: "desc" },
+          take: 1,
+          select: { revision: true, document: true, createdAt: true },
+        },
+      },
     });
     return { items: rows.slice(0, 50), nextPage: rows.length > 50 ? page + 1 : null };
   }
@@ -309,8 +313,14 @@ export class ScriptService {
       orderBy: { revision: "desc" },
       skip: (page - 1) * 50,
       take: 51,
-      select: { id: true, revision: true, document: true, createdAt: true,
-        modelVersion: true, promptVersion: true },
+      select: {
+        id: true,
+        revision: true,
+        document: true,
+        createdAt: true,
+        modelVersion: true,
+        promptVersion: true,
+      },
     });
     return { items: rows.slice(0, 50), nextPage: rows.length > 50 ? page + 1 : null };
   }

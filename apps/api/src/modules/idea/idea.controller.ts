@@ -15,7 +15,14 @@ import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js"
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { IdeaService } from "./idea.service.js";
 import type { ApprovedIdeaSnapshot } from "./idea.types.js";
-import { aiIdeaSchema, parseIdeaInput, transitionSchema, ideaMutationSchema, ideaArchiveSchema, ideaListQuerySchema } from "./idea.validation.js";
+import {
+  aiIdeaSchema,
+  parseIdeaInput,
+  transitionSchema,
+  ideaMutationSchema,
+  ideaArchiveSchema,
+  ideaListQuerySchema,
+} from "./idea.validation.js";
 
 @Controller("workspaces/:workspaceId/ideas")
 @UseGuards(AuthGuard)
@@ -38,7 +45,9 @@ export class IdeaController {
   ): Promise<unknown> {
     const parsed = ideaListQuerySchema.safeParse(query);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return this.context(request, workspaceId).then((context) => this.ideas.list(context, parsed.data.status, parsed.data.includeArchived === "true"));
+    return this.context(request, workspaceId).then((context) =>
+      this.ideas.list(context, parsed.data.status, parsed.data.includeArchived === "true"),
+    );
   }
   @Post() public create(
     @Req() request: AuthenticatedRequest,
@@ -77,8 +86,9 @@ export class IdeaController {
     const parsed = ideaMutationSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     const { expectedUpdatedAt, ...input } = parsed.data;
-    return this.context(request, workspaceId).then(context =>
-      this.ideas.edit(context, ideaId, input, new Date(expectedUpdatedAt)));
+    return this.context(request, workspaceId).then((context) =>
+      this.ideas.edit(context, ideaId, input, new Date(expectedUpdatedAt)),
+    );
   }
 
   @Delete(":ideaId")
@@ -90,8 +100,9 @@ export class IdeaController {
   ): Promise<unknown> {
     const parsed = ideaArchiveSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return this.context(request, workspaceId).then(context =>
-      this.ideas.archive(context, ideaId, new Date(parsed.data.expectedUpdatedAt)));
+    return this.context(request, workspaceId).then((context) =>
+      this.ideas.archive(context, ideaId, new Date(parsed.data.expectedUpdatedAt)),
+    );
   }
 
   @Post(":ideaId/restore")
@@ -103,8 +114,9 @@ export class IdeaController {
   ): Promise<unknown> {
     const parsed = ideaArchiveSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return this.context(request, workspaceId).then(context =>
-      this.ideas.restore(context, ideaId, new Date(parsed.data.expectedUpdatedAt)));
+    return this.context(request, workspaceId).then((context) =>
+      this.ideas.restore(context, ideaId, new Date(parsed.data.expectedUpdatedAt)),
+    );
   }
 
   @Patch(":ideaId/status") public transition(

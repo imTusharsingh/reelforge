@@ -1,4 +1,14 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from "@nestjs/common";
 import { z } from "zod";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -39,8 +49,9 @@ export class ScriptController {
     @Param("workspaceId") workspaceId: string,
     @Query("page") page?: string,
   ): Promise<unknown> {
-    return this.context(request, workspaceId).then(context =>
-      this.scripts.list(context, pageValue(page)));
+    return this.context(request, workspaceId).then((context) =>
+      this.scripts.list(context, pageValue(page)),
+    );
   }
   @Get(":scriptId/revisions")
   public revisions(
@@ -49,8 +60,9 @@ export class ScriptController {
     @Param("scriptId") scriptId: string,
     @Query("page") page?: string,
   ): Promise<unknown> {
-    return this.context(request, workspaceId).then(context =>
-      this.scripts.revisions(context, scriptId, pageValue(page)));
+    return this.context(request, workspaceId).then((context) =>
+      this.scripts.revisions(context, scriptId, pageValue(page)),
+    );
   }
   @Get(":scriptId") public get(
     @Req() request: AuthenticatedRequest,

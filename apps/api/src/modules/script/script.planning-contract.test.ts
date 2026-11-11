@@ -24,12 +24,17 @@ describe("M24 planning contract: script discovery and version history", () => {
     const db = makeDb();
     const service = new ScriptService(db as never, llm, new ProviderRegistry());
     await expect(service.list(context, 2)).resolves.toEqual({
-      items: [{ id: "script-a" }], nextPage: null,
+      items: [{ id: "script-a" }],
+      nextPage: null,
     });
-    expect(db.script.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { workspaceId: "workspace-a" }, skip: 50, take: 51,
-      include: { revisions: expect.objectContaining({ take: 1 }) },
-    }));
+    expect(db.script.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId: "workspace-a" },
+        skip: 50,
+        take: 51,
+        include: { revisions: expect.objectContaining({ take: 1 }) },
+      }),
+    );
   });
   it("checks tenant ownership before returning history and never exposes prompt text", async () => {
     const db = makeDb();
@@ -39,11 +44,14 @@ describe("M24 planning contract: script discovery and version history", () => {
       where: { workspaceId_id: { workspaceId: "workspace-a", id: "script-a" } },
       select: { id: true },
     });
-    expect(db.scriptRevision.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { workspaceId: "workspace-a", scriptId: "script-a" },
-      skip: 50, take: 51,
-      select: expect.not.objectContaining({ promptText: true }),
-    }));
+    expect(db.scriptRevision.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId: "workspace-a", scriptId: "script-a" },
+        skip: 50,
+        take: 51,
+        select: expect.not.objectContaining({ promptText: true }),
+      }),
+    );
     db.script.findUnique.mockResolvedValue(null);
     await expect(service.revisions(context, "foreign")).rejects.toBeInstanceOf(NotFoundException);
     expect(db.scriptRevision.findMany).toHaveBeenCalledTimes(1);
