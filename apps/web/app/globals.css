@@ -76,7 +76,7 @@ button:disabled {
 }
 
 .rf-nav-caption {
-  color: var(--rf-text-subtle);
+  color: var(--rf-canvas-warm);
   padding: 0 var(--rf-space-3);
 }
 
@@ -224,7 +224,7 @@ button:disabled {
 
 .rf-hero-glyph {
   background: var(--rf-accent);
-  color: var(--rf-on-accent);
+  color: var(--rf-ink);
   border-radius: var(--rf-radius-panel);
   display: grid;
   place-items: center;
@@ -278,12 +278,13 @@ button:disabled {
 }
 
 .rf-button--primary {
-  color: var(--rf-on-accent);
+  color: var(--rf-ink);
   background: var(--rf-accent);
 }
 
 .rf-button--primary:hover:not(:disabled) {
   background: var(--rf-accent-hover);
+  color: var(--rf-paper);
 }
 
 .rf-button--secondary,
