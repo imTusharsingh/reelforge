@@ -14,8 +14,10 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "security:secrets": "node scripts/check-secrets.mjs",
     "db:generate": "pnpm --filter @reelforge/database db:generate",
     "db:validate": "pnpm --filter @reelforge/database db:validate",
+    "db:check-migrations": "node scripts/check-migrations.mjs",
     "db:migrate:dev": "pnpm --filter @reelforge/database db:migrate:dev",
     "db:migrate:deploy": "pnpm --filter @reelforge/database db:migrate:deploy"
   },
