@@ -1278,6 +1278,7 @@ model Idea {
   costCurrency      String?               @map("cost_currency")
   scheduledAt       DateTime?             @map("scheduled_at") @db.Timestamptz(6)
   approvedAt        DateTime?             @map("approved_at") @db.Timestamptz(6)
+  archivedAt        DateTime?             @map("archived_at") @db.Timestamptz(6)
   createdByUserId   String                @map("created_by_user_id") @db.Uuid
   createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1292,6 +1293,7 @@ model Idea {
   @@unique([workspaceId, id])
   @@index([workspaceId, normalizedTitle])
   @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, archivedAt])
   @@index([workspaceId, channelId, seriesId, approvedAt])
   @@map("ideas")
 }

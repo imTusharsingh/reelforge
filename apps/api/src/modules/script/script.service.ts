@@ -283,6 +283,48 @@ export class ScriptService {
     });
   }
 
+  /** Bounded, workspace-scoped discovery, with the latest revision only. */
+  public async list(context: WorkspaceContext, page = 1): Promise<unknown> {
+    const rows = await this.db.script.findMany({
+      where: { workspaceId: context.workspaceId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * 50,
+      take: 51,
+      include: {
+        revisions: {
+          orderBy: { revision: "desc" },
+          take: 1,
+          select: { revision: true, document: true, createdAt: true },
+        },
+      },
+    });
+    return { items: rows.slice(0, 50), nextPage: rows.length > 50 ? page + 1 : null };
+  }
+
+  /** A script's persisted revisions are immutable; this exposes real history, not inferred versions. */
+  public async revisions(context: WorkspaceContext, id: string, page = 1): Promise<unknown> {
+    const script = await this.db.script.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+      select: { id: true },
+    });
+    if (!script) throw new NotFoundException("Script not found");
+    const rows = await this.db.scriptRevision.findMany({
+      where: { workspaceId: context.workspaceId, scriptId: id },
+      orderBy: { revision: "desc" },
+      skip: (page - 1) * 50,
+      take: 51,
+      select: {
+        id: true,
+        revision: true,
+        document: true,
+        createdAt: true,
+        modelVersion: true,
+        promptVersion: true,
+      },
+    });
+    return { items: rows.slice(0, 50), nextPage: rows.length > 50 ? page + 1 : null };
+  }
+
   public async get(context: WorkspaceContext, id: string): Promise<unknown> {
     const row = await this.db.script.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
