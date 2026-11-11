@@ -910,3 +910,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: GitHub main parent chain confirms PR #38, #40, #39 ancestry. Source inspection performed; install/lint/format/typecheck/tests/build/browser/contrast checks NOT RUN at this design gate.
 - Owner decision: pending. T03 is not approved; T04–T06 are blocked pending owner screen-direction approval.
 - Next exact action: owner reviews four mockups, requests revisions or explicitly approves; continue this same M21 branch only after approval. No production release or PR merge claimed.
+
+## 2026-11-11 - M21 owner design approval and UI foundation implementation
+- Actor/session: ChatGPT M21 implementation session; branch `work/m21-frontend-foundation-design-system`.
+- Starting state: M21 design review artifacts committed at c38822c; explicit owner approval received in ChatGPT conversation on 2026-11-11.
+- Changes: Responsive application shell, native dialog mobile navigation, reusable typed UI primitives, keyboard-oriented tabs, six static status examples, shared component docs, manual visual regression conventions and semantic markup tests.
+- Files changed: `apps/web/app/{page.tsx,globals.css}`, `apps/web/components/{app-shell.tsx,ui/**}`, `apps/web/docs/{COMPONENT_GUIDE.md,VISUAL_REGRESSION.md}`, M21 design brief/status, append-only work log.
+- Evidence: GitHub source inspection. Local install/lint/format/typecheck/test/build and browser interaction NOT RUN because the repository/toolchain were not locally available in this execution environment; GitHub CI verification required after PR creation.
+- External calls: GitHub repository actions only; no AI/social provider calls, uploads or payments.
+- Decisions: owner design direction approved; no production release permission. No new dependency or backend/schema/CI changes.
+- Risks: browser-only focus trap, keyboard controls, 320–1440px responsive behavior and contrast still require independent measured evidence.
+- Next exact action: open the M21 PR, verify CI, request Minu independent review, no self-merge.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type JSX, type ReactNode } from "react";
+import { useId, useState, type JSX, type KeyboardEvent, type ReactNode } from "react";
 
 type TabItem = { id: string; label: string; content: ReactNode };
 
@@ -19,7 +19,7 @@ export function Tabs({
     setActiveId(items[index]!.id);
     document.getElementById(`${baseId}-tab-${index}`)?.focus();
   };
-  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
     let next = index;
     if (event.key === "ArrowRight") next = (index + 1) % items.length;
     else if (event.key === "ArrowLeft") next = (index - 1 + items.length) % items.length;

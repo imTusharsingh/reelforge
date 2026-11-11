@@ -1,6 +1,6 @@
 # M21 Design Brief — T02/T03 owner review
 
-**Status: PROPOSED / OWNER APPROVAL REQUIRED.** This is a design-review artifact, not a claim of an approved UI or completed M21.
+**Status: OWNER-APPROVED DESIGN DIRECTION / CORE IMPLEMENTATION REVIEW PENDING.** This is a design-review artifact, not a claim of an approved UI or completed M21.
 
 **Source of truth:** `docs/DESIGN_SYSTEM.md` (Creator's Control Room, proposed) and `apps/web/styles/design-tokens.css`. Existing logo from PR #39 is preserved. There are **no new global tokens or font dependencies** in this handoff.
 
@@ -33,8 +33,8 @@ The labels, progress chips and navigation in the mockups are **inert design fixt
 3. Approve or revise mobile drawer behavior and optional inspector treatment.
 4. Approve or revise empty and unavailable states and the proposed user-facing microcopy.
 
-**Owner decision:** NOT YET RECORDED.  
-**Approval link / date:** NONE.  
-**Requested revisions:** Pending owner review.
+**Owner decision:** APPROVED on 2026-11-11 in the current ChatGPT conversation: "I approve the M21 representative design direction. Continue with M21 T04–T06 on the existing implementation branch, following the strict task guidelines."  
+**Approval link:** Conversation approval (not a public URL); exact wording above is the record.  
+**Requested revisions:** None supplied.  
 
-**Hard stop:** Do not proceed to production shell, shared components, T04–T06, or claim M21 complete until the owner explicitly approves these representative screens. PR #38/#39 merge is not screen approval.
+This clears the **owner design checkpoint** only. Implementation still requires independent Core review and verified quality checks; no release or M21 integration is implied.

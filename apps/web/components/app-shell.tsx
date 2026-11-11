@@ -58,11 +58,15 @@ export function AppShell({
           <span className="rf-breadcrumb">Studio / Overview</span>
           <span className="rf-shell-label">Design foundation</span>
           <div className="rf-mobile-menu">
-            <span ref={trigger}>
-              <IconButton label="Open studio navigation" tone="ghost" onClick={openMenu}>
-                Menu
-              </IconButton>
-            </span>
+            <button
+              ref={trigger}
+              type="button"
+              className="rf-button rf-button--ghost rf-icon-button"
+              onClick={openMenu}
+              aria-label="Open studio navigation"
+            >
+              Menu
+            </button>
           </div>
         </header>
         <div className="rf-workspace">

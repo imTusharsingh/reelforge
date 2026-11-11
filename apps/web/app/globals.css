@@ -105,7 +105,7 @@ button:disabled {
 }
 
 .rf-nav-item--disabled {
-  color: #d9dadb;
+  color: var(--rf-canvas-warm);
 }
 
 .rf-nav-soon {
@@ -116,7 +116,7 @@ button:disabled {
 .rf-sidebar-note {
   margin-top: auto;
   font-size: var(--rf-text-xs);
-  color: #c5c7c9;
+  color: var(--rf-canvas-warm);
 }
 
 .rf-shell-body {
@@ -363,7 +363,7 @@ button:disabled {
 .rf-badge--success,
 .rf-badge--info {
   color: var(--rf-success);
-  background: #e7eee6;
+  background: color-mix(in srgb, var(--rf-success) 13%, var(--rf-surface));
 }
 
 .rf-badge--info {
@@ -372,12 +372,12 @@ button:disabled {
 
 .rf-badge--warning {
   color: var(--rf-warning);
-  background: #fff2dc;
+  background: color-mix(in srgb, var(--rf-warning) 13%, var(--rf-surface));
 }
 
 .rf-badge--danger {
   color: var(--rf-danger);
-  background: #f1e4e2;
+  background: color-mix(in srgb, var(--rf-danger) 13%, var(--rf-surface));
 }
 
 .rf-tabs {
