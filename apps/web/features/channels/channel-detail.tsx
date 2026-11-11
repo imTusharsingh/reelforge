@@ -11,7 +11,14 @@ import { CharacterPanel, GroupPanel } from "./character-panel";
 import { ConfigurationPanel } from "./configuration-panel";
 import { GenrePanel, SeriesPanel, SnapshotsPanel } from "./content-panels";
 import { canEdit, roleNotice, type ApiObject, text } from "./model";
-import { ActionForm, ChannelsScope, ResourceState, SavedData, useChannelsClient, useResource } from "./ui";
+import {
+  ActionForm,
+  ChannelsScope,
+  ResourceState,
+  SavedData,
+  useChannelsClient,
+  useResource,
+} from "./ui";
 export function ChannelDetail({ channelId }: { channelId: string }): JSX.Element {
   const workspace = useActiveWorkspace();
   return (
