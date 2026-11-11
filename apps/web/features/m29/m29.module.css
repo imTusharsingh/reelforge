@@ -79,6 +79,12 @@
   cursor: pointer;
   font-weight: 650;
 }
+.editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-block: 16px;
+}
 .details {
   display: grid;
   gap: 8px;
@@ -104,5 +110,8 @@
   }
   .row {
     flex-direction: column;
+  }
+  .editor {
+    grid-template-columns: 1fr;
   }
 }

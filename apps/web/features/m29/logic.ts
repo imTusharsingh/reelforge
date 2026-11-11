@@ -16,11 +16,11 @@ export function safeActions(
   role: M29Context["role"],
 ): readonly ("cancel" | "retry" | "resume")[] {
   if (role === "VIEWER") return [];
-  if (["RUNNING", "QUEUED", "WAITING_APPROVAL", "RETRY_WAIT"].includes(run.state))
-    return ["cancel"];
+  if (run.state === "WAITING_APPROVAL") return ["resume", "cancel"];
+  if (["RUNNING", "QUEUED", "RETRY_WAIT"].includes(run.state)) return ["cancel"];
   if (
     run.state === "FAILED" &&
-    run.steps.some((step) => ["FAILED_FINAL", "RECONCILIATION_REQUIRED"].includes(step.status))
+    run.steps.some((step) => ["FAILED", "RECONCILIATION_REQUIRED"].includes(step.status))
   )
     return ["retry"];
   if (run.state === "PAUSED") return ["resume", "cancel"];

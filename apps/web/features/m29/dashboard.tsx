@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
-import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { Alert, Badge, Button, Field, Panel, StateMessage } from "../../components/ui/primitives";
 import {
   loadM29Data,
   markAllNotificationsRead,
   markNotificationRead,
   runAction,
+  saveBudget,
   savePreferences,
   type M29Context,
 } from "./api";
@@ -21,10 +22,12 @@ function RunCard({
   context,
   run,
   onChanged,
+  isCurrent,
 }: {
   context: M29Context;
   run: WorkflowRun;
   onChanged: () => void;
+  isCurrent: () => boolean;
 }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -36,6 +39,7 @@ function RunCard({
       await runAction(context, run.id, action);
       onChanged();
     } catch (error) {
+      if (!isCurrent()) return;
       setMessage(error instanceof Error ? error.message : "The action could not be completed.");
     } finally {
       setBusy(false);
@@ -68,9 +72,33 @@ function RunCard({
               </small>
             </div>
           ))}
-          <p className={styles.muted}>
-            {run.jobs.length} jobs · {run.events.length} events
-          </p>
+          <h3>Jobs</h3>
+          {run.jobs.length ? (
+            run.jobs.map((job) => (
+              <div key={job.id}>
+                <span>
+                  {job.id} · {job.status}
+                </span>
+                <small>
+                  attempt {job.attempt}
+                  {job.errorCode ? ` · ${job.errorCode}` : ""}
+                </small>
+              </div>
+            ))
+          ) : (
+            <small>No jobs recorded.</small>
+          )}
+          <h3>Events</h3>
+          {run.events.length ? (
+            run.events.map((event) => (
+              <div key={event.id}>
+                <span>{event.eventType}</span>
+                <small>{new Date(event.occurredAt).toLocaleString()}</small>
+              </div>
+            ))
+          ) : (
+            <small>No events recorded.</small>
+          )}
         </details>
         <div className={styles.actions}>
           {safeActions(run, context.role).map((action) => (
@@ -103,10 +131,12 @@ function Preferences({
   context,
   initial,
   onError,
+  isCurrent,
 }: {
   context: M29Context;
   initial: readonly NotificationPreference[];
   onError: (message: string) => void;
+  isCurrent: () => boolean;
 }): JSX.Element {
   const [preferences, setPreferences] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -117,6 +147,7 @@ function Preferences({
     try {
       await savePreferences(context, preferences);
     } catch (error) {
+      if (!isCurrent()) return;
       onError(error instanceof Error ? error.message : "Preferences could not be saved.");
     } finally {
       setBusy(false);
@@ -165,6 +196,83 @@ function Preferences({
       </ul>
       <Button disabled={busy} onClick={() => void save()}>
         {busy ? "Saving…" : "Save preferences"}
+      </Button>
+    </Panel>
+  );
+}
+
+function BudgetEditor({
+  context,
+  onSaved,
+  onError,
+}: {
+  context: M29Context;
+  onSaved: () => void;
+  onError: (message: string) => void;
+}): JSX.Element {
+  const [currencyCode, setCurrencyCode] = useState("USD");
+  const [monthly, setMonthly] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (): Promise<void> => {
+    const monthlyLimitMinor = Number(monthly);
+    if (
+      !/^[A-Z]{3}$/.test(currencyCode) ||
+      !Number.isInteger(monthlyLimitMinor) ||
+      monthlyLimitMinor <= 0 ||
+      reason.trim().length === 0
+    ) {
+      onError(
+        "Enter a valid three-letter currency, positive monthly limit in minor units, and reason.",
+      );
+      return;
+    }
+    setBusy(true);
+    onError("");
+    try {
+      await saveBudget(context, {
+        currency: currencyCode,
+        monthlyLimitMinor,
+        reason: reason.trim(),
+      });
+      onSaved();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Budget could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel className={styles.panel}>
+      <h2>Budget settings</h2>
+      <p className={styles.muted}>
+        Owner-only. Limits use minor currency units and are accounting caps, not subscription
+        charges.
+      </p>
+      <div className={styles.editor}>
+        <Field
+          id="m29-budget-currency"
+          label="Currency"
+          value={currencyCode}
+          maxLength={3}
+          onChange={(event) => setCurrencyCode(event.target.value.toUpperCase())}
+        />
+        <Field
+          id="m29-budget-monthly"
+          label="Monthly limit (minor units)"
+          inputMode="numeric"
+          value={monthly}
+          onChange={(event) => setMonthly(event.target.value)}
+        />
+        <Field
+          id="m29-budget-reason"
+          label="Reason"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+        />
+      </div>
+      <Button disabled={busy} onClick={() => void save()}>
+        {busy ? "Saving…" : "Save budget"}
       </Button>
     </Panel>
   );
@@ -219,6 +327,8 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
         description="M29 needs an authenticated workspace context from M22."
       />
     );
+  const currentGeneration = version.current;
+  const isCurrent = (): boolean => currentGeneration === version.current;
   return (
     <main className={styles.dashboard} aria-labelledby="m29-title">
       <header className={styles.heading}>
@@ -247,7 +357,15 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
           <ul className={styles.list}>
             {data.runs.length ? (
               data.runs.map((run) => (
-                <RunCard key={run.id} context={context} run={run} onChanged={refresh} />
+                <RunCard
+                  key={run.id}
+                  context={context}
+                  run={run}
+                  onChanged={() => {
+                    if (isCurrent()) refresh();
+                  }}
+                  isCurrent={isCurrent}
+                />
               ))
             ) : (
               <StateMessage kind="empty" description="No workflow runs have been recorded." />
@@ -264,13 +382,17 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
               disabled={!data.notifications.unreadCount}
               onClick={() => {
                 setMutationError("");
+                const generation = version.current;
                 void markAllNotificationsRead(context)
-                  .then(refresh)
-                  .catch((e: unknown) =>
-                    setMutationError(
-                      e instanceof Error ? e.message : "Notifications could not be updated.",
-                    ),
-                  );
+                  .then(() => {
+                    if (generation === version.current) refresh();
+                  })
+                  .catch((e: unknown) => {
+                    if (generation === version.current)
+                      setMutationError(
+                        e instanceof Error ? e.message : "Notifications could not be updated.",
+                      );
+                  });
               }}
             >
               Mark all read
@@ -290,13 +412,19 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
                       tone="ghost"
                       onClick={() => {
                         setMutationError("");
+                        const generation = version.current;
                         void markNotificationRead(context, notification.id)
-                          .then(refresh)
-                          .catch((e: unknown) =>
-                            setMutationError(
-                              e instanceof Error ? e.message : "Notification could not be updated.",
-                            ),
-                          );
+                          .then(() => {
+                            if (generation === version.current) refresh();
+                          })
+                          .catch((e: unknown) => {
+                            if (generation === version.current)
+                              setMutationError(
+                                e instanceof Error
+                                  ? e.message
+                                  : "Notification could not be updated.",
+                              );
+                          });
                       }}
                     >
                       Mark read
@@ -370,7 +498,25 @@ export function M29Dashboard({ context }: { context: M29Context }): JSX.Element 
           ))}
         </Panel>
       </div>
-      <Preferences context={context} initial={data.preferences} onError={setMutationError} />
+      <Preferences
+        context={context}
+        initial={data.preferences}
+        onError={(message) => {
+          if (isCurrent()) setMutationError(message);
+        }}
+        isCurrent={isCurrent}
+      />
+      {context.role === "OWNER" && (
+        <BudgetEditor
+          context={context}
+          onSaved={() => {
+            if (isCurrent()) refresh();
+          }}
+          onError={(message) => {
+            if (isCurrent()) setMutationError(message);
+          }}
+        />
+      )}
       <Panel className={styles.panel}>
         <h2>Budget history</h2>
         <ul className={styles.list}>

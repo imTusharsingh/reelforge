@@ -53,6 +53,11 @@ const bool = (value: unknown, label: string): boolean => {
   if (typeof value !== "boolean") throw new M29ApiError(200, `Invalid ${label}`);
   return value;
 };
+const currencyCode = (value: unknown, label: string): string => {
+  const code = string(value, label);
+  if (!/^[A-Z]{3}$/.test(code)) throw new M29ApiError(200, `Invalid ${label}`);
+  return code;
+};
 function parseStep(value: unknown): WorkflowStep {
   const v = record(value, "workflow step");
   return {
@@ -149,6 +154,9 @@ function parsePreference(value: unknown): NotificationPreference {
 }
 function parseBudget(value: unknown): Budget {
   const v = record(value, "budget");
+  const scope = v.scope;
+  if (scope !== "CHANNEL" && scope !== "WORKSPACE")
+    throw new M29ApiError(200, "Invalid budget.scope");
   const periods = array(v.periods, "budget.periods").map((item) => {
     const p = record(item, "budget period");
     const period = string(p.period, "budget period.period");
@@ -163,20 +171,22 @@ function parseBudget(value: unknown): Budget {
   });
   return {
     budgetId: string(v.budgetId, "budget.id"),
-    scope: v.scope === "CHANNEL" ? "CHANNEL" : "WORKSPACE",
+    scope,
     channelId: nullableString(v.channelId, "budget.channelId"),
-    currency: string(v.currency, "budget.currency"),
+    currency: currencyCode(v.currency, "budget.currency"),
     timezone: string(v.timezone, "budget.timezone"),
     periods,
   };
 }
 function parseUsage(value: unknown): UsageSummary {
   const v = record(value, "usage");
+  const period = v.period;
+  if (period !== "DAY" && period !== "MONTH") throw new M29ApiError(200, "Invalid usage.period");
   const totals = record(v.totals, "usage.totals");
   const currencies = array(totals.currencies, "usage currencies").map((item) => {
     const c = record(item, "currency");
     return {
-      currency: string(c.currency, "currency.code"),
+      currency: currencyCode(c.currency, "currency.code"),
       totalMinor: number(c.totalMinor, "currency.total"),
       actualMinor: number(c.actualMinor, "currency.actual"),
       estimatedMinor: number(c.estimatedMinor, "currency.estimated"),
@@ -194,7 +204,7 @@ function parseUsage(value: unknown): UsageSummary {
     };
   });
   return {
-    period: v.period === "DAY" ? "DAY" : "MONTH",
+    period,
     periodKey: string(v.periodKey, "usage.periodKey"),
     periodStart: date(v.periodStart, "usage.periodStart"),
     periodEnd: date(v.periodEnd, "usage.periodEnd"),
@@ -239,12 +249,6 @@ async function request<T>(
       "The request could not be completed. Check your connection and try again.",
     );
   }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new M29ApiError(response.status, "The server returned an invalid response.");
-  }
   if (!response.ok)
     throw new M29ApiError(
       response.status,
@@ -254,6 +258,12 @@ async function request<T>(
           ? "The data changed. Refresh and try again."
           : `Request failed (${response.status})`,
     );
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new M29ApiError(response.status, "The server returned an invalid response.");
+  }
   return parse(body);
 }
 const parseRuns = (value: unknown): readonly WorkflowRun[] =>
@@ -346,6 +356,25 @@ export function savePreferences(
         })),
       }),
     },
+    signal,
+  );
+}
+
+export function saveBudget(
+  context: M29Context,
+  input: Readonly<{
+    currency: string;
+    dailyLimitMinor?: number;
+    monthlyLimitMinor?: number;
+    timezone?: string;
+    reason: string;
+  }>,
+  signal?: AbortSignal,
+): Promise<Budget> {
+  return request(
+    `/workspaces/${encodeURIComponent(context.workspaceId)}/usage/budgets`,
+    parseBudget,
+    { method: "PUT", body: JSON.stringify(input) },
     signal,
   );
 }

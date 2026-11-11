@@ -38,7 +38,8 @@ describe("M29 contracts and permissions", () => {
   it("does not expose workflow mutations to viewers", () => {
     expect(safeActions(run("RUNNING"), "VIEWER")).toEqual([]);
     expect(safeActions(run("RUNNING"), "EDITOR")).toEqual(["cancel"]);
-    expect(safeActions(run("FAILED", "FAILED_FINAL"), "OWNER")).toEqual(["retry"]);
+    expect(safeActions(run("FAILED", "FAILED"), "OWNER")).toEqual(["retry"]);
+    expect(safeActions(run("WAITING_APPROVAL"), "EDITOR")).toEqual(["resume", "cancel"]);
   });
 
   it("redacts bounded failure details", () => {

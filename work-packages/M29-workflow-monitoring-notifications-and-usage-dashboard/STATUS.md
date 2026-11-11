@@ -1,6 +1,6 @@
 # M29 Status - Workflow Monitoring, Notifications & Usage Dashboard
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (partial integration; review fixes prepared)
+- **State:** IMPLEMENTED_PENDING_REVIEW (partial integration; re-review fixes prepared)
 - **Assigned session/editor:** Codex
 - **Branch/worktree:** work/m29-workflow-notifications-usage-dashboard
 - **Last updated:** 2026-11-11
@@ -13,7 +13,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 ## Completion estimate
 
-90% - review blockers B1-B6 addressed in isolated feature code; live shell/auth integration is blocked until M22 is integrated.
+95% - review blockers B1-B6 and re-review items R1-R4 addressed in isolated feature code; live shell/auth integration is blocked until M22 is integrated.
 
 ## Task checklist
 
@@ -55,7 +55,8 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - Runtime API calls use `/api/v1` with credentials and map HTTP failures to M21 state patterns.
 - PR #46 is open against `main`. Formal reviewer request to `minu-the-reviewer` returned GitHub HTTP 422 because the pull request author is that account; no approval or merge was performed.
 - Review fixes: nested per-currency M18 totals and unknown/unpriced counters are validated and displayed without currency mixing; M16 enum/state/role action gates and step/job/event details are shown; M17 preference PUT/read UI and notification mutation error states are present; usage audit history is loaded; AbortController/version guards prevent stale workspace responses; focused M29 tests cover validation, redaction and permission actions.
-- Current GitHub credential is `minu-the-reviewer`; developer account authentication is unavailable in this environment, so the fix commit is intentionally not pushed under the reviewer identity.
+- Current GitHub credential is `minu-the-reviewer`; commits use the repository-local developer identity `imTusharsingh` as requested.
+- Re-review fixes: retry now uses actual M16 `FAILED`/`RECONCILIATION_REQUIRED` step states; approval-waiting runs expose resume; mutation continuations are generation-guarded; jobs and events are displayed individually; HTTP status errors are mapped before body parsing; period/scope/currency values are strict; owner-only budget editing is available in minor units.
 
 
 
