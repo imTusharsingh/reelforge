@@ -1065,3 +1065,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - State remains IMPLEMENTED_PENDING_REVIEW and release-blocked by #56; no self-approval or merge. Follow-up regression evidence is recorded in M24 STATUS.
 
 - Review validation: full typecheck/lint/format/production build pass; 624 tests passed / 8 skipped (33 M24 tests), 15 mounted browser scenarios, 6 real Next/API/PostgreSQL browser scenarios and 4 existing-backend persistence scenarios pass. Recovery reads explicitly bypass caches.
+
+## 2026-11-12 — M24 integrates merged Core #56 / PR #57
+
+- Confirmed PR #57 merged at `60df200`; merged main into the preserved M24 branch in `de25916`, without conflicts. No backend/schema/root changes authored in the M24 integration.
+- Replaced the temporary gates with exact observed-token requests: idea status expectedStatus/expectedUpdatedAt, script revision expectedRevision/document envelope, and script approval expectedRevision. Restored controls only after client integration. Added explicit idea status comparison after 409 and server-bound approved export inspection; retained draft/recovery/navigation/permission protections.
+- Real PostgreSQL/API/browser evidence covers stale timestamp/status/revision rejection, two authenticated editors, explicit draft rebase, targeted scene preservation, persisted order/timing/character pins, stale approval prevention, correct approval/export/reload, Viewer/tenant enforcement and committed-response-loss recovery without replay. The character fixture was corrected to the actual persisted profile contract after an initial API 500.
+- Validation: full workspace typecheck/lint/production build pass; 636 tests passed / 8 skipped (41 M24 tests), 17 mounted browser scenarios, 11 real Next/API/PostgreSQL scenarios and 4 PostgreSQL persistence scenarios pass. Final formatting/hosted CI is checked after source completion.
+- AI proposals/new-script generation and scene asset assignment remain unavailable under current backend capabilities. State remains IMPLEMENTED_PENDING_REVIEW; independent review requested, no self-approval or merge.

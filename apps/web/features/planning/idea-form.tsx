@@ -186,6 +186,7 @@ export function IdeaForm({
                     setDraft(draftFromIdea(idea));
                     setDirty(false);
                     setConflict(false);
+                    setError("");
                   }
                 }}
               >

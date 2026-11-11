@@ -70,7 +70,7 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
   }
 }
 try {
-  await test("local targeted edits and history remain available while unsafe script saves are blocked", async (p) => {
+  await test("targeted edits persist with the observed revision and preserve unrelated scenes", async (p) => {
     await p.getByLabel("Scene dialogue", { exact: true }).fill("Targeted revision");
     const cues = p.getByLabel("Audio cues — one per line", { exact: true });
     await cues.fill("Birdsong");
@@ -78,24 +78,18 @@ try {
     await cues.press("Enter");
     await cues.pressSequentially("Soft piano");
     assert.equal(await cues.inputValue(), "Birdsong\nSoft piano");
-    assert.equal(
-      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
-      true,
-    );
-    assert.equal(
-      await p.getByRole("button", { name: "Approve saved script", exact: true }).isDisabled(),
-      true,
-    );
+    await p.getByRole("button", { name: "Save script revision", exact: true }).click();
+    await p.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
+    const posted = (await p.evaluate(() => window.m24Fixture.calls)).find(
+      (c) => c.path.endsWith("/revisions") && c.method === "POST",
+    ).body;
+    assert.equal(posted.expectedRevision, 1);
+    assert.equal(posted.document.scenes[1].dialogue, "Then continue");
     await p.getByRole("button", { name: "Scene 2 · 10s", exact: true }).click();
     assert.equal(
       await p.getByLabel("Scene dialogue", { exact: true }).inputValue(),
       "Then continue",
     );
-    assert.equal(
-      (await p.evaluate(() => window.m24Fixture.calls)).filter((c) => c.method !== "GET").length,
-      0,
-    );
-    p.once("dialog", (d) => d.accept());
     await p.getByRole("button", { name: "Inspect revision 1", exact: true }).click();
     assert.equal(await p.getByLabel("Scene dialogue", { exact: true }).isDisabled(), true);
   });
@@ -109,7 +103,7 @@ try {
     );
     await p.getByRole("button", { name: "Use scene total as target" }).click();
     assert.equal(
-      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
+      await p.getByRole("button", { name: "Save script revision", exact: true }).isEnabled(),
       true,
     );
     const scene = p.getByRole("button", { name: "Scene 1 · 10s", exact: true });
@@ -126,10 +120,8 @@ try {
     assert.equal(await p.getByRole("option", { name: "Version 2", exact: true }).count(), 0);
     await p.getByRole("button", { name: "Assign published character" }).click();
     await p.getByRole("button", { name: "Remove character reference", exact: true }).waitFor();
-    assert.equal(
-      await p.getByRole("button", { name: "Save script revision", exact: true }).isDisabled(),
-      true,
-    );
+    await p.getByRole("button", { name: "Save script revision", exact: true }).click();
+    await p.getByText("Revision 2 saved by the server.", { exact: true }).waitFor();
     assert.equal(await p.getByRole("button", { name: /Assign scene asset/ }).isDisabled(), true);
   });
   await test(
@@ -303,6 +295,46 @@ try {
       await p.getByRole("heading", { name: "A small creative habit", exact: true }).waitFor();
     },
     "mode=library",
+  );
+  await test("explicit script approval refreshes immutable state and approved export", async (p) => {
+    p.once("dialog", (d) => d.accept());
+    await p.getByRole("button", { name: "Approve saved script", exact: true }).click();
+    await p.getByText("Script approved by the server.", { exact: true }).waitFor();
+    await p.getByText("Inspect approved export revision 1", { exact: true }).waitFor();
+    assert.equal(await p.getByLabel("Scene dialogue", { exact: true }).isDisabled(), true);
+    const call = (await p.evaluate(() => window.m24Fixture.calls)).find(
+      (c) => c.path.endsWith("/approve") && c.method === "POST",
+    );
+    assert.deepEqual(call.body, { expectedRevision: 1 });
+  });
+  await test(
+    "idea status conflict requires an explicit refreshed comparison before another action",
+    async (p) => {
+      await p.getByRole("button", { name: "Approve idea", exact: true }).waitFor();
+      await p.evaluate(() => window.m24Fixture.remoteIdea());
+      p.once("dialog", (d) => d.accept());
+      await p.getByRole("button", { name: "Approve idea", exact: true }).click();
+      await p.getByText("Compare idea before another action", { exact: true }).waitFor();
+      const useLatest = p.getByRole("button", {
+        name: "Use refreshed brief for next action",
+        exact: true,
+      });
+      await useLatest.click();
+      const calls = await p.evaluate(() =>
+        window.m24Fixture.calls.filter((c) => c.path.endsWith("/status")),
+      );
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].body.expectedStatus, "DRAFT");
+      p.once("dialog", (d) => d.accept());
+      await p.getByRole("button", { name: "Approve idea", exact: true }).click();
+      await p.getByText("Idea action saved by the server.", { exact: true }).waitFor();
+      const next = await p.evaluate(() =>
+        window.m24Fixture.calls.filter((c) => c.path.endsWith("/status")),
+      );
+      assert.equal(next[1].body.expectedStatus, "BACKLOG");
+      assert.equal(next[1].body.expectedUpdatedAt, "2026-11-12T02:00:00.000Z");
+    },
+    "mode=idea-route",
   );
   for (const width of [390, 768, 1440])
     await test(

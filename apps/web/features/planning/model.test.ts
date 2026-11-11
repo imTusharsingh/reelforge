@@ -158,18 +158,100 @@ describe("M24 HTTP integration adapter", () => {
     );
     await expect(client().ideas()).rejects.toThrow("out-of-workspace");
   });
-  it.each(["OWNER", "EDITOR"] as const)(
-    "fails closed for unsafe status, script save and approval writes as %s",
-    async (role) => {
+  it("writes idea status with the observed timestamp/status, then refreshes canonical state", async () => {
+    const saved = { ...idea, status: "BACKLOG", updatedAt: "2026-11-12T01:00:00.000Z" };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response({ ...idea, status: "BACKLOG" }))
+      .mockResolvedValueOnce(response([saved]));
+    vi.stubGlobal("fetch", fetch);
+    expect(await client().transitionIdea(idea, "BACKLOG")).toEqual(saved);
+    expect(fetch.mock.calls[0]?.[1].method).toBe("PATCH");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({
+      status: "BACKLOG",
+      expectedStatus: idea.status,
+      expectedUpdatedAt: idea.updatedAt,
+    });
+  });
+  it.each(["status", "revision", "approval"] as const)(
+    "does not retry a stale %s precondition or substitute a freshly fetched token",
+    async (operation) => {
+      const fetch = vi.fn().mockResolvedValue(response({ message: "Version changed" }, 409));
+      vi.stubGlobal("fetch", fetch);
+      const api = client();
+      await expect(
+        operation === "status"
+          ? api.transitionIdea(idea, "BACKLOG")
+          : operation === "revision"
+            ? api.reviseScript(script, document)
+            : api.approveScript(script),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(fetch.mock.calls[0]?.[1].method).not.toBe("GET");
+    },
+  );
+  it("persists the complete targeted document with the observed revision envelope", async () => {
+    const changed = patchScene(document, "scene-one", { dialogue: "My edit" });
+    const saved = {
+      ...script,
+      status: "REVISION_PENDING",
+      currentRevision: 2,
+      revisions: [{ revision: 2, document: changed }],
+    };
+    const fetch = vi.fn().mockResolvedValue(response(saved));
+    vi.stubGlobal("fetch", fetch);
+    expect(await client().reviseScript(script, changed)).toEqual(saved);
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({
+      expectedRevision: 1,
+      document: changed,
+    });
+    expect(saved.revisions[0]?.document.scenes[1]).toEqual(document.scenes[1]);
+  });
+  it("approves the explicitly reviewed revision and reads canonical approval and export", async () => {
+    const exported = {
+      scriptId: script.id,
+      revision: 1,
+      approvedIdeaSnapshotId: "snapshot-one",
+      document,
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response(exported))
+      .mockResolvedValueOnce(response({ ...script, status: "APPROVED" }))
+      .mockResolvedValueOnce(response(exported));
+    vi.stubGlobal("fetch", fetch);
+    const api = client();
+    expect((await api.approveScript(script)).status).toBe("APPROVED");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({ expectedRevision: 1 });
+    expect(await api.exportScript(script.id, 1)).toEqual(exported);
+  });
+  it("validates approval acknowledgements and forbids immutable script edits", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          response({ scriptId: script.id, revision: 2, approvedIdeaSnapshotId: "s", document }),
+        ),
+    );
+    await expect(client().approveScript(script)).rejects.toThrow("Invalid approved");
+    await expect(
+      client().reviseScript({ ...script, status: "APPROVED" }, document),
+    ).rejects.toThrow("immutable");
+  });
+  it.each(["status", "revision", "approval"] as const)(
+    "blocks Viewer %s writes",
+    async (operation) => {
       const fetch = vi.fn();
       vi.stubGlobal("fetch", fetch);
-      await expect(client(role).reviseScript(script, document)).rejects.toMatchObject({
-        status: 503,
-      });
-      await expect(client(role).approveScript(script)).rejects.toMatchObject({ status: 503 });
-      await expect(client(role).transitionIdea(idea, "APPROVED")).rejects.toMatchObject({
-        status: 503,
-      });
+      const api = client("VIEWER");
+      await expect(
+        operation === "status"
+          ? api.transitionIdea(idea, "BACKLOG")
+          : operation === "revision"
+            ? api.reviseScript(script, document)
+            : api.approveScript(script),
+      ).rejects.toMatchObject({ status: 403 });
       expect(fetch).not.toHaveBeenCalled();
     },
   );

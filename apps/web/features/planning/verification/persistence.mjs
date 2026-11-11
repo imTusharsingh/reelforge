@@ -129,10 +129,19 @@ try {
   });
   await test("approved snapshots remain immutable after rejection", async () => {
     const idea = await ideas.create(owner, input(), "USER");
-    await ideas.transition(owner, idea.id, "APPROVED");
+    await ideas.transition(owner, idea.id, "APPROVED", idea.updatedAt, idea.status);
     const snapshot = await ideas.getApproved(viewer, idea.id);
     assert.equal(snapshot.checksumSha256.length, 64);
-    await ideas.transition(owner, idea.id, "REJECTED");
+    const approvedRow = await db.idea.findUniqueOrThrow({ where: { id: idea.id } });
+    await assert.rejects(
+      () => ideas.transition(owner, idea.id, "REJECTED", approvedRow.updatedAt, "DRAFT"),
+      /changed/,
+    );
+    await assert.rejects(
+      () => ideas.transition(owner, idea.id, "REJECTED", idea.updatedAt, "APPROVED"),
+      /changed/,
+    );
+    await ideas.transition(owner, idea.id, "REJECTED", approvedRow.updatedAt, approvedRow.status);
     await assert.rejects(
       () => ideas.edit(editor, idea.id, input(), idea.updatedAt),
       /cannot be edited/,
@@ -141,7 +150,7 @@ try {
   });
   await test("targeted scenes and ordering persist, genuine history remains unchanged, approved scripts lock", async () => {
     const idea = await ideas.create(owner, input(), "USER");
-    await ideas.transition(owner, idea.id, "APPROVED");
+    await ideas.transition(owner, idea.id, "APPROVED", idea.updatedAt, idea.status);
     const snapshot = await ideas.getApproved(owner, idea.id);
     // Explicit test-only existing-script fixture; the application never fabricates a script.
     const row = await db.script.create({
@@ -156,14 +165,14 @@ try {
     });
     const changed = structuredClone(document);
     changed.scenes[0].dialogue = "Persisted targeted change";
-    const saved = await scripts.revise(editor, row.id, changed);
+    const saved = await scripts.revise(editor, row.id, changed, 1);
     assert.equal(saved.currentRevision, 2);
     assert.deepEqual(saved.revisions[0].document.scenes[1], document.scenes[1]);
     const reordered = structuredClone(changed);
     reordered.scenes.reverse();
     reordered.scenes[0].startSeconds = 0;
     reordered.scenes[1].startSeconds = 10;
-    await scripts.revise(editor, row.id, reordered);
+    await scripts.revise(editor, row.id, reordered, 2);
     const history = await scripts.revisions(viewer, row.id);
     assert.deepEqual(
       history.items.map((r) => r.revision),
@@ -171,13 +180,30 @@ try {
     );
     assert.deepEqual(history.items[2].document, document);
     assert.equal(history.items[0].document.scenes[0].id, "two");
-    await assert.rejects(() => scripts.revise(viewer, row.id, changed), /permission/);
+    await assert.rejects(() => scripts.revise(viewer, row.id, changed, 3), /permission/);
     await assert.rejects(
       () => scripts.get({ ...owner, workspaceId: foreignWorkspaceId }, row.id),
       /not found/,
     );
-    await scripts.approve(owner, row.id);
-    await assert.rejects(() => scripts.revise(editor, row.id, changed), /immutable/);
+    await assert.rejects(() => scripts.revise(editor, row.id, changed, 1), /changed/);
+    const candidates = [structuredClone(reordered), structuredClone(reordered)];
+    candidates[0].scenes[0].dialogue = "Concurrent editor A";
+    candidates[1].scenes[1].dialogue = "Concurrent editor B";
+    const outcomes = await Promise.allSettled(
+      candidates.map((candidate) => scripts.revise(editor, row.id, candidate, 3)),
+    );
+    assert.equal(outcomes.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(outcomes.filter((result) => result.status === "rejected").length, 1);
+    assert.equal(outcomes.find((result) => result.status === "rejected").reason.getStatus(), 409);
+    assert.equal(await db.scriptRevision.count({ where: { scriptId: row.id } }), 4);
+    await assert.rejects(() => scripts.approve(owner, row.id, 3), /changed/);
+    assert.notEqual(
+      (await db.script.findUniqueOrThrow({ where: { id: row.id } })).status,
+      "APPROVED",
+    );
+    await scripts.approve(owner, row.id, 4);
+    assert.equal((await scripts.exportApproved(viewer, row.id)).revision, 4);
+    await assert.rejects(() => scripts.revise(editor, row.id, changed, 1), /immutable/);
   });
   console.log(`${passed} actual PostgreSQL persistence scenarios passed; no providers invoked.`);
 } finally {

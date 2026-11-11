@@ -1,96 +1,77 @@
 # M24 Status — Ideas, Scripts & Storyboard Workspace
 
-- **State:** IMPLEMENTED_PENDING_REVIEW — release blocked by Core #56
+- **State:** IMPLEMENTED_PENDING_REVIEW
 - **Assigned engineer:** Developer `imTusharsingh`
-- **Branch:** `work/m24-ideas-scripts-storyboard-ui`
-- **Updated:** 2026-11-11
-- **Reviewer:** independent Core review requested from `minu-the-reviewer`; no approval or merge claimed.
+- **Branch / PR:** `work/m24-ideas-scripts-storyboard-ui` / [#55](https://github.com/imTusharsingh/reelforge/pull/55)
+- **Updated:** 2026-11-12 (Asia/Kolkata)
+- **Reviewer:** `minu-the-reviewer`; independent review required. No self-approval or merge.
 
-## Synchronization and scope
+## Core #56 integration
 
-Verified prerequisite PR #53 merged into main at `f6405bac35b3a372c41cfe57d70eb253039aab87`. Reviewed and preserved existing exploratory model commit `c836bc9`; merged main into the existing branch in `9786cee`. No branch recreation, discarded exploratory work, force push, backend/schema/shared-contract/root dependency change or production service change.
+Confirmed backend PR #57 is **MERGED**, merge commit `60df200b7cc307ffa9090d2663b6719de2a3dc5f`. Merged latest main into the existing M24 branch in `de25916`, without conflicts or discarded work. The earlier prerequisite PR #53 and all existing M24 work remain in history. No branch recreation or force push.
 
-Uses normal `/planning`, `/planning/ideas/[ideaId]` and `/planning/scripts/[scriptId]` pages with the existing `AuthWorkspace`, verified-role `WorkspaceProvider`, primitives, design tokens and shared navigation guard. Planning is added to both shell navigation variants; Overview, Channels and Operations remain functional. Authentication has no route-selection logic.
+Read `docs/CORE_56_ATOMIC_PLANNING_CONTRACT.md`, controllers, validation and service implementations. No backend, schema, shared-contract or root tooling changes were made by M24; incoming Core changes are from the main merge. Core #56 requires no migration.
 
-## Task coverage and estimate
+The old `atomicPlanningWritesAvailable` / `atomicPlanningWriteNotice` gate and associated disabled controls are removed. Controls are enabled through actual contract integration, not a boolean toggle:
 
-All nine task surfaces implemented to the currently persisted backend boundary. Supported flows are ready for independent review; end-to-end new-script generation is blocked by the server's unconfigured provider, not claimed complete.
+- **Idea status:** PATCH includes `status`, `expectedStatus` and `expectedUpdatedAt` from the persisted idea the creator observed, plus future `scheduledAt` when scheduling. No fresh preflight token is substituted. Successful transitions refresh the canonical idea timestamp and approval snapshot. A 409 fetches current state and displays observed/latest comparison; another action remains blocked until explicit acceptance of the refreshed brief. No automatic retry.
+- **Script revision:** POST sends `{expectedRevision: base.currentRevision, document: completeDraft}`. Validated targeted edits, ordering, timing and published character pins persist as a new server revision. Stale revision 409 preserves the local draft; comparison and conservative three-way rebase require explicit action and an explicit new save.
+- **Script approval:** POST sends only the revision the creator reviewed: `{expectedRevision}`. Confirmation names the revision and explains immutability. Stale approval cannot approve an unseen revision. On success the client reads canonical approved state and the server export; export revision is validated and shown in a read-only inspector. Approved editors remain immutable across reload.
 
-| Task | Implementation / explicit boundary |
+## Current task coverage
+
+| Task | Implemented behavior / verified boundary |
 | --- | --- |
-| T01 | Persisted idea list/create/edit, search, server status/archive filters, archive/restore, valid lifecycle transitions, duplicate-match cues. AI discovery proposals disabled because IdeaModule binds NotConfiguredIdeaLlm. |
-| T02 | Full brief fields, channel/series selection, sources/notes, duplicate links and immutable approval snapshot inspection. Historical approvals lock editing. |
-| T03 | Existing-script manual editing uses real M07 revisions; generation checksum/config/prompt request adapter tested. Preparation selects matching persisted snapshots. Generation stays disabled: ScriptModule binds NotConfiguredScriptLlm, registry is empty and no safe readiness catalog exists. No manual new-script endpoint exists. |
-| T04 | Genuine paginated persisted history; read-only inspection, provenance when present, explicit copy into a new draft; never reconstructed history. |
-| T05 | Ordered visual direction/camera/timing storyboard cards with keyboard scene selection and detailed scene editor. No fabricated images/media. |
-| T06 | Stable-ID reorder with explicit start-time reflow; editable start/duration and backend-compatible positive/finite/total-duration validation. Text edits do not reflow other scenes. |
-| T07 | Workspace characters and their published versions can be pinned/removed and saved in scene characterRefs. Asset assignment is explicitly disabled: no scene asset field exists. Repeated version IDs across scenes are blocked to match the current backend validator limitation. |
-| T08 | Targeted scene patches preserve unrelated scenes, IDs and metadata; whole-document revision payload follows M07; explicit three-way rebase rejects overlapping edits. |
-| T09 | Shared route/history/workspace/logout guards; scope-keyed clients and cancellation; timestamp/preflight conflicts preserve drafts; refresh failures retain open edits; uncertain writes retain a per-workspace pending marker and block automatic replay until explicit reconciliation. No sensitive draft bodies or credentials stored. |
+| T01 | Persisted idea list/create/edit, search, status/archive filters, archive/restore, valid initial approval/scheduling/rejection/backlog transitions, duplicate-match cues. AI proposals remain unavailable. |
+| T02 | Detailed brief, channel/series, sources/notes, immutable approval snapshot inspection; historically approved briefs cannot be edited or archived. |
+| T03 | Existing-script manual editing and revision persistence **restored** using atomic caller tokens. New-script generation preparation consumes persisted snapshots, but generation remains disabled under unconfigured server adapters. |
+| T04 | Genuine paginated persisted revision history; read-only inspection, available provenance and explicit copy into a new draft. |
+| T05 | Ordered storyboard cards with timing/camera/visual direction, keyboard scene selection and a detailed scene editor. No fabricated images or media. |
+| T06 | Stable-ID reorder, explicit reflow, start/duration editing and finite/positive/total-duration validation. Sequential storyboard policy starts at zero with no gaps/overlaps (1e-6 numeric tolerance); target duration allows one second. Order and timing **persist**. |
+| T07 | Published workspace character versions can be pinned/removed and **persisted**. Scene asset assignment stays disabled because the schema has no asset field. Repeated version pins across scenes remain blocked to match the current backend validator. |
+| T08 | Targeted scene patches preserve unrelated scenes, stable IDs and metadata; whole-document atomic revisions. Explicit rebase preserves disjoint concurrent scene changes and rejects overlapping changes. |
+| T09 | Shared route/history/workspace/logout protections; scope-keyed clients and cancellation; preserved drafts on 409/read failures; uncached resource-specific interrupted-save reads, visible comparison and nonce-bound one-use acknowledgement. Failed/deferred/missing/foreign reads and active writes cannot unlock blind retries. No automatic replay or browser storage of draft bodies/credentials. |
 
-## Changed files
+Normal Next routes `/planning`, `/planning/ideas/[ideaId]`, `/planning/scripts/[scriptId]` retain the shared AuthWorkspace/verified WorkspaceProvider. Owner/Editor/Viewer roles, tenant scoping, design tokens/primitives and Overview/Channels/Operations navigation remain intact. No authentication route-selection logic was added.
 
-- `apps/web/app/planning/layout.tsx`, `page.tsx`, `ideas/[ideaId]/page.tsx`, `scripts/[scriptId]/page.tsx`.
-- `apps/web/features/planning/model.ts`, `session.tsx`, `common.tsx`, `library.tsx`, `idea-form.tsx`, `idea-workspace.tsx`, `script-workspace.tsx`, `planning.module.css`, `model.test.ts`.
-- `apps/web/features/planning/verification/{README.md,fixtures.ts,mounted-fixture.tsx,next-link.tsx,mounted-browser.mjs,persistence.mjs,live-browser.mjs}` (test only).
-- `apps/web/components/app-shell.tsx`: narrow navigation/breadcrumb integration only.
+## Files changed for Core integration
+
+- `apps/web/features/planning/model.ts`: exact atomic request envelopes, observed tokens, canonical status refresh, approval/export validation; existing interrupted-save reconciliation retained.
+- `idea-workspace.tsx`: restored lifecycle controls, explicit status conflict comparison, success/error states.
+- `script-workspace.tsx`: restored save/approval controls, revision-specific confirmation, server export inspector and approved-state refresh protection.
+- `idea-form.tsx`: clear an obsolete save error when the creator explicitly accepts the saved brief.
+- `model.test.ts`: successful atomic writes, exact observed request tokens, stale/no-retry and Viewer regressions; existing recovery/timing tests retained.
+- `verification/{mounted-fixture.tsx,mounted-browser.mjs,live-browser.mjs,persistence.mjs,README.md}`: updated real contracts and restored persistence/concurrency/export regressions.
 - This STATUS and `docs/WORK_LOG.md`.
 
-## Initial implementation verification (before review changes)
+## Executed integration validation
 
-Node 24.22.2, pnpm 12.16.1; actual disposable PostgreSQL, all 28 existing migrations deployed; no pending migration. No Redis or paid provider required.
+Runtime: Node 24.22.2 / pnpm 12.16.1; local disposable PostgreSQL `reelforge_dev`. No paid AI/social calls, production service changes or new dependencies.
 
 | Command | Actual result |
 | --- | --- |
-| `pnpm db:generate` / `pnpm db:migrate:deploy` | PASS; generated client, 28 migrations, no pending migration. |
-| `pnpm db:validate` / `MIGRATION_BASE_SHA=origin/main pnpm db:check-migrations` / `pnpm security:secrets` | PASS; schema valid, 28 ordered immutable migrations, 551 tracked files scanned. |
 | `pnpm typecheck` | PASS across workspace packages/apps. |
 | `pnpm lint` | PASS. |
 | `pnpm format:check` | PASS. |
-| `NODE_ENV=production pnpm build` | PASS, including all three planning routes. |
-| `pnpm test` | PASS: 612 passed, 8 skipped; includes 21 M24 unit/API-adapter tests and existing real HTTP/PostgreSQL tests. |
-| `M24_TEST_DATABASE_URL="$DATABASE_URL" node apps/web/features/planning/verification/persistence.mjs` | PASS: four real M06/M07 PostgreSQL persistence/security scenarios. |
-| `PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright ESBUILD_MODULE=/workspace/validation-reelforge/browser/node_modules/esbuild node apps/web/features/planning/verification/mounted-browser.mjs` | PASS: 13 mounted Chromium scenarios; 390/768/1440px screenshots, no page errors. |
-| `M24_TEST_DATABASE_URL="$DATABASE_URL" PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright node apps/web/features/planning/verification/live-browser.mjs` | PASS: six actual Next/API/PostgreSQL browser scenarios, including genuine HTTP 409 compare/resubmit, persistence after reload, Viewer/tenant enforcement, mobile and existing navigation. |
+| `NODE_ENV=production pnpm build` | PASS across workspace, including planning routes. |
+| `pnpm test` | PASS: **636 passed, 8 skipped**, including **41 M24 unit/adapter/recovery tests** and merged Core PostgreSQL interleaving regressions. |
+| `PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright ESBUILD_MODULE=/workspace/validation-reelforge/browser/node_modules/esbuild node apps/web/features/planning/verification/mounted-browser.mjs` | PASS: **17 mounted Chromium scenarios**, no page errors; 390/768/1440px screenshots. |
+| `M24_TEST_DATABASE_URL="$DATABASE_URL" PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright node apps/web/features/planning/verification/live-browser.mjs` | PASS: **11 actual Next/API/PostgreSQL scenarios**, no page errors. |
+| `M24_TEST_DATABASE_URL="$DATABASE_URL" node apps/web/features/planning/verification/persistence.mjs` | PASS: **4 real PostgreSQL scenarios**, including concurrent writers and stale approval rejection with no unwanted revision/approval. |
 
-Reproduction instructions and fixture boundaries: `apps/web/features/planning/verification/README.md`. Screenshots are local `/tmp/m24-{storyboard-*,live-desktop,live-mobile}.png`, not shipped application data.
+Real-browser evidence covers actual idea CAS edit/status conflicts, stale expectedStatus and expectedUpdatedAt, lifecycle/approval snapshots, two authenticated Owner/Editor clients revising the same script, preserved 409 drafts, explicit rebase, persisted order/timing/character references, stale approval rejection, exact revision approval/export/history/reload, Viewer HTTP 403 and cross-tenant denial, mobile layout and existing navigation. It also commits a real idea update while dropping its response: a failed reconciliation read stays blocked, a successful read plus explicit comparison clears the marker, and no write is replayed.
 
-Observed/fixed validation failures: initial unqualified build inherited development NODE_ENV and failed prerendering; explicit production build passes. A lint run overlapped Prisma regeneration and hit a transient generated-file ENOENT; rerun after generation passes. Early test-harness response reuse, locator, import-path and nested fixture errors were corrected before final results. No failed command is represented as a pass.
+The first character browser fixture lacked required persisted profile fields, causing a real API 500. The test fixture was corrected to the actual character profile contract; the rerun passed. No backend behavior was altered or failure reported as a pass.
 
-## Core contract proposals and remaining limits
+Reproduction and test-only fixture boundaries: `apps/web/features/planning/verification/README.md`. Screenshots are local `/tmp/m24-{storyboard-*,live-desktop,live-mobile}.png`, not application data. Final formatting, secret scan and exact-head hosted CI are recorded in the PR after the final source push.
 
-1. **Atomic script concurrency (required Core follow-up):** M07 revision and approval endpoints do not accept the client's expected revision. The UI fetches and compares before sending and handles backend CAS 409s, but a write between preflight and POST can still overwrite a more recent document or approve an unseen revision. Idea status transitions similarly have no client timestamp token. Request atomic `expectedRevision`/expected status token semantics in a separate approved backend change. Do not treat frontend preflight as complete concurrency protection.
-2. **Provider readiness:** register/configure actual idea/script adapters, provide a safe non-dispatching readiness contract and verify snapshot/budget policies before enabling generation. No real AI calls were made. New-script creation is unavailable until that dependency exists.
-3. **Scene assets:** add an approved persisted scene asset contract before enabling assignment. No asset references are invented.
-4. **Character references:** backend currently compares unique published-version count with flat reference count, rejecting repeated pins across scenes; separate Core fix needed before allowing repeated references.
-5. Pending markers survive same-tab reload in sessionStorage; in-memory fallback blocks same-page retries when storage is unavailable. Unsaved draft bodies are intentionally not persisted to browser storage; browser unload confirmation protects them, and accepting discard abandons the draft.
-6. Actual role changes are enforced by the server; 401/403 suspends UI writes until reauthentication. Full screen-reader, other browser engines and exhaustive accessibility/security review are not claimed.
+## Remaining unsupported functionality / limits
 
-## Review requirements / next action
+- **Providers:** IdeaModule and ScriptModule still bind unconfigured adapters and expose no safe general readiness catalog. AI proposals/new-script generation remain disabled. No manual new-script creation API exists; existing-script fixtures in tests are explicitly test-only. Core #56 integration does not claim provider availability or live paid verification.
+- **Scene assets:** No persisted scene asset field; assignment remains disabled. Published character refs are supported, but the current backend rejects repeated character-version IDs across scenes.
+- **Recovery:** Pending metadata survives same-tab reload via sessionStorage; an in-memory fallback protects same-page retries when browser storage is unavailable. Draft bodies are intentionally not stored; accepting navigation discard abandons unsaved work. For interrupted creates without a confirmed ID, recovery reads the unfiltered library for explicit user comparison.
+- **Review:** Full screen-reader and other browser-engine coverage are not claimed. Independent Core review and exact-head CI remain required before integration. Existing snapshot immutability, genre/factuality policy and provider/budget checks remain server-owned.
 
-Independent Core review must assess boundaries, concurrency limitations, permission/tenant enforcement, request shapes and real persistence, responsive/keyboard behavior, unsupported capability copy and exact-head CI. Resolve required findings on this branch. Do not self-approve or merge. Provider/atomic-concurrency blockers must be resolved separately before claiming the entire idea-to-new-script acceptance flow is production ready.
+## Review handoff
 
-## Review follow-up — R1, R2 and R3 (2026-11-11)
-
-This section supersedes the baseline task coverage above where operations are now gated. Review: [COMMENT review](https://github.com/imTusharsingh/reelforge/pull/55#pullrequestreview-5862174805); no formal independent approval was recorded.
-
-- **R1 fixed:** Removed unconditional pending-marker clearing. Recovery explicitly fetches uncached state for the affected idea (including archived records), script, or unfiltered collection when an interrupted create has no confirmed ID. The validated saved values are displayed for comparison. Confirmation is disabled before/during reads and after failed/missing/malformed/foreign responses. A client-owned one-use receipt binds confirmation to that exact pending operation; a new nonce invalidates stale comparisons even for the same resource path. Known in-flight writes cannot be reconciled. Refresh, unmount, workspace cancellation and retry invalidate the UI comparison. Pending markers remain until an explicit successful comparison. Saved script inspection omits dispatched prompt text/provider fields.
-- **R2 safely narrowed / Core dependency tracked:** Separate [Core issue #56](https://github.com/imTusharsingh/reelforge/issues/56) specifies atomic caller expectedRevision on script revision/approval and expectedUpdatedAt/status preconditions on idea transitions, transaction semantics, PostgreSQL interleaving regressions and release criteria. No backend/shared-contract change is authorized in this frontend PR. Script revision saves, script approval and idea status transitions are disabled both in UI and client methods (no GET/POST preflight race remains reachable from this client). Local script/scene/character drafting, script/history reads, idea creation, and timestamp-protected brief edit/archive/restore remain available. Character pins and scene changes cannot be persisted from this UI until the gate opens. Generation and asset assignment remain unavailable. **T01 status and T03/T06/T07/T08 script persistence are release-blocked, not complete.**
-- **R3 fixed:** The planning storyboard is explicitly sequential: it begins at zero and each scene starts at the prior scene's end (1e-6-second numeric tolerance). Gaps and overlaps are reported without silently rewriting scenes. “Reflow scene starts” is the explicit corrective action; the target-duration tolerance remains one second. Existing persisted documents can still be inspected; inconsistent drafts cannot pass validation.
-
-### Release gate — mandatory independent Core follow-up
-
-Do not re-enable the fail-closed client/UI gates, mark M24 integrated, or claim concurrent-edit safety until #56 has a separately approved backend implementation, independent review, merge, documented atomic request contract, frontend caller-token integration and actual interleaving regression evidence. Tracking the issue does not resolve the backend limitation. Do not merge this PR without required independent review and CI gates.
-
-### Review regression evidence
-
-- Added resource-specific recovery tests for no-read/failed/deferred reads, missing/foreign data, unknown-ID creates, stale receipts, replayed confirmations, prompt-text omission and known in-flight writes.
-- Added owner/editor no-dispatch tests for all gated mutations, and gap/overlap validation/reflow tests.
-- Mounted browser tests cover lost-acknowledgement-but-committed idea edits, comparison locking, preserved drafts, safe gates, local storyboard edits and sequential timing, alongside existing responsive/navigation checks.
-- The real browser runner now verifies gated script writes and unchanged database documents rather than claiming those writes are enabled. The separate service persistence runner still tests the existing backend; it does not bypass the production frontend gate.
-- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `NODE_ENV=production pnpm build`: PASS.
-- `pnpm test`: PASS — **624 passed, 8 skipped**, including **33 M24 unit/adapter/recovery regressions**.
-- `PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright ESBUILD_MODULE=/workspace/validation-reelforge/browser/node_modules/esbuild node apps/web/features/planning/verification/mounted-browser.mjs`: PASS — **15 scenarios**, no page errors.
-- `M24_TEST_DATABASE_URL="$DATABASE_URL" PLAYWRIGHT_MODULE=/workspace/validation-reelforge/browser/node_modules/playwright node apps/web/features/planning/verification/live-browser.mjs`: PASS — **6 actual Next/API/PostgreSQL scenarios**, including release-gated writes, preserved persisted data, Viewer/tenant enforcement and valid idea CAS reconciliation.
-- `M24_TEST_DATABASE_URL="$DATABASE_URL" node apps/web/features/planning/verification/persistence.mjs`: PASS — **4 existing-backend PostgreSQL scenarios**; not a claim that gated frontend mutations are enabled.
-- No live paid providers invoked; no schema/backend/root changes. Exact-head hosted CI is checked after pushing the review fix.
+Core #56's atomic API prerequisite is consumed; the previous frontend release gate is superseded by the actual caller-token integration and real persistence/concurrency evidence. Review exact request shapes and caller-version provenance, no-retry behavior, 409 comparison/rebase, approved export binding, recovery, roles/tenant isolation and supported-vs-unavailable capability copy. Request independent review from `minu-the-reviewer`. Do not self-approve or merge.

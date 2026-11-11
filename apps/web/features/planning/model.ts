@@ -248,10 +248,33 @@ export class PlanningApiError extends Error {
     super(message);
   }
 }
-// Core #56 release gate: remove only after the approved atomic API contract is merged and consumed.
-export const atomicPlanningWritesAvailable = false;
-export const atomicPlanningWriteNotice =
-  "Script saves, script approval and idea status changes are temporarily unavailable until Core provides atomic version checks. Local script drafts remain editable; idea brief edits and archives are available.";
+export type ApprovedScriptExport = {
+  scriptId: string;
+  revision: number;
+  approvedIdeaSnapshotId: string;
+  document: ScriptDocument;
+};
+function parseApprovedExport(
+  value: unknown,
+  scriptId: string,
+  expectedRevision?: number,
+): ApprovedScriptExport {
+  if (
+    !record(value) ||
+    value.scriptId !== scriptId ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 1 ||
+    (expectedRevision !== undefined && value.revision !== expectedRevision) ||
+    !nonempty(value.approvedIdeaSnapshotId)
+  )
+    throw new Error("Invalid approved script export.");
+  return {
+    scriptId,
+    revision: Number(value.revision),
+    approvedIdeaSnapshotId: value.approvedIdeaSnapshotId,
+    document: parseDocument(value.document),
+  };
+}
 function ideaReconciliationState(idea: Idea): unknown {
   return {
     ...draftFromIdea(idea),
@@ -377,10 +400,21 @@ export class PlanningClient {
     );
   }
   async transitionIdea(idea: Idea, status: IdeaStatus, scheduledAt?: string): Promise<Idea> {
-    void idea;
-    void status;
-    void scheduledAt;
-    throw new PlanningApiError(503, atomicPlanningWriteNotice);
+    if (!nextStatus(idea.status).includes(status))
+      throw new Error("This idea status transition is not allowed.");
+    await this.write(
+      `ideas/${encodeURIComponent(idea.id)}/status`,
+      "PATCH",
+      {
+        status,
+        expectedStatus: idea.status,
+        expectedUpdatedAt: idea.updatedAt,
+        ...(scheduledAt ? { scheduledAt } : {}),
+      },
+      (value) => parseIdea(value, this.workspaceId),
+    );
+    // Approval/scheduling acknowledgements include the immutable snapshot but not the new timestamp.
+    return this.idea(idea.id);
   }
   async approvedIdea(ideaId: string): Promise<ApprovedIdea | null> {
     let result: unknown;
@@ -425,13 +459,47 @@ export class PlanningClient {
     );
   }
   async reviseScript(base: Script, document: ScriptDocument): Promise<Script> {
-    void base;
-    void document;
-    throw new PlanningApiError(503, atomicPlanningWriteNotice);
+    if (base.status === "APPROVED") throw new Error("Approved scripts are immutable.");
+    const validation = validateDocument(document);
+    if (validation) throw new Error(validation);
+    return this.write(
+      `scripts/${encodeURIComponent(base.id)}/revisions`,
+      "POST",
+      {
+        expectedRevision: base.currentRevision,
+        document,
+      },
+      (value) => {
+        const saved = parseScript(value, this.workspaceId, base.id);
+        if (saved.currentRevision !== base.currentRevision + 1)
+          throw new Error("Unexpected saved script revision. Reconcile server state.");
+        return saved;
+      },
+    );
   }
   async approveScript(base: Script): Promise<Script> {
-    void base;
-    throw new PlanningApiError(503, atomicPlanningWriteNotice);
+    if (base.status === "APPROVED") throw new Error("This script is already approved.");
+    await this.write(
+      `scripts/${encodeURIComponent(base.id)}/approve`,
+      "POST",
+      {
+        expectedRevision: base.currentRevision,
+      },
+      (value) => parseApprovedExport(value, base.id, base.currentRevision),
+    );
+    const saved = await this.script(base.id);
+    if (saved.status !== "APPROVED" || saved.currentRevision !== base.currentRevision)
+      throw new Error(
+        "Approval acknowledged. Refresh the approved server state before continuing.",
+      );
+    return saved;
+  }
+  async exportScript(id: string, expectedRevision: number): Promise<ApprovedScriptExport> {
+    return parseApprovedExport(
+      await this.request(`scripts/${encodeURIComponent(id)}/export`),
+      id,
+      expectedRevision,
+    );
   }
   async reconcilePendingSave(): Promise<SaveReconciliation> {
     const marker = readPendingMarker(this.workspaceId);

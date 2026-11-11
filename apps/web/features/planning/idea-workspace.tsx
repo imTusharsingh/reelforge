@@ -3,13 +3,7 @@ import { useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { requestNavigationIntent } from "../../components/studio-navigation";
 import { Alert, Badge, Button, Field, Panel, TextAreaField } from "../../components/ui/primitives";
-import {
-  canWrite,
-  nextStatus,
-  atomicPlanningWritesAvailable,
-  atomicPlanningWriteNotice,
-  type IdeaStatus,
-} from "./model";
+import { canWrite, nextStatus, PlanningApiError, type Idea, type IdeaStatus } from "./model";
 import { usePlanning, useLoad, message } from "./session";
 import { IdeaForm } from "./idea-form";
 import { Choice, json, LoadState, SafeReferences } from "./common";
@@ -22,13 +16,15 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const idea = state.data;
+  const [conflict, setConflict] = useState<{ observed: Idea; latest: Idea | null } | null>(null);
+  const [notice, setNotice] = useState("");
   const act = async (kind: IdeaStatus | "archive" | "restore"): Promise<void> => {
     if (
-      (kind !== "archive" && kind !== "restore" && !atomicPlanningWritesAvailable) ||
       !idea ||
       !canWrite(client.role) ||
       suspended ||
       busy ||
+      Boolean(conflict) ||
       !requestNavigationIntent("selection")
     )
       return;
@@ -39,6 +35,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
     )
       return;
     setError("");
+    setNotice("");
     setBusy(true);
     try {
       if (kind === "archive" || kind === "restore")
@@ -49,10 +46,22 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
           kind,
           kind === "SCHEDULED" ? new Date(scheduledAt).toISOString() : undefined,
         );
-      if (!client.signal.aborted) refresh();
+      if (!client.signal.aborted) {
+        setNotice("Idea action saved by the server.");
+        refresh();
+      }
     } catch (cause) {
       if (!client.signal.aborted) {
         setError(message(cause));
+        if (cause instanceof PlanningApiError && cause.status === 409) {
+          setConflict({ observed: idea, latest: null });
+          try {
+            const latest = await client.idea(idea.id);
+            if (!client.signal.aborted) setConflict({ observed: idea, latest });
+          } catch (readError) {
+            if (!client.signal.aborted) setError(message(readError));
+          }
+        }
         refresh();
       }
     } finally {
@@ -81,6 +90,57 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
           {error && (
             <Alert tone="danger" title="Idea action failed">
               {error}
+            </Alert>
+          )}
+          {notice && <p role="status">{notice}</p>}
+          {conflict && (
+            <Alert tone="warning" title="Compare idea before another action">
+              <p>
+                The action was rejected. Compare the idea you observed with the refreshed saved
+                brief. No automatic retry was made.
+              </p>
+              <div className={styles.compare}>
+                <pre className={styles.inspect}>{json(conflict.observed)}</pre>
+                <pre className={styles.inspect}>
+                  {conflict.latest
+                    ? json(conflict.latest)
+                    : "Latest saved brief unavailable. Refresh before continuing."}
+                </pre>
+              </div>
+              <Button
+                tone="secondary"
+                onClick={() => {
+                  void client
+                    .idea(idea.id)
+                    .then((latest) => {
+                      if (!client.signal.aborted) {
+                        setConflict({ ...conflict, latest });
+                        refresh();
+                      }
+                    })
+                    .catch((cause: unknown) => {
+                      if (!client.signal.aborted) setError(message(cause));
+                    });
+                }}
+              >
+                Fetch latest for action comparison
+              </Button>
+              <Button
+                disabled={
+                  busy ||
+                  state.loading ||
+                  Boolean(state.error) ||
+                  !conflict.latest ||
+                  conflict.latest.updatedAt !== idea.updatedAt ||
+                  conflict.latest.status !== idea.status
+                }
+                onClick={() => {
+                  setConflict(null);
+                  setError("");
+                }}
+              >
+                Use refreshed brief for next action
+              </Button>
             </Alert>
           )}
           <div className={styles.grid}>
@@ -125,11 +185,6 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
               </Panel>
               <Panel>
                 <h2>Status & archive</h2>
-                {!atomicPlanningWritesAvailable && (
-                  <Alert title="Status changes temporarily unavailable" tone="warning">
-                    {atomicPlanningWriteNotice}
-                  </Alert>
-                )}
                 <p>
                   Archiving preserves the record and its status. An approval snapshot permanently
                   protects the original brief.
@@ -141,10 +196,10 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
                       <Button
                         key={status}
                         disabled={
-                          !atomicPlanningWritesAvailable ||
                           !canWrite(client.role) ||
                           suspended ||
                           busy ||
+                          Boolean(conflict) ||
                           (status === "SCHEDULED" && !scheduledAt)
                         }
                         onClick={() => void act(status)}
@@ -167,7 +222,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
                     type="datetime-local"
                     value={scheduledAt}
                     onChange={(e) => setScheduledAt(e.target.value)}
-                    disabled={!atomicPlanningWritesAvailable || !canWrite(client.role) || suspended}
+                    disabled={!canWrite(client.role) || suspended}
                   />
                 )}
                 <Button
@@ -176,6 +231,7 @@ export function IdeaWorkspace({ ideaId }: { ideaId: string }): JSX.Element {
                     !canWrite(client.role) ||
                     suspended ||
                     busy ||
+                    Boolean(conflict) ||
                     approval.loading ||
                     Boolean(approval.error) ||
                     (!idea.archivedAt && Boolean(approval.data))

@@ -5,8 +5,6 @@ import { requestNavigationIntent, draftEdited } from "../../components/studio-na
 import { Alert, Badge, Button, Field, Panel, TextAreaField } from "../../components/ui/primitives";
 import {
   canWrite,
-  atomicPlanningWritesAvailable,
-  atomicPlanningWriteNotice,
   mergeRevision,
   moveScene,
   normalizeSceneTimings,
@@ -46,13 +44,28 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
   const [selected, setSelected] = useState(draft.scenes[0]!.id);
   const [historical, setHistorical] = useState<Revision | null>(null);
   const [page, setPage] = useState(1);
+  const approvedExport = useLoad(
+    (c) =>
+      base.status === "APPROVED"
+        ? c.exportScript(base.id, base.currentRevision)
+        : Promise.resolve(null),
+    `export:${base.id}:${base.currentRevision}:${base.status}`,
+  );
   const history = useLoad((c) => c.history(script.id, page), `history:${script.id}:${page}`);
   useEffect(() => {
-    if (!dirty && script.currentRevision >= base.currentRevision) {
+    if (
+      !dirty &&
+      script.currentRevision >= base.currentRevision &&
+      !(
+        base.status === "APPROVED" &&
+        script.status !== "APPROVED" &&
+        script.currentRevision === base.currentRevision
+      )
+    ) {
       setBase(script);
       setDraft(structuredClone(script.revisions[0]!.document));
     } else if (dirty && script.currentRevision > base.currentRevision) setRemote(script);
-  }, [script, dirty, base.currentRevision]);
+  }, [script, dirty, base.currentRevision, base.status]);
   useDirty(id, dirty, () => {
     setDraft(structuredClone(base.revisions[0]!.document));
     setDirty(false);
@@ -82,7 +95,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
     }
   };
   const save = async (): Promise<void> => {
-    if (!atomicPlanningWritesAvailable || readonly || validation || remote) return;
+    if (readonly || validation || remote) return;
     setBusy(true);
     setError("");
     try {
@@ -104,16 +117,16 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
   };
   const approve = async (): Promise<void> => {
     if (
-      !atomicPlanningWritesAvailable ||
       readonly ||
       dirty ||
       remote ||
       !window.confirm(
-        "Approve the current persisted script revision? Approved scripts cannot be edited.",
+        `Approve persisted revision ${base.currentRevision}? Approved scripts cannot be edited.`,
       )
     )
       return;
     setBusy(true);
+    setError("");
     try {
       const saved = await client.approveScript(base);
       if (!client.signal.aborted) {
@@ -152,13 +165,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
           </Button>
           <Button
             onClick={() => void save()}
-            disabled={
-              !atomicPlanningWritesAvailable ||
-              readonly ||
-              !dirty ||
-              Boolean(validation) ||
-              Boolean(remote)
-            }
+            disabled={readonly || !dirty || Boolean(validation) || Boolean(remote)}
             loading={busy}
           >
             Save script revision
@@ -166,17 +173,12 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
           <Button
             tone="secondary"
             onClick={() => void approve()}
-            disabled={!atomicPlanningWritesAvailable || readonly || dirty || Boolean(remote)}
+            disabled={readonly || dirty || Boolean(remote)}
           >
             Approve saved script
           </Button>
         </div>
       </header>
-      {!atomicPlanningWritesAvailable && (
-        <Alert tone="warning" title="Saving awaits a safe version contract">
-          {atomicPlanningWriteNotice}
-        </Alert>
-      )}
       {dirty && <p role="status">Unsaved script changes</p>}
       {notice && <p role="status">{notice}</p>}
       {error && (
@@ -188,6 +190,21 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
         <Alert title="Immutable approved script" tone="info">
           This approved revision is read-only.
         </Alert>
+      )}
+      {base.status === "APPROVED" && (
+        <Panel>
+          <h2>Approved server export</h2>
+          <LoadState {...approvedExport} />
+          <Button tone="secondary" onClick={refresh}>
+            Refresh approved export
+          </Button>
+          {approvedExport.data && (
+            <details>
+              <summary>Inspect approved export revision {approvedExport.data.revision}</summary>
+              <pre className={styles.inspect}>{json(approvedExport.data)}</pre>
+            </details>
+          )}
+        </Panel>
       )}
       {remote && (
         <Alert tone="warning" title="Compare server and working draft">
@@ -204,6 +221,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
                   setBase(remote);
                   setDraft(structuredClone(remote.revisions[0]!.document));
                   setRemote(null);
+                  setError("");
                   setDirty(false);
                 }
               }}
@@ -223,6 +241,7 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
                   setBase(remote);
                   setDraft(merged);
                   setRemote(null);
+                  setError("");
                   setDirty(true);
                   draftEdited();
                   setNotice(

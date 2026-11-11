@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { PlanningContext, PendingSaveRecovery } from "../session";
 import { PlanningClient, pendingSave, type Script, type Idea } from "../model";
 import { ScriptEditor, ScriptWorkspace } from "../script-workspace";
+import { IdeaWorkspace } from "../idea-workspace";
 import { IdeaForm } from "../idea-form";
 import { PlanningLibrary } from "../library";
 import { idea, script } from "./fixtures";
@@ -14,6 +15,7 @@ import {
 const mode = new URLSearchParams(location.search).get("mode") ?? "script";
 const role = new URLSearchParams(location.search).get("role") === "VIEWER" ? "VIEWER" : "EDITOR";
 let saved = structuredClone(script);
+const persistedHistory = structuredClone(script.revisions);
 let savedIdea = structuredClone(idea);
 const calls: { path: string; method: string; body: unknown }[] = [];
 let fail = 0;
@@ -37,8 +39,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   if (method !== "GET" && fail)
     return new Response(JSON.stringify({ message: "Save interrupted" }), { status: fail });
   let result: unknown = [];
+  const conflict = (): Response =>
+    new Response(JSON.stringify({ message: "Version changed" }), { status: 409 });
+  const posted = body as {
+    expectedRevision?: number;
+    document?: Script["revisions"][number]["document"];
+    expectedStatus?: string;
+    expectedUpdatedAt?: string;
+    status?: Idea["status"];
+  };
+
   if (path === "scripts/script-one") result = saved;
   else if (path === "scripts/script-one/revisions" && method === "POST") {
+    if (posted.expectedRevision !== saved.currentRevision) return conflict();
     saved = {
       ...saved,
       currentRevision: saved.currentRevision + 1,
@@ -46,12 +59,45 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
       revisions: [
         {
           revision: saved.currentRevision + 1,
-          document: body as Script["revisions"][number]["document"],
+          document: posted.document!,
         },
       ],
     };
+    persistedHistory.unshift(saved.revisions[0]!);
     result = saved;
-  } else if (path.includes("/revisions?")) result = { items: saved.revisions, nextPage: null };
+  } else if (path === "scripts/script-one/approve" && method === "POST") {
+    if (posted.expectedRevision !== saved.currentRevision) return conflict();
+    saved = { ...saved, status: "APPROVED" };
+    result = {
+      scriptId: saved.id,
+      revision: saved.currentRevision,
+      approvedIdeaSnapshotId: "snapshot-one",
+      document: saved.revisions[0]!.document,
+    };
+  } else if (path === "scripts/script-one/export")
+    result = {
+      scriptId: saved.id,
+      revision: saved.currentRevision,
+      approvedIdeaSnapshotId: "snapshot-one",
+      document: saved.revisions[0]!.document,
+    };
+  else if (path === "ideas/idea-one/status" && method === "PATCH") {
+    if (
+      posted.expectedStatus !== savedIdea.status ||
+      posted.expectedUpdatedAt !== savedIdea.updatedAt
+    )
+      return conflict();
+    savedIdea = { ...savedIdea, status: posted.status!, updatedAt: "2026-11-12T03:00:00.000Z" };
+    result = savedIdea;
+  } else if (path === "ideas/approved/idea-one") {
+    if (savedIdea.status !== "APPROVED") return new Response("{}", { status: 404 });
+    result = {
+      id: "snapshot-one",
+      ideaId: savedIdea.id,
+      workspaceId: savedIdea.workspaceId,
+      checksumSha256: "a".repeat(64),
+    };
+  } else if (path.includes("/revisions?")) result = { items: persistedHistory, nextPage: null };
   else if (path.startsWith("scripts?")) result = { items: [saved], nextPage: null };
   else if (path.startsWith("ideas?")) result = [savedIdea];
   else if (path === "ideas/idea-one" && method === "PATCH") {
@@ -101,6 +147,9 @@ Object.assign(window, {
     fail: (status: number): void => {
       fail = status;
     },
+    remoteIdea: (): void => {
+      savedIdea = { ...savedIdea, status: "BACKLOG", updatedAt: "2026-11-12T02:00:00.000Z" };
+    },
     remote: (): void => {
       saved = {
         ...saved,
@@ -145,6 +194,8 @@ function Fixture(): JSX.Element {
         )}
         {mode === "idea" || mode === "recovery" ? (
           <IdeaForm idea={savedIdea} onSaved={() => setRevision((v) => v + 1)} />
+        ) : mode === "idea-route" ? (
+          <IdeaWorkspace ideaId={savedIdea.id} />
         ) : mode === "library" ? (
           <PlanningLibrary />
         ) : mode === "route" ? (
