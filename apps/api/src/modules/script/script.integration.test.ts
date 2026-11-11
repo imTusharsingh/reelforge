@@ -291,8 +291,8 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     await expect(service.get({ ...context, workspaceId: randomUUID() }, row.id)).rejects.toThrow(
       "Script not found",
     );
-    await service.approve(context, row.id);
-    await expect(service.revise(context, row.id, document)).rejects.toThrow("immutable");
+    await service.approve(context, row.id, row.currentRevision);
+    await expect(service.revise(context, row.id, document, row.currentRevision)).rejects.toThrow("immutable");
     const exported = await service.exportApproved(context, row.id);
     expect(exported).toMatchObject({ scriptId: row.id, revision: 1 });
   });
@@ -316,8 +316,8 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       orderBy: { createdAt: "desc" },
     });
     const results = await Promise.allSettled([
-      service.approve(context, row.id),
-      service.revise(context, row.id, document),
+      service.approve(context, row.id, row.currentRevision),
+      service.revise(context, row.id, document, row.currentRevision),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const final = await db.script.findUniqueOrThrow({
