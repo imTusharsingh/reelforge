@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import { StudioNavigationGuard } from "../components/studio-link";
 
 export const metadata: Metadata = {
   title: "ReelForge",
@@ -11,7 +12,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): ReactNode {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <StudioNavigationGuard />
+        {children}
+      </body>
     </html>
   );
 }

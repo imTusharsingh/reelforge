@@ -1,59 +1,86 @@
 # M23 Status - Channel, Brand & Content Configuration UI
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Codex M23 implementation session
+- **Branch:** `work/m23-47-channel-brand-content-ui`
+- **Issue:** #47
 - **Last updated:** 2026-11-11
-- **Reviewer:** Core Architect/Reviewer
+- **Independent reviewer:** `minu-the-reviewer`
 - **Approved commit:** none
 
-## Current objective
+## Branch synchronization
 
-Build channel list/detail/create/edit/archive; brand identity; genre/niche and format management; series; characters/personas and assets; content preferences; M05 configuration visibility; validation, preview, search and filters.
+Fetched current `origin/main` at `d406b88b3705820617231cb2cd80d6c41e688448`. Merged it into the existing M23 branch in `98c7161`; resolved navigation and work-log conflicts while retaining both histories. Preserved M29 Operations, Overview, the shared AuthWorkspace and WorkspaceProvider. Did not recreate the branch or discard its prior channel work.
+
+The synchronization build, typecheck and lint passed. The first focused test run caught an obsolete source-contract expectation for exact-route-only navigation; its updated Channels/nested-route coverage now passes. No authentication route-selection condition was introduced.
+
+## Implemented scope and acceptance boundary
+
+All eight tasks now have product surfaces and existing-API bindings. Privileged UI mutation acceptance remains **BLOCKED** by missing trusted membership-role metadata, as anticipated by Issue #47. This is not a claim that every editable workflow is available to users. The module remains pending independent review; no approval or integration is claimed.
+
+- **M23-T01:** Authenticated `/channels` list, search/status filters, create form, direct detail routes, lifecycle controls with confirmations, channel snapshot inspection/selection.
+- **M23-T02:** Persisted brand preview and name/handle/description/niche/language/audience/timezone editor. Blank optional strings are omitted because M02 does not support clearing them.
+- **M23-T03:** Workspace genres, starter policy discovery, template clone, custom creation and update. Advanced structured policies preserve the M03 JSON contract.
+- **M23-T04:** Channel series list/create/update, explicit genre selection, format/frequency and opaque character/prompt references. No arbitrary first-genre assignment.
+- **M23-T05:** Character template discovery, custom draft creation/edit/publish/archive, immutable versions/reference packages, group membership and channel/series assignments; asset list, canonical base64 upload/versioning and explicit license/rights attestation. Storage keys are never presented as public preview URLs.
+- **M23-T06:** Goals, schedule, automation, approval policies and destination-intent configuration with saved-data previews. No provider connection or execution is implied.
+- **M23-T07:** Workspace defaults/locks, workspace/channel/generation snapshots, prompt templates/versions, deterministic configuration/prompt previews and gated activation/rollback.
+- **M23-T08:** Runtime guards, selected-workspace scoping, abort-on-context/unmount, stale-response rejection, before-unload/navigation draft warnings, per-resource loading/error/empty states, retry/refresh, 401/403/404/409/offline handling, shared keyboard-accessible tabs and responsive layouts.
 
 ## Completion estimate
 
-0% - planning package created; implementation has not started.
+Frontend surfaces and existing-API bindings are implemented. Permission enablement and authorized UI mutation acceptance remain blocked by the trusted-role contract; independent review remains pending.
 
-## Task checklist
+## Permission boundary / contract request
 
-- [ ] **M23-T01:** Build channel list/detail/create/edit/archive
-- [ ] **M23-T02:** brand identity
-- [ ] **M23-T03:** genre/niche and format management
-- [ ] **M23-T04:** series
-- [ ] **M23-T05:** characters/personas and assets
-- [ ] **M23-T06:** content preferences
-- [ ] **M23-T07:** M05 configuration visibility
-- [ ] **M23-T08:** validation, preview, search and filters.
+Production M23 uses UNKNOWN because the shared authenticated workspace API has no role metadata. All privileged forms and the request layer fail closed; there is no role selector or local-storage/URL override. Only `config/resolve` and `prompts/preview` allow POST reads without a verified editor role. Backend authorization remains authoritative.
 
-## Files changed
+See `CONTRACT_CHANGE_PROPOSAL.md`. Core must approve/provide trusted role metadata before product editing can be enabled. No backend code, shared contracts, schema, migrations, dependencies or root tooling changed.
 
-- Work-package planning documentation only.
+## Files
 
-## Commands and evidence
+- `apps/web/app/channels/**`: normal Next.js pages composed with shared AuthWorkspace.
+- `apps/web/components/app-shell.tsx` and its existing test: Channels desktop/mobile destination and nested active state, retaining Overview and Operations.
+- `apps/web/features/channels/**`: module-owned models/client, resource/action handling, domain panels, asset validation, and 26 new tests.
+- `apps/web/app/globals.css`: channel surfaces and responsive styles; removed the previous branch's duplicate navigation rule that obscured active-link contrast.
+- `apps/web/lib/api.ts`: removes the earlier branch's broad channel API additions; auth/workspace API remains identical to main, channel calls live in the module.
+- This status, the contract proposal, and an appended work-log entry.
 
-- No implementation or test commands run. This is not a passing test result.
+## Verification evidence
 
-## Contract/schema proposals
+- `pnpm lint`: PASS.
+- `pnpm format:check`: PASS.
+- `pnpm typecheck`: PASS, synchronization and final workspace checks.
+- `pnpm exec vitest run apps/web`: PASS, 11 files / 67 tests, including runtime DTO and recovery cases.
+- `pnpm test`: PASS, 85 files passed / 2 skipped; 578 tests passed / 8 skipped. Redis and explicit media-path prerequisites remain skipped by the default suite.
+- `NODE_ENV=production pnpm build`: PASS, including `/channels`, `/channels/[channelId]`, `/operations` and `/`.
+- `pnpm db:validate`: PASS.
+- `pnpm db:check-migrations`: PASS, 27 ordered migrations.
+- `pnpm security:secrets`: PASS after final staging, 526 tracked files.
+- `git diff --check` and `git diff --cached --check`: PASS.
 
-- None. Shared API/schema changes require proposal and approval.
+### Local API and browser evidence
 
-## Blockers / risks / unknowns
+Used disposable accounts/workspaces and local PostgreSQL; no paid AI/social calls. API smoke exercised channel create/patch, genre create/update/template clone, series create/update, canonical asset upload/new version, character template/create/publish/draft edit, immutable reference packages, group membership/assignment, workspace snapshots, prompt template/version publish and deterministic previews. These direct owner API writes verify existing contracts, not privileged UI enablement.
 
-- Inspect current repository code and existing M00-M20 contracts before implementation.
-- Do not duplicate completed functionality.
-- Provider/platform availability must be based on configured and verified adapters.
+Playwright with installed Chromium verified Channels list/filter/detail, all six tabs, selected character/group/asset/series inspection, direct reload, deterministic previews, disabled UNKNOWN forms, two-workspace isolation, another workspace's channel rejection, keyboard tab movement, mobile navigation and overflow, draft-discard confirmation on resource selection, preservation of Operations, and logout/session protection. No browser page errors. Captured and visually inspected desktop/mobile screenshots; fixed a duplicate React key and active-navigation contrast during this review.
 
+Artifacts and exact command logs are retained outside the repository at `/workspace/validation-reelforge/m23-*`. The first browser attempt using 127.0.0.1 hit Next development-origin restrictions; rerunning on localhost passed without a configuration bypass. Full screen-reader/WCAG assessment: NOT RUN. Authorized UI editing/revocation browser tests: BLOCKED by trusted-role contract. Redis queue testing: NOT RUN for this frontend module.
 
+## PR #49 review revision
 
-## Next exact action
+See `REVIEW_RESPONSE.md` for the requirement-by-requirement response to the owner technical comment on `659c63c`. R2–R5 are implemented: explicit route/session intents and indexed Back/Forward guards, recovery for uncertain saves, scoped series/version pickers and structured fields, mutation invalidation/pristine-vs-dirty rebasing, feature DTO parsers and mounted regression tests. R1 remains BLOCKED pending separate Core approval/implementation of trusted roles. No limited merge decision or full CRUD acceptance is inferred.
 
-Inspect the current repository and dependencies, refine the implementation plan against actual code and API contracts, then start after required decisions are confirmed.
+Mounted Chromium verification: 16 checks passed, covering desktop/mobile/fallback history, keyboard/icon session intents, programmatic routing, edits, invalidation, snapshot/prompt activation and rollback, context/downgrade cancellation and reconciliation. Mock test roles are not real role-contract acceptance. Real API/Next smoke passed with Back cancellation and Overview/Channels/Operations preservation. Shared auth edits are limited to explicit workspace/logout intent calls; no auth contract changed.
 
-## Handoff notes
+## Handoff
 
-This is a planning baseline, not evidence of implementation or completion.
+Request independent review from `minu-the-reviewer` on the Developer-authored PR against main, with `Closes #47`. Do not self-approve or merge. Core should decide the role proposal and verify M23/M29 shared-context compatibility before enabling writes. Historical published versions and safety/rights gates must remain enforced.
 
-## Reviewer decision
+## Core role contract integration (after PR #51)
 
-- Pending.
+Core's verified workspace membership-role contract merged into main at `05fa1a5`. This M23 branch merged main in `668816e` and wired the backend-confirmed role through M22's workspace response parser and provider into Channels. Unknown/malformed roles fail closed; a role-free POST /workspaces acknowledgement is only used to confirm creation, never to authorize a selected workspace. Owners and Editors can now reach their channel mutation forms, while Viewers cannot; all API mutation authorization remains server-enforced.
+
+**Evidence/remaining gates:** the new role parser has focused unit tests, with hosted CI pending on the role-wiring head. Earlier real browser smoke and mounted tests were performed **before** the contract was available to the UI; end-to-end OWNER/EDITOR/VIEWER, revocation, and real authorized browser-write smoke must not be marked PASS on that earlier evidence. No production readiness or screen-reader/WCAG sign-off is claimed. Privileged M29 action enablement remains separately tracked in Issue #52 to avoid activating unfinished budget validation/mutation handling in this milestone.
+
+The milestone remains `IMPLEMENTED_PENDING_REVIEW` until final code review/merge. After merging, update status to `INTEGRATED` with the actual merge SHA and separately list any outstanding release QA.

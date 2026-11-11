@@ -17,3 +17,33 @@ describe("API response boundaries", () => {
     await expect(api.logout()).rejects.toMatchObject({ status: 502 } as Partial<ApiError>);
   });
 });
+
+describe("verified workspace role contract", () => {
+  it("accepts OWNER, EDITOR and VIEWER memberships", async () => {
+    for (const role of ["OWNER", "EDITOR", "VIEWER"] as const) {
+      const payload = [{ id: "w-1", name: "Studio", role }];
+      const response = new Response(JSON.stringify(payload));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+      await expect(api.listWorkspaces()).resolves.toMatchObject([{ role }]);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects missing or untrusted roles", async () => {
+    for (const role of [undefined, "UNKNOWN", "ADMIN", null, 1]) {
+      const payload = [{ id: "w-1", name: "Studio", role }];
+      const response = new Response(JSON.stringify(payload));
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+      await expect(api.listWorkspaces()).rejects.toMatchObject({ status: 502 });
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it("requires a verified list after workspace creation", async () => {
+    const response = new Response(JSON.stringify({ id: "w-1", name: "Studio" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    await expect(api.createWorkspace("Studio")).resolves.toEqual({ id: "w-1", name: "Studio" });
+    await expect(api.listWorkspaces()).rejects.toMatchObject({ status: 502 });
+    vi.unstubAllGlobals();
+  });
+});

@@ -1,4 +1,11 @@
-export type Workspace = { id: string; name: string; archivedAt?: string | null };
+export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
+export type Workspace = {
+  id: string;
+  name: string;
+  archivedAt?: string | null;
+  role: WorkspaceRole;
+};
+type CreatedWorkspace = Pick<Workspace, "id" | "name">;
 
 export class ApiError extends Error {
   public constructor(
@@ -20,6 +27,16 @@ function isAuthResponse(payload: unknown): payload is { userId: string } {
   return isRecord(payload) && typeof payload.userId === "string" && payload.userId.length > 0;
 }
 
+function isCreatedWorkspace(payload: unknown): payload is CreatedWorkspace {
+  return (
+    isRecord(payload) &&
+    typeof payload.id === "string" &&
+    payload.id.length > 0 &&
+    typeof payload.name === "string" &&
+    payload.name.length > 0
+  );
+}
+
 function isWorkspace(payload: unknown): payload is Workspace {
   return (
     isRecord(payload) &&
@@ -29,7 +46,8 @@ function isWorkspace(payload: unknown): payload is Workspace {
     payload.name.length > 0 &&
     (payload.archivedAt === undefined ||
       payload.archivedAt === null ||
-      typeof payload.archivedAt === "string")
+      typeof payload.archivedAt === "string") &&
+    (payload.role === "OWNER" || payload.role === "EDITOR" || payload.role === "VIEWER")
   );
 }
 
@@ -94,6 +112,6 @@ export const api = {
   logout: (): Promise<{ ok: true }> =>
     request("/auth/logout", { method: "POST" }, isLogoutResponse),
   listWorkspaces: (): Promise<Workspace[]> => request("/workspaces", undefined, isWorkspaceList),
-  createWorkspace: (name: string): Promise<Workspace> =>
-    request("/workspaces", { method: "POST", body: JSON.stringify({ name }) }, isWorkspace),
+  createWorkspace: (name: string): Promise<CreatedWorkspace> =>
+    request("/workspaces", { method: "POST", body: JSON.stringify({ name }) }, isCreatedWorkspace),
 };

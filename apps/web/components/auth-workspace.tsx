@@ -9,6 +9,7 @@ import {
   type JSX,
   type ReactNode,
 } from "react";
+import { requestNavigationIntent } from "./studio-navigation";
 import { AppShell } from "./app-shell";
 import { Alert, Badge, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type Workspace } from "../lib/api";
@@ -183,7 +184,8 @@ function WorkspaceSetup({
         );
         return;
       }
-      onSelected(refreshed.find((candidate) => candidate.id === workspace.id) ?? workspace);
+      const authorized = refreshed.find((candidate) => candidate.id === workspace.id);
+      if (authorized) onSelected(authorized);
     } catch (cause) {
       if (created) setErrorTitle("Workspace created, but list refresh failed");
       setError(errorText(cause));
@@ -282,10 +284,20 @@ function Studio({
       }
       shellActions={
         <div className="rf-actions">
-          <Button onClick={onSwitch} tone="secondary">
+          <Button
+            onClick={() => {
+              if (requestNavigationIntent("workspace")) onSwitch();
+            }}
+            tone="secondary"
+          >
             Switch workspace
           </Button>
-          <Button onClick={onLogout} tone="ghost">
+          <Button
+            onClick={() => {
+              if (requestNavigationIntent("logout")) void onLogout();
+            }}
+            tone="ghost"
+          >
             Sign out
           </Button>
         </div>
