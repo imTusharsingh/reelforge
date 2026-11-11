@@ -1044,3 +1044,32 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Issue #47 auto-closed; milestone STATUS is INTEGRATED. User explicitly authorized merges; no formal independent GitHub approval was recorded because Developer is the PR author and currently connected identity.
 - Real post-contract owner/editor/viewer browser CRUD and membership-revocation smoke, full screen-reader check and release security QA are not claimed as run.
 - Privileged M29 Operations remains safely restricted pending Issue #52; cross-app mobile responsiveness remains Issue #48.
+
+## 2026-11-11 — M24 Issue #54 planning workspace implementation
+
+- Preserved existing M24 exploratory branch/model and merged main `f6405ba` (including merged Core backend PR #53) in `9786cee`.
+- Added normal authenticated planning library/idea/script routes, persisted brief editing/archive/status/snapshot flows, true script history, manual revision editing, storyboard cards/timing/order, supported published-character pins, targeted changes and explicit conflict/recovery/navigation protection. Reused shared verified-role workspace/auth provider and existing design/navigation components.
+- Generation and scene asset assignment remain visibly unavailable where current server contracts cannot support them. No provider calls, fabricated saved records/history, backend/schema/shared-contract/root configuration changes, force pushes or production changes.
+- Quality evidence: workspace typecheck/lint/format and explicit production build pass; full suite 612 passed / 8 skipped; 21 M24 unit/adapter tests; 4 actual PostgreSQL scenarios; 13 mounted browser scenarios; 6 actual Next/API/PostgreSQL browser scenarios covering real 409 reconciliation, saved reloads, archive/restore, immutable approvals, tenant/Viewer enforcement and preserved navigation. Exact commands and limitations are in M24 STATUS and verification README.
+- Core follow-up required for atomic client expected-revision/status tokens, safe generation readiness/configuration, persisted scene assets and repeated character-version pins. Client preflight cannot eliminate the M07 final race. State is IMPLEMENTED_PENDING_REVIEW; independent Core review and exact-head CI required, no self-approval/merge.
+
+### M24 multiline editor follow-up
+
+- Preserved line breaks while typing brief references and scene audio cues; normalize blank/whitespace-only references only at the API boundary. Added mounted keyboard-entry regression coverage and payload normalization assertion. Focused 21 tests and 13 browser scenarios pass; final frontend checks rerun before push.
+
+## 2026-11-11 — M24 PR #55 review changes
+
+- R1: replaced unconditional interrupted-save acknowledgement with successful resource-specific reads, visible comparison and a client-owned one-use receipt tied to the pending nonce. Failed/deferred reads, unknown/missing/foreign resources and known in-flight writes cannot unlock retries; refresh/unmount invalidate comparisons. Provider prompt fields are omitted from the comparison.
+- R2: opened separate Core issue #56 for atomic client preconditions on script revisions/approval and idea status transitions. Fail-closed UI and client gates disable these unsafe writes until the independently approved Core contract is merged and integrated. Preserved local drafting and safe timestamp-protected idea edits/archive/restore; no backend/shared-contract/root changes.
+- R3: defined sequential storyboard timing and added gap/overlap validation with explicit reflow. No automatic changes to unrelated scenes.
+- State remains IMPLEMENTED_PENDING_REVIEW and release-blocked by #56; no self-approval or merge. Follow-up regression evidence is recorded in M24 STATUS.
+
+- Review validation: full typecheck/lint/format/production build pass; 624 tests passed / 8 skipped (33 M24 tests), 15 mounted browser scenarios, 6 real Next/API/PostgreSQL browser scenarios and 4 existing-backend persistence scenarios pass. Recovery reads explicitly bypass caches.
+
+## 2026-11-12 — M24 integrates merged Core #56 / PR #57
+
+- Confirmed PR #57 merged at `60df200`; merged main into the preserved M24 branch in `de25916`, without conflicts. No backend/schema/root changes authored in the M24 integration.
+- Replaced the temporary gates with exact observed-token requests: idea status expectedStatus/expectedUpdatedAt, script revision expectedRevision/document envelope, and script approval expectedRevision. Restored controls only after client integration. Added explicit idea status comparison after 409 and server-bound approved export inspection; retained draft/recovery/navigation/permission protections.
+- Real PostgreSQL/API/browser evidence covers stale timestamp/status/revision rejection, two authenticated editors, explicit draft rebase, targeted scene preservation, persisted order/timing/character pins, stale approval prevention, correct approval/export/reload, Viewer/tenant enforcement and committed-response-loss recovery without replay. The character fixture was corrected to the actual persisted profile contract after an initial API 500.
+- Validation: full workspace typecheck/lint/production build pass; 636 tests passed / 8 skipped (41 M24 tests), 17 mounted browser scenarios, 11 real Next/API/PostgreSQL scenarios and 4 PostgreSQL persistence scenarios pass. Final formatting/hosted CI is checked after source completion.
+- AI proposals/new-script generation and scene asset assignment remain unavailable under current backend capabilities. State remains IMPLEMENTED_PENDING_REVIEW; independent review requested, no self-approval or merge.
