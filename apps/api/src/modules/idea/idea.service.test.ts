@@ -269,6 +269,7 @@ describe("IdeaService", () => {
     const db = database();
     const idea = {
       id: "idea-a",
+      updatedAt: observedAt,
       status: "DRAFT",
       channelId: "channel-a",
       seriesId: null,
