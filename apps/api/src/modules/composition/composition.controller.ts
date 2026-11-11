@@ -91,13 +91,14 @@ export class CompositionController {
     @Param("workspaceId") workspaceId: string,
     @Param("jobId") jobId: string,
     @Param("artifactId") artifactId: string,
-    @Query("download") download: unknown,
+    @Query("download") downloadQuery: unknown,
     @Res() response: Response,
   ): Promise<void> {
     return this.context(request, workspaceId).then(async (context) => {
+      const download = parseDownloadQuery(downloadQuery);
       const content = await this.composition.getArtifactContent(context, jobId, artifactId);
       sendMediaContent(response, content, {
-        download: parseDownloadQuery(download),
+        download,
         rangeHeader: singleHeaderValue(request.headers.range),
         ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
       });
@@ -109,13 +110,14 @@ export class CompositionController {
     @Param("workspaceId") workspaceId: string,
     @Param("jobId") jobId: string,
     @Param("artifactId") artifactId: string,
-    @Query("download") download: unknown,
+    @Query("download") downloadQuery: unknown,
     @Res() response: Response,
   ): Promise<void> {
     return this.context(request, workspaceId).then(async (context) => {
+      const download = parseDownloadQuery(downloadQuery);
       const content = await this.composition.getArtifactContent(context, jobId, artifactId);
       sendMediaContent(response, content, {
-        download: parseDownloadQuery(download),
+        download,
         head: true,
       });
     });

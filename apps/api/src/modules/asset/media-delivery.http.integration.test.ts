@@ -894,6 +894,17 @@ suite("authorized media delivery HTTP contract", () => {
     expect(head.text).toBeUndefined();
   });
 
+  it("rejects unknown download values before reading or resolving bytes", async () => {
+    if (!app) return;
+    const server = app.getHttpServer();
+    const assetUrl = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content?download=1`;
+    expect((await get(server, assetUrl, viewerToken)).status).toBe(400);
+    const missingAssetUrl = `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content?download=1`;
+    expect((await get(server, missingAssetUrl, viewerToken)).status).toBe(400);
+    const artifactUrl = `/workspaces/${workspaceId}/composition/jobs/${jobId}/artifacts/${videoArtifactId}/content?download=yes`;
+    expect((await get(server, artifactUrl, viewerToken)).status).toBe(400);
+  });
+
   it("reports missing asset bytes as not found and corrupt bytes as a conflict", async () => {
     if (!app) return;
     const server = app.getHttpServer();

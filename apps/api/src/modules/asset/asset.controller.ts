@@ -130,16 +130,18 @@ export class AssetController {
     @Param("workspaceId") workspaceId: string,
     @Param("assetId") assetId: string,
     @Param("version") version: string,
-    @Query("download") download: unknown,
+    @Query("download") downloadQuery: unknown,
     @Res() response: Response,
   ): Promise<void> {
+    const context = await this.context(request, workspaceId);
+    const download = parseDownloadQuery(downloadQuery);
     const content = await this.assets.getContent(
-      await this.context(request, workspaceId),
+      context,
       assetId,
       parsePositiveInteger(version, "version"),
     );
     sendMediaContent(response, content, {
-      download: parseDownloadQuery(download),
+      download,
       rangeHeader: singleHeaderValue(request.headers.range),
       ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
     });
@@ -150,16 +152,18 @@ export class AssetController {
     @Param("workspaceId") workspaceId: string,
     @Param("assetId") assetId: string,
     @Param("version") version: string,
-    @Query("download") download: unknown,
+    @Query("download") downloadQuery: unknown,
     @Res() response: Response,
   ): Promise<void> {
+    const context = await this.context(request, workspaceId);
+    const download = parseDownloadQuery(downloadQuery);
     const content = await this.assets.getContent(
-      await this.context(request, workspaceId),
+      context,
       assetId,
       parsePositiveInteger(version, "version"),
     );
     sendMediaContent(response, content, {
-      download: parseDownloadQuery(download),
+      download,
       head: true,
     });
   }

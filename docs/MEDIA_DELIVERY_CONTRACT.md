@@ -67,7 +67,7 @@ HEAD /api/v1/workspaces/:workspaceId/composition/jobs/:jobId/artifacts/:artifact
 | --- | --- | --- | --- |
 | `download` | `true` or `false` | `false` | `true` forces `Content-Disposition: attachment`; otherwise media is `inline`. Unknown values are rejected with `400`. |
 
-No other query parameter changes authorization, storage location, media type, or filename.
+No other query parameter changes authorization, storage location, media type, or filename. Malformed `version` or `download` values are rejected with `400` before resource bytes are read.
 
 ## Response contract
 
