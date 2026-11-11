@@ -2,6 +2,13 @@ import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nest
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceRepository } from "./workspace.repository.js";
 
+type WorkspaceListItem = Readonly<{
+  id: string;
+  name: string;
+  archivedAt: Date | null;
+  role: WorkspaceContext["role"];
+}>;
+
 @Injectable()
 export class WorkspaceService {
   public constructor(
@@ -64,16 +71,7 @@ export class WorkspaceService {
    * The role comes from a filtered database membership, never from the request.
    * Mutations still re-check live membership through the backend authorization path.
    */
-  public async list(
-    userId: string,
-  ): Promise<
-    Array<{
-      id: string;
-      name: string;
-      archivedAt: Date | null;
-      role: "OWNER" | "EDITOR" | "VIEWER";
-    }>
-  > {
+  public async list(userId: string): Promise<WorkspaceListItem[]> {
     const workspaces = await this.db.workspace.findMany({
       where: { archivedAt: null, memberships: { some: { userId } } },
       select: {
