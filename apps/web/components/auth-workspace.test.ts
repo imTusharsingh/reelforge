@@ -29,8 +29,9 @@ describe("authentication form validation", () => {
 
 describe("authenticated studio route boundary", () => {
   it("uses route content registration instead of pathname-specific booleans", () => {
-    expect(workspaceSource).toContain('type StudioRoute = "overview" | "operations"');
-    expect(workspaceSource).toContain("studioContent[route]");
+    expect(workspaceSource).toContain("children: ReactNode");
+    expect(workspaceSource).toContain("content={children}");
+    expect(workspaceSource).toContain("WorkspaceProvider");
     expect(workspaceSource).not.toContain("window.location.pathname");
   });
 

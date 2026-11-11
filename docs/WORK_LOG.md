@@ -1000,3 +1000,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-11 - M29 latest review UX and route-boundary fixes
 - Review fixes: moved workspace switch/sign-out into persistent AppShell controls so Operations retains authenticated session actions; replaced pathname/Operations boolean branching with a typed `StudioRoute` content registry supplied by each URL page.
 - QA: added source-contract tests for enabled Operations navigation, active-page semantics, shared shell actions, and route-boundary registration. Focused frontend suite now passes 8 files / 24 tests; web typecheck, lint and format:check pass. Browser/session-expiry smoke remains NOT RUN.
+
+## 2026-11-11 - M29 architecture review follow-up
+- Extracted page ownership from the authentication state machine. `AuthWorkspace` now accepts page-owned children, keeps session bootstrap/workspace switching/logout and shared AppShell controls, and provides the verified selected workspace through `WorkspaceProvider`.
+- Overview and Operations now render separate screen components from their URL pages; no route registry, pathname check, or route boolean remains inside authentication. Future M23–M28 pages can be URL-owned while UNKNOWN-role read-only safety remains intact.
+- Verification: web typecheck, lint, format:check, focused frontend tests (8 files / 24 tests), and web production build PASS. Root recursive typecheck is unavailable because installed pnpm 11.25.0 / Node 24.22.1 do not match repository engine pins; web typecheck is PASS. Browser/session-expiry/accessibility smoke remains NOT RUN.

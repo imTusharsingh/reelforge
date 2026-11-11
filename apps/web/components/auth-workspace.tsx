@@ -19,7 +19,7 @@ import {
   resolveCurrentRequest,
   sessionFailureMessage,
 } from "../lib/session-policy";
-import { OperationsDashboard } from "./operations-dashboard";
+import { WorkspaceProvider } from "./studio-workspace-context";
 
 type View = "auth" | "onboarding" | "studio";
 
@@ -242,45 +242,6 @@ function WorkspaceSetup({
   );
 }
 
-type StudioRoute = "overview" | "operations";
-
-function OverviewContent({ workspace }: { workspace: Workspace }): JSX.Element {
-  return (
-    <>
-      <header className="rf-page-heading">
-        <p className="rf-eyebrow">Studio / Overview</p>
-        <h1>{workspace.name}</h1>
-        <p>Your production space is ready for its next deliberate step.</p>
-      </header>
-      <div className="rf-studio-grid">
-        <Panel>
-          <p className="rf-eyebrow">Workspace</p>
-          <h2>Keep the room focused.</h2>
-          <p className="rf-muted">
-            You are working in <strong>{workspace.name}</strong>. Workspace access is enforced by
-            the API for every request.
-          </p>
-        </Panel>
-        <Panel>
-          <p className="rf-eyebrow">Account settings</p>
-          <h2>Profile settings unavailable</h2>
-          <p className="rf-muted">
-            The current API does not expose an authenticated-user profile endpoint, so account edits
-            are intentionally unavailable.
-          </p>
-        </Panel>
-      </div>
-    </>
-  );
-}
-
-const studioContent: Record<StudioRoute, (workspace: Workspace) => JSX.Element> = {
-  overview: (workspace) => <OverviewContent workspace={workspace} />,
-  operations: (workspace) => (
-    <OperationsDashboard context={{ workspaceId: workspace.id, role: "UNKNOWN" }} />
-  ),
-};
-
 function Studio({
   workspace,
   content,
@@ -330,17 +291,19 @@ function Studio({
         </div>
       }
     >
-      {logoutError && (
-        <Alert tone="danger" title="Sign out did not complete">
-          {logoutError}
-        </Alert>
-      )}
-      {content}
+      <WorkspaceProvider workspace={workspace}>
+        {logoutError && (
+          <Alert tone="danger" title="Sign out did not complete">
+            {logoutError}
+          </Alert>
+        )}
+        {content}
+      </WorkspaceProvider>
     </AppShell>
   );
 }
 
-export function AuthWorkspace({ route = "overview" }: { route?: StudioRoute }): JSX.Element {
+export function AuthWorkspace({ children }: { children: ReactNode }): JSX.Element {
   const [view, setView] = useState<View>("auth");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selected, setSelected] = useState<Workspace | null>(null);
@@ -498,7 +461,7 @@ export function AuthWorkspace({ route = "overview" }: { route?: StudioRoute }): 
     <Studio
       workspace={selected}
       onSwitch={switchWorkspace}
-      content={studioContent[route](selected)}
+      content={children}
       onLogout={logout}
       logoutError={logoutError}
     />

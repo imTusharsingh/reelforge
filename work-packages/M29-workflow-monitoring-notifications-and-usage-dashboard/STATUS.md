@@ -35,6 +35,8 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `apps/web/app/operations/page.tsx`
 - `apps/web/components/app-shell.tsx` (Operations navigation link and active breadcrumb)
 - `apps/web/components/auth-workspace.tsx` (verified selected workspace handoff; read-only UNKNOWN role)
+- `apps/web/components/studio-workspace-context.tsx` (shared verified workspace context)
+- `apps/web/components/overview-screen.tsx` and `apps/web/components/operations-screen.tsx` (page-owned screen content)
 - `apps/web/app/globals.css` (navigation link reset)
 
 ## Commands and evidence
@@ -52,6 +54,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - `corepack pnpm --config.engine-strict=false lint`: PASS after Operations integration.
 - `corepack pnpm --config.engine-strict=false format:check`: PASS after Operations integration.
 - `corepack pnpm exec vitest run apps/web/components apps/web/lib`: PASS, 8 files / 24 tests.
+- `corepack pnpm --config.engine-strict=false --filter @reelforge/web build`: PASS; `/` and `/operations` generated successfully.
 
 ## Contract/schema proposals
 
@@ -67,13 +70,13 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 - Current GitHub credential is `minu-the-reviewer`; commits use the repository-local developer identity `imTusharsingh` as requested.
 - Re-review fixes: retry now uses actual M16 `FAILED`/`RECONCILIATION_REQUIRED` step states; approval-waiting runs expose resume; mutation continuations are generation-guarded; jobs and events are displayed individually; HTTP status errors are mapped before body parsing; period/scope/currency values are strict; owner-only budget editing is available in minor units.
 - Latest review M1-M4 and product integration: merged current `origin/main` without overwriting M22 files; mutation requests abort on context changes and guard finalizers; budget edits select the existing workspace budget, preserve currency/version, and send `expectedVersion`; Operations route/navigation uses verified workspace selection and M29 renders inside the existing AppShell main landmark.
-- Latest UX/architecture review: workspace switch/sign-out are now persistent AppShell controls; route selection is provided by the URL page through a typed `StudioRoute` content registry rather than `window.location.pathname` or an Operations boolean. Focused source-contract coverage now includes active navigation and route-boundary behavior (8 files / 24 tests).
+- Latest UX/architecture review: workspace switch/sign-out are persistent AppShell controls. Page ownership is now separated from authentication: `AuthWorkspace` only bootstraps the verified session/workspace and provides `WorkspaceProvider`; `/` and `/operations` each supply their own screen component. No route registry, pathname inspection, or route boolean remains in the authentication state machine.
 
 
 
 ## Next exact action
 
-Obtain Core approval for a trusted membership-role API seam, then enable OWNER/EDITOR actions from that verified role; run authenticated browser/accessibility/API smoke checks.
+Obtain Core approval for a trusted membership-role API seam, then enable OWNER/EDITOR actions from that verified role; run authenticated browser/accessibility/API smoke checks. M23 should consume the shared workspace context and AppShell rather than modifying M29 authentication logic.
 
 ## Handoff notes
 
