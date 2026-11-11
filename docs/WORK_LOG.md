@@ -1044,3 +1044,11 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Issue #47 auto-closed; milestone STATUS is INTEGRATED. User explicitly authorized merges; no formal independent GitHub approval was recorded because Developer is the PR author and currently connected identity.
 - Real post-contract owner/editor/viewer browser CRUD and membership-revocation smoke, full screen-reader check and release security QA are not claimed as run.
 - Privileged M29 Operations remains safely restricted pending Issue #52; cross-app mobile responsiveness remains Issue #48.
+
+## 2026-11-11 — M24 Issue #54 planning workspace implementation
+
+- Preserved existing M24 exploratory branch/model and merged main `f6405ba` (including merged Core backend PR #53) in `9786cee`.
+- Added normal authenticated planning library/idea/script routes, persisted brief editing/archive/status/snapshot flows, true script history, manual revision editing, storyboard cards/timing/order, supported published-character pins, targeted changes and explicit conflict/recovery/navigation protection. Reused shared verified-role workspace/auth provider and existing design/navigation components.
+- Generation and scene asset assignment remain visibly unavailable where current server contracts cannot support them. No provider calls, fabricated saved records/history, backend/schema/shared-contract/root configuration changes, force pushes or production changes.
+- Quality evidence: workspace typecheck/lint/format and explicit production build pass; full suite 612 passed / 8 skipped; 21 M24 unit/adapter tests; 4 actual PostgreSQL scenarios; 13 mounted browser scenarios; 6 actual Next/API/PostgreSQL browser scenarios covering real 409 reconciliation, saved reloads, archive/restore, immutable approvals, tenant/Viewer enforcement and preserved navigation. Exact commands and limitations are in M24 STATUS and verification README.
+- Core follow-up required for atomic client expected-revision/status tokens, safe generation readiness/configuration, persisted scene assets and repeated character-version pins. Client preflight cannot eliminate the M07 final race. State is IMPLEMENTED_PENDING_REVIEW; independent Core review and exact-head CI required, no self-approval/merge.
