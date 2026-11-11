@@ -203,7 +203,11 @@ export class IdeaService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
     });
     if (!idea) throw new NotFoundException("Idea not found");
-    if (idea.archivedAt || !["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status))
+    const approvedSnapshot = await this.db.ideaApprovalSnapshot.findUnique({
+      where: { workspaceId_ideaId: { workspaceId: context.workspaceId, ideaId: id } },
+      select: { id: true },
+    });
+    if (approvedSnapshot || idea.archivedAt || !["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status))
       throw new ConflictException("Approved, scheduled or archived ideas cannot be edited");
 
     let channelId = input.channelId;
@@ -252,8 +256,12 @@ export class IdeaService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
     });
     if (!idea) throw new NotFoundException("Idea not found");
-    if (!["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status))
-      throw new ConflictException("Approved and scheduled ideas cannot be archived");
+    const approvedSnapshot = await this.db.ideaApprovalSnapshot.findUnique({
+      where: { workspaceId_ideaId: { workspaceId: context.workspaceId, ideaId: id } },
+      select: { id: true },
+    });
+    if (approvedSnapshot || !["DRAFT", "BACKLOG", "REJECTED"].includes(idea.status))
+      throw new ConflictException("Previously approved or scheduled ideas cannot be archived");
     if (restore ? !idea.archivedAt : Boolean(idea.archivedAt))
       throw new ConflictException(restore ? "Idea is not archived" : "Idea is already archived");
     const changed = await this.db.idea.updateMany({
