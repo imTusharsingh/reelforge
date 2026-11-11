@@ -903,3 +903,10 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Defects/risks/blockers: T05 not authorized; retention ADR, KMS/hosting, AI vendor and email sender pending; finding C1 (M06/M11/M15 AI ports bypass M08 ledger / M18 reservation) must be fixed before those adapters are bound; event-registry drift E1–E5; schema drift S1–S6.
 - Next exact action: Minu compares this branch with the VS Code M20 PR and picks one to land; then the owner answers the release-gate decisions.
 - Related status/ADR: M20 `STATUS.md`, `INTEGRATION_REVIEW.md`, `RELEASE_CHECKLIST.md`; ADR-007, ADR-010, ADR-013, ADR-018, ADR-019.
+
+## 2026-11-11 - M21 design-review checkpoint (not completed)
+- Actor/session: ChatGPT implementation session, M21 only; branch `work/m21-frontend-foundation-design-system` based on `5463226`.
+- Changes: M21 frontend audit, proposed design brief, four editable desktop/mobile/empty/unavailable SVG review mockups, and M21 STATUS. No production UI, backend, contracts, root config, schema, CI or dependencies changed.
+- Verification: GitHub main parent chain confirms PR #38, #40, #39 ancestry. Source inspection performed; install/lint/format/typecheck/tests/build/browser/contrast checks NOT RUN at this design gate.
+- Owner decision: pending. T03 is not approved; T04–T06 are blocked pending owner screen-direction approval.
+- Next exact action: owner reviews four mockups, requests revisions or explicitly approves; continue this same M21 branch only after approval. No production release or PR merge claimed.
