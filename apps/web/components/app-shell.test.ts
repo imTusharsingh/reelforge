@@ -8,15 +8,10 @@ const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf
 
 describe("M21 responsive context access", () => {
   it("renders the context dialog, accessible trigger and close action", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        AppShell,
-        {
-          inspector: createElement("p", null, "Selected item details"),
-          children: createElement("h1", null, "Overview"),
-        },
-      ),
-    );
+    const inspector = createElement("p", null, "Selected item details");
+    const children = createElement("h1", null, "Overview");
+    const app = createElement(AppShell, { inspector, children });
+    const html = renderToStaticMarkup(app);
     expect(html).toContain("View context");
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('aria-label="Context panel"');
@@ -26,9 +21,9 @@ describe("M21 responsive context access", () => {
   });
 
   it("omits context dialog and trigger when no inspector exists", () => {
-    const html = renderToStaticMarkup(
-      createElement(AppShell, { children: createElement("h1", null, "Overview") }),
-    );
+    const children = createElement("h1", null, "Overview");
+    const app = createElement(AppShell, { children });
+    const html = renderToStaticMarkup(app);
     expect(html).not.toContain("View context");
     expect(html).not.toContain('aria-label="Context panel"');
   });
