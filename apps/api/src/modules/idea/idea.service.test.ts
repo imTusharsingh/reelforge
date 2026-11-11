@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException } from "@nes
 import { describe, expect, it, vi } from "vitest";
 import { IdeaService } from "./idea.service.js";
 
+const observedAt = new Date("2026-11-11T10:00:00.000Z");
 const context = { workspaceId: "workspace-a", userId: "user-a", role: "OWNER" as const };
 const input = {
   title: "  Morning  habits! ",
@@ -18,7 +19,7 @@ const input = {
 
 type Mock = ReturnType<typeof vi.fn>;
 function database(): {
-  idea: { findMany: Mock; findUnique: Mock; create: Mock; update: Mock; updateMany: Mock };
+  idea: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; create: Mock; update: Mock; updateMany: Mock };
   channel: { findUnique: Mock };
   contentSeries: { findUnique: Mock };
   ideaApprovalSnapshot: { findUnique: Mock; create: Mock };
@@ -28,6 +29,7 @@ function database(): {
     idea: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "idea-a", status: "REJECTED" }),
       create: vi
         .fn()
         .mockImplementation(async ({ data }: { data: { normalizedTitle: string } }) => ({
@@ -72,6 +74,7 @@ describe("IdeaService", () => {
       service.create({ ...context, role: "VIEWER" }, input, "USER"),
     ).rejects.toBeInstanceOf(ForbiddenException);
     db.idea.findUnique.mockResolvedValue({
+      updatedAt: observedAt,
       id: "idea-a",
       status: "DRAFT",
       channelId: "channel-a",
@@ -79,13 +82,14 @@ describe("IdeaService", () => {
       topic: "new",
     });
     await expect(
-      service.transition(context, "idea-a", "SCHEDULED", new Date()),
+      service.transition(context, "idea-a", "SCHEDULED", observedAt, "DRAFT", new Date()),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("enforces cooldown before approval", async () => {
     const db = database();
     db.idea.findUnique.mockResolvedValue({
+      updatedAt: observedAt,
       id: "idea-a",
       status: "DRAFT",
       channelId: "channel-a",
@@ -94,7 +98,7 @@ describe("IdeaService", () => {
     });
     db.idea.findMany.mockResolvedValue([{ topic: "Habits" }]);
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
-    await expect(service.transition(context, "idea-a", "APPROVED")).rejects.toBeInstanceOf(
+    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
@@ -114,6 +118,7 @@ describe("IdeaService", () => {
   it("creates an immutable approval snapshot and allows diversity when the window is varied", async () => {
     const db = database();
     db.idea.findUnique.mockResolvedValue({
+      updatedAt: observedAt,
       id: "idea-a",
       status: "DRAFT",
       channelId: "channel-a",
@@ -141,11 +146,12 @@ describe("IdeaService", () => {
     );
     db.ideaApprovalSnapshot.findUnique.mockImplementation(async () => persisted);
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
-    const result = await service.transition(context, "idea-a", "APPROVED");
+    const result = await service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT");
     expect(result).toMatchObject({ approvalSnapshot: { checksumSha256: expect.any(String) } });
     expect(db.ideaApprovalSnapshot.create).toHaveBeenCalledOnce();
     const original = { ...persisted };
     db.idea.findUnique.mockResolvedValue({
+      updatedAt: observedAt,
       id: "idea-a",
       status: "APPROVED",
       channelId: "channel-a",
@@ -163,7 +169,7 @@ describe("IdeaService", () => {
       costCurrency: "USD",
       workspaceId: "workspace-a",
     });
-    await service.transition(context, "idea-a", "SCHEDULED", new Date(Date.now() + 60_000));
+    await service.transition(context, "idea-a", "SCHEDULED", observedAt, "APPROVED", new Date(Date.now() + 60_000));
     expect(db.ideaApprovalSnapshot.create).toHaveBeenCalledOnce();
     expect(persisted).toEqual(original);
     expect(await service.getApproved(context, "idea-a")).toMatchObject({
@@ -219,13 +225,13 @@ describe("IdeaService", () => {
     db.idea.findUnique.mockResolvedValue(idea);
     db.idea.findMany.mockResolvedValue([{ topic: "one" }, { topic: "one" }, { topic: "one" }]);
     const service = new IdeaService(db as never, { proposeIdea: vi.fn() });
-    await expect(service.transition(context, "idea-a", "APPROVED")).rejects.toThrow("diversity");
+    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toThrow("diversity");
     db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
-    await expect(service.transition(context, "idea-a", "APPROVED")).rejects.toThrow("diversity");
+    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).rejects.toThrow("diversity");
     db.idea.findMany.mockResolvedValue([{ topic: "one" }, { topic: "two" }, { topic: "three" }]);
     db.idea.findUnique.mockResolvedValue({ ...idea, seriesId: "series-a" });
     db.ideaApprovalSnapshot.create.mockResolvedValue({});
-    await expect(service.transition(context, "idea-a", "APPROVED")).resolves.toBeDefined();
+    await expect(service.transition(context, "idea-a", "APPROVED", observedAt, "DRAFT")).resolves.toBeDefined();
   });
 
   it("validates an AI fixture through the same input boundary and records provenance", async () => {
