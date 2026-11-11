@@ -35,6 +35,37 @@ const llm = {
 } satisfies ScriptLlmPort;
 
 describe("script tenant and authorization gates", () => {
+  it("rejects stale caller revisions without creating or approving unseen content", async () => {
+    const document = {
+      schemaVersion: "1.0" as const,
+      title: "Test", hook: "Hook", dialogue: "", cta: "CTA",
+      metadata: { genre: "comedy", targetDurationSeconds: 1, factual: false },
+      scenes: [{
+        id: "scene", startSeconds: 0, durationSeconds: 1, characterRefs: [],
+        dialogue: "", visualDescription: "Visual", camera: "wide", audioCues: [],
+      }],
+    };
+    let writes = 0;
+    const staleDb = {
+      genre: { findFirst: async () => ({ safetyProfile: { requiresSourceBackedClaims: false } }) },
+      script: { findUnique: async () => ({
+        id: "script", currentRevision: 2, status: "REVISION_PENDING",
+        approvedIdeaChecksum: "checksum",
+        revisions: [{ revision: 2, document }],
+        snapshot: { references: [], checksumSha256: "checksum", idea: { status: "APPROVED" } },
+      }), updateMany: async () => { writes++; return { count: 1 }; } },
+      characterVersion: { findMany: async () => [] },
+      $transaction: async () => { writes++; },
+    } as unknown as Database;
+    const service = new ScriptService(staleDb, llm, new ProviderRegistry());
+    await expect(service.revise(context(), "script", document, 1)).rejects.toThrow(
+      "Script changed since the caller",
+    );
+    await expect(service.approve(context(), "script", 1)).rejects.toThrow(
+      "Script changed since the caller",
+    );
+    expect(writes).toBe(0);
+  });
   it("rejects viewers before any database/provider operation", async (): Promise<void> => {
     const service = new ScriptService(db(null), llm, new ProviderRegistry());
     await expect(
