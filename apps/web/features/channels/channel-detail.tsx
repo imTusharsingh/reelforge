@@ -60,7 +60,7 @@ function Detail({ channelId }: { channelId: string }): JSX.Element {
                 ? "Your workspace role is Viewer. Channel editing requires Owner or Editor."
                 : roleNotice}
             </Alert>
-          )
+          )}
           <Tabs
             label="Channel configuration sections"
             items={[
