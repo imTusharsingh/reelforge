@@ -26,10 +26,12 @@ describe("M21 responsive shell source contracts", () => {
     expect(styles).toContain(".rf-context-dialog::backdrop {");
   });
 
-  it("keeps Operations as a real enabled route with active-page semantics", () => {
+  it("keeps Operations and Production as real enabled routes with active-page semantics", () => {
     expect(shell).toContain('{ name: "Operations", href: "/operations" }');
+    expect(shell).toContain('{ name: "Production", href: "/production" }');
     expect(shell).toContain('{ name: "Channels", href: "/channels" }');
     expect(shell).toContain('pathname.startsWith("/channels/")');
+    expect(shell).toContain('pathname.startsWith("/production/")');
     expect(shell).toContain("aria-current={");
     expect(shell).toContain("shellActions");
   });

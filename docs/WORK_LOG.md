@@ -1074,6 +1074,14 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Validation: full workspace typecheck/lint/production build pass; 636 tests passed / 8 skipped (41 M24 tests), 17 mounted browser scenarios, 11 real Next/API/PostgreSQL scenarios and 4 PostgreSQL persistence scenarios pass. Final formatting/hosted CI is checked after source completion.
 - AI proposals/new-script generation and scene asset assignment remain unavailable under current backend capabilities. State remains IMPLEMENTED_PENDING_REVIEW; independent review requested, no self-approval or merge.
 
+## 2026-11-12 — M25 mandatory audit blocked on Core contracts
+
+- Started isolated `feat/m25-generation-studio` at main `7a81e07`, the confirmed M24 PR #55 merge. No product code changed.
+- Published endpoint/DTO, permission, provider readiness and safe invocation matrix plus scoped implementation plan in `docs/M25_CAPABILITY_AUDIT.md`.
+- Raised Core issues #59 (authorized media delivery) and #60 (discovery and safe pinned scene mutation contracts), assigned to minu-the-reviewer. Storage keys are not URLs; scene replace regenerates rather than assigns an asset; providers are NotConfigured.
+- M25 is BLOCKED before coding under #58's mandatory stop rule. All T01–T10 remain unchecked. No implementation PR, self-approval, merge or issue closure.
+- Verification is static audit only; required implementation lint/format/typecheck/test/build/DB/browser gates were not run. Exact command results and continuation steps are in M25 STATUS.
+
 ## 2026-11-12 — Core #60 production job discovery and safe scene mutations
 
 - Implemented additive workspace-scoped discovery for scene-media jobs and composition/render jobs, reading persisted production rows rather than usage-ledger lines or workflow references. Both lists support script/channel/status filters and bounded stable pagination.
@@ -1094,3 +1102,19 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Verification: focused unit suites pass (28 tests), HTTP integration suite against PostgreSQL passes (9 tests), lint/format:check/typecheck/production build PASS, `db:validate`/`db:check-migrations`/`security:secrets`/`git diff --check` PASS, full suite 665 passed / 8 skipped (673). Two full-suite runs passed; one full-suite run hit the pre-existing parallel-load flake in `script.integration.test.ts` ("keeps a prior-day response auditable across reset..."); that file passes 3/3 in isolation and is unrelated to this work package.
 - CI reliability: push and `pull_request` runs for the same branch shared one concurrency group, so opening a PR while the push run was in progress cancelled it and left `CANCELLED` check suites on the head commit. Added `github.event_name` to the concurrency group so the two event types run independently; within each event the newer commit still supersedes older runs. The replacement PR's `pull_request` run passed before this change; this change prevents the cancelled-push-suite rollup on subsequent commits.
 - State is IMPLEMENTED_PENDING_REVIEW on `work/core-59-media-delivery-v2` (PR #62; #61 was closed after its branch's Actions runs deadlocked in `queued`); no self-approval or merge. Issue #58 remains open and M25 remains blocked on independent review of #59.
+
+## 2026-11-12 — M25 Generation Studio implementation
+
+- Merged main `58b946e` (Core #59/#60) into `feat/m25-generation-studio`, preserving all append-only work-log entries. Implemented authenticated Production navigation and routes for persisted project discovery, approved-script entry, per-scene production, and render/export history.
+- Added strict workspace-scoped DTO parsing, server-capability gating, verified Owner/Editor writes and Viewer reads, expected revision/version/idempotency mutation requests, explicit ambiguous-response reconciliation, background polling, authoritative cost/budget presentation and pinned approved script context.
+- Added authorized asset and render previews/downloads through Core #59 API paths. Storage keys are never interpreted as URLs. Selected library-asset assignment remains disabled under Core #60; existing `{kind}` replacement is accurately labelled regeneration. Default NotConfigured providers keep all paid controls disabled.
+- Verification: focused production and shell tests 12/12; full lint/format/typecheck/production build pass; database schema/migration checks pass; full PostgreSQL suite 698 passed / 8 skipped; offline suite 516 passed / 189 skipped. The first full run failed only because the configured managed PostgreSQL service was not listening; after starting it and applying migrations 28–30, the same full command passed. Mounted Chromium passed 4 responsive/permission/media scenarios at 1440px and 390px with no page overflow. No live provider or external side effect.
+- State is IMPLEMENTED_PENDING_REVIEW at implementation commit `f278fa4`. The branch was pushed under verified `imTusharsingh` identity and non-draft PR #66 targets `main` with `Closes #58`; independent review is requested from `minu-the-reviewer`. Hosted exact-head CI and review remain. No self-approval or merge.
+
+## 2026-11-12 — M25 PR #66 review follow-up
+
+- Addressed independent review R1 by loading the job's exact immutable revision from the workspace/script-scoped revision-history route, validating bounded pagination and the exact revision number, and refusing missing, duplicate or mismatched revision data. The studio no longer presents the mutable latest script beside pinned outputs. Regression fixtures advance the latest script to revision 2 with changed/reordered scenes while asserting the revision-1 production title, narration, timing and scene order.
+- Addressed R2 by classifying unreadable JSON and invalid DTOs from successful mutation responses as uncertain. Create/retry keys remain stable across recovery; scene mutations retain the original job version, operation payload and idempotency key, observe persisted state first, and only replay that exact key when the job has not advanced. Deterministic failures during an uncertain replay cannot discard the saved key and enable a fresh paid dispatch.
+- Also completed backlog #64's nonblocking follow-up: media failure state is tied to media identity, so a regenerated asset URL can recover without remounting the surrounding output card.
+- Verification after fixes: focused production/shell tests 15/15; full PostgreSQL suite 701 passed / 8 skipped; lint, format, typecheck, production build, database validation, 30-migration guard, secret scan and `git diff --check` pass. Mounted Chromium passes 6/6 scenarios, including exact historical revision presentation, same-key truncated-response reconciliation and media recovery. No live provider or external production side effect.
+- Review fixes are pending commit/push and independent re-review. No self-approval or merge.
