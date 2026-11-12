@@ -502,40 +502,35 @@ export class SceneMediaService {
 
     try {
       await this.withOperationHeartbeat(context.workspaceId, jobId, operationId, async () => {
-      const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs), {
-        mode: "pinned",
-        revision: job.scriptRevision,
-        configSnapshotId: job.configSnapshotId,
-        promptSnapshotId: job.promptSnapshotId,
-      });
-      const selection = selectionFor(operation, target);
-      await this.execute(context, jobId, plan, selection, operationId);
-      const after = await this.activeGenerations(context.workspaceId, jobId);
-      await this.requireOperationLease(context.workspaceId, jobId, operationId);
-      await this.db.sceneMediaMutation.updateMany({
-        where: {
-          workspaceId: context.workspaceId,
-          id: mutationId,
-          status: "IN_PROGRESS",
-        },
-        data: { status: "SUCCEEDED", sceneVersionAfter: maxSceneVersion(after) },
-      });
+        const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs), {
+          mode: "pinned",
+          revision: job.scriptRevision,
+          configSnapshotId: job.configSnapshotId,
+          promptSnapshotId: job.promptSnapshotId,
+        });
+        const selection = selectionFor(operation, target);
+        await this.execute(context, jobId, plan, selection, operationId);
+        const after = await this.activeGenerations(context.workspaceId, jobId);
+        await this.db.$transaction(async (tx) => {
+          await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+          await tx.sceneMediaMutation.updateMany({
+            where: { workspaceId: context.workspaceId, id: mutationId, status: "IN_PROGRESS" },
+            data: { status: "SUCCEEDED", sceneVersionAfter: maxSceneVersion(after) },
+          });
+        });
       });
     } catch (error) {
-      await this.db.sceneMediaMutation
-        .updateMany({
-          where: {
-            workspaceId: context.workspaceId,
-            id: mutationId,
-            status: "IN_PROGRESS",
-          },
+      await this.db.$transaction(async (tx) => {
+        await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+        await tx.sceneMediaMutation.updateMany({
+          where: { workspaceId: context.workspaceId, id: mutationId, status: "IN_PROGRESS" },
           data: {
             status: "FAILED",
             errorCode: error instanceof HttpException ? error.name : "MUTATION_FAILED",
             errorMessage: safeMessage(error),
           },
-        })
-        .catch(() => undefined);
+        });
+      }).catch(() => undefined);
       throw error;
     } finally {
       await this.releaseOperation(context.workspaceId, jobId, operationId);
@@ -836,9 +831,12 @@ export class SceneMediaService {
     operationId: string,
   ): Promise<void> {
     await this.requireOperationLease(context.workspaceId, jobId, operationId);
-    await this.db.sceneMediaJob.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-      data: { status: "RUNNING" },
+    await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+      await tx.sceneMediaJob.updateMany({
+        where: { workspaceId: context.workspaceId, id: jobId, leaseId: operationId },
+        data: { status: "RUNNING" },
+      });
     });
     try {
       const active = await this.activeGenerations(context.workspaceId, jobId);
@@ -871,7 +869,7 @@ export class SceneMediaService {
               .filter((output) => output.status === "SUCCEEDED" || output.status === "REUSED")
               .map((output) => output.kind),
           );
-          await this.runScene(context, jobId, plan, planned, previous, reuse);
+          await this.runScene(context, jobId, plan, planned, previous, reuse, operationId);
           continue;
         }
         if (selection.type === "regenerate") {
@@ -953,10 +951,12 @@ export class SceneMediaService {
             );
       statuses.push(status);
     }
-    await this.requireOperationLease(context.workspaceId, jobId, operationId);
-    await this.db.sceneGeneration.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
-      data: { status: rollupScene(statuses) },
+    await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+      await tx.sceneGeneration.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
+        data: { status: rollupScene(statuses) },
+      });
     });
   }
 
@@ -1362,16 +1362,18 @@ export class SceneMediaService {
     kind: SceneMediaKind,
     failure: { status: "FAILED_RETRYABLE" | "FAILED_FINAL"; code: string; message: string },
   ): Promise<SceneOutputStatus> {
-    await this.requireOperationLease(context.workspaceId, jobId, operationId);
-    await this.db.sceneGenerationOutput.create({
-      data: {
-        workspaceId: context.workspaceId,
-        sceneGenerationId: generationId,
-        kind,
-        status: failure.status,
-        errorCode: failure.code,
-        errorMessage: failure.message,
-      },
+    await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+      await tx.sceneGenerationOutput.create({
+        data: {
+          workspaceId: context.workspaceId,
+          sceneGenerationId: generationId,
+          kind,
+          status: failure.status,
+          errorCode: failure.code,
+          errorMessage: failure.message,
+        },
+      });
     });
     return failure.status;
   }
@@ -1402,7 +1404,6 @@ export class SceneMediaService {
       })),
     }));
   }
-
 
   /** Refresh live leases. Ownership checks also fence writes when an operation loses its lease. */
   private async withOperationHeartbeat<T>(
@@ -1468,15 +1469,21 @@ export class SceneMediaService {
       .catch(() => undefined);
   }
 
-  private async refreshJobStatus(workspaceId: string, jobId: string, operationId: string): Promise<void> {
-    await this.requireOperationLease(workspaceId, jobId, operationId);
-    const scenes = await this.db.sceneGeneration.findMany({
-      where: { workspaceId, jobId, activeSlot: 1 },
-      select: { status: true },
-    });
-    await this.db.sceneMediaJob.update({
-      where: { workspaceId_id: { workspaceId, id: jobId } },
-      data: { status: rollupJob(scenes.map((scene) => scene.status)) },
+  private async refreshJobStatus(
+    workspaceId: string,
+    jobId: string,
+    operationId: string,
+  ): Promise<void> {
+    await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(workspaceId, jobId, operationId, tx);
+      const scenes = await tx.sceneGeneration.findMany({
+        where: { workspaceId, jobId, activeSlot: 1 },
+        select: { status: true },
+      });
+      await tx.sceneMediaJob.updateMany({
+        where: { workspaceId, id: jobId, leaseId: operationId },
+        data: { status: rollupJob(scenes.map((scene) => scene.status)) },
+      });
     });
   }
 
