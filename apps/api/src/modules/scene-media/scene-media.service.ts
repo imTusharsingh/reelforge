@@ -525,12 +525,17 @@ export class SceneMediaService {
 
     try {
       await this.withOperationHeartbeat(context.workspaceId, jobId, operationId, async () => {
-        const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs), {
-          mode: "pinned",
-          revision: job.scriptRevision,
-          configSnapshotId: job.configSnapshotId,
-          promptSnapshotId: job.promptSnapshotId,
-        });
+        const plan = await this.plan(
+          context,
+          job.scriptId,
+          requestedOutputs(job.requestedOutputs),
+          {
+            mode: "pinned",
+            revision: job.scriptRevision,
+            configSnapshotId: job.configSnapshotId,
+            promptSnapshotId: job.promptSnapshotId,
+          },
+        );
         const selection = selectionFor(operation, target);
         await this.execute(context, jobId, plan, selection, operationId);
         const after = await this.activeGenerations(context.workspaceId, jobId);
@@ -543,17 +548,19 @@ export class SceneMediaService {
         });
       });
     } catch (error) {
-      await this.db.$transaction(async (tx) => {
-        await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
-        await tx.sceneMediaMutation.updateMany({
-          where: { workspaceId: context.workspaceId, id: mutationId, status: "IN_PROGRESS" },
-          data: {
-            status: "FAILED",
-            errorCode: error instanceof HttpException ? error.name : "MUTATION_FAILED",
-            errorMessage: safeMessage(error),
-          },
-        });
-      }).catch(() => undefined);
+      await this.db
+        .$transaction(async (tx) => {
+          await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+          await tx.sceneMediaMutation.updateMany({
+            where: { workspaceId: context.workspaceId, id: mutationId, status: "IN_PROGRESS" },
+            data: {
+              status: "FAILED",
+              errorCode: error instanceof HttpException ? error.name : "MUTATION_FAILED",
+              errorMessage: safeMessage(error),
+            },
+          });
+        })
+        .catch(() => undefined);
       throw error;
     } finally {
       await this.releaseOperation(context.workspaceId, jobId, operationId);
