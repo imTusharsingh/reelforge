@@ -264,26 +264,27 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       where: { id: budgetId },
       data: { reserved: 0, spent: 0, periodStart: new Date() },
     });
-    await expect(
-      Promise.all([
-        service.generate(context, {
-          approvedIdeaSnapshotId: snapshotId,
-          approvedIdeaChecksum: "checksum",
-          prompt: "one",
-          channelId,
-          configSnapshotId,
-          promptSnapshotId,
-        }),
-        service.generate(context, {
-          approvedIdeaSnapshotId: snapshotId,
-          approvedIdeaChecksum: "checksum",
-          prompt: "two",
-          channelId,
-          configSnapshotId,
-          promptSnapshotId,
-        }),
-      ]),
-    ).rejects.toThrow("daily budget");
+    const results = await Promise.allSettled([
+      service.generate(context, {
+        approvedIdeaSnapshotId: snapshotId,
+        approvedIdeaChecksum: "checksum",
+        prompt: "one",
+        channelId,
+        configSnapshotId,
+        promptSnapshotId,
+      }),
+      service.generate(context, {
+        approvedIdeaSnapshotId: snapshotId,
+        approvedIdeaChecksum: "checksum",
+        prompt: "two",
+        channelId,
+        configSnapshotId,
+        promptSnapshotId,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ message: "Provider daily budget exceeded" });
   });
   it("denies foreign script reads and keeps approved exports immutable", async () => {
     if (!db) return;
@@ -407,6 +408,11 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       data: { reserved: 0, spent: 0, periodStart: new Date() },
     });
     let day = new Date("2026-01-01T23:59:00.000Z");
+    // Wait for the first reservation to commit and dispatch before advancing time.
+    let entered!: () => void;
+    const dispatched = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     let release!: () => void;
     const hold = new Promise<void>((resolve): void => {
       release = resolve;
@@ -414,6 +420,7 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
     const delayed: ScriptLlmPort = {
       ...llm,
       complete: async (): Promise<Awaited<ReturnType<ScriptLlmPort["complete"]>>> => {
+        entered();
         await hold;
         return {
           output: document,
@@ -443,35 +450,43 @@ suite("ScriptService persisted tenant, lifecycle, and budget behavior", () => {
       promptSnapshotId,
       correlationId,
     });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    day = new Date("2026-01-02T00:01:00.000Z");
-    const second = new ScriptService(
-      db as Database,
-      {
-        ...llm,
-        complete: async (): Promise<Awaited<ReturnType<ScriptLlmPort["complete"]>>> => {
-          throw new Error("next day fails");
+    try {
+      await Promise.race([dispatched, pending]);
+      const priorDay = await db.providerBudgetReservation.findFirstOrThrow({
+        where: { workspaceId, correlationId },
+      });
+      expect(priorDay.status).toBe("RESERVED");
+      expect(priorDay.periodStart.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+      day = new Date("2026-01-02T00:01:00.000Z");
+      const second = new ScriptService(
+        db as Database,
+        {
+          ...llm,
+          complete: async (): Promise<Awaited<ReturnType<ScriptLlmPort["complete"]>>> => {
+            throw new Error("next day fails");
+          },
         },
-      },
-      registry,
-      () => day,
-    );
-    await expect(
-      second.generate(context, {
-        approvedIdeaSnapshotId: snapshotId,
-        approvedIdeaChecksum: "checksum",
-        prompt: "next day",
-        channelId,
-        configSnapshotId,
-        promptSnapshotId,
-        correlationId: randomUUID(),
-      }),
-    ).rejects.toThrow("next day fails");
-    const beforeFinish = await db.providerBudget.findUniqueOrThrow({ where: { id: budgetId } });
-    expect(beforeFinish.spent.toString()).toBe("0");
-    expect(beforeFinish.reserved.toString()).toBe("0");
-    release();
-    await pending;
+        registry,
+        () => day,
+      );
+      await expect(
+        second.generate(context, {
+          approvedIdeaSnapshotId: snapshotId,
+          approvedIdeaChecksum: "checksum",
+          prompt: "next day",
+          channelId,
+          configSnapshotId,
+          promptSnapshotId,
+          correlationId: randomUUID(),
+        }),
+      ).rejects.toThrow("next day fails");
+      const beforeFinish = await db.providerBudget.findUniqueOrThrow({ where: { id: budgetId } });
+      expect(beforeFinish.spent.toString()).toBe("0");
+      expect(beforeFinish.reserved.toString()).toBe("0");
+    } finally {
+      release();
+      await pending;
+    }
     const after = await db.providerBudget.findUniqueOrThrow({ where: { id: budgetId } });
     expect(after.reserved.toString()).toBe("0");
     expect(after.spent.toString()).toBe("0");
