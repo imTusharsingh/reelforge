@@ -38,6 +38,9 @@ class CapturingAuditService {
   }
 }
 
+// Full-suite Postgres/HTTP work needs headroom on constrained development machines.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
 const PREFIX = "/api/v1";

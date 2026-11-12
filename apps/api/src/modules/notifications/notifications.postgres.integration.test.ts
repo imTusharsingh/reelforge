@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createDatabaseClient } from "@reelforge/database";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChannelService } from "../channel/channel.service.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { OrchestrationService } from "../orchestration/orchestration.service.js";
@@ -23,6 +23,9 @@ import {
 import { NotificationsService } from "./notifications.service.js";
 import { NotificationIntakeSources } from "./notifications.sources.js";
 import { ChannelReportsService } from "./reports.service.js";
+
+// Full-suite Postgres/HTTP work needs headroom on constrained development machines.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);

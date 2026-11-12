@@ -18,5 +18,7 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     environment: "node",
+    // Keep database/HTTP suites from exhausting shared local resources under load.
+    maxWorkers: 2,
   },
 });

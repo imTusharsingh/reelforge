@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { createDatabaseClient } from "@reelforge/database";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChannelService } from "../channel/channel.service.js";
 import { StaticBudgetPolicy, UnconfiguredBudgetPolicy } from "./orchestration.budget.js";
 import { WorkflowLimitsService } from "./orchestration.limits.js";
@@ -18,6 +18,9 @@ import {
   type WorkflowStepDispatcherPort,
   type WorkflowStepKey,
 } from "./orchestration.types.js";
+
+// Full-suite Postgres/HTTP work needs headroom on constrained development machines.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
