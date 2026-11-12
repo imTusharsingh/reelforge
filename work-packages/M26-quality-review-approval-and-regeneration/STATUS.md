@@ -1,9 +1,9 @@
 # M26 Status - Quality Review, Approval & Regeneration
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
-- **Last updated:** 2026-11-11
+- **State:** READY_FOR_IMPLEMENTATION
+- **Assigned session/editor:** M26 implementation handoff — unassigned
+- **Branch/worktree:** `feat/m26-quality-review-ui` (branch created; no implementation yet)
+- **Last updated:** 2026-11-12
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -13,7 +13,7 @@ Build review queue and video/scene review; show M11 checks and evaluator output;
 
 ## Completion estimate
 
-0% - planning package created; implementation has not started.
+0% implemented — Core backend contract audit and implementation handoff prepared; no UI code or tests have been executed.
 
 ## Task checklist
 
@@ -27,7 +27,7 @@ Build review queue and video/scene review; show M11 checks and evaluator output;
 
 ## Files changed
 
-- Work-package planning documentation only.
+- Work-package planning documentation and handoff status only. M26 implementation issue: #67.
 
 ## Commands and evidence
 
@@ -35,7 +35,10 @@ Build review queue and video/scene review; show M11 checks and evaluator output;
 
 ## Contract/schema proposals
 
-- None. Shared API/schema changes require proposal and approval.
+- Existing backend routes verified: `GET /quality/queue`, `GET /quality/runs/:runId`, `GET /quality/renders/:renderJobId/status`, `POST /quality/runs/:runId/decision`.
+- The queue returns only 50 current pending runs, not arbitrary historic discovery. Historic review records are present within individual run detail.
+- The decision endpoint requires a reason; `REQUEST_CHANGES` requires a regeneration target and may require an override reason for failed-gate mismatch.
+- Shared API/schema changes still require a separately reviewed Core proposal.
 
 ## Blockers / risks / unknowns
 
@@ -47,11 +50,11 @@ Build review queue and video/scene review; show M11 checks and evaluator output;
 
 ## Next exact action
 
-Inspect the current repository and dependencies, refine the implementation plan against actual code and API contracts, then start after required decisions are confirmed.
+Implement M26-T01–T07 from issue #67 on `feat/m26-quality-review-ui`; add focused tests and browser scenarios; run real verification; open a non-draft PR and request independent `minu-the-reviewer` review.
 
 ## Handoff notes
 
-This is a planning baseline, not evidence of implementation or completion.
+M25 PR #66 was independently approved and squash-merged into `main` as `fd8692588c5628d7dda25bd041ff2292b22e99ef`. Issue #67 provides verified quality API contracts, seven task definitions, safety boundaries and exact acceptance checks. Branch prepared from that merge; this is a handoff, not evidence of M26 UI implementation.
 
 ## Reviewer decision
 
