@@ -1441,8 +1441,12 @@ export class SceneMediaService {
       if (renewing || lost) return;
       renewing = true;
       void this.requireOperationLease(workspaceId, jobId, operationId)
-        .catch(() => { lost = true; })
-        .finally(() => { renewing = false; });
+        .catch(() => {
+          lost = true;
+        })
+        .finally(() => {
+          renewing = false;
+        });
     }, OPERATION_HEARTBEAT_MS);
     timer.unref();
     try {
