@@ -1,0 +1,79 @@
+-- EXACT SQL PROPOSAL v1; NOT A MIGRATION; NOT APPROVED; DO NOT EXECUTE.
+-- Baseline: 18926530477d53b5dcb96ffa55f905eee1a02ce4, latest namespace 20261120020000.
+-- S2-S5 are Prisma mappings/default annotations only: preserve all existing physical objects.
+BEGIN;
+LOCK TABLE "channels", "channel_config_snapshots" IN SHARE ROW EXCLUSIVE MODE;
+ALTER TABLE "channels" ADD CONSTRAINT "channels_workspace_id_active_snapshot_id_fkey"
+ FOREIGN KEY ("workspace_id", "active_snapshot_id") REFERENCES "channel_config_snapshots"("workspace_id", "id")
+ ON DELETE RESTRICT ON UPDATE CASCADE NOT VALID;
+ALTER TABLE "channels" VALIDATE CONSTRAINT "channels_workspace_id_active_snapshot_id_fkey";
+ALTER TABLE "channels" DROP CONSTRAINT "channels_active_snapshot_fkey";
+CREATE TYPE "PaidAiKind" AS ENUM ('IDEA_PROPOSAL','QUALITY_REVIEW','INSIGHT_NARRATIVE');
+CREATE TYPE "PaidAiOperationState" AS ENUM ('READY','DISPATCHING','RESULT_READY','SUCCEEDED','FAILED','UNCERTAIN','NOT_DISPATCHED');
+CREATE TYPE "PublishingCorrelationOrigin" AS ENUM ('REQUEST','WORKFLOW','LEGACY_RECOVERY');
+CREATE TABLE "paid_ai_operations" (
+ "id" UUID PRIMARY KEY,
+ "workspace_id" UUID NOT NULL,
+ "kind" "PaidAiKind" NOT NULL,
+ "operation_key" UUID NOT NULL,
+ "attempt_id" UUID NOT NULL UNIQUE,
+ "attempt_number" INTEGER NOT NULL DEFAULT 1,
+ "channel_id" UUID,
+ "workflow_run_id" UUID,
+ "origin_correlation_id" UUID NOT NULL,
+ "requested_by_user_id" UUID NOT NULL,
+ "fingerprint_version" INTEGER NOT NULL DEFAULT 1,
+ "request_sha256" TEXT NOT NULL,
+ "provider_id" TEXT NOT NULL,
+ "capability_id" TEXT NOT NULL,
+ "provider_configuration_id" TEXT NOT NULL,
+ "estimate" DECIMAL(18,8) NOT NULL,
+ "currency" TEXT NOT NULL,
+ "budget_authorization" JSONB NOT NULL,
+ "state" "PaidAiOperationState" NOT NULL,
+ "reservation_id" UUID,
+ "provider_request_id" UUID,
+ "normalized_result" JSONB,
+ "result_provenance" JSONB,
+ "result_type" TEXT,
+ "result_id" TEXT,
+ "error_code" TEXT,
+ "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ "updated_at" TIMESTAMPTZ(6) NOT NULL,
+ "dispatch_started_at" TIMESTAMPTZ(6),
+ "dispatch_deadline_at" TIMESTAMPTZ(6),
+ "completed_at" TIMESTAMPTZ(6),
+ CONSTRAINT "paid_ai_operations_workspace_id_id_key" UNIQUE ("workspace_id","id"),
+ CONSTRAINT "paid_ai_operations_identity_key" UNIQUE ("workspace_id","kind","operation_key"),
+ CONSTRAINT "paid_ai_operations_attempt_check" CHECK ("attempt_number"=1),
+ CONSTRAINT "paid_ai_operations_fingerprint_check" CHECK ("fingerprint_version"=1 AND "request_sha256" ~ '^[0-9a-f]{64}$'),
+ CONSTRAINT "paid_ai_operations_provider_check" CHECK (length(btrim("provider_id"))>0 AND length(btrim("capability_id"))>0 AND length(btrim("provider_configuration_id"))>0),
+ CONSTRAINT "paid_ai_operations_money_check" CHECK ("estimate">=0 AND "estimate" <> 'NaN'::numeric AND "currency" ~ '^[A-Z]{3}$'),
+ CONSTRAINT "paid_ai_operations_authorization_check" CHECK (jsonb_typeof("budget_authorization")='object'),
+ CONSTRAINT "paid_ai_operations_links_check" CHECK ("reservation_id" IS NOT NULL AND "provider_request_id" IS NOT NULL),
+ CONSTRAINT "paid_ai_operations_dispatch_check" CHECK (
+  ("state" IN ('READY','NOT_DISPATCHED') AND "dispatch_started_at" IS NULL AND "dispatch_deadline_at" IS NULL)
+  OR ("state" NOT IN ('READY','NOT_DISPATCHED') AND "dispatch_started_at" IS NOT NULL AND "dispatch_deadline_at" IS NOT NULL AND "dispatch_deadline_at">"dispatch_started_at")),
+ CONSTRAINT "paid_ai_operations_completion_check" CHECK (
+  ("state" IN ('SUCCEEDED','FAILED','NOT_DISPATCHED') AND "completed_at" IS NOT NULL)
+  OR ("state" NOT IN ('SUCCEEDED','FAILED','NOT_DISPATCHED') AND "completed_at" IS NULL)),
+ CONSTRAINT "paid_ai_operations_result_check" CHECK (
+  ("state" IN ('RESULT_READY','SUCCEEDED') AND "normalized_result" IS NOT NULL AND "result_provenance" IS NOT NULL AND jsonb_typeof("result_provenance")='object')
+  OR ("state" NOT IN ('RESULT_READY','SUCCEEDED') AND "normalized_result" IS NULL AND "result_provenance" IS NULL)),
+ CONSTRAINT "paid_ai_operations_domain_ref_check" CHECK (
+  ("state"='SUCCEEDED' AND "result_type" IS NOT NULL AND length(btrim("result_type"))>0 AND "result_id" IS NOT NULL AND length(btrim("result_id"))>0)
+  OR ("state"<>'SUCCEEDED' AND "result_type" IS NULL AND "result_id" IS NULL)),
+ CONSTRAINT "paid_ai_operations_workspace_fkey" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+ CONSTRAINT "paid_ai_operations_channel_fkey" FOREIGN KEY ("workspace_id","channel_id") REFERENCES "channels"("workspace_id","id") ON DELETE NO ACTION ON UPDATE CASCADE,
+ CONSTRAINT "paid_ai_operations_run_fkey" FOREIGN KEY ("workspace_id","workflow_run_id") REFERENCES "workflow_runs"("workspace_id","id") ON DELETE NO ACTION ON UPDATE CASCADE,
+ CONSTRAINT "paid_ai_operations_reservation_fkey" FOREIGN KEY ("workspace_id","reservation_id") REFERENCES "usage_reservations"("workspace_id","id") ON DELETE NO ACTION ON UPDATE CASCADE,
+ CONSTRAINT "paid_ai_operations_request_fkey" FOREIGN KEY ("workspace_id","provider_request_id") REFERENCES "provider_requests"("workspace_id","id") ON DELETE NO ACTION ON UPDATE CASCADE
+);
+CREATE INDEX "paid_ai_operations_workspace_state_created_idx" ON "paid_ai_operations"("workspace_id","state","created_at");
+ALTER TABLE "publish_jobs" ADD COLUMN "origin_correlation_id" UUID, ADD COLUMN "correlation_origin" "PublishingCorrelationOrigin";
+ALTER TABLE "publish_attempts" ADD COLUMN "origin_correlation_id" UUID, ADD COLUMN "correlation_origin" "PublishingCorrelationOrigin";
+ALTER TABLE "publish_jobs" ADD CONSTRAINT "publish_jobs_origin_pair_check" CHECK (("origin_correlation_id" IS NULL)=("correlation_origin" IS NULL));
+ALTER TABLE "publish_attempts" ADD CONSTRAINT "publish_attempts_origin_pair_check" CHECK (("origin_correlation_id" IS NULL)=("correlation_origin" IS NULL));
+-- Cross-table ledger/hold/status and identity equalities remain M08/M18 transactional invariants,
+-- not falsely represented as intra-row CHECK guarantees. No ledger/hold/history backfill.
+COMMIT;

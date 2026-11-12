@@ -173,3 +173,39 @@ These are implementation-specific choices, not permission to invent behavior:
 4. **Data retention durations:** owner must approve retention/deletion policy before production media/analytics data accumulates.
 
 Each pending decision must be resolved in an ADR before the affected production block is approved.
+
+## ADR-021 — M08 paid-operation boundary and M18 accounting
+
+- **Status:** ARCHITECTURE ACCEPTED, revision 2; implementation NOT authorized by this record.
+- **Exact accepted contract:** [preserved CC-69-A-01 / ADR-021 revision 2](proposals/issue-69-a/frozen/CC-69-A-01_ADR-021.md), [posted text #6832104336](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832104336).
+- **Independent acceptance:** [minu-the-reviewer #6832215027](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832215027). The revision-2 amendment controls conflicting earlier proposal wording. Original PENDING headers are preserved submission history.
+- **Decision:** M08 owns the paid-operation boundary; M18 owns transaction-aware reservation/authorization/settlement. Persist exact READY non-dispatch classification and atomic T2 dispatch claim. Unclaimed READY expiry produces zero false spend, while dispatched uncertainty remains conservatively covered; same-key uncertain replay never redispatches. Preserve M07 manual policy. A-POL-01 requires new M06/M11/M15 paths to fail closed without M18 authorization.
+- **Conditions:** Actual crash/expiry/lock/commit-ambiguity tests T21-13..19 and all remaining acceptance evidence are mandatory. Exact source, schema and SQL require their downstream gates; no implementation result is claimed.
+
+## ADR-022 — Conservative M17 publishing intake and bounded recovery
+
+- **Status:** ARCHITECTURE ACCEPTED; implementation NOT authorized by this record.
+- **Exact accepted contract:** [preserved CC-69-A-02 / ADR-022](proposals/issue-69-a/frozen/CC-69-A-02_ADR-022.md), [posted text #6831936692](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6831936692).
+- **Independent acceptance:** [minu-the-reviewer #6832033899](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832033899).
+- **Decision:** Owner A-POL-02 accepts scoped conservative intake limitations; retain no eventual-delivery, published_at acknowledgement or active broker-DLQ guarantee. Use validated M13-owned reads, poison-page blocking, bounded OWNER diagnostics/fingerprint replay with transactional audit, durable origin/marked legacy correlation, and prospective attempt-specific final failures. Preserve v1 wire contracts and ordinary cursor behavior.
+- **Conditions:** Demonstrate tenant/role/range/fingerprint denial, replay/audit atomicity, duplicate resistance, late-commit and malformed-event handling, owning-service boundaries and zero publication invocation during replay. Diagnostics describe only scanned committed rows and current receipt state, not universal delivery.
+
+## ADR-023 — Non-destructive schema reconciliation and A persistence
+
+- **Status:** SCHEMA ARCHITECTURE/INVENTORY ACCEPTED, revision 2; exact executable SQL NOT APPROVED.
+- **Exact accepted contract:** [preserved CC-69-A-03 / ADR-023 revision 2](proposals/issue-69-a/frozen/CC-69-A-03_ADR-023.md), [posted text #6832104919](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832104919).
+- **Independent acceptance:** [minu-the-reviewer #6832215027](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832215027), following directional acceptance in #6832033899.
+- **Decision:** S1 RESTRICT; preserve S2 creator FKs, S3 defaults, sixteen S4 physical FK names and five S5 index names/uniqueness. Add only accepted operation state/link/check inventory and nullable publishing correlation fields. Cross-table accounting invariants belong to M08/M18 transactions, not ordinary row CHECKs.
+- **Conditions:** Separate independent exact-SQL and lock/validation review before execution; fresh/populated-upgrade proof, previous migration checksums, tenant/workspace cascade behavior, SQL-only trigger/CHECK/partial-index preservation and empty executable diff. The inherited 84-line diff and [SQL proposal](proposals/issue-69-a/SQL_REVIEW_PROPOSAL.txt) are NOT authorized migrations. Recheck future timestamp before creation.
+
+## ADR-024 — Compatible audit paging and fatal-process safety
+
+- **Status:** ARCHITECTURE ACCEPTED; implementation NOT authorized by this record.
+- **Exact accepted contract:** [preserved CC-69-A-04 / ADR-024](proposals/issue-69-a/frozen/CC-69-A-04_ADR-024.md), [posted text #6831937795](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6831937795).
+- **Independent acceptance:** [minu-the-reviewer #6832033899](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832033899).
+- **Decision:** Opt-in exact PostgreSQL timestamp/UUID audit cursor, unchanged array and legacy before semantics, no multi-request snapshot promise; trusted stop uses fenced existing PAUSED state; narrow first-stop 409; Prisma/path redaction; transactional audit seam; handler-first heavy worker import; bounded best-effort fatal flush with accepted proposed default 2,000 ms, not a durability guarantee.
+- **Conditions:** Real child-process import/stalled-sink fault injection, timer/redaction/tenant/cursor tests, cancellation/attempt fencing, no new workflow state and preserved safe reconciliation. No executed application verification is claimed.
+
+### Issue #69(A) incorporation and remaining authority
+
+[Manager A-DOC-01](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832566412) authorizes only this documentation route. Architecture acceptance is not a GitHub PR APPROVE or final application Gate 0 release. Reviewed documentation incorporation, separate exact-SQL acceptance, shared-contract coordination with #65, and final Manager owned-path/application release remain required. ADR-020 is reserved for Workstream E; its omission here is intentional. PROJECT_STATE, WORK_LOG and package STATUS are not changed by this incorporation.
