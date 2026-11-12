@@ -140,7 +140,9 @@ Semantics:
 - Same key while the mutation is `IN_PROGRESS` returns HTTP 409. Clients must observe the job rather than start duplicate work.
 - Same key after a `FAILED` mutation returns HTTP 409. Clients must use a new key after resolving the failure.
 - A failed mutation still consumes its version. Clients must reload the package before retrying.
-- The lease lasts 30 minutes and is released on success or failure. If a process crashes, the next claim after lease expiry may take over; stale `IN_PROGRESS` mutations are reconciled to `FAILED` with `errorCode: STALE_OPERATION`. A request that outlives its lease must tolerate a takeover.
+- The lease has a 30-minute expiration window and is renewed every 15 seconds during a live create or mutation. The owner token is checked before paid dispatch and transactionally fenced before scene and output writes; a stale owner cannot commit new scene/asset/job state after ownership loss.
+- An expired lease is **not** proof that a provider stopped processing: if an active scene is still `PROVIDER_PROCESSING`, takeover fails with HTTP 409 and requires explicit provider reconciliation before further paid dispatch. This can require manual/operator action until provider-specific reconciliation is implemented. If no provider work is unresolved, a subsequent claim can take over and reconcile old `IN_PROGRESS` mutations to `FAILED` with `STALE_OPERATION`.
+- The heartbeat only protects this synchronous request lifetime. Future asynchronous vendors must persist external provider-job IDs and provide reconciliation/leases across worker restarts; do not present async vendor integrations as safe solely because the HTTP request uses a heartbeat.
 
 Mutations plan from the job's pinned `scriptRevision`, `configSnapshotId` and `promptSnapshotId`. If that revision is missing or its snapshot IDs no longer match the job, the mutation fails with HTTP 409 instead of planning from a newer script.
 
