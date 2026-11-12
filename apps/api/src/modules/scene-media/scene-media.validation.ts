@@ -4,6 +4,14 @@ import {
   type CapabilityMetadata,
   type ProviderEnvironment,
 } from "@reelforge/ai-providers";
+import {
+  ReplaceSceneMediaOutputRequestSchema,
+  SceneMediaJobListQuerySchema,
+  SceneMediaJobMutationRequestSchema,
+  type ReplaceSceneMediaOutputRequest,
+  type SceneMediaJobListQuery,
+  type SceneMediaJobMutationRequest,
+} from "@reelforge/contracts";
 import { z } from "zod";
 import type { AssetMediaType } from "../asset/asset.types.js";
 import {
@@ -26,15 +34,15 @@ const outputsSchema = z.object({
   dialogue: z.boolean().optional().default(false),
 });
 
-const createSchema = z.object({
-  scriptId: z.uuid(),
-  idempotencyKey: z.string().trim().min(1).max(200),
-  outputs: outputsSchema,
-});
-
-const replaceSchema = z.object({
-  kind: z.enum(["IMAGE", "VIDEO", "NARRATION", "DIALOGUE"]),
-});
+const createSchema = z
+  .object({
+    scriptId: z.uuid(),
+    /** The approved revision the caller observed. Pinned exactly into the new job. */
+    expectedScriptRevision: z.number().int().positive(),
+    idempotencyKey: z.string().trim().min(1).max(200),
+    outputs: outputsSchema,
+  })
+  .strict();
 
 const promptBundleSchema = z.object({
   renderedText: z.string().min(1),
@@ -187,6 +195,7 @@ const KIND_MEDIA: Readonly<Record<SceneMediaKind, readonly AssetMediaType[]>> = 
 
 export type CreateSceneMediaInput = Readonly<{
   scriptId: string;
+  expectedScriptRevision: number;
   idempotencyKey: string;
   outputs: RequestedOutputs;
 }>;
@@ -197,10 +206,22 @@ export function parseCreateInput(body: unknown): CreateSceneMediaInput {
   return parsed.data;
 }
 
-export function parseReplaceInput(body: unknown): SceneMediaKind {
-  const parsed = replaceSchema.safeParse(body);
+export function parseMutationInput(body: unknown): SceneMediaJobMutationRequest {
+  const parsed = SceneMediaJobMutationRequestSchema.safeParse(body);
   if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-  return parsed.data.kind;
+  return parsed.data;
+}
+
+export function parseReplaceInput(body: unknown): ReplaceSceneMediaOutputRequest {
+  const parsed = ReplaceSceneMediaOutputRequestSchema.safeParse(body);
+  if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+  return parsed.data;
+}
+
+export function parseSceneMediaJobListQuery(query: unknown): SceneMediaJobListQuery {
+  const parsed = SceneMediaJobListQuerySchema.safeParse(query);
+  if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+  return parsed.data;
 }
 
 export function parsePromptBundle(value: unknown): {
@@ -213,7 +234,10 @@ export function parsePromptBundle(value: unknown): {
 }
 
 export function providerEnvironment(env: NodeJS.ProcessEnv = process.env): ProviderEnvironment {
-  return env.NODE_ENV === "production" ? "production" : "development";
+  if (env.NODE_ENV === "production") return "production";
+  if (env.NODE_ENV === "staging") return "staging";
+  if (env.NODE_ENV === "test") return "test";
+  return "development";
 }
 
 export function applicableKinds(scene: ScriptScene, outputs: RequestedOutputs): SceneMediaKind[] {

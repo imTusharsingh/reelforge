@@ -7,7 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
 import {
   IMAGE_PROVIDER,
@@ -16,10 +16,19 @@ import {
   TTS_PROVIDER,
   VIDEO_PROVIDER,
   type ImageProviderPort,
+  type ProviderEnvironment,
   type ProviderRegistry,
   type TtsProviderPort,
   type VideoProviderPort,
 } from "@reelforge/ai-providers";
+import type {
+  SceneMediaCapabilityAvailability,
+  SceneMediaCapabilityCatalog,
+  SceneMediaCapabilityUnavailableReason,
+  SceneMediaJobList,
+  SceneMediaJobSummary,
+  SceneMediaMutationOperation,
+} from "@reelforge/contracts";
 import { AssetService } from "../asset/asset.service.js";
 import { buildAssetObjectKey } from "../asset/asset.validation.js";
 import { sha256Hex } from "../asset/storage/checksum.js";
@@ -65,8 +74,10 @@ import {
   isCompletePackage,
   normalizeMediaResult,
   parseCreateInput,
+  parseMutationInput,
   parsePromptBundle,
   parseReplaceInput,
+  parseSceneMediaJobListQuery,
   providerEnvironment,
   readVoice,
   validateGeneratedMedia,
@@ -76,13 +87,29 @@ import {
 
 type Plan = Readonly<{
   scriptId: string;
-  currentRevision: number;
+  revision: number;
   channelId: string | null;
   configId: string;
   promptId: string;
   budgetId: string;
   scenes: readonly PlannedScene[];
 }>;
+
+type PinnedJob = Readonly<{
+  id: string;
+  scriptId: string;
+  scriptRevision: number;
+  channelId: string | null;
+  version: number;
+  requestedOutputs: Prisma.JsonValue;
+  configSnapshotId: string;
+  promptSnapshotId: string;
+}>;
+
+type MutationTarget =
+  | Readonly<{ sceneId: null; outputKind: null }>
+  | Readonly<{ sceneId: string; outputKind: null }>
+  | Readonly<{ sceneId: string; outputKind: SceneMediaKind }>;
 
 type ActiveOutput = {
   id: string;
@@ -146,17 +173,25 @@ export class SceneMediaService {
           idempotencyKey: input.idempotencyKey,
         },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        scriptId: true,
+        scriptRevision: true,
+        requestedOutputs: true,
+      },
     });
-    if (existing) return this.present(context, existing.id);
-    const plan = await this.plan(context, input.scriptId, input.outputs);
+    if (existing) return this.replayCreate(context, existing, input);
+    const plan = await this.plan(context, input.scriptId, input.outputs, {
+      mode: "create",
+      expectedRevision: input.expectedScriptRevision,
+    });
     let jobId: string;
     try {
       const created = await this.db.sceneMediaJob.create({
         data: {
           workspaceId: context.workspaceId,
           scriptId: plan.scriptId,
-          scriptRevision: plan.currentRevision,
+          scriptRevision: plan.revision,
           channelId: plan.channelId,
           idempotencyKey: input.idempotencyKey,
           schemaVersion: SCENE_MEDIA_SCHEMA_VERSION,
@@ -178,10 +213,15 @@ export class SceneMediaService {
             idempotencyKey: input.idempotencyKey,
           },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          scriptId: true,
+          scriptRevision: true,
+          requestedOutputs: true,
+        },
       });
       if (!raced) throw error;
-      return this.present(context, raced.id);
+      return this.replayCreate(context, raced, input);
     }
     await this.execute(context, jobId, plan, { type: "initial" });
     return this.present(context, jobId);
@@ -189,6 +229,60 @@ export class SceneMediaService {
 
   public async get(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
     return this.present(context, jobId);
+  }
+
+  /** Workspace-scoped production history, including direct jobs with no usage-ledger rows. */
+  public async list(context: WorkspaceContext, query: unknown): Promise<SceneMediaJobList> {
+    const parsed = parseSceneMediaJobListQuery(query);
+    const rows = await this.db.sceneMediaJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        ...(parsed.scriptId === undefined ? {} : { scriptId: parsed.scriptId }),
+        ...(parsed.channelId === undefined ? {} : { channelId: parsed.channelId }),
+        ...(parsed.status === undefined ? {} : { status: parsed.status }),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (parsed.page - 1) * parsed.pageSize,
+      take: parsed.pageSize + 1,
+      select: {
+        id: true,
+        workspaceId: true,
+        scriptId: true,
+        scriptRevision: true,
+        channelId: true,
+        status: true,
+        version: true,
+        idempotencyKey: true,
+        configSnapshotId: true,
+        promptSnapshotId: true,
+        requestedOutputs: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    const hasNext = rows.length > parsed.pageSize;
+    return {
+      items: rows.slice(0, parsed.pageSize).map((row) => this.summary(row)),
+      page: parsed.page,
+      pageSize: parsed.pageSize,
+      nextPage: hasNext ? parsed.page + 1 : null,
+    };
+  }
+
+  /**
+   * Server-derived capability availability. This reads registration metadata only; it never
+   * performs a provider health probe, exposes credentials, or claims a vendor/model is ready.
+   */
+  public async capabilities(context: WorkspaceContext): Promise<SceneMediaCapabilityCatalog> {
+    const environment = providerEnvironment();
+    return {
+      workspaceId: context.workspaceId,
+      generatedAt: new Date().toISOString(),
+      environment,
+      capabilities: (["IMAGE", "VIDEO", "NARRATION", "DIALOGUE"] as const).map((kind) =>
+        this.capabilityAvailability(kind, environment),
+      ),
+    };
   }
 
   public async exportPackage(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
@@ -199,24 +293,31 @@ export class SceneMediaService {
     return pkg;
   }
 
-  public async retry(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
+  public async retry(
+    context: WorkspaceContext,
+    jobId: string,
+    body: unknown,
+  ): Promise<SceneMediaPackage> {
     this.editor(context);
-    const job = await this.requireJob(context, jobId);
-    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
-    await this.execute(context, job.id, plan, { type: "retry" });
-    return this.present(context, job.id);
+    const request = parseMutationInput(body);
+    return this.mutate(context, jobId, "RETRY", request, {
+      sceneId: null,
+      outputKind: null,
+    });
   }
 
   public async regenerate(
     context: WorkspaceContext,
     jobId: string,
     sceneId: string,
+    body: unknown,
   ): Promise<SceneMediaPackage> {
     this.editor(context);
-    const job = await this.requireJob(context, jobId);
-    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
-    await this.execute(context, job.id, plan, { type: "regenerate", sceneId });
-    return this.present(context, job.id);
+    const request = parseMutationInput(body);
+    return this.mutate(context, jobId, "REGENERATE", request, {
+      sceneId,
+      outputKind: null,
+    });
   }
 
   public async replace(
@@ -226,11 +327,11 @@ export class SceneMediaService {
     body: unknown,
   ): Promise<SceneMediaPackage> {
     this.editor(context);
-    const kind = parseReplaceInput(body);
-    const job = await this.requireJob(context, jobId);
-    const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs));
-    await this.execute(context, job.id, plan, { type: "replace", sceneId, outputKind: kind });
-    return this.present(context, job.id);
+    const request = parseReplaceInput(body);
+    return this.mutate(context, jobId, "REPLACE", request, {
+      sceneId,
+      outputKind: request.kind,
+    });
   }
 
   public async providerHealth(
@@ -246,22 +347,305 @@ export class SceneMediaService {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
   }
 
+  private async replayCreate(
+    context: WorkspaceContext,
+    existing: Readonly<{
+      id: string;
+      scriptId: string;
+      scriptRevision: number;
+      requestedOutputs: Prisma.JsonValue;
+    }>,
+    input: Readonly<{
+      scriptId: string;
+      expectedScriptRevision: number;
+      outputs: RequestedOutputs;
+    }>,
+  ): Promise<SceneMediaPackage> {
+    if (
+      existing.scriptId !== input.scriptId ||
+      existing.scriptRevision !== input.expectedScriptRevision ||
+      !sameOutputs(requestedOutputs(existing.requestedOutputs), input.outputs)
+    ) {
+      throw new ConflictException(
+        "The same idempotency key requires the same script revision and requested outputs",
+      );
+    }
+    return this.present(context, existing.id);
+  }
+
+  /**
+   * Claim exactly one mutation for an observed job version, then execute it from the job's
+   * immutable pinned script revision and snapshots. A replay of a completed key returns the
+   * current package without dispatching paid work again.
+   */
+  private async mutate(
+    context: WorkspaceContext,
+    jobId: string,
+    operation: SceneMediaMutationOperation,
+    request: Readonly<{ idempotencyKey: string; expectedJobVersion: number }>,
+    target: MutationTarget,
+  ): Promise<SceneMediaPackage> {
+    const job = await this.requireJob(context, jobId);
+    const payload = mutationPayload(operation, request.expectedJobVersion, target);
+    const payloadHash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    const existing = await this.db.sceneMediaMutation.findUnique({
+      where: {
+        workspaceId_jobId_idempotencyKey: {
+          workspaceId: context.workspaceId,
+          jobId,
+          idempotencyKey: request.idempotencyKey,
+        },
+      },
+    });
+    if (existing) return this.replayMutation(context, jobId, existing, payloadHash);
+
+    let mutationId: string;
+    try {
+      mutationId = await this.db.$transaction(async (tx) => {
+        const current = await tx.sceneMediaJob.findUnique({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+          select: { version: true },
+        });
+        if (!current) throw new NotFoundException("Scene media job not found");
+        if (current.version !== request.expectedJobVersion) {
+          throw new ConflictException(
+            "The observed scene media job version is stale; reload the job and retry",
+          );
+        }
+        const claimed = await tx.sceneMediaJob.updateMany({
+          where: {
+            workspaceId: context.workspaceId,
+            id: jobId,
+            version: request.expectedJobVersion,
+          },
+          data: { version: { increment: 1 } },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException(
+            "A concurrent scene media mutation already changed this job; reload and retry",
+          );
+        }
+        const before = await this.activeGenerations(context.workspaceId, jobId);
+        const created = await tx.sceneMediaMutation.create({
+          data: {
+            workspaceId: context.workspaceId,
+            jobId,
+            operation,
+            status: "IN_PROGRESS",
+            idempotencyKey: request.idempotencyKey,
+            expectedJobVersion: request.expectedJobVersion,
+            payloadHash,
+            payload,
+            sceneIds: target.sceneId === null ? [] : [target.sceneId],
+            sceneVersionBefore: maxSceneVersion(before),
+            createdByUserId: context.userId,
+          },
+          select: { id: true },
+        });
+        return created.id;
+      });
+    } catch (error) {
+      // A same-key request may have won the unique-key or version race. Reconcile that
+      // completed/ongoing claim instead of dispatching a second paid mutation.
+      const raced = await this.db.sceneMediaMutation.findUnique({
+        where: {
+          workspaceId_jobId_idempotencyKey: {
+            workspaceId: context.workspaceId,
+            jobId,
+            idempotencyKey: request.idempotencyKey,
+          },
+        },
+      });
+      if (raced) return this.replayMutation(context, jobId, raced, payloadHash);
+      throw error;
+    }
+
+    try {
+      const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs), {
+        mode: "pinned",
+        revision: job.scriptRevision,
+        configSnapshotId: job.configSnapshotId,
+        promptSnapshotId: job.promptSnapshotId,
+      });
+      const selection = selectionFor(operation, target);
+      await this.execute(context, jobId, plan, selection);
+      const after = await this.activeGenerations(context.workspaceId, jobId);
+      await this.db.sceneMediaMutation.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: mutationId } },
+        data: { status: "SUCCEEDED", sceneVersionAfter: maxSceneVersion(after) },
+      });
+    } catch (error) {
+      await this.db.sceneMediaMutation
+        .update({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id: mutationId } },
+          data: {
+            status: "FAILED",
+            errorCode: error instanceof HttpException ? error.name : "MUTATION_FAILED",
+            errorMessage: safeMessage(error),
+          },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+    return this.present(context, jobId);
+  }
+
+  private async replayMutation(
+    context: WorkspaceContext,
+    jobId: string,
+    existing: Readonly<{ payloadHash: string; status: string }>,
+    payloadHash: string,
+  ): Promise<SceneMediaPackage> {
+    if (existing.payloadHash !== payloadHash) {
+      throw new ConflictException(
+        "The same idempotency key requires the same operation, target, and observed job version",
+      );
+    }
+    if (existing.status === "SUCCEEDED") return this.present(context, jobId);
+    if (existing.status === "IN_PROGRESS") {
+      throw new ConflictException(
+        "This scene media mutation is already in progress; do not retry it",
+      );
+    }
+    throw new ConflictException("This scene media mutation failed; use a new idempotency key");
+  }
+
+  private summary(
+    row: Readonly<{
+      id: string;
+      workspaceId: string;
+      scriptId: string;
+      scriptRevision: number;
+      channelId: string | null;
+      status: SceneMediaJobStatus;
+      version: number;
+      idempotencyKey: string;
+      configSnapshotId: string;
+      promptSnapshotId: string;
+      requestedOutputs: Prisma.JsonValue;
+      createdAt: Date;
+      updatedAt: Date;
+    }>,
+  ): SceneMediaJobSummary {
+    return {
+      jobId: row.id,
+      workspaceId: row.workspaceId,
+      scriptId: row.scriptId,
+      scriptRevision: row.scriptRevision,
+      channelId: row.channelId,
+      status: row.status,
+      version: row.version,
+      idempotencyKey: row.idempotencyKey,
+      configSnapshotId: row.configSnapshotId,
+      promptSnapshotId: row.promptSnapshotId,
+      requestedOutputs: requestedOutputs(row.requestedOutputs),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private capabilityAvailability(
+    kind: SceneMediaKind,
+    environment: ProviderEnvironment,
+  ): SceneMediaCapabilityAvailability {
+    const capability = this.capabilityFor(kind);
+    const expectedProviderKind = providerKind(kind);
+    const label = capabilityLabel(kind);
+    if (capability.providerId === "unconfigured") {
+      return unavailable(kind, "PROVIDER_NOT_CONFIGURED", `${label} is not configured.`);
+    }
+    if (capability.kind !== expectedProviderKind) {
+      return unavailable(
+        kind,
+        "CAPABILITY_MISMATCH",
+        `${label} is bound to a provider capability of the wrong kind.`,
+      );
+    }
+    let registration: ReturnType<ProviderRegistry["get"]>;
+    try {
+      registration = this.registry.get(capability.providerId, capability.capabilityId);
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === "CAPABILITY_NOT_REGISTERED") {
+        return unavailable(
+          kind,
+          "CAPABILITY_NOT_REGISTERED",
+          `${label} provider capability is not registered for this environment.`,
+        );
+      }
+      throw error;
+    }
+    if (registration.capability.kind !== expectedProviderKind) {
+      return unavailable(
+        kind,
+        "CAPABILITY_MISMATCH",
+        `${label} registered capability does not match this media kind.`,
+      );
+    }
+    if (registration.credential.environment !== environment) {
+      return unavailable(
+        kind,
+        "PROVIDER_ENVIRONMENT_MISMATCH",
+        `${label} provider is not configured for this environment.`,
+      );
+    }
+    if (registration.capability.costModel.amount === null) {
+      return unavailable(
+        kind,
+        "COST_UNKNOWN",
+        `${label} provider cost is unknown, so budget preflight cannot dispatch it.`,
+      );
+    }
+    return {
+      kind,
+      available: true,
+      reason: null,
+      message: `${label} capability is registered for this environment; no live health probe was performed.`,
+      providerId: capability.providerId,
+      capabilityId: capability.capabilityId,
+    };
+  }
+
   private async plan(
     context: WorkspaceContext,
     scriptId: string,
     outputs: RequestedOutputs,
+    pin:
+      | Readonly<{ mode: "create"; expectedRevision: number }>
+      | Readonly<{
+          mode: "pinned";
+          revision: number;
+          configSnapshotId: string;
+          promptSnapshotId: string;
+        }>,
   ): Promise<Plan> {
+    const expectedRevision = pin.mode === "create" ? pin.expectedRevision : pin.revision;
     const script = await this.db.script.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: scriptId } },
-      include: { revisions: { orderBy: { revision: "desc" }, take: 1 } },
+      include: { revisions: { where: { revision: expectedRevision }, take: 1 } },
     });
     if (!script) throw new NotFoundException("Script not found");
-    if (script.status !== "APPROVED") {
-      throw new ConflictException("Only approved scripts can generate scene media");
+    if (pin.mode === "create") {
+      if (script.status !== "APPROVED") {
+        throw new ConflictException("Only approved scripts can generate scene media");
+      }
+      if (script.currentRevision !== expectedRevision) {
+        throw new ConflictException(
+          "The observed script revision is stale; reload the approved script and retry",
+        );
+      }
     }
     const revision = script.revisions[0];
-    if (!revision || revision.revision !== script.currentRevision) {
-      throw new ConflictException("Approved script revision is inconsistent");
+    if (!revision || revision.revision !== expectedRevision) {
+      throw new ConflictException("The pinned approved script revision is unavailable");
+    }
+    if (
+      pin.mode === "pinned" &&
+      (revision.configSnapshotId !== pin.configSnapshotId ||
+        revision.promptSnapshotId !== pin.promptSnapshotId)
+    ) {
+      throw new ConflictException(
+        "The pinned script revision no longer matches the job's immutable configuration and prompt snapshots",
+      );
     }
     if (!revision.configSnapshotId || !revision.promptSnapshotId) {
       throw new ConflictException(
@@ -331,7 +715,7 @@ export class SceneMediaService {
     }
     return {
       scriptId: script.id,
-      currentRevision: script.currentRevision,
+      revision: revision.revision,
       channelId: script.channelId,
       configId: config.id,
       promptId: prompt.id,
@@ -960,13 +1344,19 @@ export class SceneMediaService {
     });
   }
 
-  private async requireJob(
-    context: WorkspaceContext,
-    jobId: string,
-  ): Promise<{ id: string; scriptId: string; requestedOutputs: Prisma.JsonValue }> {
+  private async requireJob(context: WorkspaceContext, jobId: string): Promise<PinnedJob> {
     const job = await this.db.sceneMediaJob.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-      select: { id: true, scriptId: true, requestedOutputs: true },
+      select: {
+        id: true,
+        scriptId: true,
+        scriptRevision: true,
+        channelId: true,
+        version: true,
+        requestedOutputs: true,
+        configSnapshotId: true,
+        promptSnapshotId: true,
+      },
     });
     if (!job) throw new NotFoundException("Scene media job not found");
     return job;
@@ -993,6 +1383,7 @@ export class SceneMediaService {
       scriptRevision: job.scriptRevision,
       channelId: job.channelId,
       status: job.status,
+      version: job.version,
       idempotencyKey: job.idempotencyKey,
       configSnapshotId: job.configSnapshotId,
       promptSnapshotId: job.promptSnapshotId,
@@ -1133,6 +1524,78 @@ function exceptionMessage(error: HttpException): string {
     if (Array.isArray(message)) return message.map((item) => String(item)).join("; ");
   }
   return error.message;
+}
+
+function sameOutputs(left: RequestedOutputs, right: RequestedOutputs): boolean {
+  return (
+    left.image === right.image &&
+    left.video === right.video &&
+    left.narration === right.narration &&
+    left.dialogue === right.dialogue
+  );
+}
+
+function mutationPayload(
+  operation: SceneMediaMutationOperation,
+  expectedJobVersion: number,
+  target: MutationTarget,
+): Prisma.InputJsonValue {
+  return {
+    operation,
+    expectedJobVersion,
+    sceneId: target.sceneId,
+    outputKind: target.outputKind,
+  };
+}
+
+function selectionFor(operation: SceneMediaMutationOperation, target: MutationTarget): Selection {
+  if (operation === "RETRY") return { type: "retry" };
+  if (operation === "REGENERATE") {
+    if (target.sceneId === null) {
+      throw new BadRequestException("A scene id is required for regeneration");
+    }
+    return { type: "regenerate", sceneId: target.sceneId };
+  }
+  if (target.sceneId === null || target.outputKind === null) {
+    throw new BadRequestException("A scene id and output kind are required for replacement");
+  }
+  return { type: "replace", sceneId: target.sceneId, outputKind: target.outputKind };
+}
+
+function maxSceneVersion(scenes: readonly Readonly<{ sceneVersion: number }>[]): number {
+  return scenes.reduce((max, scene) => Math.max(max, scene.sceneVersion), 0);
+}
+
+function unavailable(
+  kind: SceneMediaKind,
+  reason: SceneMediaCapabilityUnavailableReason,
+  message: string,
+): SceneMediaCapabilityAvailability {
+  return {
+    kind,
+    available: false,
+    reason,
+    message,
+    providerId: null,
+    capabilityId: null,
+  };
+}
+
+function providerKind(kind: SceneMediaKind): "image" | "video" | "tts" {
+  if (kind === "IMAGE") return "image";
+  if (kind === "VIDEO") return "video";
+  return "tts";
+}
+
+function capabilityLabel(kind: SceneMediaKind): string {
+  if (kind === "IMAGE") return "Image generation";
+  if (kind === "VIDEO") return "Motion generation";
+  if (kind === "NARRATION") return "Narration speech generation";
+  return "Dialogue speech generation";
+}
+
+function safeMessage(error: unknown): string {
+  return error instanceof Error ? error.message.slice(0, 1000) : "Scene media mutation failed";
 }
 
 function isUniqueConflict(error: unknown): boolean {

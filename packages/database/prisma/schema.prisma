@@ -228,6 +228,7 @@ model User {
   authEvents               AuthEvent[]
   createdIdeas             Idea[]                @relation("IdeaCreator")
   createdSceneMediaJobs    SceneMediaJob[]
+  createdSceneMediaMutations SceneMediaMutation[]
   createdRenderJobs        RenderJob[]
   createdQualityReviewRuns QualityReviewRun[]
   qualityDecisions         QualityDecision[]
@@ -280,6 +281,7 @@ model Workspace {
   providerBudgets             ProviderBudget[]
   providerBudgetReservations  ProviderBudgetReservation[]
   sceneMediaJobs              SceneMediaJob[]
+  sceneMediaMutations         SceneMediaMutation[]
   sceneGenerations            SceneGeneration[]
   sceneGenerationOutputs      SceneGenerationOutput[]
   renderJobs                  RenderJob[]
@@ -1526,6 +1528,7 @@ model SceneMediaJob {
   idempotencyKey   String               @map("idempotency_key")
   schemaVersion    String               @default("1.0") @map("schema_version")
   status           SceneMediaJobStatus  @default(QUEUED)
+  version          Int                  @default(1)
   requestedOutputs Json                 @map("requested_outputs")
   configSnapshotId String               @map("config_snapshot_id") @db.Uuid
   promptSnapshotId String               @map("prompt_snapshot_id") @db.Uuid
@@ -1539,12 +1542,57 @@ model SceneMediaJob {
   promptSnapshot   PromptBundleSnapshot @relation(fields: [workspaceId, promptSnapshotId], references: [workspaceId, id], onDelete: Restrict)
   createdBy        User                 @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   scenes           SceneGeneration[]
+  mutations        SceneMediaMutation[]
   renderJobs       RenderJob[]          @relation("SceneMediaRenderJobs")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey], map: "scene_media_jobs_idempotency_key")
   @@index([workspaceId, scriptId, createdAt])
+  @@index([workspaceId, channelId, createdAt])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, createdAt])
   @@map("scene_media_jobs")
+}
+
+enum SceneMediaMutationOperation {
+  RETRY
+  REGENERATE
+  REPLACE
+}
+
+enum SceneMediaMutationStatus {
+  IN_PROGRESS
+  SUCCEEDED
+  FAILED
+}
+
+model SceneMediaMutation {
+  id                 String                      @id @default(uuid()) @db.Uuid
+  workspaceId        String                      @map("workspace_id") @db.Uuid
+  jobId              String                      @map("job_id") @db.Uuid
+  operation          SceneMediaMutationOperation
+  status             SceneMediaMutationStatus    @default(IN_PROGRESS)
+  idempotencyKey     String                      @map("idempotency_key")
+  expectedJobVersion Int                         @map("expected_job_version")
+  payloadHash        String                      @map("payload_hash")
+  payload            Json
+  sceneIds           String[]                    @map("scene_ids")
+  sceneVersionBefore Int                         @map("scene_version_before")
+  sceneVersionAfter  Int?                        @map("scene_version_after")
+  errorCode          String?                     @map("error_code")
+  errorMessage       String?                     @map("error_message")
+  createdByUserId    String                      @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace          Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                SceneMediaJob               @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: Cascade)
+  createdBy          User                        @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, jobId, idempotencyKey], map: "scene_media_mutations_idempotency_key")
+  @@index([workspaceId, jobId, createdAt])
+  @@index([workspaceId, status, updatedAt])
+  @@map("scene_media_mutations")
 }
 
 model SceneGeneration {

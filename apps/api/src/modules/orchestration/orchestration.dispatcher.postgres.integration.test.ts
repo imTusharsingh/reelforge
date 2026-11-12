@@ -31,6 +31,7 @@ import type { RenderCompositionInput } from "../composition/composition.types.js
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { PublishingService } from "../publishing/publishing.service.js";
 import { QualityService } from "../quality/quality.service.js";
+import { providerEnvironment } from "../scene-media/scene-media.validation.js";
 import type { ScriptLlmPort } from "../script/script.types.js";
 import { ScriptService } from "../script/script.service.js";
 import { OrchestrationModule } from "./orchestration.module.js";
@@ -332,7 +333,13 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     for (const port of [llm, image, video, tts])
       registry.register({
         capability: port.capability,
-        credential: { providerId: "fixture", environment: "development", secret: "fixture-secret" },
+        credential: {
+          providerId: "fixture",
+          // Script generation still resolves its provider environment as development unless
+          // production, while scene media resolves the current test environment.
+          environment: port === llm ? "development" : providerEnvironment(),
+          secret: "fixture-secret",
+        },
       });
     module = await Test.createTestingModule({ imports: [OrchestrationModule] })
       .overrideProvider("DATABASE")

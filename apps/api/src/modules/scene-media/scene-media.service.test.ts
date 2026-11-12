@@ -17,6 +17,7 @@ import { characterSnapshotChecksum } from "../character/character.validation.js"
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { SceneDispatchLedger } from "./scene-media.budget.js";
 import { SceneMediaService } from "./scene-media.service.js";
+import { providerEnvironment } from "./scene-media.validation.js";
 import type { SceneMediaPackage } from "./scene-media.types.js";
 import type { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { BudgetExhaustedError } from "../usage-budget/usage-budget.types.js";
@@ -206,18 +207,23 @@ class MemoryStorage implements StoragePort {
 function memoryDatabase(state: MemoryState): {
   db: Database;
   assets: Array<Record<string, unknown>>;
+  jobs: Array<Record<string, unknown>>;
+  mutations: Array<Record<string, unknown>>;
 } {
   const jobs: Array<Record<string, unknown>> = [];
   const generations: Array<Record<string, unknown>> = [];
   const outputs: Array<Record<string, unknown>> = [];
   const assets: Array<Record<string, unknown>> = [];
+  const mutations: Array<Record<string, unknown>> = [];
   const rank: Record<string, number> = { IMAGE: 0, VIDEO: 1, NARRATION: 2, DIALOGUE: 3 };
   const db = {
     script: {
       findUnique: async ({
         where,
+        include,
       }: {
         where: { workspaceId_id: { workspaceId: string; id: string } };
+        include?: { revisions?: { where?: { revision?: number }; take?: number } };
       }): Promise<unknown> => {
         const script = state.script;
         if (
@@ -227,11 +233,15 @@ function memoryDatabase(state: MemoryState): {
         ) {
           return null;
         }
+        const revisionFilter = include?.revisions?.where?.revision;
+        const revisions = [...script.revisions]
+          .filter(
+            (revision) => revisionFilter === undefined || revision.revision === revisionFilter,
+          )
+          .sort((left, right) => Number(right.revision) - Number(left.revision));
         return {
           ...script,
-          revisions: [...script.revisions].sort(
-            (left, right) => Number(right.revision) - Number(left.revision),
-          ),
+          revisions: revisions.slice(0, include?.revisions?.take ?? revisions.length),
         };
       },
     },
@@ -313,7 +323,15 @@ function memoryDatabase(state: MemoryState): {
         ) {
           throw { code: "P2002" };
         }
-        const row = { id: randomUUID(), channelId: data.channelId ?? null, ...data };
+        const now = new Date();
+        const row = {
+          id: randomUUID(),
+          channelId: data.channelId ?? null,
+          version: data.version ?? 1,
+          createdAt: now,
+          updatedAt: now,
+          ...data,
+        };
         jobs.push(row);
         return row;
       },
@@ -331,6 +349,112 @@ function memoryDatabase(state: MemoryState): {
         );
         if (!row) throw new Error("missing job");
         Object.assign(row, data);
+        return row;
+      },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId: string; id: string; version: number };
+        data: { version: { increment: number } };
+      }): Promise<unknown> => {
+        const matched = jobs.filter(
+          (row) =>
+            row.workspaceId === where.workspaceId &&
+            row.id === where.id &&
+            row.version === where.version,
+        );
+        for (const row of matched) {
+          row.version = Number(row.version) + data.version.increment;
+          row.updatedAt = new Date();
+        }
+        return { count: matched.length };
+      },
+      findMany: async ({
+        where,
+        skip,
+        take,
+      }: {
+        where: {
+          workspaceId: string;
+          scriptId?: string;
+          channelId?: string;
+          status?: string;
+        };
+        skip?: number;
+        take?: number;
+      }): Promise<unknown> => {
+        const matched = jobs
+          .filter(
+            (row) =>
+              row.workspaceId === where.workspaceId &&
+              (where.scriptId === undefined || row.scriptId === where.scriptId) &&
+              (where.channelId === undefined || row.channelId === where.channelId) &&
+              (where.status === undefined || row.status === where.status),
+          )
+          .sort((left, right) => {
+            const byCreated =
+              new Date(String(right.createdAt)).getTime() -
+              new Date(String(left.createdAt)).getTime();
+            return byCreated !== 0 ? byCreated : String(right.id).localeCompare(String(left.id));
+          });
+        return matched.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take);
+      },
+    },
+    sceneMediaMutation: {
+      findUnique: async ({
+        where,
+      }: {
+        where: {
+          workspaceId_jobId_idempotencyKey: {
+            workspaceId: string;
+            jobId: string;
+            idempotencyKey: string;
+          };
+        };
+      }): Promise<unknown> =>
+        mutations.find(
+          (row) =>
+            row.workspaceId === where.workspaceId_jobId_idempotencyKey.workspaceId &&
+            row.jobId === where.workspaceId_jobId_idempotencyKey.jobId &&
+            row.idempotencyKey === where.workspaceId_jobId_idempotencyKey.idempotencyKey,
+        ) ?? null,
+      create: async ({
+        data,
+        select,
+      }: {
+        data: Record<string, unknown>;
+        select?: { id?: boolean };
+      }): Promise<unknown> => {
+        if (
+          mutations.some(
+            (row) =>
+              row.workspaceId === data.workspaceId &&
+              row.jobId === data.jobId &&
+              row.idempotencyKey === data.idempotencyKey,
+          )
+        ) {
+          throw { code: "P2002" };
+        }
+        const now = new Date();
+        const row = { id: randomUUID(), createdAt: now, updatedAt: now, ...data };
+        mutations.push(row);
+        return select?.id ? { id: row.id } : row;
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const row = mutations.find(
+          (item) =>
+            item.workspaceId === where.workspaceId_id.workspaceId &&
+            item.id === where.workspaceId_id.id,
+        );
+        if (!row) throw new Error("missing mutation");
+        Object.assign(row, data, { updatedAt: new Date() });
         return row;
       },
     },
@@ -429,7 +553,7 @@ function memoryDatabase(state: MemoryState): {
     $transaction: async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> =>
       callback(db),
   };
-  return { db: db as unknown as Database, assets };
+  return { db: db as unknown as Database, assets, jobs, mutations };
 }
 
 function harness(options?: {
@@ -442,12 +566,23 @@ function harness(options?: {
   characters?: Array<Record<string, unknown>>;
   cost?: number | null;
   usage?: Pick<UsageBudgetService, "reservePaidCall" | "finishPaidCall">;
+  channelId?: string | null;
+  currentRevision?: number;
+  revisions?: Array<{
+    revision: number;
+    document: Record<string, unknown>;
+    configSnapshotId: string;
+    promptSnapshotId: string;
+  }>;
 }): {
   service: SceneMediaService;
   context: WorkspaceContext;
   ledger: MemoryLedger;
   storage: MemoryStorage;
   assets: Array<Record<string, unknown>>;
+  jobs: Array<Record<string, unknown>>;
+  mutations: Array<Record<string, unknown>>;
+  state: MemoryState;
   imageCalls: Array<{ prompt: string; referenceImageIds?: readonly string[] }>;
   videoCalls: number;
   ttsCalls: string[];
@@ -519,7 +654,7 @@ function harness(options?: {
         capability: port.capability,
         credential: {
           providerId: port.capability.providerId,
-          environment: "development",
+          environment: providerEnvironment(),
           secret: "secret",
         },
       });
@@ -529,10 +664,10 @@ function harness(options?: {
     script: {
       id: scriptId,
       workspaceId,
-      channelId: null,
+      channelId: options?.channelId ?? null,
       status: options?.status ?? "APPROVED",
-      currentRevision: 1,
-      revisions: [
+      currentRevision: options?.currentRevision ?? 1,
+      revisions: options?.revisions ?? [
         {
           revision: 1,
           document: document(options?.scenes ?? [scene("one"), scene("two")]),
@@ -549,7 +684,7 @@ function harness(options?: {
       bundle: { renderedText: "Rendered snapshot prompt", fingerprintSha256: "a".repeat(64) },
       fingerprintSha256: "a".repeat(64),
     },
-    budget: { id: randomUUID(), workspaceId, channelId: null },
+    budget: { id: randomUUID(), workspaceId, channelId: options?.channelId ?? null },
     characters: (options?.characters ?? []).map((row) => ({ workspaceId, ...row })),
   };
   const memory = memoryDatabase(state);
@@ -590,6 +725,9 @@ function harness(options?: {
     ledger,
     storage,
     assets: memory.assets,
+    jobs: memory.jobs,
+    mutations: memory.mutations,
+    state,
     imageCalls,
     get videoCalls(): number {
       return videoCalls;
@@ -604,6 +742,7 @@ const createBody = (
   patch: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   scriptId,
+  expectedScriptRevision: 1,
   idempotencyKey: randomUUID(),
   outputs: { image: true, video: false, narration: false, dialogue: false },
   ...patch,
@@ -759,7 +898,10 @@ describe("scene media generation", () => {
     });
     const before = env.imageCalls.length;
     const ttsBefore = env.ttsCalls.length;
-    const retried = await env.service.retry(env.context, created.jobId);
+    const retried = await env.service.retry(env.context, created.jobId, {
+      idempotencyKey: randomUUID(),
+      expectedJobVersion: created.version,
+    });
     const sceneOne = retried.scenes.find((item) => item.sceneId === "one");
     const sceneTwo = retried.scenes.find((item) => item.sceneId === "two");
     expect(sceneOne?.sceneVersion).toBe(1);
@@ -779,12 +921,17 @@ describe("scene media generation", () => {
       ...createBody(env.scriptId),
       outputs: { image: true, video: false, narration: true, dialogue: false },
     });
-    const regenerated = await env.service.regenerate(env.context, created.jobId, "one");
+    const regenerated = await env.service.regenerate(env.context, created.jobId, "one", {
+      idempotencyKey: randomUUID(),
+      expectedJobVersion: created.version,
+    });
     expect(regenerated.scenes.find((item) => item.sceneId === "one")?.sceneVersion).toBe(2);
     expect(regenerated.scenes.find((item) => item.sceneId === "two")?.sceneVersion).toBe(1);
     expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: two"))).toHaveLength(1);
     const ttsAfterRegenerate = env.ttsCalls.length;
     const replaced = await env.service.replace(env.context, created.jobId, "two", {
+      idempotencyKey: randomUUID(),
+      expectedJobVersion: regenerated.version,
       kind: "IMAGE",
     });
     const sceneTwo = replaced.scenes.find((item) => item.sceneId === "two");
@@ -1099,6 +1246,235 @@ describe("scene media generation", () => {
         outputs: { image: true, video: false, narration: false, dialogue: false },
       }),
     ).rejects.toThrow(/could not be finalized/i);
+  });
+
+  it("rejects a stale observed script revision before dispatch", async () => {
+    const env = harness({ currentRevision: 2 });
+    await expect(
+      env.service.create(env.context, createBody(env.scriptId, { expectedScriptRevision: 1 })),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(env.imageCalls).toHaveLength(0);
+    expect(env.jobs).toHaveLength(0);
+  });
+
+  it("replays a create key only for the same script revision and outputs", async () => {
+    const env = harness();
+    const body = createBody(env.scriptId, { idempotencyKey: "pinned-create" });
+    const created = await env.service.create(env.context, body);
+    await expect(
+      env.service.create(env.context, { ...body, expectedScriptRevision: 2 }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      env.service.create(env.context, {
+        ...body,
+        outputs: { image: true, video: true, narration: false, dialogue: false },
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(env.jobs).toHaveLength(1);
+    expect(created.version).toBe(1);
+  });
+
+  it("plans retries from the job's pinned revision and snapshots, not the newer script", async () => {
+    const env = harness({ scenes: [scene("one", { narration: undefined, dialogue: "" })] });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    const script = env.state.script;
+    if (!script) throw new Error("fixture script missing");
+    script.currentRevision = 2;
+    script.revisions.push({
+      revision: 2,
+      document: document([scene("three", { narration: undefined, dialogue: "" })]),
+      configSnapshotId: randomUUID(),
+      promptSnapshotId: randomUUID(),
+    });
+    const retried = await env.service.retry(env.context, created.jobId, {
+      idempotencyKey: "pinned-retry",
+      expectedJobVersion: created.version,
+    });
+    expect(retried.scriptRevision).toBe(1);
+    expect(retried.configSnapshotId).toBe(created.configSnapshotId);
+    expect(retried.promptSnapshotId).toBe(created.promptSnapshotId);
+    expect(retried.scenes.map((item) => item.sceneId)).toEqual(["one"]);
+    expect(env.imageCalls.every((call) => call.prompt.includes("Rendered snapshot prompt"))).toBe(
+      true,
+    );
+  });
+
+  it("refuses to plan a mutation when the pinned revision snapshots no longer match", async () => {
+    const env = harness({ scenes: [scene("one", { narration: undefined, dialogue: "" })] });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    const script = env.state.script;
+    if (!script) throw new Error("fixture script missing");
+    const revision = script.revisions[0];
+    if (!revision) throw new Error("fixture revision missing");
+    revision.configSnapshotId = randomUUID();
+    await expect(
+      env.service.retry(env.context, created.jobId, {
+        idempotencyKey: "snapshot-drift",
+        expectedJobVersion: created.version,
+      }),
+    ).rejects.toThrow(/immutable configuration and prompt snapshots/i);
+    expect(env.imageCalls).toHaveLength(1);
+  });
+
+  it("rejects stale job versions and concurrent mutations atomically", async () => {
+    let failed = false;
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => {
+          if (!failed) {
+            failed = true;
+            throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
+          }
+          return {
+            mediaId: `img-${request.correlationId}`,
+            providerJobId: `job-${request.correlationId}`,
+            metadata: { modelVersion: "m", promptVersion: "p", cost: 1, currency: "USD" },
+            media: { declaredMediaType: "image/png", body: PNG },
+          };
+        },
+      },
+    });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    await expect(
+      env.service.retry(env.context, created.jobId, {
+        idempotencyKey: "stale-version",
+        expectedJobVersion: created.version + 1,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const callsBefore = env.imageCalls.length;
+    const results = await Promise.allSettled([
+      env.service.retry(env.context, created.jobId, {
+        idempotencyKey: "concurrent-a",
+        expectedJobVersion: created.version,
+      }),
+      env.service.retry(env.context, created.jobId, {
+        idempotencyKey: "concurrent-b",
+        expectedJobVersion: created.version,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" && rejected.reason).toBeInstanceOf(ConflictException);
+    expect(env.imageCalls.length).toBe(callsBefore + 1);
+    expect(env.mutations).toHaveLength(1);
+    const job = env.jobs[0];
+    expect(job?.version).toBe(created.version + 1);
+  });
+
+  it("replays a completed mutation without dispatching paid work and rejects key reuse", async () => {
+    let failed = false;
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => {
+          if (!failed) {
+            failed = true;
+            throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
+          }
+          return {
+            mediaId: `img-${request.correlationId}`,
+            providerJobId: `job-${request.correlationId}`,
+            metadata: { modelVersion: "m", promptVersion: "p", cost: 1, currency: "USD" },
+            media: { declaredMediaType: "image/png", body: PNG },
+          };
+        },
+      },
+    });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    const request = { idempotencyKey: "lost-response", expectedJobVersion: created.version };
+    const first = await env.service.retry(env.context, created.jobId, request);
+    const callsAfterFirst = env.imageCalls.length;
+    const replay = await env.service.retry(env.context, created.jobId, request);
+    expect(replay.version).toBe(first.version);
+    expect(env.imageCalls).toHaveLength(callsAfterFirst);
+    expect(env.mutations).toHaveLength(1);
+    await expect(
+      env.service.regenerate(env.context, created.jobId, "one", request),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("derives capability availability with explicit reasons and no live probe", async () => {
+    const unconfigured = harness({
+      register: false,
+      image: { capability: capability("image", 1, { providerId: "unconfigured" }) },
+    });
+    const catalog = await unconfigured.service.capabilities(unconfigured.context);
+    expect(catalog.capabilities.find((item) => item.kind === "IMAGE")).toMatchObject({
+      available: false,
+      reason: "PROVIDER_NOT_CONFIGURED",
+      providerId: null,
+      capabilityId: null,
+    });
+    expect(catalog.capabilities.find((item) => item.kind === "VIDEO")).toMatchObject({
+      available: false,
+      reason: "CAPABILITY_NOT_REGISTERED",
+    });
+    const unknownCost = harness({ image: { capability: capability("image", null) } });
+    const costCatalog = await unknownCost.service.capabilities(unknownCost.context);
+    expect(costCatalog.capabilities.find((item) => item.kind === "IMAGE")).toMatchObject({
+      available: false,
+      reason: "COST_UNKNOWN",
+    });
+    const registered = harness();
+    const ready = await registered.service.capabilities(registered.context);
+    expect(ready.capabilities.find((item) => item.kind === "IMAGE")).toMatchObject({
+      available: true,
+      reason: null,
+      providerId: "fixture",
+      capabilityId: "image",
+    });
+  });
+
+  it("lists workspace-scoped direct jobs with filters, pagination, and viewer reads", async () => {
+    const channelId = randomUUID();
+    const env = harness({
+      channelId,
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+    });
+    const first = await env.service.create(
+      env.context,
+      createBody(env.scriptId, { idempotencyKey: "list-one" }),
+    );
+    const second = await env.service.create(
+      env.context,
+      createBody(env.scriptId, { idempotencyKey: "list-two" }),
+    );
+    const page = await env.service.list(
+      { ...env.context, role: "VIEWER" },
+      {
+        scriptId: env.scriptId,
+        channelId,
+        status: "SUCCEEDED",
+        page: 1,
+        pageSize: 1,
+      },
+    );
+    expect(page.items).toHaveLength(1);
+    expect(page.nextPage).toBe(2);
+    const last = await env.service.list(env.context, {
+      scriptId: env.scriptId,
+      channelId,
+      status: "SUCCEEDED",
+      page: 2,
+      pageSize: 1,
+    });
+    expect(last.items).toHaveLength(1);
+    expect([...page.items, ...last.items].map((item) => item.jobId).sort()).toEqual(
+      [first.jobId, second.jobId].sort(),
+    );
+    expect(last.nextPage).toBeNull();
+    const foreign = await env.service.list(
+      { ...env.context, workspaceId: randomUUID() },
+      { page: 1, pageSize: 25 },
+    );
+    expect(foreign.items).toHaveLength(0);
+    const wrongChannel = await env.service.list(env.context, {
+      channelId: randomUUID(),
+      page: 1,
+      pageSize: 25,
+    });
+    expect(wrongChannel.items).toHaveLength(0);
   });
 
   it("rejects a character reference whose checksum does not match the published package", async () => {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -19,6 +19,15 @@ export class CompositionController {
   ): Promise<RenderJobView> {
     return this.context(request, workspaceId).then((context) =>
       this.composition.create(context, body),
+    );
+  }
+  @Get("jobs") public list(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query() query: unknown,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) =>
+      this.composition.list(context, query),
     );
   }
   @Get("jobs/:jobId") public get(

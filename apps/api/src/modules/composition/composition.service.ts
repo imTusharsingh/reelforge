@@ -14,6 +14,7 @@ import { renderRetryDelayMs } from "./composition.retry-policy.js";
 import type { RenderManifest } from "./composition.manifest.js";
 
 import { canonicalRenderFingerprint, MediaValidationError } from "@reelforge/media";
+import type { RenderJobList } from "@reelforge/contracts";
 import { createHash } from "node:crypto";
 import {
   STORAGE_PORT,
@@ -39,6 +40,7 @@ import {
   createRenderSchema,
   editRenderSchema,
   parse,
+  parseRenderJobListQuery,
   validateComposition,
 } from "./composition.validation.js";
 
@@ -101,6 +103,76 @@ export class CompositionService {
   }
   public async get(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     return this.present(context, id);
+  }
+
+  /** Workspace-scoped render history, including jobs with no usage-ledger rows. */
+  public async list(context: WorkspaceContext, query: unknown): Promise<RenderJobList> {
+    const parsed = parseRenderJobListQuery(query);
+    const rows = await this.db.renderJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        ...(parsed.status === undefined ? {} : { status: parsed.status }),
+        ...(parsed.scriptId === undefined && parsed.channelId === undefined
+          ? {}
+          : {
+              sceneMediaJob: {
+                ...(parsed.scriptId === undefined ? {} : { scriptId: parsed.scriptId }),
+                ...(parsed.channelId === undefined ? {} : { channelId: parsed.channelId }),
+              },
+            }),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (parsed.page - 1) * parsed.pageSize,
+      take: parsed.pageSize + 1,
+      select: {
+        id: true,
+        workspaceId: true,
+        sceneMediaJobId: true,
+        parentJobId: true,
+        status: true,
+        attempt: true,
+        idempotencyKey: true,
+        inputFingerprint: true,
+        retentionDays: true,
+        cancelRequestedAt: true,
+        errorCode: true,
+        errorMessage: true,
+        createdAt: true,
+        updatedAt: true,
+        expiredAt: true,
+        _count: { select: { artifacts: true } },
+        sceneMediaJob: {
+          select: { scriptId: true, scriptRevision: true, channelId: true },
+        },
+      },
+    });
+    const hasNext = rows.length > parsed.pageSize;
+    return {
+      items: rows.slice(0, parsed.pageSize).map((row) => ({
+        jobId: row.id,
+        workspaceId: row.workspaceId,
+        sceneMediaJobId: row.sceneMediaJobId,
+        scriptId: row.sceneMediaJob.scriptId,
+        scriptRevision: row.sceneMediaJob.scriptRevision,
+        channelId: row.sceneMediaJob.channelId,
+        status: row.status,
+        attempt: row.attempt,
+        idempotencyKey: row.idempotencyKey,
+        inputFingerprint: row.inputFingerprint,
+        parentJobId: row.parentJobId,
+        retentionDays: row.retentionDays,
+        cancelRequestedAt: row.cancelRequestedAt?.toISOString() ?? null,
+        errorCode: row.errorCode,
+        errorMessage: row.errorMessage,
+        artifactCount: row._count.artifacts,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        expiredAt: row.expiredAt?.toISOString() ?? null,
+      })),
+      page: parsed.page,
+      pageSize: parsed.pageSize,
+      nextPage: hasNext ? parsed.page + 1 : null,
+    };
   }
   public async getManifest(context: WorkspaceContext, id: string): Promise<RenderManifest> {
     const job = await this.present(context, id);
