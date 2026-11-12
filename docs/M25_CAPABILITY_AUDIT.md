@@ -1,5 +1,9 @@
 # M25 backend capability audit
 
+## Core resolution
+
+Core issues #59 and #60 are merged on `main` at `f143d2e` and `58b946e`. M25 merged that main tip in branch commit `15dfd0a` and consumed only the approved contracts. The authorized media routes, persisted job discovery, server-derived capability catalog, observed revision creation, and versioned/idempotent mutation behavior are now implemented. Selected library-asset assignment remains explicitly absent by Core decision; the UI exposes the real gallery and labels selection unavailable while keeping the existing `{kind}` regeneration semantics.
+
 Audited 2026-11-12 (Asia/Calcutta), main `7a81e0710b4c1ff6ae1375aacb3ef6d89634db0e` (merged M24 PR #55). Branch: `feat/m25-generation-studio`; worktree: `/workspace/reelforge-m25`. Static source audit only; no provider or application HTTP calls.
 
 ## Authorization and readiness
@@ -25,11 +29,11 @@ DTOs named below are existing module-local types, not new shared contracts. Sour
 | T09 preview | GET `composition/jobs/:jobId` → RenderJobView; GET manifest → RenderManifest | Metadata and manifest reads; manifest requires successful complete artifact set and verifies stored bytes | No authorized browser media byte/URL delivery; #59 blocks real preview |
 | T10 render/export/history | POST `composition/jobs` / `jobs/:jobId/retry` with validated input/idempotencyKey/retentionDays; POST cancel; GET manifest. GET `scene-media/jobs/:jobId/export` → complete SceneMediaPackage | Render creates durable jobs; retry pins fingerprint and bounded child lineage; scene export is JSON, not a video. Usage breakdown lists renderJobId/status | No video download route. No general render list; usage can discover render jobs per script. #59; complete production history decision #60 |
 
-## Core decisions required
+## Core decisions resolved
 
-- [#59](https://github.com/imTusharsingh/reelforge/issues/59): authorized immutable media preview/download and render artifact delivery.
-- [#60](https://github.com/imTusharsingh/reelforge/issues/60): complete discovery, capability availability decision, selected-asset assignment decision, pinned scene inputs and safe mutation semantics.
-- No schema change is assumed necessary. Core chooses and implements any shared contracts/backend/schema changes in a separate assignment. Reduced acceptance requires a written Core decision.
+- [#59](https://github.com/imTusharsingh/reelforge/issues/59): closed by merged Core PR #62; M25 uses authenticated asset-version and render-artifact content paths.
+- [#60](https://github.com/imTusharsingh/reelforge/issues/60): closed by merged Core PR #63; M25 uses complete discovery, capability availability, expected script revisions, observed job versions and operation idempotency.
+- M25 made no shared contract, backend, schema, migration or root-tooling changes.
 - `docs/PROJECT_STATE.md` still describes M19-era progress; latest main, WORK_LOG and the assigned package establish the actual M24 baseline. No architectural decision is inferred from stale progress text.
 
 ## Scoped implementation plan after Core resolution

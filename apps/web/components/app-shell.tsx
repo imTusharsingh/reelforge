@@ -11,7 +11,7 @@ const destinations = [
   { name: "Channels", href: "/channels" },
   { name: "Planning", href: "/planning" },
   { name: "Operations", href: "/operations" },
-  { name: "Production", href: null },
+  { name: "Production", href: "/production" },
   { name: "Review queue", href: null },
   { name: "Publishing", href: null },
   { name: "Insights", href: null },
@@ -27,12 +27,13 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
           <li key={name}>
             {href ? (
               <StudioLink
-                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) ? "rf-nav-item--current" : ""}`.trim()}
+                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
                 aria-current={
                   pathname === href ||
                   (href === "/channels" && pathname.startsWith("/channels/")) ||
-                  (href === "/planning" && pathname.startsWith("/planning/"))
+                  (href === "/planning" && pathname.startsWith("/planning/")) ||
+                  (href === "/production" && pathname.startsWith("/production/"))
                     ? "page"
                     : undefined
                 }
