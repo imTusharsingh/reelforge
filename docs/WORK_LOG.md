@@ -1134,3 +1134,8 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-12 — M26 PR handoff
 
 - Pushed implementation commit `b6241dd` on `feat/m26-quality-review-ui` using verified `imTusharsingh` authentication. Opened non-draft PR #68 targeting `main` with `Closes #67` and explicitly requested `minu-the-reviewer`. Hosted CI queued; implementation and verification evidence remain in M26 STATUS and the PR description. No self-approval or merge.
+
+
+## 2026-11-12 — M26 scorecard boundary verification
+
+- Tightened scorecard validation to mirror the existing M11 strict allowed fields, criterion evidence/list limits and model/prompt provenance lengths, with a regression test. No backend/shared contract changes. Focused Review tests: 43 passed; full local PostgreSQL suite: 744 passed / 8 skipped; mounted Chromium: 17/17 passed. Lint, format, full typecheck and production build rerun successfully. Hosted CI passed for prior handoff commit `a94413a`; monitor the final follow-up commit before handoff. Independent review remains requested; no self-approval or merge.

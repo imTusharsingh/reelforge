@@ -110,26 +110,44 @@ export function parseGates(v: unknown): Gate[] {
   if (new Set(v.map((g) => (g as Gate).id)).size !== v.length) invalid();
   return v as Gate[];
 }
+const onlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  Object.keys(value).every((key) => keys.includes(key));
+const boundedText = (value: unknown, maximum: number): boolean =>
+  text(value) && value.trim().length <= maximum;
+const criterionStrings = (value: unknown, minimum = 0): boolean =>
+  Array.isArray(value) &&
+  value.length >= minimum &&
+  value.length <= 20 &&
+  value.every((item) => boundedText(item, 1000));
 function parseScorecard(v: unknown): Scorecard | null {
   if (v === null) return null;
-  if (!record(v) || !score(v.score) || !record(v.criteria) || !record(v.metadata)) invalid();
+  if (
+    !record(v) ||
+    !onlyKeys(v, ["criteria", "score", "metadata"]) ||
+    !score(v.score) ||
+    !record(v.criteria) ||
+    !onlyKeys(v.criteria, criteria) ||
+    !record(v.metadata) ||
+    !onlyKeys(v.metadata, ["modelVersion", "promptVersion", "cost", "currency", "usage"])
+  )
+    invalid();
   for (const id of criteria) {
     const c = v.criteria[id];
     if (
       !record(c) ||
       !score(c.score) ||
-      !strings(c.evidence) ||
-      c.evidence.length === 0 ||
-      !strings(c.limitations)
+      !onlyKeys(c, ["score", "evidence", "limitations"]) ||
+      !criterionStrings(c.evidence, 1) ||
+      !criterionStrings(c.limitations)
     )
       invalid();
   }
   const m = v.metadata;
   if (
-    !text(m.modelVersion) ||
-    !text(m.promptVersion) ||
+    !boundedText(m.modelVersion, 200) ||
+    !boundedText(m.promptVersion, 200) ||
     !(m.cost === null || (typeof m.cost === "number" && Number.isFinite(m.cost) && m.cost >= 0)) ||
-    (m.currency !== undefined && !text(m.currency))
+    (m.currency !== undefined && !boundedText(m.currency, 20))
   )
     invalid();
   if (

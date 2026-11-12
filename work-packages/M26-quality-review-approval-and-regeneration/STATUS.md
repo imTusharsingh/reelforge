@@ -36,7 +36,7 @@
 - Read Issue #67 via GitHub, complete work package, M11 service/controller/validation/types, M24/M25 UI/API/browser patterns, design system, decision log and architecture/governance documents.
 - `pnpm install --frozen-lockfile`: passed; pinned dependencies unchanged.
 - `bash /workspace/environment/reelforge/start-postgres.sh`: local PostgreSQL ready. `pnpm db:migrate:deploy`: passed, 30 existing migrations present; applied only three outstanding M24/M25 migrations to the disposable development database.
-- `pnpm exec vitest run apps/web/features/review`: passed, 42 tests in 2 files.
+- `pnpm exec vitest run apps/web/features/review`: passed, 43 tests in 2 files.
 - `pnpm --filter @reelforge/web typecheck`: passed.
 - `pnpm typecheck`, `pnpm lint`, `NODE_ENV=production pnpm build`: passed in initial full verification. Final rerun recorded below when complete.
 - `NODE_ENV=test pnpm test`: initial full run passed, 97 files passed / 2 skipped, 741 tests passed / 8 skipped. Two additional recovery-storage tests were added afterward; final result recorded below.
@@ -67,15 +67,15 @@ All final commands exited 0:
 | `pnpm format:check` | PASS (rechecked after documentation and local evidence formatting) |
 | `pnpm lint` | PASS |
 | `pnpm typecheck` | PASS, all workspace packages |
-| `NODE_ENV=test pnpm test` | PASS, 97 files passed / 2 skipped; 743 tests passed / 8 skipped |
+| `NODE_ENV=test pnpm test` | PASS, 97 files passed / 2 skipped; 744 tests passed / 8 skipped |
 | `NODE_ENV=production pnpm build` | PASS, including both new review routes |
 | `pnpm db:validate` | PASS |
 | `pnpm db:check-migrations` | PASS, 30 existing migrations |
 | `pnpm security:secrets` | PASS; repeated after staging to include new files |
 | `git diff --check` | PASS |
 
-The final format recheck initially found only the generated local `work/final-checks.json` missing a trailing newline; formatting that ignored evidence file resolved it without a tracked tooling change. Final browser rerun: 17/17 passed; focused review tests: 42/42 passed. Implementation is complete within the existing contracts. Remaining work is independent review and CI confirmation; no self-approval or merge.
+The final format recheck initially found only the generated local `work/final-checks.json` missing a trailing newline; formatting that ignored evidence file resolved it without a tracked tooling change. Final browser rerun: 17/17 passed; focused review tests: 43/43 passed. A final trust-boundary follow-up mirrors M11 strict scorecard fields and evidence/provenance bounds, with a regression test. Lint, format, typecheck, the full PostgreSQL suite, mounted browser scenarios and production build were re-executed after the follow-up. Implementation is complete within the existing contracts. Remaining work is independent review and CI confirmation; no self-approval or merge.
 
 ## Next action and reviewer decision
 
-Implementation commit `b6241dd` was pushed. Non-draft [PR #68](https://github.com/imTusharsingh/reelforge/pull/68) targets `main`, includes `Closes #67`, and has an explicit review request for `minu-the-reviewer` under the verified `imTusharsingh` account. Hosted CI was queued at handoff creation. Next: monitor CI and address any failures, then await independent review. Do not self-approve or merge.
+Implementation commit `b6241dd` was pushed. Non-draft [PR #68](https://github.com/imTusharsingh/reelforge/pull/68) targets `main`, includes `Closes #67`, and has an explicit review request for `minu-the-reviewer` under the verified `imTusharsingh` account. Hosted CI passed for handoff commit `a94413a` (run 43182345807). The final scorecard-boundary follow-up is reverified locally and its hosted CI must also pass. Next: monitor CI and address any failures, then await independent review. Do not self-approve or merge.

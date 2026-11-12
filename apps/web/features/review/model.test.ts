@@ -62,6 +62,27 @@ describe("M26 persisted quality contracts", () => {
       parseRun({ ...review, scorecard: { ...scorecard, metadata: {} } }, workspaceId),
     ).toThrow();
   });
+  it("rejects scorecards outside the persisted M11 evidence/provenance bounds", () => {
+    for (const invalid of [
+      { ...scorecard, metadata: { ...scorecard.metadata, modelVersion: "m".repeat(201) } },
+      { ...scorecard, metadata: { ...scorecard.metadata, extra: "unsupported" } },
+      {
+        ...scorecard,
+        criteria: {
+          ...scorecard.criteria,
+          FACTUALITY: { score: 84, evidence: Array(21).fill("Evidence"), limitations: [] },
+        },
+      },
+      {
+        ...scorecard,
+        criteria: {
+          ...scorecard.criteria,
+          FACTUALITY: { score: 84, evidence: ["e".repeat(1001)], limitations: [] },
+        },
+      },
+    ])
+      expect(() => parseRun({ ...review, scorecard: invalid }, workspaceId)).toThrow();
+  });
   it.each(["OWNER", "EDITOR"])("allows validated %s approval and rejection", (role) => {
     for (const action of ["APPROVE", "REJECT"] as const)
       expect(() =>
