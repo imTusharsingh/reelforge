@@ -1,4 +1,16 @@
-# Separate exact SQL review packet — PENDING
+# Separate exact SQL review packet — REQUEST CHANGES / NOT APPROVED
+
+## Current decision — 2026-11-13 IST
+
+**SQL v1: REQUEST CHANGES / NOT APPROVED.** Independent [Minu exact-SQL review #6832724919](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832724919) issued an adverse decision; this is not merely an unreviewed candidate. The [subsequent SQL-01 disposition #6832990843](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832990843) resolves the suspected S1 cascade regression **only for the reproduced baseline graph**, not the full SQL proposal.
+
+The distinct direct-hard-delete policy is still awaiting owner/Manager acknowledgement: new paid-operation NO ACTION references block direct channel/workflow/hold/request deletion while an operation exists; workspace cascade succeeded in synthetic fixtures. No detachment, purge or deferrable alternative is preapproved. SQL-02 operator-reviewed lock/timeout/validation/rollback procedure, SQL-03 paired Prisma schema/migration and preservation/zero-drift proof, and SQL-04 full CHECK/FK/financial transaction validation remain outstanding.
+
+The scoped PostgreSQL reproduction evidence is [#6832944568](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832944568) and [#6832945162](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832945162): 42 cases and three workspace COMMIT probes, not execution of SQL v1 or complete application verification. The earlier “no A database command” and “NOT RUN” statements below describe the historical submission, not these later scoped reproductions. No application migration has been created or executed.
+
+Keep SQL_REVIEW_PROPOSAL.txt as historical, unapproved v1. Independent Core acceptance of revised exact SQL and separate Manager authorization are required before any migration execution; application Gate 0 remains BLOCKED.
+
+## Historical SQL v1 submission — preserved, superseded review status
 
 This packet proposes the full text in SQL_REVIEW_PROPOSAL.txt. It is not executable migration authorization, not a created migration and not empirical safety proof. Base: 18926530477d53b5dcb96ffa55f905eee1a02ce4; 30 existing migrations; latest 20261120020000. Exact inherited 84-line drift is schema-drift-baseline.txt and ADR-023's appendix. Reproduce baseline after execution is authorized; no A database command has run.
 

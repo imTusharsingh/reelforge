@@ -77,3 +77,7 @@ ALTER TABLE "publish_attempts" ADD CONSTRAINT "publish_attempts_origin_pair_chec
 -- Cross-table ledger/hold/status and identity equalities remain M08/M18 transactional invariants,
 -- not falsely represented as intra-row CHECK guarantees. No ledger/hold/history backfill.
 COMMIT;
+
+-- HISTORICAL V1: REQUEST CHANGES / NOT APPROVED (#6832724919).
+-- SQL-01 resolved only for the reproduced graph (#6832990843); hard-delete policy and SQL-02..04 remain open.
+-- No migration execution or application Gate 0 authorization.

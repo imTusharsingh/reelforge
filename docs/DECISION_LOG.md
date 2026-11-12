@@ -198,6 +198,8 @@ Each pending decision must be resolved in an ADR before the affected production 
 - **Decision:** S1 RESTRICT; preserve S2 creator FKs, S3 defaults, sixteen S4 physical FK names and five S5 index names/uniqueness. Add only accepted operation state/link/check inventory and nullable publishing correlation fields. Cross-table accounting invariants belong to M08/M18 transactions, not ordinary row CHECKs.
 - **Conditions:** Separate independent exact-SQL and lock/validation review before execution; fresh/populated-upgrade proof, previous migration checksums, tenant/workspace cascade behavior, SQL-only trigger/CHECK/partial-index preservation and empty executable diff. The inherited 84-line diff and [SQL proposal](proposals/issue-69-a/SQL_REVIEW_PROPOSAL.txt) are NOT authorized migrations. Recheck future timestamp before creation.
 
+- **Exact SQL adverse review:** SQL v1 is **REQUEST CHANGES / NOT APPROVED**, per [Minu #6832724919](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832724919). [SQL-01 disposition #6832990843](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832990843) resolves the S1 cascade hypothesis only for the reproduced graph; distinct hard-delete policy and SQL-02–04 remain open. See the [current SQL outcome](proposals/issue-69-a/SQL_REVIEW.md). Architecture acceptance is unchanged; no migration/application release follows.
+
 ## ADR-024 — Compatible audit paging and fatal-process safety
 
 - **Status:** ARCHITECTURE ACCEPTED; implementation NOT authorized by this record.

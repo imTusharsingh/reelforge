@@ -23,3 +23,13 @@ The top-level CC/ADR files duplicate the frozen exact reviewed bodies. Historica
 4. Perform actual implementation acceptance and full verification only after release. Architecture acceptance and documentation checks are not passing runtime tests.
 
 ADR-020 and PROJECT_STATE remain E-owned. WORK_LOG and package STATUS appends are deferred until #68's shared ownership is coordinated. FINAL_GATE0.md and FINAL_OWNERSHIP.md are deliberately omitted to avoid turning historical proposed scope into implementation authority. Agent F alone owns CI/process changes. PR #70 is preserved. No live provider, schema/migration, application, frontend, root tooling, dependency or workflow change is included.
+
+## Current decision — 2026-11-13 IST
+
+**SQL v1: REQUEST CHANGES / NOT APPROVED.** Independent [Minu exact-SQL review #6832724919](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832724919) issued an adverse decision; this is not merely an unreviewed candidate. The [subsequent SQL-01 disposition #6832990843](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832990843) resolves the suspected S1 cascade regression **only for the reproduced baseline graph**, not the full SQL proposal.
+
+The distinct direct-hard-delete policy is still awaiting owner/Manager acknowledgement: new paid-operation NO ACTION references block direct channel/workflow/hold/request deletion while an operation exists; workspace cascade succeeded in synthetic fixtures. No detachment, purge or deferrable alternative is preapproved. SQL-02 operator-reviewed lock/timeout/validation/rollback procedure, SQL-03 paired Prisma schema/migration and preservation/zero-drift proof, and SQL-04 full CHECK/FK/financial transaction validation remain outstanding.
+
+The scoped PostgreSQL reproduction evidence is [#6832944568](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832944568) and [#6832945162](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832945162): 42 cases and three workspace COMMIT probes, not execution of SQL v1 or complete application verification. The earlier “no A database command” and “NOT RUN” statements below describe the historical submission, not these later scoped reproductions. No application migration has been created or executed.
+
+Keep SQL_REVIEW_PROPOSAL.txt as historical, unapproved v1. Independent Core acceptance of revised exact SQL and separate Manager authorization are required before any migration execution; application Gate 0 remains BLOCKED.
