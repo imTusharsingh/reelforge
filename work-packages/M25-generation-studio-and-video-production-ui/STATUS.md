@@ -46,7 +46,7 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - `git fetch origin main`: initial transient GitHub HTTP 503; retry PASS, fetched `58b946e`.
 - `git merge --no-edit origin/main`: initial WORK_LOG append-only conflict; resolved by preserving M25 audit plus both Core entries; merge commit `15dfd0a`.
 - `pnpm install --frozen-lockfile`: PASS, all 12 workspace projects installed from the unchanged lockfile.
-- `pnpm vitest run apps/web/features/production apps/web/components/app-shell.test.ts`: PASS, 3 files / 11 tests.
+- `pnpm vitest run apps/web/features/production apps/web/components/app-shell.test.ts`: PASS, 3 files / 12 tests.
 - `pnpm lint`: PASS.
 - `pnpm format:check`: PASS before the final documentation update; rerun on final source below.
 - `pnpm typecheck`: PASS after full workspace install.
@@ -58,7 +58,7 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - Final `pnpm test` with PostgreSQL: PASS, 698 passed / 8 skipped.
 - `NODE_ENV=production pnpm build`: PASS; `/production`, `/production/jobs/[jobId]`, `/production/renders/[jobId]`, `/production/scripts/[scriptId]` generated.
 - Mounted Chromium: PASS, 4 scenarios at 1440px and 390px covering persisted scene/timeline/narration, provider unavailability, Viewer restrictions, unsupported assignment, authorized artifact paths, media failure and mobile overflow. Screenshot: `/tmp/m25-production-mobile.png`.
-- `pnpm security:secrets`: PASS, 563 tracked files inspected before adding final frontend files; final rerun below.
+- `pnpm security:secrets`: PASS, 584 tracked files inspected.
 
 ## Contract/schema proposals
 
@@ -71,11 +71,11 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - Default provider bindings remain NotConfigured, so generation/regeneration controls correctly remain disabled in the current environment. A configured deployment will be enabled only from `GET /scene-media/capabilities`.
 - Render creation is not exposed because the current API requires a complete validated composition input and has no server command that safely derives it from a scene package. Existing renders can be monitored, canceled, retried, previewed and downloaded.
 - Browser evidence uses Chromium and isolated persisted-response fixtures. Live provider readiness, other browser engines and full screen-reader certification are not claimed.
-- The injected `GH_TOKEN` reported invalid during this session; Git fetch works through repository credentials. Push/PR identity and PR mutation must be verified before review request.
+- Branch commit and PR ownership are verified as `imTusharsingh`; PR #66 is non-draft and requests `minu-the-reviewer`.
 
 ## Next exact action
 
-Run final source/document gates, self-review the full diff, commit and push using the verified `imtusharsingh` identity, open a non-draft PR targeting `main` with `Closes #58`, request `minu-the-reviewer`, then address all feedback and rerun affected checks on the final head. Do not self-approve or merge.
+Monitor hosted checks and independent review on PR #66, address all feedback, and rerun affected checks on the final head. Do not self-approve or merge.
 
 ## Handoff notes
 
@@ -83,4 +83,4 @@ All supported production UI reads and actions use authenticated workspace-scoped
 
 ## Reviewer decision
 
-Pending independent review; not approved or integrated.
+PR #66 is open and pending independent review from `minu-the-reviewer`; not approved or integrated.
