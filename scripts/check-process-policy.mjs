@@ -220,6 +220,40 @@ function inspectCiTopology(flow, policy) {
   }
 }
 
+function inspectProcessTopology(flow, policy) {
+  const trustedRef = "${{ github.event.pull_request.base.sha || 'refs/heads/main' }}";
+  const trustedSha = "${{ github.event.pull_request.base.sha || github.sha }}";
+  const action = (prefix) => policy.actions.find((value) => value.startsWith(prefix));
+  if (
+    !isDeepStrictEqual(Object.keys(flow.jobs), ["policy"]) ||
+    !isDeepStrictEqual(flow.jobs.policy, {
+      name: "Process Policy",
+      if: "github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main'",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 10,
+      steps: [
+        {
+          uses: action("actions/checkout@"),
+          with: { ref: trustedRef, "persist-credentials": false },
+        },
+        { uses: action("pnpm/action-setup@"), with: { version: "12.16.1" } },
+        { uses: action("actions/setup-node@"), with: { "node-version-file": ".node-version" } },
+        { run: "pnpm install --frozen-lockfile --ignore-scripts" },
+        {
+          name: "Validate current metadata and candidate blobs as data",
+          env: {
+            GH_TOKEN: "${{ github.token }}",
+            TRUSTED_BASE_SHA: trustedSha,
+            NODE_USE_ENV_PROXY: "1",
+          },
+          run: "node scripts/check-process-policy.mjs",
+        },
+      ],
+    })
+  )
+    fail("Process Policy mandatory trusted execution topology");
+}
+
 export function inspectWorkflow(flow, policy, path) {
   if (!object(flow) || !object(flow.jobs)) fail("Workflow structure");
   if (path === CI_PATH) inspectCiTopology(flow, policy);
@@ -229,6 +263,7 @@ export function inspectWorkflow(flow, policy, path) {
     !Object.hasOwn(flow.on, "pull_request_target")
   )
     fail("Unsupported workflow path/identity");
+  else inspectProcessTopology(flow, policy);
   const allowedTop = new Set([
     "name",
     "on",
@@ -278,7 +313,7 @@ export function inspectWorkflow(flow, policy, path) {
       (flow.env ||
         job.env ||
         job.services ||
-        (job.if &&
+        (Object.hasOwn(job, "if") &&
           job.if !==
             "github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main'"))
     )
@@ -299,7 +334,7 @@ export function inspectWorkflow(flow, policy, path) {
       ]);
       if (Object.keys(step).some((k) => !stepKeys.has(k))) fail("Unsupported step key");
       if (privilegedEvent) {
-        if (step.if) fail("Conditional target step forbidden");
+        if (Object.hasOwn(step, "if")) fail("Conditional target step forbidden");
         const allowedEnv = {
           GH_TOKEN: "${{ github.token }}",
           TRUSTED_BASE_SHA: trustedSha,

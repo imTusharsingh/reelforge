@@ -27,6 +27,7 @@ const workflowSources = Object.fromEntries(
 );
 const ciPath = ".github/workflows/ci.yml";
 const submittedCi = await inspectYaml(workflowSources["ci.yml"]);
+const submittedProcess = await inspectYaml(workflowSources["process-policy.yml"]);
 const head = "a".repeat(40),
   base = "b".repeat(40),
   blob = "c".repeat(40);
@@ -445,38 +446,18 @@ test("actual Required CI CLI blocks mandatory failure, skip and cancel", async (
 });
 
 test("target workflow rejects head checkout, action script and environment redirection", () => {
-  const make = () => ({
-    on: { pull_request_target: { branches: ["main"] } },
-    permissions: { contents: "read" },
-    jobs: {
-      check: {
-        "runs-on": "ubuntu-24.04",
-        steps: [
-          {
-            uses: policy.actions[0],
-            with: {
-              ref: "${{ github.event.pull_request.head.sha }}",
-              "persist-credentials": false,
-            },
-          },
-        ],
-      },
-    },
-  });
-  assert.throws(() => inspectWorkflow(make(), policy, ".github/workflows/process-policy.yml"));
+  const path = ".github/workflows/process-policy.yml";
+  const make = () => structuredClone(submittedProcess);
+  assert.equal(inspectWorkflow(make(), policy, path), true);
+  const head = make();
+  head.jobs.policy.steps[0].with.ref = "${{ github.event.pull_request.head.sha }}";
+  assert.throws(() => inspectWorkflow(head, policy, path));
   const env = make();
-  env.jobs.check.steps = [
-    {
-      run: "node scripts/check-process-policy.mjs",
-      env: { NODE_OPTIONS: "--import ./candidate.mjs" },
-    },
-  ];
-  assert.throws(() => inspectWorkflow(env, policy, ".github/workflows/process-policy.yml"));
+  env.jobs.policy.steps.at(-1).env.NODE_OPTIONS = "--import ./candidate.mjs";
+  assert.throws(() => inspectWorkflow(env, policy, path));
   const shell = make();
-  shell.jobs.check.steps = [
-    { run: "node scripts/check-process-policy.mjs", shell: "./candidate-shell" },
-  ];
-  assert.throws(() => inspectWorkflow(shell, policy, ".github/workflows/process-policy.yml"));
+  shell.jobs.policy.steps.at(-1).shell = "./candidate-shell";
+  assert.throws(() => inspectWorkflow(shell, policy, path));
 });
 
 test("new terminal claims require exact independent closeout attestation", () => {
@@ -655,4 +636,29 @@ for (const [name, change] of Object.entries({
         }),
       ),
     );
+  });
+
+for (const [name, mutate] of Object.entries({
+  "checker step removed": (flow) => {
+    flow.jobs.policy.steps.pop();
+  },
+  "checker step if false": (flow) => {
+    flow.jobs.policy.steps.at(-1).if = false;
+  },
+  "policy job removed": (flow) => {
+    delete flow.jobs.policy;
+  },
+  "policy job renamed": (flow) => {
+    flow.jobs.other = flow.jobs.policy;
+    delete flow.jobs.policy;
+  },
+  "policy job if false": (flow) => {
+    flow.jobs.policy.if = false;
+  },
+}))
+  test(`same gate invariant: reject Process Policy ${name}`, () => {
+    const flow = structuredClone(submittedProcess);
+    assert.equal(inspectWorkflow(flow, policy, ".github/workflows/process-policy.yml"), true);
+    mutate(flow);
+    assert.throws(() => inspectWorkflow(flow, policy, ".github/workflows/process-policy.yml"));
   });
