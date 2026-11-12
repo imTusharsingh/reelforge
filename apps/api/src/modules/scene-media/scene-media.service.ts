@@ -92,6 +92,7 @@ import {
  * tolerate a takeover.
  */
 const OPERATION_LEASE_MS = 30 * 60 * 1000;
+const OPERATION_HEARTBEAT_MS = 15 * 1000;
 
 type Plan = Readonly<{
   scriptId: string;
@@ -235,7 +236,9 @@ export class SceneMediaService {
       return this.replayCreate(context, raced, input);
     }
     try {
-      await this.execute(context, jobId, plan, { type: "initial" });
+      await this.withOperationHeartbeat(context.workspaceId, jobId, operationId, () =>
+        this.execute(context, jobId, plan, { type: "initial" }, operationId),
+      );
     } finally {
       await this.releaseOperation(context.workspaceId, jobId, operationId);
     }
@@ -498,6 +501,7 @@ export class SceneMediaService {
     }
 
     try {
+      await this.withOperationHeartbeat(context.workspaceId, jobId, operationId, async () => {
       const plan = await this.plan(context, job.scriptId, requestedOutputs(job.requestedOutputs), {
         mode: "pinned",
         revision: job.scriptRevision,
@@ -505,8 +509,9 @@ export class SceneMediaService {
         promptSnapshotId: job.promptSnapshotId,
       });
       const selection = selectionFor(operation, target);
-      await this.execute(context, jobId, plan, selection);
+      await this.execute(context, jobId, plan, selection, operationId);
       const after = await this.activeGenerations(context.workspaceId, jobId);
+      await this.requireOperationLease(context.workspaceId, jobId, operationId);
       await this.db.sceneMediaMutation.updateMany({
         where: {
           workspaceId: context.workspaceId,
@@ -514,6 +519,7 @@ export class SceneMediaService {
           status: "IN_PROGRESS",
         },
         data: { status: "SUCCEEDED", sceneVersionAfter: maxSceneVersion(after) },
+      });
       });
     } catch (error) {
       await this.db.sceneMediaMutation
@@ -827,7 +833,9 @@ export class SceneMediaService {
     jobId: string,
     plan: Plan,
     selection: Selection,
+    operationId: string,
   ): Promise<void> {
+    await this.requireOperationLease(context.workspaceId, jobId, operationId);
     await this.db.sceneMediaJob.update({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
       data: { status: "RUNNING" },
@@ -850,7 +858,7 @@ export class SceneMediaService {
             )
             .map((output) => output.kind),
         );
-        await this.runScene(context, jobId, plan, planned, previous, reuse);
+        await this.runScene(context, jobId, plan, planned, previous, reuse, operationId);
         return;
       }
       let matched = selection.type !== "regenerate";
@@ -869,14 +877,14 @@ export class SceneMediaService {
         if (selection.type === "regenerate") {
           if (planned.scene.id !== selection.sceneId) continue;
           matched = true;
-          await this.runScene(context, jobId, plan, planned, previous, new Set());
+          await this.runScene(context, jobId, plan, planned, previous, new Set(), operationId);
           continue;
         }
-        await this.runScene(context, jobId, plan, planned, null, new Set());
+        await this.runScene(context, jobId, plan, planned, null, new Set(), operationId);
       }
       if (!matched) throw new NotFoundException("Scene generation not found");
     } finally {
-      await this.refreshJobStatus(context.workspaceId, jobId);
+      await this.refreshJobStatus(context.workspaceId, jobId, operationId);
     }
   }
 
@@ -887,9 +895,11 @@ export class SceneMediaService {
     planned: PlannedScene,
     previous: ActiveGeneration | null,
     reuse: ReadonlySet<SceneMediaKind>,
+    operationId: string,
   ): Promise<void> {
     const sceneVersion = (previous?.sceneVersion ?? 0) + 1;
     const generation = await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       if (previous) {
         await tx.sceneGeneration.updateMany({
           where: {
@@ -929,6 +939,7 @@ export class SceneMediaService {
               generation.sceneVersion,
               planned,
               previousOutput,
+              operationId,
             )
           : await this.dispatchOutput(
               context,
@@ -938,9 +949,11 @@ export class SceneMediaService {
               generation.id,
               generation.sceneVersion,
               kind,
+              operationId,
             );
       statuses.push(status);
     }
+    await this.requireOperationLease(context.workspaceId, jobId, operationId);
     await this.db.sceneGeneration.update({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
       data: { status: rollupScene(statuses) },
@@ -954,6 +967,7 @@ export class SceneMediaService {
     sceneVersion: number,
     planned: PlannedScene,
     previous: ActiveOutput,
+    operationId: string,
   ): Promise<SceneOutputStatus> {
     if (
       previous.assetId === null ||
@@ -964,7 +978,7 @@ export class SceneMediaService {
       previous.providerAssetId === null ||
       previous.mediaType === null
     ) {
-      return this.failOutput(context, generationId, previous.kind, {
+      return this.failOutput(context, jobId, operationId, generationId, previous.kind, {
         status: "FAILED_RETRYABLE",
         code: "REUSE_UNAVAILABLE",
         message: "Successful scene output is missing persisted media and cannot be reused",
@@ -972,6 +986,7 @@ export class SceneMediaService {
     }
     const outputId = randomUUID();
     await this.db.$transaction(async (tx) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       await tx.sceneGenerationOutput.create({
         data: {
           id: outputId,
@@ -1019,6 +1034,7 @@ export class SceneMediaService {
     generationId: string,
     sceneVersion: number,
     kind: SceneMediaKind,
+    operationId: string,
   ): Promise<SceneOutputStatus> {
     const correlationId = randomUUID();
     const capability = this.capabilityFor(kind);
@@ -1031,6 +1047,7 @@ export class SceneMediaService {
     let dispatched = false;
     let usageFinished = false;
     try {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId);
       this.prepareDispatch(kind, planned, capability, correlationId);
       this.registry.assertReady(capability, providerEnvironment());
       const estimate = capability.costModel.amount;
@@ -1066,8 +1083,10 @@ export class SceneMediaService {
         providerId: capability.providerId,
         capabilityId: capability.capabilityId,
       });
+      await this.requireOperationLease(context.workspaceId, jobId, operationId);
       dispatched = true;
       const raw = await this.invoke(kind, planned, correlationId);
+      await this.requireOperationLease(context.workspaceId, jobId, operationId);
       normalized = normalizeMediaResult(raw);
       if (
         !normalized.envelopeValid ||
@@ -1133,6 +1152,7 @@ export class SceneMediaService {
         usage: normalized.usage,
       });
       await this.db.$transaction(async (tx) => {
+        await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
         await tx.asset.create({
           data: {
             id: assetId,
@@ -1224,7 +1244,7 @@ export class SceneMediaService {
           .catch(() => undefined);
       }
       const failure = classify(error);
-      return this.failOutput(context, generationId, kind, failure);
+      return this.failOutput(context, jobId, operationId, generationId, kind, failure);
     }
   }
 
@@ -1336,10 +1356,13 @@ export class SceneMediaService {
 
   private async failOutput(
     context: WorkspaceContext,
+    jobId: string,
+    operationId: string,
     generationId: string,
     kind: SceneMediaKind,
     failure: { status: "FAILED_RETRYABLE" | "FAILED_FINAL"; code: string; message: string },
   ): Promise<SceneOutputStatus> {
+    await this.requireOperationLease(context.workspaceId, jobId, operationId);
     await this.db.sceneGenerationOutput.create({
       data: {
         workspaceId: context.workspaceId,
@@ -1380,6 +1403,53 @@ export class SceneMediaService {
     }));
   }
 
+
+  /** Refresh live leases. Ownership checks also fence writes when an operation loses its lease. */
+  private async withOperationHeartbeat<T>(
+    workspaceId: string,
+    jobId: string,
+    operationId: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    let renewing = false;
+    let lost = false;
+    const timer = setInterval(() => {
+      if (renewing || lost) return;
+      renewing = true;
+      void this.requireOperationLease(workspaceId, jobId, operationId)
+        .catch(() => { lost = true; })
+        .finally(() => { renewing = false; });
+    }, OPERATION_HEARTBEAT_MS);
+    timer.unref();
+    try {
+      const result = await task();
+      if (lost) throw new ConflictException("The scene media operation lease was lost");
+      return result;
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
+  private async requireOperationLease(
+    workspaceId: string,
+    jobId: string,
+    operationId: string,
+    db: Pick<Database, "sceneMediaJob"> = this.db,
+  ): Promise<void> {
+    const claimed = await db.sceneMediaJob.updateMany({
+      where: {
+        workspaceId,
+        id: jobId,
+        leaseId: operationId,
+        leaseExpiresAt: { gt: new Date() },
+      },
+      data: { leaseExpiresAt: operationExpiry() },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException("The scene media operation lease is no longer owned");
+    }
+  }
+
   /**
    * Best-effort release of this request's operation lease. A failure leaves the lease to expire
    * rather than masking the operation result; a takeover already owns the token, so this update
@@ -1398,7 +1468,8 @@ export class SceneMediaService {
       .catch(() => undefined);
   }
 
-  private async refreshJobStatus(workspaceId: string, jobId: string): Promise<void> {
+  private async refreshJobStatus(workspaceId: string, jobId: string, operationId: string): Promise<void> {
+    await this.requireOperationLease(workspaceId, jobId, operationId);
     const scenes = await this.db.sceneGeneration.findMany({
       where: { workspaceId, jobId, activeSlot: 1 },
       select: { status: true },
