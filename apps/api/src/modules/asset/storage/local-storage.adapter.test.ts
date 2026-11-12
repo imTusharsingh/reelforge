@@ -7,6 +7,7 @@ import {
   LocalFilesystemStorageAdapter,
   StoragePathError,
 } from "../../asset/storage/local-storage.adapter.js";
+import { StorageObjectNotFoundError } from "../../asset/storage/storage.port.js";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 let root: string | undefined;
@@ -36,7 +37,7 @@ describe("LocalFilesystemStorageAdapter", () => {
     await adapter.deleteObject({ workspaceId, objectKey: "assets/root/v1/file.png" });
     await expect(
       adapter.getObject({ workspaceId, objectKey: "assets/root/v1/file.png" }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(StorageObjectNotFoundError);
   });
 
   it("rejects traversal and non-UUID workspace paths", async () => {
