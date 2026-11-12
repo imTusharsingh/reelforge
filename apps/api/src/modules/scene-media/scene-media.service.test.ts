@@ -31,6 +31,29 @@ function wavBytes(): Uint8Array {
   return new Uint8Array(body);
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done): void => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function imageResult(request: { correlationId: string }): MediaGenerationResponse {
+  return {
+    mediaId: `img-${request.correlationId}`,
+    providerJobId: `job-${request.correlationId}`,
+    providerRequestId: `req-${request.correlationId}`,
+    metadata: {
+      modelVersion: "fixture-model",
+      promptVersion: "fixture-prompt",
+      cost: 1,
+      currency: "USD",
+    },
+    media: { declaredMediaType: "image/png", body: PNG },
+  };
+}
+
 function capability(
   kind: CapabilityMetadata["kind"],
   amount: number | null = 1,
@@ -328,6 +351,8 @@ function memoryDatabase(state: MemoryState): {
           id: randomUUID(),
           channelId: data.channelId ?? null,
           version: data.version ?? 1,
+          leaseId: data.leaseId ?? null,
+          leaseExpiresAt: data.leaseExpiresAt ?? null,
           createdAt: now,
           updatedAt: now,
           ...data,
@@ -355,17 +380,50 @@ function memoryDatabase(state: MemoryState): {
         where,
         data,
       }: {
-        where: { workspaceId: string; id: string; version: number };
-        data: { version: { increment: number } };
+        where: {
+          workspaceId: string;
+          id: string;
+          version?: number;
+          leaseId?: string | null;
+          OR?: Array<{ leaseId: null } | { leaseExpiresAt: { lt: Date } }>;
+        };
+        data: {
+          version?: { increment: number };
+          leaseId?: string | null;
+          leaseExpiresAt?: Date | null;
+        };
       }): Promise<unknown> => {
-        const matched = jobs.filter(
-          (row) =>
-            row.workspaceId === where.workspaceId &&
-            row.id === where.id &&
-            row.version === where.version,
-        );
+        const matched = jobs.filter((row) => {
+          if (row.workspaceId !== where.workspaceId || row.id !== where.id) return false;
+          if (where.version !== undefined && row.version !== where.version) return false;
+          if (where.leaseId !== undefined && row.leaseId !== where.leaseId) {
+            return false;
+          }
+          if (where.OR) {
+            const matchedClause = where.OR.some((clause) => {
+              if ("leaseId" in clause) {
+                return row.leaseId === clause.leaseId;
+              }
+              const expiresAt = row.leaseExpiresAt;
+              return (
+                expiresAt instanceof Date &&
+                expiresAt.getTime() < clause.leaseExpiresAt.lt.getTime()
+              );
+            });
+            if (!matchedClause) return false;
+          }
+          return true;
+        });
         for (const row of matched) {
-          row.version = Number(row.version) + data.version.increment;
+          if (data.version) {
+            row.version = Number(row.version) + data.version.increment;
+          }
+          if (data.leaseId !== undefined) {
+            row.leaseId = data.leaseId;
+          }
+          if (data.leaseExpiresAt !== undefined) {
+            row.leaseExpiresAt = data.leaseExpiresAt;
+          }
           row.updatedAt = new Date();
         }
         return { count: matched.length };
@@ -456,6 +514,38 @@ function memoryDatabase(state: MemoryState): {
         if (!row) throw new Error("missing mutation");
         Object.assign(row, data, { updatedAt: new Date() });
         return row;
+      },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: {
+          workspaceId: string;
+          id?: string;
+          jobId?: string;
+          status?: string;
+          createdAt?: { lt: Date };
+        };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const matched = mutations.filter((row) => {
+          if (row.workspaceId !== where.workspaceId) return false;
+          if (where.id !== undefined && row.id !== where.id) return false;
+          if (where.jobId !== undefined && row.jobId !== where.jobId) return false;
+          if (where.status !== undefined && row.status !== where.status) return false;
+          if (where.createdAt) {
+            const createdAt = row.createdAt;
+            if (
+              !(createdAt instanceof Date) ||
+              createdAt.getTime() >= where.createdAt.lt.getTime()
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
+        for (const row of matched) Object.assign(row, data, { updatedAt: new Date() });
+        return { count: matched.length };
       },
     },
     sceneGeneration: {
@@ -1392,6 +1482,125 @@ describe("scene media generation", () => {
     await expect(
       env.service.regenerate(env.context, created.jobId, "one", request),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("rejects a different-key mutation while a paid mutation is in flight", async () => {
+    let hold = false;
+    const entered = deferred();
+    const release = deferred();
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => {
+          if (hold) {
+            entered.resolve();
+            await release.promise;
+          }
+          return imageResult(request);
+        },
+      },
+    });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    hold = true;
+    try {
+      const first = env.service.regenerate(env.context, created.jobId, "one", {
+        idempotencyKey: "in-flight-a",
+        expectedJobVersion: created.version,
+      });
+      await entered.promise;
+      const callsWhileHeld = env.imageCalls.length;
+      await expect(
+        env.service.regenerate(env.context, created.jobId, "one", {
+          idempotencyKey: "in-flight-b",
+          expectedJobVersion: created.version + 1,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(env.imageCalls).toHaveLength(callsWhileHeld);
+      expect(env.mutations).toHaveLength(1);
+      release.resolve();
+      const result = await first;
+      expect(result.version).toBe(created.version + 1);
+      expect(env.jobs[0]?.leaseId).toBeNull();
+      expect(env.jobs[0]?.leaseExpiresAt).toBeNull();
+    } finally {
+      hold = false;
+      release.resolve();
+    }
+  });
+
+  it("rejects a mutation while the initial creation dispatch is in flight", async () => {
+    const entered = deferred();
+    const release = deferred();
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      image: {
+        generate: async (request) => {
+          entered.resolve();
+          await release.promise;
+          return imageResult(request);
+        },
+      },
+    });
+    const creating = env.service.create(
+      env.context,
+      createBody(env.scriptId, { idempotencyKey: "create-in-flight" }),
+    );
+    try {
+      await entered.promise;
+      const jobId = String(env.jobs[0]?.id);
+      const callsWhileHeld = env.imageCalls.length;
+      await expect(
+        env.service.retry(env.context, jobId, {
+          idempotencyKey: "mutation-during-create",
+          expectedJobVersion: 1,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(env.imageCalls).toHaveLength(callsWhileHeld);
+      expect(env.mutations).toHaveLength(0);
+    } finally {
+      release.resolve();
+    }
+    const created = await creating;
+    expect(created.status).toBe("SUCCEEDED");
+    expect(env.jobs[0]?.leaseId).toBeNull();
+    expect(env.jobs[0]?.leaseExpiresAt).toBeNull();
+  });
+
+  it("recovers a job whose operation lease expired", async () => {
+    const env = harness({ scenes: [scene("one", { narration: undefined, dialogue: "" })] });
+    const created = await env.service.create(env.context, createBody(env.scriptId));
+    const job = env.jobs[0];
+    if (!job) throw new Error("fixture job missing");
+    job.leaseId = "crashed-operation";
+    job.leaseExpiresAt = new Date(Date.now() - 60_000);
+    const staleId = randomUUID();
+    const staleAt = new Date(Date.now() - 60 * 60 * 1000);
+    env.mutations.push({
+      id: staleId,
+      workspaceId: env.context.workspaceId,
+      jobId: created.jobId,
+      operation: "RETRY",
+      status: "IN_PROGRESS",
+      idempotencyKey: "crashed-key",
+      expectedJobVersion: created.version,
+      payloadHash: "stale",
+      payload: {},
+      sceneIds: [],
+      sceneVersionBefore: 0,
+      sceneVersionAfter: null,
+      errorCode: null,
+      errorMessage: null,
+      createdByUserId: env.context.userId,
+      createdAt: staleAt,
+      updatedAt: staleAt,
+    });
+    const retried = await env.service.retry(env.context, created.jobId, {
+      idempotencyKey: "recover-expired-lease",
+      expectedJobVersion: created.version,
+    });
+    expect(retried.version).toBe(created.version + 1);
+    expect(env.mutations.find((row) => row.id === staleId)?.status).toBe("FAILED");
+    expect(env.mutations.find((row) => row.id === staleId)?.errorCode).toBe("STALE_OPERATION");
   });
 
   it("derives capability availability with explicit reasons and no live probe", async () => {

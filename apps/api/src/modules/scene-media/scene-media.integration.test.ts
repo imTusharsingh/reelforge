@@ -25,6 +25,25 @@ import { providerEnvironment } from "./scene-media.validation.js";
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+type ImageGate = Readonly<{
+  entered: Promise<void>;
+  released: Promise<void>;
+  signalEntered: () => void;
+  release: () => void;
+}>;
+
+function makeImageGate(): ImageGate {
+  let signalEntered!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve): void => {
+    signalEntered = resolve;
+  });
+  const released = new Promise<void>((resolve): void => {
+    release = resolve;
+  });
+  return { entered, released, signalEntered, release };
+}
 const ownerId = randomUUID();
 const workspaceId = randomUUID();
 const channelId = randomUUID();
@@ -88,6 +107,7 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
   const db = databaseUrl === undefined ? undefined : createDatabaseClient(databaseUrl);
   let storageRoot = "";
   let imageCalls = 0;
+  let imageGate: ImageGate | null = null;
   let videoCalls = 0;
   let failImages = false;
   let metadataMode: "complete" | "missing" | "null" | "non-object" | "omit-usage" = "complete";
@@ -95,6 +115,11 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
     capability: capability("image", "image"),
     generate: async (request): Promise<MediaGenerationResponse> => {
       imageCalls += 1;
+      const gate = imageGate;
+      if (gate) {
+        gate.signalEntered();
+        await gate.released;
+      }
       if (failImages)
         throw new ProviderError("PROVIDER_UNAVAILABLE", "down", request.correlationId);
       const media = {
@@ -261,7 +286,7 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
       },
     });
     await db.providerBudget.create({
-      data: { id: budgetId, workspaceId, channelId, dailyLimit: 20, currency: "USD" },
+      data: { id: budgetId, workspaceId, channelId, dailyLimit: 100, currency: "USD" },
     });
     await db.script.create({
       data: {
@@ -671,5 +696,123 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
     expect(
       await db.sceneMediaMutation.count({ where: { workspaceId, jobId: created.jobId } }),
     ).toBe(1);
+  });
+
+  it("blocks a different-key mutation while a paid mutation is in flight", async () => {
+    if (!db || !service) return;
+    const created = await service.create(context, {
+      scriptId,
+      expectedScriptRevision: 1,
+      idempotencyKey: "scene-media-lease-mutation",
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    const gate = makeImageGate();
+    imageGate = gate;
+    try {
+      const first = service.regenerate(context, created.jobId, "one", {
+        idempotencyKey: "scene-media-lease-a",
+        expectedJobVersion: created.version,
+      });
+      await gate.entered;
+      const callsWhileHeld = imageCalls;
+      await expect(
+        service.regenerate(context, created.jobId, "one", {
+          idempotencyKey: "scene-media-lease-b",
+          expectedJobVersion: created.version + 1,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(imageCalls).toBe(callsWhileHeld);
+      gate.release();
+      const result = await first;
+      expect(result.version).toBe(created.version + 1);
+      const settled = await db.sceneMediaJob.findUniqueOrThrow({
+        where: { workspaceId_id: { workspaceId, id: created.jobId } },
+      });
+      expect(settled.leaseId).toBeNull();
+      expect(settled.leaseExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+      imageGate = null;
+    }
+  });
+
+  it("blocks mutations while the initial creation dispatch is in flight", async () => {
+    if (!db || !service) return;
+    const gate = makeImageGate();
+    imageGate = gate;
+    try {
+      const creating = service.create(context, {
+        scriptId,
+        expectedScriptRevision: 1,
+        idempotencyKey: "scene-media-lease-create",
+        outputs: { image: true, video: false, narration: false, dialogue: false },
+      });
+      await gate.entered;
+      const job = await db.sceneMediaJob.findFirstOrThrow({
+        where: { workspaceId, idempotencyKey: "scene-media-lease-create" },
+      });
+      const callsWhileHeld = imageCalls;
+      await expect(
+        service.retry(context, job.id, {
+          idempotencyKey: "scene-media-lease-during-create",
+          expectedJobVersion: job.version,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(imageCalls).toBe(callsWhileHeld);
+      gate.release();
+      const created = await creating;
+      expect(created.status).toBe("SUCCEEDED");
+      const settled = await db.sceneMediaJob.findUniqueOrThrow({
+        where: { workspaceId_id: { workspaceId, id: job.id } },
+      });
+      expect(settled.leaseId).toBeNull();
+      expect(settled.leaseExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+      imageGate = null;
+    }
+  });
+
+  it("recovers an expired operation lease and reconciles the stale mutation", async () => {
+    if (!db || !service) return;
+    const created = await service.create(context, {
+      scriptId,
+      expectedScriptRevision: 1,
+      idempotencyKey: "scene-media-lease-recovery",
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    await db.sceneMediaJob.update({
+      where: { workspaceId_id: { workspaceId, id: created.jobId } },
+      data: {
+        leaseId: "crashed-operation",
+        leaseExpiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+    const stale = await db.sceneMediaMutation.create({
+      data: {
+        workspaceId,
+        jobId: created.jobId,
+        operation: "RETRY",
+        status: "IN_PROGRESS",
+        idempotencyKey: "scene-media-lease-crashed",
+        expectedJobVersion: created.version,
+        payloadHash: "stale",
+        payload: {},
+        sceneIds: [],
+        sceneVersionBefore: 0,
+        createdByUserId: ownerId,
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      },
+    });
+    const retried = await service.retry(context, created.jobId, {
+      idempotencyKey: "scene-media-lease-recovery-retry",
+      expectedJobVersion: created.version,
+    });
+    expect(retried.version).toBe(created.version + 1);
+    const reconciled = await db.sceneMediaMutation.findUniqueOrThrow({
+      where: { workspaceId_id: { workspaceId, id: stale.id } },
+    });
+    expect(reconciled.status).toBe("FAILED");
+    expect(reconciled.errorCode).toBe("STALE_OPERATION");
   });
 });

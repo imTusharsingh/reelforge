@@ -85,6 +85,14 @@ import {
   type NormalizedUsage,
 } from "./scene-media.validation.js";
 
+/**
+ * Lease for a paid job operation. The exclusion is claimed atomically with the job version, so
+ * two create/mutation requests cannot dispatch provider work for the same job at once. A crashed
+ * request stops blocking new work after this window; an operation that outlives its lease must
+ * tolerate a takeover.
+ */
+const OPERATION_LEASE_MS = 30 * 60 * 1000;
+
 type Plan = Readonly<{
   scriptId: string;
   revision: number;
@@ -185,6 +193,7 @@ export class SceneMediaService {
       mode: "create",
       expectedRevision: input.expectedScriptRevision,
     });
+    const operationId = randomUUID();
     let jobId: string;
     try {
       const created = await this.db.sceneMediaJob.create({
@@ -196,6 +205,8 @@ export class SceneMediaService {
           idempotencyKey: input.idempotencyKey,
           schemaVersion: SCENE_MEDIA_SCHEMA_VERSION,
           status: "RUNNING",
+          leaseId: operationId,
+          leaseExpiresAt: operationExpiry(),
           requestedOutputs: input.outputs,
           configSnapshotId: plan.configId,
           promptSnapshotId: plan.promptId,
@@ -223,7 +234,11 @@ export class SceneMediaService {
       if (!raced) throw error;
       return this.replayCreate(context, raced, input);
     }
-    await this.execute(context, jobId, plan, { type: "initial" });
+    try {
+      await this.execute(context, jobId, plan, { type: "initial" });
+    } finally {
+      await this.releaseOperation(context.workspaceId, jobId, operationId);
+    }
     return this.present(context, jobId);
   }
 
@@ -399,32 +414,54 @@ export class SceneMediaService {
     });
     if (existing) return this.replayMutation(context, jobId, existing, payloadHash);
 
+    const operationId = randomUUID();
     let mutationId: string;
     try {
       mutationId = await this.db.$transaction(async (tx) => {
-        const current = await tx.sceneMediaJob.findUnique({
-          where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
-          select: { version: true },
-        });
-        if (!current) throw new NotFoundException("Scene media job not found");
-        if (current.version !== request.expectedJobVersion) {
-          throw new ConflictException(
-            "The observed scene media job version is stale; reload the job and retry",
-          );
-        }
+        const now = new Date();
         const claimed = await tx.sceneMediaJob.updateMany({
           where: {
             workspaceId: context.workspaceId,
             id: jobId,
             version: request.expectedJobVersion,
+            OR: [{ leaseId: null }, { leaseExpiresAt: { lt: now } }],
           },
-          data: { version: { increment: 1 } },
+          data: {
+            version: { increment: 1 },
+            leaseId: operationId,
+            leaseExpiresAt: new Date(now.getTime() + OPERATION_LEASE_MS),
+          },
         });
         if (claimed.count !== 1) {
+          const current = await tx.sceneMediaJob.findUnique({
+            where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+            select: { version: true },
+          });
+          if (!current) throw new NotFoundException("Scene media job not found");
+          if (current.version !== request.expectedJobVersion) {
+            throw new ConflictException(
+              "The observed scene media job version is stale; reload the job and retry",
+            );
+          }
           throw new ConflictException(
-            "A concurrent scene media mutation already changed this job; reload and retry",
+            "Another scene media operation is already running for this job; wait for it to finish and reload",
           );
         }
+        // A crashed request releases nothing; reconcile its expired claim so the ledger does not
+        // leave a permanent IN_PROGRESS mutation behind.
+        await tx.sceneMediaMutation.updateMany({
+          where: {
+            workspaceId: context.workspaceId,
+            jobId,
+            status: "IN_PROGRESS",
+            createdAt: { lt: new Date(now.getTime() - OPERATION_LEASE_MS) },
+          },
+          data: {
+            status: "FAILED",
+            errorCode: "STALE_OPERATION",
+            errorMessage: "The operation lease expired before the mutation completed",
+          },
+        });
         const before = await this.activeGenerations(context.workspaceId, jobId);
         const created = await tx.sceneMediaMutation.create({
           data: {
@@ -445,8 +482,8 @@ export class SceneMediaService {
         return created.id;
       });
     } catch (error) {
-      // A same-key request may have won the unique-key or version race. Reconcile that
-      // completed/ongoing claim instead of dispatching a second paid mutation.
+      // A same-key request may have won the unique-key, version, or in-flight race. Reconcile
+      // that completed/ongoing claim instead of dispatching a second paid mutation.
       const raced = await this.db.sceneMediaMutation.findUnique({
         where: {
           workspaceId_jobId_idempotencyKey: {
@@ -470,14 +507,22 @@ export class SceneMediaService {
       const selection = selectionFor(operation, target);
       await this.execute(context, jobId, plan, selection);
       const after = await this.activeGenerations(context.workspaceId, jobId);
-      await this.db.sceneMediaMutation.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: mutationId } },
+      await this.db.sceneMediaMutation.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          id: mutationId,
+          status: "IN_PROGRESS",
+        },
         data: { status: "SUCCEEDED", sceneVersionAfter: maxSceneVersion(after) },
       });
     } catch (error) {
       await this.db.sceneMediaMutation
-        .update({
-          where: { workspaceId_id: { workspaceId: context.workspaceId, id: mutationId } },
+        .updateMany({
+          where: {
+            workspaceId: context.workspaceId,
+            id: mutationId,
+            status: "IN_PROGRESS",
+          },
           data: {
             status: "FAILED",
             errorCode: error instanceof HttpException ? error.name : "MUTATION_FAILED",
@@ -486,6 +531,8 @@ export class SceneMediaService {
         })
         .catch(() => undefined);
       throw error;
+    } finally {
+      await this.releaseOperation(context.workspaceId, jobId, operationId);
     }
     return this.present(context, jobId);
   }
@@ -1333,6 +1380,24 @@ export class SceneMediaService {
     }));
   }
 
+  /**
+   * Best-effort release of this request's operation lease. A failure leaves the lease to expire
+   * rather than masking the operation result; a takeover already owns the token, so this update
+   * cannot clear someone else's claim.
+   */
+  private async releaseOperation(
+    workspaceId: string,
+    jobId: string,
+    operationId: string,
+  ): Promise<void> {
+    await this.db.sceneMediaJob
+      .updateMany({
+        where: { workspaceId, id: jobId, leaseId: operationId },
+        data: { leaseId: null, leaseExpiresAt: null },
+      })
+      .catch(() => undefined);
+  }
+
   private async refreshJobStatus(workspaceId: string, jobId: string): Promise<void> {
     const scenes = await this.db.sceneGeneration.findMany({
       where: { workspaceId, jobId, activeSlot: 1 },
@@ -1592,6 +1657,10 @@ function capabilityLabel(kind: SceneMediaKind): string {
   if (kind === "VIDEO") return "Motion generation";
   if (kind === "NARRATION") return "Narration speech generation";
   return "Dialogue speech generation";
+}
+
+function operationExpiry(): Date {
+  return new Date(Date.now() + OPERATION_LEASE_MS);
 }
 
 function safeMessage(error: unknown): string {

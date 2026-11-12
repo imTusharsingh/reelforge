@@ -133,12 +133,14 @@ Mutation requests require an observed version and a client operation key:
 Semantics:
 
 - The claim is atomic: the job version is compared and incremented in one transaction before any paid work. A stale or concurrently claimed version returns HTTP 409.
+- The claim also takes a job-scoped in-flight lease (`leaseId` + `leaseExpiresAt`). Initial creation takes the lease before dispatch, so a mutation cannot start while the create operation is still running. A different-key mutation observed at the newly incremented version returns HTTP 409 while paid work is active.
 - A key is scoped to workspace, job, and operation payload. The payload hash covers operation, expected version, target scene and output kind.
 - Same key with the same payload and a `SUCCEEDED` mutation returns the current package without dispatching paid work again.
 - Same key with a different payload returns HTTP 409.
 - Same key while the mutation is `IN_PROGRESS` returns HTTP 409. Clients must observe the job rather than start duplicate work.
 - Same key after a `FAILED` mutation returns HTTP 409. Clients must use a new key after resolving the failure.
 - A failed mutation still consumes its version. Clients must reload the package before retrying.
+- The lease lasts 30 minutes and is released on success or failure. If a process crashes, the next claim after lease expiry may take over; stale `IN_PROGRESS` mutations are reconciled to `FAILED` with `errorCode: STALE_OPERATION`. A request that outlives its lease must tolerate a takeover.
 
 Mutations plan from the job's pinned `scriptRevision`, `configSnapshotId` and `promptSnapshotId`. If that revision is missing or its snapshot IDs no longer match the job, the mutation fails with HTTP 409 instead of planning from a newer script.
 
@@ -226,12 +228,13 @@ There is no scene cancellation endpoint. `CANCELED` exists only on render-job st
 - `POST /scene-media/jobs` now requires `expectedScriptRevision`; older callers receive HTTP 400. The M16 orchestration consumer was updated to read the approved script revision and pass it.
 - Retry/regenerate/replace now require a JSON body with `idempotencyKey` and `expectedJobVersion`; older callers receive HTTP 400.
 - `scene_media_jobs.version` is additive with default `1`, so existing rows remain valid.
-- `scene_media_mutations` and its enums are new. Migration `20261120010000_m25_production_jobs_and_mutations` is additive only and must be applied before deploying this server code.
+- `scene_media_jobs.active_operation_id` and `active_operation_expires_at` are nullable additive columns. Existing jobs have no lease and can be mutated immediately.
+- `scene_media_mutations` and its enums are new. Migrations `20261120010000_m25_production_jobs_and_mutations` and `20261120020000_m25_scene_media_operation_lease` are additive only and must be applied before deploying this server code.
 - Prisma client generation is required in the normal build process.
 
 ## Verification and release gates
 
-Focused coverage includes direct-job discovery without ledger rows, script/channel/status filters, bounded pagination, tenant isolation, Viewer reads, stale approved revisions, pinned historical revisions and snapshots, stale/concurrent job versions, same-key replay, same-key different-payload conflicts, ambiguous-response replay without duplicate paid work, capability reasons, and render-job discovery.
+Focused coverage includes direct-job discovery without ledger rows, script/channel/status filters, bounded pagination, tenant isolation, Viewer reads, stale approved revisions, pinned historical revisions and snapshots, stale/concurrent job versions, same-key replay, same-key different-payload conflicts, ambiguous-response replay without duplicate paid work, capability reasons, and render-job discovery. PostgreSQL coverage holds the first dispatch open and proves that a different-key mutation at the newly observed version and a mutation during initial `RUNNING` creation are rejected without a second provider dispatch; it also covers expired-lease recovery and stale-mutation reconciliation.
 
 No live AI or social calls are made by tests. Provider fixtures are local test seams only.
 

@@ -1529,6 +1529,8 @@ model SceneMediaJob {
   schemaVersion    String               @default("1.0") @map("schema_version")
   status           SceneMediaJobStatus  @default(QUEUED)
   version          Int                  @default(1)
+  leaseId          String?              @map("active_operation_id")
+  leaseExpiresAt   DateTime?            @map("active_operation_expires_at") @db.Timestamptz(6)
   requestedOutputs Json                 @map("requested_outputs")
   configSnapshotId String               @map("config_snapshot_id") @db.Uuid
   promptSnapshotId String               @map("prompt_snapshot_id") @db.Uuid
