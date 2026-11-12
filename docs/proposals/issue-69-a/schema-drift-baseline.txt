@@ -81,4 +81,3 @@ ALTER INDEX "performance_strategy_changes_workspace_id_channel_id_created_at" RE
 
 -- RenameIndex
 ALTER INDEX "performance_strategy_changes_workspace_id_channel_id_version_ke" RENAME TO "performance_strategy_changes_workspace_id_channel_id_versio_key";
-
