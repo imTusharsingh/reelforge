@@ -773,6 +773,47 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
     }
   });
 
+  it("refuses an expired-lease takeover while paid provider work is unresolved", async () => {
+    if (!db || !service) return;
+    const created = await service.create(context, {
+      scriptId,
+      expectedScriptRevision: 1,
+      idempotencyKey: "scene-media-lease-expiry-inflight",
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    const gate = makeImageGate();
+    imageGate = gate;
+    try {
+      const first = service.regenerate(context, created.jobId, "one", {
+        idempotencyKey: "scene-media-inflight-owner",
+        expectedJobVersion: created.version,
+      });
+      await gate.entered;
+      await db.sceneMediaJob.update({
+        where: { workspaceId_id: { workspaceId, id: created.jobId } },
+        data: { leaseExpiresAt: new Date(Date.now() - 60_000) },
+      });
+      const callsWhileHeld = imageCalls;
+      await expect(
+        service.regenerate(context, created.jobId, "one", {
+          idempotencyKey: "scene-media-inflight-takeover",
+          expectedJobVersion: created.version + 1,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(imageCalls).toBe(callsWhileHeld);
+      const held = await db.sceneMediaJob.findUniqueOrThrow({
+        where: { workspaceId_id: { workspaceId, id: created.jobId } },
+      });
+      expect(held.version).toBe(created.version + 1);
+      gate.release();
+      await expect(first).rejects.toBeInstanceOf(ConflictException);
+      expect(imageCalls).toBe(callsWhileHeld);
+    } finally {
+      gate.release();
+      imageGate = null;
+    }
+  });
+
   it("recovers an expired operation lease and reconciles the stale mutation", async () => {
     if (!db || !service) return;
     const created = await service.create(context, {
