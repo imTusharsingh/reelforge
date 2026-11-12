@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 const SELF = fileURLToPath(import.meta.url);
 export const LIMITS = Object.freeze({ bytes: 262144, nodes: 20000, depth: 40, milliseconds: 3000 });
@@ -110,8 +111,124 @@ async function yamlChild() {
   process.stdout.write(JSON.stringify(doc.toJS({ maxAliasCount: 0 })));
 }
 
-export function inspectWorkflow(flow, policy) {
+const CI_PATH = ".github/workflows/ci.yml";
+const PROCESS_PATH = ".github/workflows/process-policy.yml";
+
+function inspectCiTopology(flow, policy) {
+  const mandatory = ["quality", "database", "tests", "build", "secrets"];
+  const jobs = [...mandatory, "required", "dependency-audit"];
+  if (!isDeepStrictEqual(Object.keys(flow.jobs).sort(), jobs.sort()))
+    fail("CI mandatory job topology missing, renamed or extended");
+  if (
+    !isDeepStrictEqual(flow.on, {
+      push: { branches: ["main", "work/**", "chore/**", "feat/**", "fix/**"] },
+      pull_request: { branches: ["main"] },
+    })
+  )
+    fail("CI required event topology");
+  if (!isDeepStrictEqual(flow.permissions, { contents: "read" })) fail("CI read-only default");
+  if (
+    !isDeepStrictEqual(flow.env, {
+      NEXT_TELEMETRY_DISABLED: "1",
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/reelforge?schema=public",
+    })
+  )
+    fail("CI workflow environment override");
+  for (const name of [...mandatory, "dependency-audit"]) {
+    const job = flow.jobs[name];
+    if (!object(job) || Object.hasOwn(job, "if") || Object.hasOwn(job, "needs"))
+      fail(`CI job must run unconditionally: ${name}`);
+    const env =
+      name === "database"
+        ? {
+            MIGRATION_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before }}",
+          }
+        : undefined;
+    if (!isDeepStrictEqual(job.env, env)) fail(`CI job environment override: ${name}`);
+  }
+  const checkout = policy.actions.find((action) => action.startsWith("actions/checkout@"));
+  const setupNode = policy.actions.find((action) => action.startsWith("actions/setup-node@"));
+  const setup = [
+    { uses: checkout, with: { "persist-credentials": false } },
+    { uses: setupNode, with: { "node-version-file": ".node-version" } },
+  ];
+  // Exact structured jobs exclude conditionals (including false), continue-on-error,
+  // environment/shell overrides, alternate checkouts and preparatory no-op scripts.
+  if (
+    !isDeepStrictEqual(flow.jobs.secrets, {
+      name: "Secret scan (mandatory)",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 5,
+      steps: [...setup, { run: "node scripts/check-secrets.mjs" }],
+    })
+  )
+    fail("Mandatory secret scan job must match unconditional approved invocation");
+  if (
+    !isDeepStrictEqual(flow.jobs.required, {
+      name: "Required CI",
+      if: "always()",
+      needs: mandatory,
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 5,
+      steps: [
+        ...setup,
+        {
+          name: "Require every mandatory job to pass",
+          env: { RESULTS: "${{ toJSON(needs) }}" },
+          run: "node scripts/check-process-policy.mjs --required",
+        },
+      ],
+    })
+  )
+    fail("Required CI unconditional dependency graph/aggregation");
+  const commands = {
+    quality: [
+      "pnpm install --frozen-lockfile",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm typecheck",
+      "node --test scripts/check-process-policy.test.mjs",
+    ],
+    database: [
+      "pnpm install --frozen-lockfile",
+      "pnpm db:check-migrations",
+      "pnpm db:validate",
+      "pnpm db:migrate:deploy",
+    ],
+    tests: [
+      "pnpm install --frozen-lockfile",
+      "pnpm db:migrate:deploy",
+      "pnpm db:generate",
+      "set -o pipefail\npnpm test 2>&1 | tee test-output.txt\n",
+    ],
+    build: ["pnpm install --frozen-lockfile", "pnpm build"],
+    "dependency-audit": [
+      "pnpm install --frozen-lockfile --ignore-scripts",
+      "node scripts/check-process-policy.mjs --audit",
+    ],
+  };
+  for (const [name, expected] of Object.entries(commands)) {
+    const steps = flow.jobs[name].steps;
+    if (
+      !Array.isArray(steps) ||
+      !isDeepStrictEqual(
+        steps.filter((step) => Object.hasOwn(step, "run")),
+        expected.map((run) => ({ run })),
+      )
+    )
+      fail(`CI unconditional command topology: ${name}`);
+  }
+}
+
+export function inspectWorkflow(flow, policy, path) {
   if (!object(flow) || !object(flow.jobs)) fail("Workflow structure");
+  if (path === CI_PATH) inspectCiTopology(flow, policy);
+  else if (
+    path !== PROCESS_PATH ||
+    !object(flow.on) ||
+    !Object.hasOwn(flow.on, "pull_request_target")
+  )
+    fail("Unsupported workflow path/identity");
   const allowedTop = new Set([
     "name",
     "on",
@@ -225,25 +342,6 @@ export function inspectWorkflow(flow, policy) {
   // Secrets interpolation is disallowed except the dedicated read-only GitHub token.
   const text = JSON.stringify(flow);
   if (/\$\{\{[^}]*\bsecrets\s*[.[]/.test(text)) fail("Repository secrets forbidden");
-  if (flow.jobs.required) {
-    const required = flow.jobs.required;
-    const mandatory = ["quality", "database", "tests", "build", "secrets"];
-    if (
-      required.if !== "always()" ||
-      !Array.isArray(required.needs) ||
-      mandatory.some((name) => !required.needs.includes(name)) ||
-      required.needs.includes("dependency-audit")
-    )
-      fail("Required CI dependency graph");
-    if (
-      !required.steps.some(
-        (step) => step.run === "node scripts/check-process-policy.mjs --required",
-      )
-    )
-      fail("Required CI aggregation missing");
-    if (!flow.jobs.secrets?.steps?.some((step) => step.run === "node scripts/check-secrets.mjs"))
-      fail("Mandatory secret scan missing");
-  }
   return true;
 }
 
@@ -529,6 +627,7 @@ export async function evaluateLive({ api, policy, number, trustedBase }) {
     inspectWorkflow(
       await inspectYaml(Buffer.from(blob.content, "base64").toString("utf8")),
       policy,
+      `.github/workflows/${f.name}`,
     );
   }
   const current = await api(`pulls/${number}`);

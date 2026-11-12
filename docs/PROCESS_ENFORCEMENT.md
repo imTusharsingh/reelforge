@@ -9,6 +9,17 @@ Independent Core decisions: [6831915757](https://github.com/imTusharsingh/reelfo
 
 `Required CI` requires quality, database, tests, build and secrets to return success.
 Failure, cancellation, skip or absence of a mandatory result blocks its aggregate.
+Candidate inspection is bound to the actual `.github/workflows/ci.yml` path from
+GitHub's directory inventory, never its author-controlled display name. The
+expected event and seven-job topology is checked unconditionally. Removing,
+renaming or moving Required CI, secrets, quality, database, tests, build or the
+separate audit job fails closed. The scanner and aggregator must match their
+approved structured jobs exactly: no job/step conditions beyond Required CI's
+`always()`, continue-on-error, altered RESULTS, environment/shell overrides,
+extra preparation steps, sparse/alternate checkouts, or muted/redirected scanner
+invocation. Approved CI environment and unconditional command sequences are
+checked as structures, not shell-pattern safety claims. An intended topology
+change requires independent review and a corresponding trusted policy update.
 Push coverage includes main, work/**, chore/**, feat/** and fix/**; all PRs to main
 retain checks. Issue #69 work continues to use work/ or chore/ branches.
 

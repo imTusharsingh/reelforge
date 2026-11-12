@@ -17,6 +17,16 @@ import {
 const policy = JSON.parse(
   await readFile(new URL("../.github/process-policy.json", import.meta.url)),
 );
+const workflowSources = Object.fromEntries(
+  await Promise.all(
+    ["ci.yml", "process-policy.yml"].map(async (name) => [
+      name,
+      await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8"),
+    ]),
+  ),
+);
+const ciPath = ".github/workflows/ci.yml";
+const submittedCi = await inspectYaml(workflowSources["ci.yml"]);
 const head = "a".repeat(40),
   base = "b".repeat(40),
   blob = "c".repeat(40);
@@ -158,7 +168,7 @@ test("installed YAML API parses current workflows and pins", async () => {
     const flow = await inspectYaml(
       await readFile(new URL(`../.github/workflows/${path}`, import.meta.url), "utf8"),
     );
-    assert.equal(inspectWorkflow(flow, policy), true);
+    assert.equal(inspectWorkflow(flow, policy, `.github/workflows/${path}`), true);
   }
 });
 const invalidYaml = {
@@ -186,11 +196,7 @@ test("literal injection remains inert data", async () => {
   );
 });
 function workflow() {
-  return {
-    on: { push: null },
-    permissions: { contents: "read" },
-    jobs: { check: { "runs-on": "ubuntu-24.04", steps: [{ run: "node --version" }] } },
-  };
+  return structuredClone(submittedCi);
 }
 for (const [name, mutate] of Object.entries({
   write: (w) => {
@@ -200,31 +206,32 @@ for (const [name, mutate] of Object.entries({
     w.permissions = "${{ inputs.permissions }}";
   },
   override: (w) => {
-    w.jobs.check.permissions = { contents: "write" };
+    w.jobs.quality.permissions = { contents: "write" };
   },
   secrets: (w) => {
-    w.jobs.check.steps[0].run = "echo ${{ secrets.DEPLOY }}";
+    w.jobs.quality.steps[0].run = "echo ${{ secrets.DEPLOY }}";
   },
   push: (w) => {
-    w.jobs.check.steps[0].run = "git push origin main";
+    w.jobs.quality.steps[0].run = "git push origin main";
   },
   localAction: (w) => {
-    w.jobs.check.steps = [{ uses: "./candidate-action" }];
+    w.jobs.quality.steps = [{ uses: "./candidate-action" }];
   },
   credentials: (w) => {
-    w.jobs.check.steps = [{ uses: policy.actions[0], with: { "persist-credentials": true } }];
+    w.jobs.quality.steps = [{ uses: policy.actions[0], with: { "persist-credentials": true } }];
   },
   reusable: (w) => {
-    w.jobs.check.uses = "owner/repo/workflow@main";
+    w.jobs.quality.uses = "owner/repo/workflow@main";
   },
   selfHosted: (w) => {
-    w.jobs.check["runs-on"] = "self-hosted";
+    w.jobs.quality["runs-on"] = "self-hosted";
   },
 }))
   test(`workflow rejects ${name}`, () => {
     const w = workflow();
+    assert.equal(inspectWorkflow(w, policy, ".github/workflows/ci.yml"), true);
     mutate(w);
-    assert.throws(() => inspectWorkflow(w, policy));
+    assert.throws(() => inspectWorkflow(w, policy, ".github/workflows/ci.yml"));
   });
 test("every mandatory job fail/cancel/skip blocks Required CI", () => {
   const all = Object.fromEntries(
@@ -293,10 +300,14 @@ function liveFixture(change = () => {}) {
       value = structuredClone(comment);
       commentReads++;
     } else if (path === `contents/.github/workflows?ref=${head}`)
-      value = ["ci.yml", "process-policy.yml"].map((name) => ({ type: "file", name, sha: blob }));
-    else if (path === `git/blobs/${blob}`) {
+      value = ["ci.yml", "process-policy.yml"].map((name) => ({
+        type: "file",
+        name,
+        sha: name === "ci.yml" ? blob : "d".repeat(40),
+      }));
+    else if ([`git/blobs/${blob}`, `git/blobs/${"d".repeat(40)}`].includes(path)) {
       const source =
-        "on:\n  push:\npermissions:\n  contents: read\njobs:\n  check:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --version\n";
+        workflowSources[path === `git/blobs/${blob}` ? "ci.yml" : "process-policy.yml"];
       value = {
         encoding: "base64",
         size: source.length,
@@ -452,7 +463,7 @@ test("target workflow rejects head checkout, action script and environment redir
       },
     },
   });
-  assert.throws(() => inspectWorkflow(make(), policy));
+  assert.throws(() => inspectWorkflow(make(), policy, ".github/workflows/process-policy.yml"));
   const env = make();
   env.jobs.check.steps = [
     {
@@ -460,12 +471,12 @@ test("target workflow rejects head checkout, action script and environment redir
       env: { NODE_OPTIONS: "--import ./candidate.mjs" },
     },
   ];
-  assert.throws(() => inspectWorkflow(env, policy));
+  assert.throws(() => inspectWorkflow(env, policy, ".github/workflows/process-policy.yml"));
   const shell = make();
   shell.jobs.check.steps = [
     { run: "node scripts/check-process-policy.mjs", shell: "./candidate-shell" },
   ];
-  assert.throws(() => inspectWorkflow(shell, policy));
+  assert.throws(() => inspectWorkflow(shell, policy, ".github/workflows/process-policy.yml"));
 });
 
 test("new terminal claims require exact independent closeout attestation", () => {
@@ -502,3 +513,146 @@ test("edited acceptance evidence invalidates independent attestation", () => {
   p.metadata.acceptance[0].evidence = "author substituted a different result";
   assert.throws(() => validatePacket(p), /metadata digest/);
 });
+
+const ciCase = () => structuredClone(submittedCi);
+for (const name of [
+  "quality",
+  "database",
+  "tests",
+  "build",
+  "secrets",
+  "required",
+  "dependency-audit",
+]) {
+  test(`F-H1: reject removed mandatory CI topology job ${name}`, () => {
+    const flow = ciCase();
+    delete flow.jobs[name];
+    assert.throws(() => inspectWorkflow(flow, policy, ciPath));
+  });
+}
+const ciBypasses = {
+  "required and secrets removed together": (flow) => {
+    delete flow.jobs.required;
+    delete flow.jobs.secrets;
+  },
+  "required job renamed": (flow) => {
+    flow.jobs.other = flow.jobs.required;
+    delete flow.jobs.required;
+  },
+  "secrets job renamed": (flow) => {
+    flow.jobs.other = flow.jobs.secrets;
+    delete flow.jobs.secrets;
+  },
+  "PR trigger removed": (flow) => {
+    delete flow.on.pull_request;
+  },
+  "PR trigger filtered by path": (flow) => {
+    flow.on.pull_request.paths = ["never/**"];
+  },
+  "push branch removed": (flow) => {
+    flow.on.push.branches.pop();
+  },
+  "scanner step if false": (flow) => {
+    flow.jobs.secrets.steps[2].if = false;
+  },
+  "scanner step false expression": (flow) => {
+    flow.jobs.secrets.steps[2].if = "${{ false }}";
+  },
+  "scanner step true expression still conditional": (flow) => {
+    flow.jobs.secrets.steps[2].if = "${{ true }}";
+  },
+  "scanner job if false": (flow) => {
+    flow.jobs.secrets.if = false;
+  },
+  "scanner job skip expression": (flow) => {
+    flow.jobs.secrets.if = "${{ false }}";
+  },
+  "scanner missing": (flow) => {
+    flow.jobs.secrets.steps.pop();
+  },
+  "scanner exit muted": (flow) => {
+    flow.jobs.secrets.steps[2].run += " || true";
+  },
+  "scanner output redirected": (flow) => {
+    flow.jobs.secrets.steps[2].run += " > /dev/null";
+  },
+  "scanner step continue on error": (flow) => {
+    flow.jobs.secrets.steps[2]["continue-on-error"] = true;
+  },
+  "scanner job continue on error": (flow) => {
+    flow.jobs.secrets["continue-on-error"] = true;
+  },
+  "scanner environment injection": (flow) => {
+    flow.jobs.secrets.steps[2].env = { NODE_OPTIONS: "--import ./neutralize.mjs" };
+  },
+  "scanner job environment injection": (flow) => {
+    flow.jobs.secrets.env = { PATH: "/tmp/noop" };
+  },
+  "scanner preparatory neutralization": (flow) => {
+    flow.jobs.secrets.steps.splice(2, 0, { run: "printf '' > scripts/check-secrets.mjs" });
+  },
+  "scanner alternate checkout": (flow) => {
+    flow.jobs.secrets.steps[0].with.ref = "clean-branch";
+  },
+  "scanner checkout sparse omission": (flow) => {
+    flow.jobs.secrets.steps[0].with["sparse-checkout"] = "README.md";
+  },
+  "aggregator conditional": (flow) => {
+    flow.jobs.required.steps[2].if = false;
+  },
+  "aggregator results replaced": (flow) => {
+    flow.jobs.required.steps[2].env.RESULTS = "{}";
+  },
+  "aggregator removed": (flow) => {
+    flow.jobs.required.steps.pop();
+  },
+  "quality job skipped": (flow) => {
+    flow.jobs.quality.if = false;
+  },
+  "build step skipped": (flow) => {
+    flow.jobs.build.steps.at(-1).if = false;
+  },
+};
+for (const [name, mutate] of Object.entries(ciBypasses))
+  test(`F-H1/F-H2: reject ${name}`, () => {
+    const flow = ciCase();
+    mutate(flow);
+    assert.throws(() => inspectWorkflow(flow, policy, ciPath));
+  });
+test("workflow name cannot grant or change trusted path identity", () => {
+  const flow = ciCase();
+  flow.name = "Renamed display label";
+  assert.equal(inspectWorkflow(flow, policy, ciPath), true);
+  assert.throws(() => inspectWorkflow(flow, policy, ".github/workflows/other.yml"));
+  assert.throws(() => inspectWorkflow(flow, policy));
+});
+
+for (const [name, change] of Object.entries({
+  "missing Required CI and scanner": (flow) => {
+    delete flow.jobs.required;
+    delete flow.jobs.secrets;
+  },
+  "false scanner step": (flow) => {
+    flow.jobs.secrets.steps[2].if = false;
+  },
+  "global scanner environment redirection": (flow) => {
+    flow.env.NODE_OPTIONS = "--import ./neutralize.mjs";
+  },
+}))
+  test(`live candidate blob inspection rejects ${name}`, async () => {
+    await assert.rejects(
+      evaluateLive(
+        liveFixture(({ path, value }) => {
+          if (path !== `git/blobs/${blob}`) return;
+          const flow = ciCase();
+          change(flow);
+          const source = JSON.stringify(flow);
+          return {
+            ...value,
+            size: Buffer.byteLength(source),
+            content: Buffer.from(source).toString("base64"),
+          };
+        }),
+      ),
+    );
+  });
