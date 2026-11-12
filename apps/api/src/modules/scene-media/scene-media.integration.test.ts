@@ -807,6 +807,16 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
       expect(held.version).toBe(created.version + 1);
       gate.release();
       await expect(first).rejects.toBeInstanceOf(ConflictException);
+      const afterStaleOwner = await db.sceneMediaJob.findUniqueOrThrow({
+        where: { workspaceId_id: { workspaceId, id: created.jobId } },
+      });
+      expect(afterStaleOwner.leaseId).not.toBeNull();
+      await expect(
+        service.regenerate(context, created.jobId, "one", {
+          idempotencyKey: "scene-media-after-expired-owner",
+          expectedJobVersion: created.version + 1,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(imageCalls).toBe(callsWhileHeld);
     } finally {
       gate.release();
