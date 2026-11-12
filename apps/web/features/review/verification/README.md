@@ -16,7 +16,9 @@ in `work/`; no external assets are downloaded. Screenshots are written to
 
 Scenarios cover queue scope/empty/error, unavailable and persisted AI evaluation,
 Owner/Editor/Viewer permissions, missing/failed gate evidence, required reason,
-regeneration route/scene/override, history and safe links, ambiguous success and
+regeneration route/scene/override, history and safe links (including the exact persisted
+render route and successful-render retry limitation), status-specific wording for
+missing AI scorecards, ambiguous success and
 409 reconciliation without duplicate writes, automatic approval, authenticated
 preview paths with valid/expired media, keyboard focus and responsive overflow.
 

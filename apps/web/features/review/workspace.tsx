@@ -99,7 +99,9 @@ export function ReviewQueue(): JSX.Element {
                     {run.gateSummary.filter((g) => !g.passed).length} failed hard gates ·{" "}
                     {run.scorecard
                       ? "Persisted AI evaluation available"
-                      : "AI evaluation unavailable"}
+                      : run.status === "AI_REVIEW_UNAVAILABLE"
+                        ? "AI evaluation unavailable"
+                        : "No AI scorecard recorded"}
                   </p>
                   <span>Inspect evidence and review →</span>
                 </StudioLink>
@@ -370,6 +372,14 @@ export function ReviewDetail({ runId }: { runId: string }): JSX.Element {
                         ) : (
                           <p>
                             Production context unavailable. Open the render to inspect its source.
+                          </p>
+                        )}
+                        {r.stage === "RENDER" && (
+                          <p>
+                            {render.data?.status === "SUCCEEDED"
+                              ? "This successful render cannot be retried."
+                              : "Only failed retryable or canceled renders can be retried in the render workspace."}{" "}
+                            Creating a new render from a review request is not supported.
                           </p>
                         )}
                       </li>

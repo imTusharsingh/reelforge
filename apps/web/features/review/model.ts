@@ -315,10 +315,9 @@ export function validateDecision(
     throw new Error("Enter an override reason (up to 1000 characters) for this failed-gate route.");
 }
 export function regenerationHref(stage: Stage, render: RenderJob): string | null {
-  const context = renderContext(render);
+  if (stage === "RENDER") return `/production/renders/${encodeURIComponent(render.id)}`;
   if (stage === "SCENE") return `/production/jobs/${encodeURIComponent(render.sceneMediaJobId)}`;
+  const context = renderContext(render);
   if (!context.scriptId) return null;
-  return stage === "SCRIPT"
-    ? `/planning/scripts/${encodeURIComponent(context.scriptId)}`
-    : `/production/scripts/${encodeURIComponent(context.scriptId)}`;
+  return `/planning/scripts/${encodeURIComponent(context.scriptId)}`;
 }

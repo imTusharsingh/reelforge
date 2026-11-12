@@ -126,6 +126,22 @@ try {
     },
     "mode=queue",
   );
+  for (const mode of ["queue", "queue-blocked", "queue-no-scorecard"])
+    await test(
+      `${mode} describes persisted AI availability accurately`,
+      async (page) => {
+        await page.getByText(/Inspect evidence/).waitFor();
+        const card = page.getByRole("link", { name: /Inspect evidence/ });
+        assert(
+          (await card.innerText()).includes(
+            mode === "queue" ? "AI evaluation unavailable" : "No AI scorecard recorded",
+          ),
+        );
+        if (mode !== "queue")
+          assert(!(await card.innerText()).includes("AI evaluation unavailable"));
+      },
+      `mode=${mode}`,
+    );
   await test(
     "workspace switch discards the prior tenant's late queue response",
     async (page) => {
@@ -245,10 +261,18 @@ try {
           await page.getByRole("link", { name: "Open script workflow" }).getAttribute("href")
         ).startsWith("/planning/scripts/"),
       );
-      assert(
-        (
-          await page.getByRole("link", { name: "Open render workflow" }).getAttribute("href")
-        ).startsWith("/production/scripts/"),
+      assert.equal(
+        await page.getByRole("link", { name: "Open render workflow" }).getAttribute("href"),
+        "/production/renders/50000000-0000-4000-8000-000000000005",
+      );
+      await page.getByText(/This successful render cannot be retried/).waitFor();
+      await page
+        .getByText(/Creating a new render from a review request is not supported/)
+        .waitFor();
+      assert.equal(
+        (await page.evaluate(() => window.m26Fixture.calls.filter((c) => c.method === "POST")))
+          .length,
+        0,
       );
     },
     "mode=history",

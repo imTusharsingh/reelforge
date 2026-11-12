@@ -172,8 +172,13 @@ describe("M26 persisted quality contracts", () => {
   it("routes safely to existing workflows without dispatching work", () => {
     expect(regenerationHref("SCENE", render)).toContain("/production/jobs/");
     expect(regenerationHref("SCRIPT", render)).toContain("/planning/scripts/");
-    expect(regenerationHref("RENDER", render)).toContain("/production/scripts/");
+    expect(regenerationHref("RENDER", render)).toBe(`/production/renders/${render.id}`);
     expect(renderContext(render).sceneIds).toContain("scene-one");
     expect(regenerationHref("SCRIPT", { ...render, input: {} })).toBeNull();
+  });
+  it("links render regeneration by persisted render ID without script context", () => {
+    expect(regenerationHref("RENDER", { ...render, input: {}, id: "render/id?" })).toBe(
+      "/production/renders/render%2Fid%3F",
+    );
   });
 });

@@ -1139,3 +1139,12 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-12 — M26 scorecard boundary verification
 
 - Tightened scorecard validation to mirror the existing M11 strict allowed fields, criterion evidence/list limits and model/prompt provenance lengths, with a regression test. No backend/shared contract changes. Focused Review tests: 43 passed; full local PostgreSQL suite: 744 passed / 8 skipped; mounted Chromium: 17/17 passed. Lint, format, full typecheck and production build rerun successfully. Hosted CI passed for prior handoff commit `a94413a`; monitor the final follow-up commit before handoff. Independent review remains requested; no self-approval or merge.
+
+
+## 2026-11-12 — M26 PR #68 independent review fixes
+
+- Addressed the M26-T06 approval blocker from review `5872848055`: RENDER regeneration history now links to the exact persisted `/production/renders/:renderJobId` workspace, independently of script input context. Removed the incorrect scene-production creation destination. Added truthful messaging that successful renders cannot be retried and that creating a new render directly from a review request is unsupported. Existing M25/backend retry, idempotency, version and permission rules remain unchanged; recording or following a request dispatches no generation.
+- Also fixed the nonblocking queue wording note associated with #64: null scorecards say “No AI scorecard recorded” unless the persisted status positively identifies `AI_REVIEW_UNAVAILABLE`. No provider availability is inferred.
+- Updated the previously incorrect model/browser route assertions and added coverage for missing script context, escaped render IDs, exact persisted render routing, successful-render retry messaging, no generation POST, and three queue-scorecard states. Focused Review suite: 44 passed. Mounted Chromium: 20/20 passed, retaining desktop and 390px coverage.
+- Verification after fixes: frozen-lockfile install, format, lint, full typecheck, production build, database validation, 30-migration guard, secrets scan and diff checks all passed. Full local PostgreSQL suite: 745 passed / 8 skipped (97 files passed / 2 skipped). No backend, contracts, schema/migration or root-tooling changes; no live AI/social calls.
+- Follow-up is ready to push to the existing PR and request independent `minu-the-reviewer` re-review, with hosted CI monitoring for the new commit. State remains IMPLEMENTED_PENDING_REVIEW. No self-approval or merge.

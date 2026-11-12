@@ -14,7 +14,7 @@
 - [x] **M26-T03:** Complete persisted AI scorecard validation, five criteria, evidence/limitations, model/prompt provenance; distinct unavailable, manual, deterministic and automatic approval states.
 - [x] **M26-T04:** Owner/Editor decisions, Viewer read-only, explicit required reason, target/scene/override validation, confirmation, duplicate protection, conflicts and GET-only reconciliation before another decision.
 - [x] **M26-T05:** Persisted decision action/reason/override/reviewer ID/time and regeneration stage/scene/attempt/time. No invented names or historical discovery.
-- [x] **M26-T06:** Safe links to existing planning script, production job and render-composition workflows. Recording a change request does not dispatch provider work. M25 safeguards are untouched.
+- [x] **M26-T06:** Safe links to existing planning script, production job and persisted render detail/retry workflows. Recording a change request does not dispatch provider work. M25 safeguards are untouched.
 - [x] **M26-T07:** Separate current-render quality status read, complete hard-gate evidence and blockers; advisory eligibility with authoritative publishing rechecks explained.
 
 ## Files changed
@@ -36,7 +36,7 @@
 - Read Issue #67 via GitHub, complete work package, M11 service/controller/validation/types, M24/M25 UI/API/browser patterns, design system, decision log and architecture/governance documents.
 - `pnpm install --frozen-lockfile`: passed; pinned dependencies unchanged.
 - `bash /workspace/environment/reelforge/start-postgres.sh`: local PostgreSQL ready. `pnpm db:migrate:deploy`: passed, 30 existing migrations present; applied only three outstanding M24/M25 migrations to the disposable development database.
-- `pnpm exec vitest run apps/web/features/review`: passed, 43 tests in 2 files.
+- `pnpm exec vitest run apps/web/features/review`: passed, 44 tests in 2 files.
 - `pnpm --filter @reelforge/web typecheck`: passed.
 - `pnpm typecheck`, `pnpm lint`, `NODE_ENV=production pnpm build`: passed in initial full verification. Final rerun recorded below when complete.
 - `NODE_ENV=test pnpm test`: initial full run passed, 97 files passed / 2 skipped, 741 tests passed / 8 skipped. Two additional recovery-storage tests were added afterward; final result recorded below.
@@ -67,15 +67,26 @@ All final commands exited 0:
 | `pnpm format:check` | PASS (rechecked after documentation and local evidence formatting) |
 | `pnpm lint` | PASS |
 | `pnpm typecheck` | PASS, all workspace packages |
-| `NODE_ENV=test pnpm test` | PASS, 97 files passed / 2 skipped; 744 tests passed / 8 skipped |
+| `NODE_ENV=test pnpm test` | PASS, 97 files passed / 2 skipped; 745 tests passed / 8 skipped |
 | `NODE_ENV=production pnpm build` | PASS, including both new review routes |
 | `pnpm db:validate` | PASS |
 | `pnpm db:check-migrations` | PASS, 30 existing migrations |
 | `pnpm security:secrets` | PASS; repeated after staging to include new files |
 | `git diff --check` | PASS |
 
-The final format recheck initially found only the generated local `work/final-checks.json` missing a trailing newline; formatting that ignored evidence file resolved it without a tracked tooling change. Final browser rerun: 17/17 passed; focused review tests: 43/43 passed. A final trust-boundary follow-up mirrors M11 strict scorecard fields and evidence/provenance bounds, with a regression test. Lint, format, typecheck, the full PostgreSQL suite, mounted browser scenarios and production build were re-executed after the follow-up. Implementation is complete within the existing contracts. Remaining work is independent review and CI confirmation; no self-approval or merge.
+The final format recheck initially found only the generated local `work/final-checks.json` missing a trailing newline; formatting that ignored evidence file resolved it without a tracked tooling change. Latest browser rerun: 20/20 passed; focused review tests: 44/44 passed. A final trust-boundary follow-up mirrors M11 strict scorecard fields and evidence/provenance bounds, with a regression test. Lint, format, typecheck, the full PostgreSQL suite, mounted browser scenarios and production build were re-executed after the follow-up. Implementation is complete within the existing contracts. Remaining work is independent review and CI confirmation; no self-approval or merge.
 
 ## Next action and reviewer decision
 
-Implementation commit `b6241dd` was pushed. Non-draft [PR #68](https://github.com/imTusharsingh/reelforge/pull/68) targets `main`, includes `Closes #67`, and has an explicit review request for `minu-the-reviewer` under the verified `imTusharsingh` account. Hosted CI passed for handoff commit `a94413a` (run 43182345807). The final scorecard-boundary follow-up is reverified locally and its hosted CI must also pass. Next: monitor CI and address any failures, then await independent review. Do not self-approve or merge.
+[PR #68](https://github.com/imTusharsingh/reelforge/pull/68) targets `main`, includes `Closes #67`, and remains unmerged. The independent review requested the RENDER-route correction documented below; that blocker and the nonblocking queue wording note are now fixed and locally verified. Hosted CI passed on the previously reviewed head `c4148d3` (run 43182925922). Next: push the follow-up, post the verification summary, request `minu-the-reviewer` re-review, and monitor CI on the follow-up commit. Independent approval is still required; do not self-approve or merge.
+
+
+## PR #68 independent review follow-up
+
+Addressed the [changes-requested review](https://github.com/imTusharsingh/reelforge/pull/68#pullrequestreview-5872848055) from `minu-the-reviewer`:
+
+- **R1 / M26-T06 blocker:** `RENDER` requests now link to `/production/renders/:renderJobId` using the persisted render ID. They no longer link to scene-production creation, and routing remains available without script input context. History explains that successful renders cannot be retried and that creating a new render from a review request is unsupported. Existing backend/M25 retry rules, permission checks and idempotency remain unchanged; navigation does not dispatch generation.
+- **Nonblocking wording note / #64:** Null scorecards now read “No AI scorecard recorded” unless persisted status is explicitly `AI_REVIEW_UNAVAILABLE`. Valid recorded scorecards retain their existing label.
+- Changed files for this follow-up: review `model.ts`, `model.test.ts`, `workspace.tsx`, browser `mounted-fixture.tsx`, `mounted-browser.mjs`, verification `README.md`, this status and the appended work-log record.
+- Focused model/API suite: 44 tests passed. Mounted Chromium: 20 scenarios passed, including exact persisted-render routing, missing-script-context/path encoding, successful-render limitation messaging, no generation POST, and distinct missing/unavailable queue wording. Existing desktop/390px, role, evidence and reconciliation scenarios remain passing.
+- Full repository verification after the review fixes passed: `pnpm install --frozen-lockfile`, `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `NODE_ENV=test pnpm test` (745 passed / 8 skipped; 97 files passed / 2 skipped), `NODE_ENV=production pnpm build`, `pnpm db:validate`, `pnpm db:check-migrations` (30 immutable ordered migrations), `pnpm security:secrets`, and `git diff --check` all exited 0. The local PostgreSQL readiness check passed. No paid/provider calls or backend/shared-contract/tooling changes. Independent re-review is still required. No self-approval or merge.

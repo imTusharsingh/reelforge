@@ -15,10 +15,11 @@ const role =
   query.get("role") === "VIEWER" ? "VIEWER" : query.get("role") === "OWNER" ? "OWNER" : "EDITOR";
 let current: Run = structuredClone(review);
 let failedRead = false;
-if (mode === "blocked") {
+if (mode === "blocked" || mode === "queue-blocked") {
   current.status = "BLOCKED";
   current.gateSummary[0]!.passed = false;
 }
+if (mode === "queue-no-scorecard") current.status = "REVIEW_REQUIRED";
 if (mode === "missing") current.gateSummary = [];
 if (mode === "ai" || mode === "auto") {
   current.scorecard = scorecard;
@@ -138,7 +139,7 @@ function Fixture(): JSX.Element {
       <ReviewContext.Provider
         value={{ client, revision, refresh: () => setRevision((v) => v + 1) }}
       >
-        {["queue", "empty", "error"].includes(mode) ? (
+        {mode.startsWith("queue") || ["empty", "error"].includes(mode) ? (
           <ReviewQueue />
         ) : (
           <ReviewDetail runId={runId} />
