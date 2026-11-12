@@ -1486,7 +1486,12 @@ export class SceneMediaService {
   ): Promise<void> {
     await this.db.sceneMediaJob
       .updateMany({
-        where: { workspaceId, id: jobId, leaseId: operationId },
+        where: {
+          workspaceId,
+          id: jobId,
+          leaseId: operationId,
+          leaseExpiresAt: { gt: new Date() },
+        },
         data: { leaseId: null, leaseExpiresAt: null },
       })
       .catch(() => undefined);
