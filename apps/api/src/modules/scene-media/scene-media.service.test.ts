@@ -556,6 +556,18 @@ function memoryDatabase(state: MemoryState): {
       },
     },
     sceneGeneration: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { workspaceId: string; jobId: string; activeSlot: number; status: string };
+      }): Promise<unknown> =>
+        generations.find(
+          (row) =>
+            row.workspaceId === where.workspaceId &&
+            row.jobId === where.jobId &&
+            row.activeSlot === where.activeSlot &&
+            row.status === where.status,
+        ) ?? null,
       findMany: async ({
         where,
         select,
