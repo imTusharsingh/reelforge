@@ -402,8 +402,11 @@ function memoryDatabase(state: MemoryState): {
             return false;
           }
           if (where.leaseExpiresAt) {
-            if (!(row.leaseExpiresAt instanceof Date) ||
-                row.leaseExpiresAt.getTime() <= where.leaseExpiresAt.gt.getTime()) return false;
+            if (
+              !(row.leaseExpiresAt instanceof Date) ||
+              row.leaseExpiresAt.getTime() <= where.leaseExpiresAt.gt.getTime()
+            )
+              return false;
           }
           if (where.OR) {
             const matchedClause = where.OR.some((clause) => {
