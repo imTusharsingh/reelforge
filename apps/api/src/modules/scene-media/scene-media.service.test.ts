@@ -385,12 +385,14 @@ function memoryDatabase(state: MemoryState): {
           id: string;
           version?: number;
           leaseId?: string | null;
+          leaseExpiresAt?: { gt: Date };
           OR?: Array<{ leaseId: null } | { leaseExpiresAt: { lt: Date } }>;
         };
         data: {
           version?: { increment: number };
           leaseId?: string | null;
           leaseExpiresAt?: Date | null;
+          status?: string;
         };
       }): Promise<unknown> => {
         const matched = jobs.filter((row) => {
@@ -398,6 +400,10 @@ function memoryDatabase(state: MemoryState): {
           if (where.version !== undefined && row.version !== where.version) return false;
           if (where.leaseId !== undefined && row.leaseId !== where.leaseId) {
             return false;
+          }
+          if (where.leaseExpiresAt) {
+            if (!(row.leaseExpiresAt instanceof Date) ||
+                row.leaseExpiresAt.getTime() <= where.leaseExpiresAt.gt.getTime()) return false;
           }
           if (where.OR) {
             const matchedClause = where.OR.some((clause) => {
@@ -424,6 +430,7 @@ function memoryDatabase(state: MemoryState): {
           if (data.leaseExpiresAt !== undefined) {
             row.leaseExpiresAt = data.leaseExpiresAt;
           }
+          if (data.status !== undefined) row.status = data.status;
           row.updatedAt = new Date();
         }
         return { count: matched.length };
