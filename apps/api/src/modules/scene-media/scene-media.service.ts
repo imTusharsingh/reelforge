@@ -422,6 +422,10 @@ export class SceneMediaService {
     try {
       mutationId = await this.db.$transaction(async (tx) => {
         const now = new Date();
+        const previousLease = await tx.sceneMediaJob.findUnique({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
+          select: { leaseId: true, leaseExpiresAt: true },
+        });
         const claimed = await tx.sceneMediaJob.updateMany({
           where: {
             workspaceId: context.workspaceId,
@@ -449,6 +453,25 @@ export class SceneMediaService {
           throw new ConflictException(
             "Another scene media operation is already running for this job; wait for it to finish and reload",
           );
+        }
+        // An expired lease alone does not prove that a submitted provider request stopped.
+        // A scene still processing must be reconciled against the provider before more paid work.
+        // Rolling back this transaction also rolls back the provisional version/lease claim.
+        if (previousLease?.leaseId && previousLease.leaseExpiresAt) {
+          const unresolved = await tx.sceneGeneration.findFirst({
+            where: {
+              workspaceId: context.workspaceId,
+              jobId,
+              activeSlot: 1,
+              status: "PROVIDER_PROCESSING",
+            },
+            select: { id: true },
+          });
+          if (unresolved) {
+            throw new ConflictException(
+              "A previous provider operation may still be running; reconcile its result before another paid attempt",
+            );
+          }
         }
         // A crashed request releases nothing; reconcile its expired claim so the ledger does not
         // leave a permanent IN_PROGRESS mutation behind.
