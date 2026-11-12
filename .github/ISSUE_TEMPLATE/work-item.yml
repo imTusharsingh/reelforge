@@ -1,0 +1,34 @@
+name: Scoped work item
+description: Gate 0 scope, ownership, approvals and acceptance evidence
+title: "[Workstream] "
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: Issue or work package, scope and non-scope
+      description: Name the assigned workstream, dependencies, blockers and deferred capabilities.
+    validations: { required: true }
+  - type: textarea
+    id: ownership
+    attributes:
+      label: Base/head SHA and exact changed-file ownership
+      description: List every proposed path and owner; identify shared files and concurrent PRs.
+    validations: { required: true }
+  - type: textarea
+    id: approvals
+    attributes:
+      label: Gate 0, ADR and change-control approvals
+      description: Link independent records. Author checkboxes cannot authorize protected paths.
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Exact acceptance criteria and verification matrix
+      description: Include unit/integration/functional/browser, PostgreSQL/Redis/FFmpeg, security/tenant/role/retry checks and unavailable capabilities.
+    validations: { required: true }
+  - type: textarea
+    id: reconciliation
+    attributes:
+      label: Status/work-log reconciliation and independent reviewer
+      description: Name reviewer, evidence ownership and proposed handoff; no self-approval or integration claims.
+    validations: { required: true }

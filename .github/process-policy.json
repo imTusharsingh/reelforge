@@ -1,0 +1,47 @@
+{
+  "repository": "imTusharsingh/reelforge",
+  "repositoryId": 1446655770,
+  "authorizerId": 353068839,
+  "authorizerLogin": "minu-the-reviewer",
+  "readScopes": ["contents", "pull-requests", "issues"],
+  "protectedPrefixes": [
+    ".github/",
+    "scripts/",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "vitest.config.ts",
+    "eslint.config.js",
+    "tsconfig",
+    "AGENTS.md",
+    "packages/",
+    "apps/api/src/app.module.ts",
+    "docs/DECISION_LOG.md",
+    "docs/PROJECT_STATE.md",
+    "docs/CHANGE_CONTROL.md",
+    "docs/WORK_LOG.md"
+  ],
+  "requiredEvidence": [
+    "install",
+    "lint",
+    "format",
+    "typecheck",
+    "build",
+    "database",
+    "migration-diff",
+    "tests-redis",
+    "tests-no-redis",
+    "tests-ffmpeg",
+    "policy",
+    "secrets",
+    "audit",
+    "smoke",
+    "browser"
+  ],
+  "actions": [
+    "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+    "pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2",
+    "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+  ]
+}
