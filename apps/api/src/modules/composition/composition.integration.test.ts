@@ -390,9 +390,40 @@ suite("CompositionService persisted lifecycle", () => {
     await rm(storageRoot, { recursive: true, force: true });
   });
 
+  it("lists workspace-scoped render jobs with filters, pagination, and viewer reads", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const created = await service.create(context, body(`render-list-${randomUUID()}`));
+    const page = await service.list(
+      { ...context, role: "VIEWER" },
+      {
+        scriptId,
+        status: "SUCCEEDED",
+        page: 1,
+        pageSize: 10,
+      },
+    );
+    expect(page.items.some((item) => item.jobId === created.id)).toBe(true);
+    expect(page.items.every((item) => item.scriptId === scriptId)).toBe(true);
+    const listed = page.items.find((item) => item.jobId === created.id);
+    expect(listed).toMatchObject({ scriptRevision: 1, artifactCount: 3, attempt: 0 });
+    const foreign = await service.list(
+      { ...context, workspaceId: otherWorkspaceId },
+      { page: 1, pageSize: 10 },
+    );
+    expect(foreign.items).toHaveLength(0);
+    const wrongScript = await service.list(context, {
+      scriptId: randomUUID(),
+      page: 1,
+      pageSize: 10,
+    });
+    expect(wrongScript.items).toHaveLength(0);
+  });
+
   it("persists attachments only after successful export and replays the same idempotency key", async () => {
     if (!db || !service) return;
     fail = false;
+    calls = 0;
     const created = await service.create(context, body("render-success"));
     const repeated = await service.create(context, body("render-success"));
     expect(created.status).toBe("SUCCEEDED");

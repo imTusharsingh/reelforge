@@ -38,6 +38,15 @@ export class CompositionController {
       this.composition.create(context, body),
     );
   }
+  @Get("jobs") public list(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query() query: unknown,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) =>
+      this.composition.list(context, query),
+    );
+  }
   @Get("jobs/:jobId") public get(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,

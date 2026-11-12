@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_RENDER_PROFILE } from "@reelforge/media";
 import { BadRequestException } from "@nestjs/common";
+import { RenderJobListQuerySchema, type RenderJobListQuery } from "@reelforge/contracts";
 import type { RenderCompositionInput } from "./composition.types.js";
 const uuid = z.string().uuid();
 const caption = z
@@ -99,6 +100,9 @@ export function parse<T>(schema: z.ZodType<T>, value: unknown): T {
       result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
     );
   return result.data;
+}
+export function parseRenderJobListQuery(query: unknown): RenderJobListQuery {
+  return parse(RenderJobListQuerySchema, query);
 }
 export function validateComposition(input: RenderCompositionInput): void {
   if (
