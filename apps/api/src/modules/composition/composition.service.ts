@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Inject,
   Injectable,
   NotFoundException,
@@ -25,6 +26,15 @@ import {
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionEnginePort } from "./composition.engine.js";
 import { AssetService } from "../asset/asset.service.js";
+import {
+  defaultContentFilename,
+  deliverableMediaType,
+  EXPIRING_ARTIFACT_CACHE_CONTROL,
+  readVerifiedStorageObject,
+  sanitizeContentFilename,
+} from "../asset/content-delivery.js";
+import type { MediaContent } from "../asset/content-delivery.js";
+import { isUuid } from "../asset/asset.validation.js";
 import { COMPOSITION_ENGINE } from "./composition.types.js";
 import type {
   RenderArtifactView,
@@ -201,6 +211,72 @@ export class CompositionService {
       });
     }
   }
+  /**
+   * Returns one render artifact's verified bytes after checking job success,
+   * retention, immutable artifact binding, and the published asset version.
+   */
+  public async getArtifactContent(
+    context: WorkspaceContext,
+    id: string,
+    artifactId: string,
+  ): Promise<MediaContent> {
+    if (!isUuid(id)) throw new BadRequestException("jobId must be a UUID");
+    if (!isUuid(artifactId)) throw new BadRequestException("artifactId must be a UUID");
+    const job = await this.db.renderJob.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+      include: { artifacts: true },
+    });
+    if (!job) throw new NotFoundException("Render job not found");
+    if (job.expiredAt !== null)
+      throw new GoneException("Render artifacts have expired and are no longer available");
+    if (job.status !== "SUCCEEDED")
+      throw new ConflictException("A successful render is required for artifact delivery");
+    const artifact = job.artifacts.find((candidate) => candidate.id === artifactId);
+    if (!artifact) throw new NotFoundException("Render artifact not found");
+    if (artifact.retainedUntil !== null && artifact.retainedUntil <= this.now())
+      throw new GoneException("Render artifact has expired and is no longer available");
+    if (!artifact.objectKey.startsWith(`render/${job.id}/`))
+      throw new ConflictException("Render artifact is not bound to its render job");
+    const mediaType = deliverableMediaType(artifact.mediaType);
+    if (mediaType === undefined)
+      throw new ConflictException("Render artifact media type is not supported for delivery");
+    const asset = await this.db.asset.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        id: artifact.assetId,
+        version: artifact.assetVersion,
+        status: "PUBLISHED",
+      },
+    });
+    if (
+      !asset ||
+      asset.objectKey !== artifact.objectKey ||
+      asset.mediaType !== artifact.mediaType ||
+      asset.byteSize !== artifact.byteSize ||
+      asset.checksumSha256 !== artifact.checksumSha256
+    )
+      throw new ConflictException("Render artifact is not bound to its published asset version");
+    const body = await readVerifiedStorageObject({
+      storage: this.storage,
+      workspaceId: context.workspaceId,
+      objectKey: artifact.objectKey,
+      byteSize: artifact.byteSize,
+      checksumSha256: artifact.checksumSha256,
+      label: "Render artifact",
+    });
+    return {
+      body,
+      mediaType,
+      filename: sanitizeContentFilename(
+        asset.filename,
+        defaultContentFilename(mediaType, `render-${artifact.kind.toLowerCase()}`),
+      ),
+      byteSize: artifact.byteSize,
+      checksumSha256: artifact.checksumSha256,
+      cacheControl: EXPIRING_ARTIFACT_CACHE_CONTROL,
+    };
+  }
+
   public async cancel(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     this.editor(context);
     const rows = await this.db.renderJob.updateMany({

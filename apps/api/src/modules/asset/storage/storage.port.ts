@@ -1,5 +1,17 @@
 export const STORAGE_PORT = "STORAGE_PORT";
 
+/**
+ * A real storage adapter raises this when the requested object does not exist.
+ * Callers must distinguish a missing object from a transient storage failure;
+ * they must never synthesize bytes or a success response for a missing object.
+ */
+export class StorageObjectNotFoundError extends Error {
+  public constructor(message = "Storage object not found") {
+    super(message);
+    this.name = "StorageObjectNotFoundError";
+  }
+}
+
 export type StoragePutInput = Readonly<{
   workspaceId: string;
   objectKey: string;

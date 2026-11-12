@@ -1,7 +1,24 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Head,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
+import type { Response } from "express";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
+import {
+  parseDownloadQuery,
+  sendMediaContent,
+  singleHeaderValue,
+} from "../asset/content-delivery.js";
 import { CompositionService } from "./composition.service.js";
 import type { RenderJobView } from "./composition.types.js";
 import type { RenderManifest } from "./composition.manifest.js";
@@ -77,6 +94,44 @@ export class CompositionController {
       this.composition.edit(context, jobId, body),
     );
   }
+
+  @Get("jobs/:jobId/artifacts/:artifactId/content") public artifactContent(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("jobId") jobId: string,
+    @Param("artifactId") artifactId: string,
+    @Query("download") downloadQuery: unknown,
+    @Res() response: Response,
+  ): Promise<void> {
+    return this.context(request, workspaceId).then(async (context) => {
+      const download = parseDownloadQuery(downloadQuery);
+      const content = await this.composition.getArtifactContent(context, jobId, artifactId);
+      sendMediaContent(response, content, {
+        download,
+        rangeHeader: singleHeaderValue(request.headers.range),
+        ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
+      });
+    });
+  }
+
+  @Head("jobs/:jobId/artifacts/:artifactId/content") public artifactContentHead(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("jobId") jobId: string,
+    @Param("artifactId") artifactId: string,
+    @Query("download") downloadQuery: unknown,
+    @Res() response: Response,
+  ): Promise<void> {
+    return this.context(request, workspaceId).then(async (context) => {
+      const download = parseDownloadQuery(downloadQuery);
+      const content = await this.composition.getArtifactContent(context, jobId, artifactId);
+      sendMediaContent(response, content, {
+        download,
+        head: true,
+      });
+    });
+  }
+
   private context(request: AuthenticatedRequest, workspaceId: string): Promise<WorkspaceContext> {
     return this.workspaces.context(request.principal.userId, workspaceId);
   }
