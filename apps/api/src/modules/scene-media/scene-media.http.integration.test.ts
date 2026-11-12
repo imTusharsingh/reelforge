@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { createDatabaseClient } from "@reelforge/database";
@@ -115,6 +115,12 @@ suite("SceneMediaController authentication and workspace guards", () => {
       .post(`${base}/jobs`)
       .expect(401);
     await request(app!.getHttpServer() as never)
+      .get(`${base}/jobs`)
+      .expect(401);
+    await request(app!.getHttpServer() as never)
+      .get(`${base}/capabilities`)
+      .expect(401);
+    await request(app!.getHttpServer() as never)
       .get(`${base}/provider-health/provider/image`)
       .expect(401);
     await request(app!.getHttpServer() as never)
@@ -122,9 +128,27 @@ suite("SceneMediaController authentication and workspace guards", () => {
       .set("Authorization", `Bearer ${outsiderToken}`)
       .expect(403);
     await request(app!.getHttpServer() as never)
+      .get(`${base}/jobs`)
+      .set("Authorization", `Bearer ${outsiderToken}`)
+      .expect(403);
+    await request(app!.getHttpServer() as never)
+      .get(`${base}/capabilities`)
+      .set("Authorization", `Bearer ${outsiderToken}`)
+      .expect(403);
+    await request(app!.getHttpServer() as never)
       .post(`${base}/jobs`)
       .set("Authorization", `Bearer ${viewerToken}`)
-      .send({ scriptId: missing, idempotencyKey: "viewer", outputs: { image: true } })
+      .send({
+        scriptId: missing,
+        expectedScriptRevision: 1,
+        idempotencyKey: "viewer",
+        outputs: { image: true },
+      })
+      .expect(403);
+    await request(app!.getHttpServer() as never)
+      .post(`${base}/jobs/${missing}/retry`)
+      .set("Authorization", `Bearer ${viewerToken}`)
+      .send({ idempotencyKey: "viewer-retry", expectedJobVersion: 1 })
       .expect(403);
     await request(app!.getHttpServer() as never)
       .get(`${base}/provider-health/provider/image`)
@@ -138,5 +162,26 @@ suite("SceneMediaController authentication and workspace guards", () => {
       .get(`${base}/jobs/${missing}`)
       .set("Authorization", `Bearer ${viewerToken}`)
       .expect(404);
+  });
+
+  it("allows viewer reads for workspace-scoped discovery and capabilities", async () => {
+    const base = `/workspaces/${workspaceId}/scene-media`;
+    const jobs = await request(app!.getHttpServer() as never)
+      .get(`${base}/jobs`)
+      .set("Authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(jobs.body).toMatchObject({ items: [], page: 1, pageSize: 25, nextPage: null });
+    const capabilities = await request(app!.getHttpServer() as never)
+      .get(`${base}/capabilities`)
+      .set("Authorization", `Bearer ${viewerToken}`)
+      .expect(200);
+    expect(capabilities.body).toMatchObject({ workspaceId });
+    expect(capabilities.body.capabilities).toHaveLength(4);
+    expect(
+      capabilities.body.capabilities.every(
+        (item: { available: boolean; reason: string | null }) =>
+          item.available === false && typeof item.reason === "string",
+      ),
+    ).toBe(true);
   });
 });

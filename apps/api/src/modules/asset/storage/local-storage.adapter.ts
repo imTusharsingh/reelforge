@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { sha256Hex } from "./checksum.js";
+import { StorageObjectNotFoundError } from "./storage.port.js";
 import type { StoragePort, StoragePutInput, StoragePutResult } from "./storage.port.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -58,7 +59,12 @@ export class LocalFilesystemStorageAdapter implements StoragePort {
   }
 
   public async getObject(input: { workspaceId: string; objectKey: string }): Promise<Buffer> {
-    return readFile(this.resolveWorkspaceObject(input.workspaceId, input.objectKey));
+    try {
+      return await readFile(this.resolveWorkspaceObject(input.workspaceId, input.objectKey));
+    } catch (error) {
+      if (isMissingFile(error)) throw new StorageObjectNotFoundError();
+      throw error;
+    }
   }
 
   public async deleteObject(input: { workspaceId: string; objectKey: string }): Promise<void> {
@@ -75,4 +81,13 @@ export class LocalFilesystemStorageAdapter implements StoragePort {
       throw new StoragePathError("Object key resolves outside the workspace storage root");
     return destination;
   }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
 }

@@ -233,6 +233,27 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
       return this.sceneResult(pkg);
     }
     const scriptId = requiredString(input.input, "scriptId");
+    const script = record(await this.scripts.get(input.context, scriptId));
+    const status = script["status"];
+    const currentRevision = script["currentRevision"];
+    if (status !== "APPROVED") {
+      throw new WorkflowStepError(
+        "SCRIPT_REJECTED",
+        `Script is ${String(status).toLowerCase()}; scene media requires an approved script`,
+        false,
+      );
+    }
+    if (
+      typeof currentRevision !== "number" ||
+      !Number.isSafeInteger(currentRevision) ||
+      currentRevision < 1
+    ) {
+      throw new WorkflowStepError(
+        "SCRIPT_RESULT_INVALID",
+        "The approved script has no valid current revision",
+        false,
+      );
+    }
     const outputs = record(input.input["outputs"]);
     const requested = {
       image: true as const,
@@ -242,6 +263,7 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
     };
     const pkg = await this.sceneMedia.create(input.context, {
       scriptId,
+      expectedScriptRevision: currentRevision,
       idempotencyKey: input.idempotencyKey,
       outputs: requested,
     });

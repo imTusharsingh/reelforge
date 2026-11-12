@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Inject,
   Injectable,
   NotFoundException,
@@ -14,6 +15,7 @@ import { renderRetryDelayMs } from "./composition.retry-policy.js";
 import type { RenderManifest } from "./composition.manifest.js";
 
 import { canonicalRenderFingerprint, MediaValidationError } from "@reelforge/media";
+import type { RenderJobList } from "@reelforge/contracts";
 import { createHash } from "node:crypto";
 import {
   STORAGE_PORT,
@@ -24,6 +26,15 @@ import {
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionEnginePort } from "./composition.engine.js";
 import { AssetService } from "../asset/asset.service.js";
+import {
+  defaultContentFilename,
+  deliverableMediaType,
+  EXPIRING_ARTIFACT_CACHE_CONTROL,
+  readVerifiedStorageObject,
+  sanitizeContentFilename,
+} from "../asset/content-delivery.js";
+import type { MediaContent } from "../asset/content-delivery.js";
+import { isUuid } from "../asset/asset.validation.js";
 import { COMPOSITION_ENGINE } from "./composition.types.js";
 import type {
   RenderArtifactView,
@@ -39,6 +50,7 @@ import {
   createRenderSchema,
   editRenderSchema,
   parse,
+  parseRenderJobListQuery,
   validateComposition,
 } from "./composition.validation.js";
 
@@ -102,6 +114,76 @@ export class CompositionService {
   public async get(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     return this.present(context, id);
   }
+
+  /** Workspace-scoped render history, including jobs with no usage-ledger rows. */
+  public async list(context: WorkspaceContext, query: unknown): Promise<RenderJobList> {
+    const parsed = parseRenderJobListQuery(query);
+    const rows = await this.db.renderJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        ...(parsed.status === undefined ? {} : { status: parsed.status }),
+        ...(parsed.scriptId === undefined && parsed.channelId === undefined
+          ? {}
+          : {
+              sceneMediaJob: {
+                ...(parsed.scriptId === undefined ? {} : { scriptId: parsed.scriptId }),
+                ...(parsed.channelId === undefined ? {} : { channelId: parsed.channelId }),
+              },
+            }),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (parsed.page - 1) * parsed.pageSize,
+      take: parsed.pageSize + 1,
+      select: {
+        id: true,
+        workspaceId: true,
+        sceneMediaJobId: true,
+        parentJobId: true,
+        status: true,
+        attempt: true,
+        idempotencyKey: true,
+        inputFingerprint: true,
+        retentionDays: true,
+        cancelRequestedAt: true,
+        errorCode: true,
+        errorMessage: true,
+        createdAt: true,
+        updatedAt: true,
+        expiredAt: true,
+        _count: { select: { artifacts: true } },
+        sceneMediaJob: {
+          select: { scriptId: true, scriptRevision: true, channelId: true },
+        },
+      },
+    });
+    const hasNext = rows.length > parsed.pageSize;
+    return {
+      items: rows.slice(0, parsed.pageSize).map((row) => ({
+        jobId: row.id,
+        workspaceId: row.workspaceId,
+        sceneMediaJobId: row.sceneMediaJobId,
+        scriptId: row.sceneMediaJob.scriptId,
+        scriptRevision: row.sceneMediaJob.scriptRevision,
+        channelId: row.sceneMediaJob.channelId,
+        status: row.status,
+        attempt: row.attempt,
+        idempotencyKey: row.idempotencyKey,
+        inputFingerprint: row.inputFingerprint,
+        parentJobId: row.parentJobId,
+        retentionDays: row.retentionDays,
+        cancelRequestedAt: row.cancelRequestedAt?.toISOString() ?? null,
+        errorCode: row.errorCode,
+        errorMessage: row.errorMessage,
+        artifactCount: row._count.artifacts,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        expiredAt: row.expiredAt?.toISOString() ?? null,
+      })),
+      page: parsed.page,
+      pageSize: parsed.pageSize,
+      nextPage: hasNext ? parsed.page + 1 : null,
+    };
+  }
   public async getManifest(context: WorkspaceContext, id: string): Promise<RenderManifest> {
     const job = await this.present(context, id);
     const artifact = job.artifacts.find((item) => item.kind === "MANIFEST");
@@ -129,6 +211,72 @@ export class CompositionService {
       });
     }
   }
+  /**
+   * Returns one render artifact's verified bytes after checking job success,
+   * retention, immutable artifact binding, and the published asset version.
+   */
+  public async getArtifactContent(
+    context: WorkspaceContext,
+    id: string,
+    artifactId: string,
+  ): Promise<MediaContent> {
+    if (!isUuid(id)) throw new BadRequestException("jobId must be a UUID");
+    if (!isUuid(artifactId)) throw new BadRequestException("artifactId must be a UUID");
+    const job = await this.db.renderJob.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
+      include: { artifacts: true },
+    });
+    if (!job) throw new NotFoundException("Render job not found");
+    if (job.expiredAt !== null)
+      throw new GoneException("Render artifacts have expired and are no longer available");
+    if (job.status !== "SUCCEEDED")
+      throw new ConflictException("A successful render is required for artifact delivery");
+    const artifact = job.artifacts.find((candidate) => candidate.id === artifactId);
+    if (!artifact) throw new NotFoundException("Render artifact not found");
+    if (artifact.retainedUntil !== null && artifact.retainedUntil <= this.now())
+      throw new GoneException("Render artifact has expired and is no longer available");
+    if (!artifact.objectKey.startsWith(`render/${job.id}/`))
+      throw new ConflictException("Render artifact is not bound to its render job");
+    const mediaType = deliverableMediaType(artifact.mediaType);
+    if (mediaType === undefined)
+      throw new ConflictException("Render artifact media type is not supported for delivery");
+    const asset = await this.db.asset.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        id: artifact.assetId,
+        version: artifact.assetVersion,
+        status: "PUBLISHED",
+      },
+    });
+    if (
+      !asset ||
+      asset.objectKey !== artifact.objectKey ||
+      asset.mediaType !== artifact.mediaType ||
+      asset.byteSize !== artifact.byteSize ||
+      asset.checksumSha256 !== artifact.checksumSha256
+    )
+      throw new ConflictException("Render artifact is not bound to its published asset version");
+    const body = await readVerifiedStorageObject({
+      storage: this.storage,
+      workspaceId: context.workspaceId,
+      objectKey: artifact.objectKey,
+      byteSize: artifact.byteSize,
+      checksumSha256: artifact.checksumSha256,
+      label: "Render artifact",
+    });
+    return {
+      body,
+      mediaType,
+      filename: sanitizeContentFilename(
+        asset.filename,
+        defaultContentFilename(mediaType, `render-${artifact.kind.toLowerCase()}`),
+      ),
+      byteSize: artifact.byteSize,
+      checksumSha256: artifact.checksumSha256,
+      cacheControl: EXPIRING_ARTIFACT_CACHE_CONTROL,
+    };
+  }
+
   public async cancel(context: WorkspaceContext, id: string): Promise<RenderJobView> {
     this.editor(context);
     const rows = await this.db.renderJob.updateMany({

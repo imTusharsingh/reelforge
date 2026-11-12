@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import {
   ProviderError,
   type CapabilityMetadata,
@@ -40,6 +40,23 @@ export class SceneMediaController {
     return this.context(request, workspaceId).then((context) => this.media.create(context, body));
   }
 
+  @Get("jobs")
+  public list(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query() query: unknown,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) => this.media.list(context, query));
+  }
+
+  @Get("capabilities")
+  public capabilities(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) => this.media.capabilities(context));
+  }
+
   @Get("jobs/:jobId")
   public get(
     @Req() request: AuthenticatedRequest,
@@ -65,8 +82,11 @@ export class SceneMediaController {
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Param("jobId") jobId: string,
+    @Body() body: unknown,
   ): Promise<unknown> {
-    return this.context(request, workspaceId).then((context) => this.media.retry(context, jobId));
+    return this.context(request, workspaceId).then((context) =>
+      this.media.retry(context, jobId, body),
+    );
   }
 
   @Post("jobs/:jobId/scenes/:sceneId/regenerate")
@@ -75,9 +95,10 @@ export class SceneMediaController {
     @Param("workspaceId") workspaceId: string,
     @Param("jobId") jobId: string,
     @Param("sceneId") sceneId: string,
+    @Body() body: unknown,
   ): Promise<unknown> {
     return this.context(request, workspaceId).then((context) =>
-      this.media.regenerate(context, jobId, sceneId),
+      this.media.regenerate(context, jobId, sceneId, body),
     );
   }
 

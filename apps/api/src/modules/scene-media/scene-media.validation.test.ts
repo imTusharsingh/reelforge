@@ -80,6 +80,7 @@ describe("scene media validation", () => {
       scriptRevision: 1,
       channelId: null,
       status: "SUCCEEDED",
+      version: 1,
       idempotencyKey: "key",
       configSnapshotId: "config",
       promptSnapshotId: "prompt",

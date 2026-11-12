@@ -60,6 +60,8 @@ export type SceneMediaPackage = Readonly<{
   scriptRevision: number;
   channelId: string | null;
   status: SceneMediaJobStatus;
+  /** Observed job version. Every accepted mutation increments this token exactly once. */
+  version: number;
   idempotencyKey: string;
   configSnapshotId: string;
   promptSnapshotId: string;
