@@ -5,6 +5,7 @@ import type {
   RenderJob,
   SceneMediaPackage,
   Script,
+  ScriptRevision,
 } from "../model";
 
 export const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -24,32 +25,32 @@ export const script: Script = {
     {
       revision: 2,
       document: {
-        title: "The twenty-second reset",
-        hook: "A small reset can change the next hour.",
+        title: "Latest revision must stay hidden",
+        hook: "This hook belongs only to revision two.",
         dialogue: "",
         narration: "Pause. Reset. Begin again.",
         cta: "Try it before your next task.",
         metadata: { targetDurationSeconds: 20 },
         scenes: [
           {
-            id: "scene-one",
+            id: "scene-two",
             startSeconds: 0,
-            durationSeconds: 8,
-            dialogue: "",
-            narration: "Put both feet on the floor.",
-            visualDescription: "Creator settles into a quiet studio chair.",
-            camera: "Slow medium push-in",
-            audioCues: ["Room tone"],
+            durationSeconds: 12,
+            dialogue: "This dialogue was revised.",
+            narration: "Revision two reordered this scene.",
+            visualDescription: "A changed second scene now appears first.",
+            camera: "Revised overhead cut",
+            audioCues: ["Changed paper movement"],
           },
           {
-            id: "scene-two",
-            startSeconds: 8,
-            durationSeconds: 12,
-            dialogue: "Now choose the next useful thing.",
-            narration: "One breath. One decision.",
-            visualDescription: "Notebook opens to a clean page.",
-            camera: "Overhead cut",
-            audioCues: ["Paper movement"],
+            id: "scene-one",
+            startSeconds: 12,
+            durationSeconds: 8,
+            dialogue: "",
+            narration: "Revision two changed this narration.",
+            visualDescription: "A changed first scene now appears second.",
+            camera: "Revised medium push-in",
+            audioCues: ["Changed room tone"],
           },
         ],
       },
@@ -57,12 +58,46 @@ export const script: Script = {
   ],
 };
 
+export const pinnedRevision: ScriptRevision = {
+  revision: 1,
+  document: {
+    title: "The twenty-second reset",
+    hook: "A small reset can change the next hour.",
+    dialogue: "",
+    narration: "Pause. Reset. Begin again.",
+    cta: "Try it before your next task.",
+    metadata: { targetDurationSeconds: 20 },
+    scenes: [
+      {
+        id: "scene-one",
+        startSeconds: 0,
+        durationSeconds: 8,
+        dialogue: "",
+        narration: "Put both feet on the floor.",
+        visualDescription: "Creator settles into a quiet studio chair.",
+        camera: "Slow medium push-in",
+        audioCues: ["Room tone"],
+      },
+      {
+        id: "scene-two",
+        startSeconds: 8,
+        durationSeconds: 12,
+        dialogue: "Now choose the next useful thing.",
+        narration: "One breath. One decision.",
+        visualDescription: "Notebook opens to a clean page.",
+        camera: "Overhead cut",
+        audioCues: ["Paper movement"],
+      },
+    ],
+  },
+};
+
 export const production: SceneMediaPackage = {
   schemaVersion: "1.0",
   jobId,
   workspaceId,
   scriptId,
-  scriptRevision: 2,
+  scriptRevision: 1,
   channelId: script.channelId,
   status: "PARTIAL",
   version: 3,

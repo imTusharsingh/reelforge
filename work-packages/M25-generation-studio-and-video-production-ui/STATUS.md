@@ -46,7 +46,7 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - `git fetch origin main`: initial transient GitHub HTTP 503; retry PASS, fetched `58b946e`.
 - `git merge --no-edit origin/main`: initial WORK_LOG append-only conflict; resolved by preserving M25 audit plus both Core entries; merge commit `15dfd0a`.
 - `pnpm install --frozen-lockfile`: PASS, all 12 workspace projects installed from the unchanged lockfile.
-- `pnpm vitest run apps/web/features/production apps/web/components/app-shell.test.ts`: PASS, 3 files / 12 tests.
+- `pnpm vitest run apps/web/features/production apps/web/components/app-shell.test.ts`: PASS, 3 files / 15 tests after review fixes.
 - `pnpm lint`: PASS.
 - `pnpm format:check`: PASS before the final documentation update; rerun on final source below.
 - `pnpm typecheck`: PASS after full workspace install.
@@ -55,9 +55,9 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - Started the managed local PostgreSQL 17 service; `pnpm db:migrate:deploy`: PASS, migrations 28–30 applied to disposable `reelforge_dev`.
 - `pnpm db:validate`: PASS.
 - `pnpm db:check-migrations`: PASS, 30 ordered immutable migrations.
-- Final `pnpm test` with PostgreSQL: PASS, 698 passed / 8 skipped.
+- Final `pnpm test` with PostgreSQL: PASS, 701 passed / 8 skipped after review fixes.
 - `NODE_ENV=production pnpm build`: PASS; `/production`, `/production/jobs/[jobId]`, `/production/renders/[jobId]`, `/production/scripts/[scriptId]` generated.
-- Mounted Chromium: PASS, 4 scenarios at 1440px and 390px covering persisted scene/timeline/narration, provider unavailability, Viewer restrictions, unsupported assignment, authorized artifact paths, media failure and mobile overflow. Screenshot: `/tmp/m25-production-mobile.png`.
+- Mounted Chromium: PASS, 6 scenarios at 1440px and 390px covering exact pinned-revision presentation after a newer reordered revision, persisted scene/timeline/narration, provider unavailability, Viewer restrictions, unsupported assignment, authorized artifact paths, media failure/recovery, same-key uncertain mutation reconciliation and mobile overflow. Screenshot: `/tmp/m25-production-mobile.png`.
 - `pnpm security:secrets`: PASS, 584 tracked files inspected.
 
 ## Contract/schema proposals
@@ -75,7 +75,7 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 
 ## Next exact action
 
-Monitor hosted checks and independent review on PR #66, address all feedback, and rerun affected checks on the final head. Do not self-approve or merge.
+Commit and push the R1/R2 plus #64 review fixes, request re-review on PR #66, and monitor hosted checks and the independent reviewer decision. Do not self-approve or merge.
 
 ## Handoff notes
 
@@ -83,4 +83,4 @@ All supported production UI reads and actions use authenticated workspace-scoped
 
 ## Reviewer decision
 
-PR #66 is open and pending independent review from `minu-the-reviewer`; not approved or integrated.
+PR #66 received CHANGES_REQUESTED at `4eb0aa3`. R1 exact immutable revision loading, R2 uncertain malformed-success/key preservation, and the #64 media recovery follow-up are fixed locally with regression coverage; re-review is pending after push. Not approved or integrated.

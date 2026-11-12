@@ -41,6 +41,7 @@ export function RenderWorkspace({ jobId }: { jobId: string }): JSX.Element {
   };
   const retry = async (): Promise<void> => {
     if (!render) return;
+    const replayingSavedKey = retryKey.current !== null;
     retryKey.current ??= crypto.randomUUID();
     setBusy("retry");
     setError("");
@@ -50,8 +51,9 @@ export function RenderWorkspace({ jobId }: { jobId: string }): JSX.Element {
       window.location.assign(`/production/renders/${child.id}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The render retry could not be started.");
-      setUncertain(cause instanceof ProductionApiError && cause.uncertain);
-      if (!(cause instanceof ProductionApiError) || !cause.uncertain) retryKey.current = null;
+      const outcomeUncertain = cause instanceof ProductionApiError && cause.uncertain;
+      setUncertain(outcomeUncertain || replayingSavedKey);
+      if (!outcomeUncertain && !replayingSavedKey) retryKey.current = null;
     } finally {
       setBusy("");
     }

@@ -1,10 +1,17 @@
 "use client";
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { ProductionApiError } from "./api";
 import { LoadResult } from "./common";
-import { canWrite, mediaPath, statusTone, type OutputKind, type ProductionScene } from "./model";
+import {
+  canWrite,
+  mediaPath,
+  statusTone,
+  type OutputKind,
+  type ProductionScene,
+  type SceneMediaPackage,
+} from "./model";
 import styles from "./production.module.css";
 import { CostPanel } from "./start";
 import { useLoad, useProduction } from "./session";
@@ -13,22 +20,23 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
   const { client, refresh } = useProduction();
   const state = useLoad(async (api) => {
     const job = await api.package(jobId);
-    const [script, capabilities, assets, renders, costs] = await Promise.all([
-      api.script(job.scriptId),
+    const [scriptRevision, capabilities, assets, renders, costs] = await Promise.all([
+      api.scriptRevision(job.scriptId, job.scriptRevision),
       api.capabilities(),
       api.assets(),
       api.renders(1, job.scriptId),
       api.costs(job.scriptId),
     ]);
-    if (script.currentRevision < job.scriptRevision)
-      throw new Error("The production job references a script revision that is not available.");
-    return { job, script, capabilities, assets, renders, costs };
+    if (scriptRevision.revision !== job.scriptRevision)
+      throw new Error("The production job references a mismatched script revision.");
+    return { job, scriptRevision, capabilities, assets, renders, costs };
   }, `production-job:${jobId}`);
   const [selected, setSelected] = useState(0);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [uncertain, setUncertain] = useState(false);
+  const pendingMutation = useRef<PendingSceneMutation | null>(null);
   useEffect((): (() => void) | undefined => {
     if (state.data?.job.status !== "RUNNING" && state.data?.job.status !== "QUEUED") return;
     const timer = window.setInterval(refresh, 5000);
@@ -39,7 +47,7 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
     [state.data],
   );
   const job = state.data?.job;
-  const scriptRevision = state.data?.script.revisions[0];
+  const scriptRevision = state.data?.scriptRevision;
   const scene = job?.scenes[selected] ?? null;
   const scriptScene = scene
     ? scriptRevision?.document.scenes.find((item) => item.id === scene.sceneId)
@@ -55,51 +63,80 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       ).every((kind) => capability.get(kind)?.available)
     : false;
 
-  const mutate = async (
-    operation: "retry" | "regenerate" | "replace",
-    target?: ProductionScene,
-    kind?: OutputKind,
+  const dispatchMutation = async (
+    attempt: PendingSceneMutation,
+    reconciling = false,
   ): Promise<void> => {
-    if (!job || uncertain) return;
-    const label = `${operation}:${target?.sceneId ?? "job"}:${kind ?? "all"}`;
-    setBusy(label);
+    setBusy(reconciling ? "reconcile" : attempt.label);
     setError("");
     setNotice("");
     try {
       const updated = await client.mutate(
-        job,
-        operation,
-        crypto.randomUUID(),
-        target?.sceneId,
-        kind,
+        attempt.job,
+        attempt.operation,
+        attempt.key,
+        attempt.sceneId,
+        attempt.kind,
       );
+      pendingMutation.current = null;
+      setUncertain(false);
       setNotice(
         `Request accepted. Job version is now ${updated.version}; displayed state was refreshed.`,
       );
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The production action failed.");
-      setUncertain(cause instanceof ProductionApiError && cause.uncertain);
+      const outcomeUncertain = cause instanceof ProductionApiError && cause.uncertain;
+      if (outcomeUncertain || reconciling) {
+        pendingMutation.current = attempt;
+        setUncertain(true);
+      } else {
+        pendingMutation.current = null;
+        setUncertain(false);
+      }
     } finally {
       setBusy("");
     }
   };
 
+  const mutate = async (
+    operation: "retry" | "regenerate" | "replace",
+    target?: ProductionScene,
+    kind?: OutputKind,
+  ): Promise<void> => {
+    if (!job || uncertain) return;
+    const attempt: PendingSceneMutation = {
+      job,
+      operation,
+      key: crypto.randomUUID(),
+      label: `${operation}:${target?.sceneId ?? "job"}:${kind ?? "all"}`,
+      ...(target ? { sceneId: target.sceneId } : {}),
+      ...(kind ? { kind } : {}),
+    };
+    pendingMutation.current = attempt;
+    await dispatchMutation(attempt);
+  };
+
   const reconcile = async (): Promise<void> => {
+    const attempt = pendingMutation.current;
+    if (!attempt) return;
     setBusy("reconcile");
     setError("");
     try {
       const observed = await client.package(jobId);
-      setNotice(
-        job && observed.version !== job.version
-          ? `The server advanced this job to version ${observed.version}. Inspect the persisted output before another action.`
-          : "No newer job version is visible. The prior outcome remains unknown; refresh again before retrying.",
-      );
-      setUncertain(false);
-      refresh();
+      if (observed.version !== attempt.job.version) {
+        pendingMutation.current = null;
+        setUncertain(false);
+        setNotice(
+          `The server advanced this job to version ${observed.version}. Inspect the persisted output before another action.`,
+        );
+        refresh();
+        return;
+      }
+      setNotice("No newer job version is visible. Replaying the exact saved request key safely.");
+      await dispatchMutation(attempt, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Reconciliation failed.");
-    } finally {
       setBusy("");
     }
   };
@@ -368,8 +405,9 @@ export function MediaPreview({
   mediaType: string | null;
   src: string;
 }): JSX.Element {
-  const [failed, setFailed] = useState(false);
-  if (failed)
+  const identity = `${mediaType ?? "unknown"}:${src}`;
+  const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
+  if (failedIdentity === identity)
     return (
       <StateMessage
         kind="error"
@@ -383,7 +421,7 @@ export function MediaPreview({
         preload="metadata"
         aria-label={label}
         src={src}
-        onError={() => setFailed(true)}
+        onError={() => setFailedIdentity(identity)}
       />
     );
   if (mediaType?.startsWith("audio/"))
@@ -393,11 +431,11 @@ export function MediaPreview({
         preload="metadata"
         aria-label={label}
         src={src}
-        onError={() => setFailed(true)}
+        onError={() => setFailedIdentity(identity)}
       />
     );
   if (mediaType?.startsWith("image/"))
-    return <img alt={label} loading="lazy" src={src} onError={() => setFailed(true)} />;
+    return <img alt={label} loading="lazy" src={src} onError={() => setFailedIdentity(identity)} />;
   return (
     <StateMessage
       kind="unavailable"
@@ -405,6 +443,15 @@ export function MediaPreview({
     />
   );
 }
+
+type PendingSceneMutation = {
+  job: SceneMediaPackage;
+  operation: "retry" | "regenerate" | "replace";
+  key: string;
+  label: string;
+  sceneId?: string;
+  kind?: OutputKind;
+};
 
 function AssetGallery({
   assets,

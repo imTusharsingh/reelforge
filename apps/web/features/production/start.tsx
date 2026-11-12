@@ -43,6 +43,7 @@ export function ProductionStart({ scriptId }: { scriptId: string }): JSX.Element
     if (!script || !imageAvailable || uncertain) return;
     setBusy(true);
     setError("");
+    const replayingSavedKey = operationKey.current !== null;
     operationKey.current ??= crypto.randomUUID();
     try {
       const job = await client.createJob(script, outputs, operationKey.current);
@@ -50,8 +51,9 @@ export function ProductionStart({ scriptId }: { scriptId: string }): JSX.Element
       navigateWithIntent(`/production/jobs/${job.jobId}`, router.push);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Production could not be started.");
-      setUncertain(cause instanceof ProductionApiError && cause.uncertain);
-      if (!(cause instanceof ProductionApiError) || !cause.uncertain) operationKey.current = null;
+      const outcomeUncertain = cause instanceof ProductionApiError && cause.uncertain;
+      setUncertain(outcomeUncertain || replayingSavedKey);
+      if (!outcomeUncertain && !replayingSavedKey) operationKey.current = null;
     } finally {
       setBusy(false);
     }

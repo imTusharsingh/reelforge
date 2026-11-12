@@ -40,8 +40,18 @@ const server = http.createServer((request, response) => {
       "Content-Type",
       request.url.includes("artifacts") ? "video/mp4" : "image/png",
     );
-    response.statusCode = request.url.includes("artifacts") ? 410 : 200;
-    response.end(request.url.includes("artifacts") ? "expired" : png);
+    response.statusCode = request.url.includes("artifacts")
+      ? 410
+      : request.url.includes("broken")
+        ? 404
+        : 200;
+    response.end(
+      request.url.includes("artifacts")
+        ? "expired"
+        : request.url.includes("broken")
+          ? "missing"
+          : png,
+    );
     return;
   }
   response.setHeader(
@@ -82,6 +92,7 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
 try {
   await test("persisted scene timeline, narration and provider-unavailable controls", async (page) => {
     await page.getByRole("heading", { name: "The twenty-second reset" }).waitFor();
+    assert.equal(await page.getByText("Latest revision must stay hidden").count(), 0);
     assert.equal(
       await page.getByRole("button", { name: "Regenerate entire scene" }).isDisabled(),
       true,
@@ -127,6 +138,40 @@ try {
       await page.getByText(/could not be loaded/).waitFor();
     },
     "mode=render",
+  );
+  await test(
+    "media preview recovers when regenerated asset identity changes",
+    async (page) => {
+      await page.getByText(/Recoverable preview could not be loaded/).waitFor();
+      await page.getByRole("button", { name: "Use regenerated asset" }).click();
+      const preview = page.getByRole("img", { name: "Recoverable preview" });
+      await preview.waitFor();
+      await page.waitForFunction(
+        () =>
+          document.querySelector("img")?.complete && document.querySelector("img")?.naturalWidth,
+      );
+      assert.equal(await page.getByText(/could not be loaded/).count(), 0);
+    },
+    "mode=media-recovery",
+  );
+  await test(
+    "uncertain scene mutation reconciles with the same paid-work key",
+    async (page) => {
+      await page.getByRole("heading", { name: "The twenty-second reset" }).waitFor();
+      await page.getByRole("button", { name: "Regenerate image" }).click();
+      await page.getByText(/returned an unreadable response/).waitFor();
+      await page.getByRole("button", { name: "Reconcile from server" }).click();
+      await page.getByText(/Job version is now 4/).waitFor();
+      const writes = await page.evaluate(() =>
+        window.m25Fixture.calls.filter(
+          (call) => call.method === "POST" && call.path.endsWith("/replace"),
+        ),
+      );
+      assert.equal(writes.length, 2);
+      assert.equal(writes[0].body.idempotencyKey, writes[1].body.idempotencyKey);
+      assert.equal(writes[0].body.expectedJobVersion, writes[1].body.expectedJobVersion);
+    },
+    "mode=mutation-reconcile",
   );
   console.log(`PASS ${count} mounted production browser scenarios`);
 } finally {

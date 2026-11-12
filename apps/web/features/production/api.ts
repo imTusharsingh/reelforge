@@ -9,6 +9,7 @@ import {
   parseRenders,
   parseSceneJobs,
   parseScript,
+  parseScriptRevision,
   record,
   type Asset,
   type CapabilityCatalog,
@@ -20,6 +21,7 @@ import {
   type SceneJobSummary,
   type SceneMediaPackage,
   type Script,
+  type ScriptRevision,
 } from "./model";
 
 export class ProductionApiError extends Error {
@@ -85,11 +87,40 @@ export class ProductionClient {
         mutation,
       );
     }
-    const payload: unknown = await response.json().catch(() => undefined);
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      if (response.ok && mutation)
+        throw new ProductionApiError(
+          502,
+          "The server accepted the request but returned an unreadable response. Reconcile persisted production state before another action.",
+          true,
+        );
+      payload = undefined;
+    }
     this.signal.throwIfAborted();
     if (!response.ok)
       throw new ProductionApiError(response.status, message(response.status, payload));
     return payload;
+  }
+
+  private async mutation<T>(
+    path: string,
+    body: Record<string, unknown> | undefined,
+    parse: (value: unknown) => T,
+  ): Promise<T> {
+    const value = await this.request(path, { method: "POST", ...(body ? { body } : {}) });
+    try {
+      return parse(value);
+    } catch (cause) {
+      if (cause instanceof ProductionApiError) throw cause;
+      throw new ProductionApiError(
+        502,
+        "The server accepted the request but returned invalid production data. Reconcile persisted production state before another action.",
+        true,
+      );
+    }
   }
 
   public async sceneJobs(page = 1, scriptId?: string): Promise<Page<SceneJobSummary>> {
@@ -133,22 +164,50 @@ export class ProductionClient {
     );
   }
 
+  public async scriptRevision(scriptId: string, expectedRevision: number): Promise<ScriptRevision> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
+      throw new ProductionApiError(400, "The pinned script revision is invalid.");
+    const seen = new Set<number>();
+    let page = 1;
+    for (let requestCount = 0; requestCount < 1000; requestCount += 1) {
+      const value = await this.request(
+        `scripts/${encodeURIComponent(scriptId)}/revisions?page=${page}`,
+      );
+      if (!record(value) || !Array.isArray(value.items))
+        throw new ProductionApiError(502, "The service returned an invalid revision page.");
+      const revisions = value.items.map(parseScriptRevision);
+      for (const revision of revisions) {
+        if (seen.has(revision.revision))
+          throw new ProductionApiError(502, "The service returned duplicate script revisions.");
+        seen.add(revision.revision);
+      }
+      const exact = revisions.find((revision) => revision.revision === expectedRevision);
+      if (exact) return exact;
+      if (value.nextPage === null) break;
+      if (!Number.isSafeInteger(value.nextPage) || value.nextPage !== page + 1)
+        throw new ProductionApiError(502, "The service returned invalid revision pagination.");
+      page = value.nextPage;
+    }
+    throw new ProductionApiError(
+      404,
+      `Pinned script revision ${expectedRevision} is unavailable for this script.`,
+    );
+  }
+
   public async createJob(
     script: Script,
     outputs: { image: true; video: boolean; narration: boolean; dialogue: boolean },
     idempotencyKey: string,
   ): Promise<SceneMediaPackage> {
-    return parsePackage(
-      await this.request("scene-media/jobs", {
-        method: "POST",
-        body: {
-          scriptId: script.id,
-          expectedScriptRevision: script.currentRevision,
-          idempotencyKey,
-          outputs,
-        },
-      }),
-      this.workspaceId,
+    return this.mutation(
+      "scene-media/jobs",
+      {
+        scriptId: script.id,
+        expectedScriptRevision: script.currentRevision,
+        idempotencyKey,
+        outputs,
+      },
+      (value) => parsePackage(value, this.workspaceId),
     );
   }
 
@@ -163,16 +222,14 @@ export class ProductionClient {
       operation === "retry"
         ? `scene-media/jobs/${encodeURIComponent(job.jobId)}/retry`
         : `scene-media/jobs/${encodeURIComponent(job.jobId)}/scenes/${encodeURIComponent(sceneId ?? "")}/${operation}`;
-    return parsePackage(
-      await this.request(path, {
-        method: "POST",
-        body: {
-          idempotencyKey,
-          expectedJobVersion: job.version,
-          ...(operation === "replace" ? { kind } : {}),
-        },
-      }),
-      this.workspaceId,
+    return this.mutation(
+      path,
+      {
+        idempotencyKey,
+        expectedJobVersion: job.version,
+        ...(operation === "replace" ? { kind } : {}),
+      },
+      (value) => parsePackage(value, this.workspaceId),
     );
   }
 
@@ -194,21 +251,18 @@ export class ProductionClient {
   }
 
   public async cancelRender(jobId: string): Promise<RenderJob> {
-    return parseRender(
-      await this.request(`composition/jobs/${encodeURIComponent(jobId)}/cancel`, {
-        method: "POST",
-      }),
-      this.workspaceId,
+    return this.mutation(
+      `composition/jobs/${encodeURIComponent(jobId)}/cancel`,
+      undefined,
+      (value) => parseRender(value, this.workspaceId),
     );
   }
 
   public async retryRender(job: RenderJob, idempotencyKey: string): Promise<RenderJob> {
-    return parseRender(
-      await this.request(`composition/jobs/${encodeURIComponent(job.id)}/retry`, {
-        method: "POST",
-        body: { idempotencyKey, input: job.input, retentionDays: job.retentionDays },
-      }),
-      this.workspaceId,
+    return this.mutation(
+      `composition/jobs/${encodeURIComponent(job.id)}/retry`,
+      { idempotencyKey, input: job.input, retentionDays: job.retentionDays },
+      (value) => parseRender(value, this.workspaceId),
     );
   }
 

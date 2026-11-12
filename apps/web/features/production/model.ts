@@ -86,24 +86,25 @@ export type ScriptScene = {
   audioCues: string[];
   transition?: string;
 };
+export type ScriptRevision = {
+  revision: number;
+  document: {
+    title: string;
+    hook: string;
+    dialogue: string;
+    narration?: string;
+    cta: string;
+    metadata: { targetDurationSeconds: number };
+    scenes: ScriptScene[];
+  };
+};
 export type Script = {
   id: string;
   workspaceId: string;
   channelId: string | null;
   status: "DRAFT" | "REVISION_PENDING" | "APPROVED" | "REJECTED";
   currentRevision: number;
-  revisions: Array<{
-    revision: number;
-    document: {
-      title: string;
-      hook: string;
-      dialogue: string;
-      narration?: string;
-      cta: string;
-      metadata: { targetDurationSeconds: number };
-      scenes: ScriptScene[];
-    };
-  }>;
+  revisions: ScriptRevision[];
 };
 export type Asset = {
   id: string;
@@ -382,14 +383,15 @@ export function parseScript(value: unknown, workspaceId: string): Script {
     value.revisions.length !== 1
   )
     throw new Error("Invalid script.");
-  const revision = value.revisions[0];
-  if (
-    !record(revision) ||
-    revision.revision !== value.currentRevision ||
-    !record(revision.document)
-  )
+  const revision = parseScriptRevision(value.revisions[0]);
+  if (revision.revision !== value.currentRevision) throw new Error("Invalid script revision.");
+  return { ...value, revisions: [revision] } as Script;
+}
+
+export function parseScriptRevision(value: unknown): ScriptRevision {
+  if (!record(value) || !positive(value.revision) || !record(value.document))
     throw new Error("Invalid script revision.");
-  const document = revision.document;
+  const document = value.document;
   if (
     !text(document.title) ||
     !text(document.hook) ||
@@ -415,7 +417,7 @@ export function parseScript(value: unknown, workspaceId: string): Script {
       throw new Error("Invalid script scene.");
     return scene as unknown as ScriptScene;
   });
-  return { ...value, revisions: [{ ...revision, document: { ...document, scenes } }] } as Script;
+  return { revision: value.revision, document: { ...document, scenes } } as ScriptRevision;
 }
 
 export function parseAsset(value: unknown, workspaceId: string): Asset {
