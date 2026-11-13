@@ -29,6 +29,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   const method = init?.method ?? "GET";
   const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
   calls.push({ path, method, body });
+  if (method === "POST" && path === "composition/jobs") {
+    if (mode === "render-budget")
+      return new Response(JSON.stringify({ message: "BUDGET_EXHAUSTED" }), { status: 409 });
+    if (mode === "render-uncertain") return new Response("{", { status: 200 });
+    return new Response(JSON.stringify(render), { status: 200 });
+  }
   if (mode === "mutation-reconcile" && method === "POST" && path.endsWith("/replace")) {
     mutationResponses += 1;
     if (mutationResponses === 1)
@@ -39,7 +45,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
     });
   }
   let payload: unknown;
-  if (path === `scene-media/jobs/${jobId}`) payload = production;
+  if (path === `scene-media/jobs/${jobId}`)
+    payload =
+      mode.startsWith("render-start") || mode === "render-budget" || mode === "render-uncertain"
+        ? {
+            ...production,
+            status: "SUCCEEDED",
+            scenes: production.scenes.map((scene) => ({
+              ...scene,
+              status: "SUCCEEDED",
+              outputs: [{ ...production.scenes[0]!.outputs[0] }],
+            })),
+          }
+        : production;
   else if (path === `scripts/${scriptId}/revisions?page=1`)
     payload = { items: [script.revisions[0], pinnedRevision], nextPage: null };
   else if (path === "scene-media/capabilities")

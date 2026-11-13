@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProductionApiError, ProductionClient } from "./api";
+import { makeRenderInput } from "./composition";
+import { assetId, pinnedRevision, production, render } from "./verification/fixtures";
 import type { SceneMediaPackage, Script, ScriptRevision } from "./model";
 
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -9,6 +11,50 @@ const jobId = "30000000-0000-4000-8000-000000000003";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ProductionClient", () => {
+  it("posts pinned composition input once and refuses Viewer writes", async () => {
+    const complete = {
+      ...production,
+      status: "SUCCEEDED" as const,
+      scenes: production.scenes.map((scene) => ({
+        ...scene,
+        status: "SUCCEEDED" as const,
+        outputs: [
+          {
+            kind: "IMAGE" as const,
+            status: "SUCCEEDED" as const,
+            assetId,
+            assetVersion: 1,
+            mediaType: "image/png",
+            byteSize: 68,
+            errorCode: null,
+            errorMessage: null,
+          },
+        ],
+      })),
+    };
+    const input = makeRenderInput(complete, pinnedRevision, "12345678");
+    const request = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(render), { status: 200 }));
+    vi.stubGlobal("fetch", request);
+    await expect(
+      new ProductionClient(workspaceId, "VIEWER", new AbortController().signal).startRender(
+        input,
+        "key",
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(request).not.toHaveBeenCalled();
+    await new ProductionClient(workspaceId, "EDITOR", new AbortController().signal).startRender(
+      input,
+      "key",
+    );
+    expect(request).toHaveBeenCalledOnce();
+    expect(JSON.parse(String((request.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      idempotencyKey: "key",
+      retentionDays: 90,
+      input,
+    });
+  });
   it("loads the exact pinned revision after the script advances and scenes are reordered", async () => {
     const revision = (number: number, title: string, sceneIds: string[]): ScriptRevision => ({
       revision: number,

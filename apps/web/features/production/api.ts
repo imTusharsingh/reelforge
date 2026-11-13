@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import type { RenderInput } from "./composition";
 import {
   canWrite,
   parseAssets,
@@ -101,7 +102,11 @@ export class ProductionClient {
     }
     this.signal.throwIfAborted();
     if (!response.ok)
-      throw new ProductionApiError(response.status, message(response.status, payload));
+      throw new ProductionApiError(
+        response.status,
+        message(response.status, payload),
+        mutation && response.status >= 500,
+      );
     return payload;
   }
 
@@ -247,6 +252,14 @@ export class ProductionClient {
     return parseRender(
       await this.request(`composition/jobs/${encodeURIComponent(jobId)}`),
       this.workspaceId,
+    );
+  }
+
+  public async startRender(input: RenderInput, idempotencyKey: string): Promise<RenderJob> {
+    return this.mutation(
+      "composition/jobs",
+      { idempotencyKey, input, retentionDays: 90 },
+      (value) => parseRender(value, this.workspaceId),
     );
   }
 
