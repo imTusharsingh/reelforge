@@ -1,0 +1,8 @@
+# Git hooks are shared across worktrees. If this worktree does not have
+# lint-staged installed (for example an older branch), do not block the commit.
+if [ ! -x node_modules/.bin/lint-staged ]; then
+  echo "Skipping pre-commit lint-staged (not installed in this worktree)."
+  exit 0
+fi
+
+pnpm exec lint-staged
