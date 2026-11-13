@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { StudioLink } from "./studio-link";
 import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
+import { getBreadcrumb } from "./breadcrumb";
 
 const destinations = [
   { name: "Overview", href: "/" },
@@ -14,7 +15,7 @@ const destinations = [
   { name: "Production", href: "/production" },
   { name: "Review queue", href: "/review" },
   { name: "Publishing", href: "/publishing" },
-  { name: "Insights", href: null },
+  { name: "Insights", href: "/insights" },
   { name: "Account", href: "/account" },
 ];
 
@@ -28,7 +29,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
           <li key={name}>
             {href ? (
               <StudioLink
-                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) || (href === "/review" && pathname.startsWith("/review/")) || (href === "/publishing" && pathname.startsWith("/publishing/")) || (href === "/account" && pathname.startsWith("/account")) ? "rf-nav-item--current" : ""}`.trim()}
+                className={`rf-nav-item ${pathname === href || (href !== "/" && pathname.startsWith(`${href}/`)) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
                 aria-current={
                   pathname === href ||
@@ -37,7 +38,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
                   (href === "/production" && pathname.startsWith("/production/")) ||
                   (href === "/review" && pathname.startsWith("/review/")) ||
                   (href === "/publishing" && pathname.startsWith("/publishing/")) ||
-                  (href === "/account" && pathname.startsWith("/account"))
+                  (href !== "/" && pathname.startsWith(`${href}/`))
                     ? "page"
                     : undefined
                 }
@@ -45,9 +46,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
                 {name}
               </StudioLink>
             ) : (
-              <span className="rf-nav-item rf-nav-item--disabled">
-                {name} <span className="rf-nav-soon">Planned</span>
-              </span>
+              <span className="rf-nav-item rf-nav-item--disabled">{name}</span>
             )}
           </li>
         ))}
@@ -74,21 +73,7 @@ export function AppShell({
   const openInspector = (): void => inspectorDialog.current?.showModal();
   const closeInspector = (): void => inspectorDialog.current?.close();
   const pathname = usePathname();
-  const breadcrumb = pathname.startsWith("/publishing")
-    ? "Studio / Publishing"
-    : pathname.startsWith("/review")
-      ? "Studio / Review"
-      : pathname.startsWith("/production")
-        ? "Studio / Production"
-        : pathname.startsWith("/planning")
-          ? "Studio / Planning"
-          : pathname.startsWith("/channels")
-            ? "Studio / Channels"
-            : pathname === "/operations"
-              ? "Studio / Operations"
-              : pathname.startsWith("/account")
-                ? "Studio / Account"
-                : "Studio / Overview";
+  const breadcrumb = getBreadcrumb(pathname);
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
