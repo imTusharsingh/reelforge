@@ -54,6 +54,7 @@ const attackerChannelId = randomUUID();
 
 /** Routes reviewed in M20 INTEGRATION_REVIEW.md as intentionally outside a workspace scope. */
 const REVIEWED_UNSCOPED_ROUTES: readonly string[] = [
+  "GET /auth/csrf",
   "GET /auth/me",
   "GET /health",
   "GET /ops/metrics",

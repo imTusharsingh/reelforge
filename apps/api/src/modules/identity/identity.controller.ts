@@ -13,6 +13,7 @@ import type { Response } from "express";
 import { ChangePasswordRequestSchema, UpdateAuthMeRequestSchema } from "@reelforge/contracts";
 import { AuthGuard, type AuthenticatedRequest } from "./auth.guard.js";
 import { IdentityService } from "./identity.service.js";
+import { createCsrfToken, CSRF_COOKIE } from "./csrf.middleware.js";
 
 type Credentials = { email: string; password: string; displayName?: string };
 function parseCredentials(body: unknown): Credentials {
@@ -35,9 +36,25 @@ function parseStrict<T>(schema: { parse: (value: unknown) => T }, body: unknown)
   }
 }
 
+function setCsrfCookie(response: Response, token = createCsrfToken()): void {
+  response.cookie(CSRF_COOKIE, token, {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+  });
+}
+
 @Controller("auth")
 export class IdentityController {
   public constructor(private readonly identity: IdentityService) {}
+
+  @Get("csrf")
+  public csrf(@Res({ passthrough: true }) response: Response): { token: string } {
+    const token = createCsrfToken();
+    setCsrfCookie(response, token);
+    return { token };
+  }
 
   @Post("register")
   public async register(
@@ -52,6 +69,7 @@ export class IdentityController {
       sameSite: "strict",
       path: "/",
     });
+    setCsrfCookie(response);
     return { userId: result.userId };
   }
 
@@ -68,6 +86,7 @@ export class IdentityController {
       sameSite: "strict",
       path: "/",
     });
+    setCsrfCookie(response);
     return { userId: result.userId };
   }
 
@@ -80,6 +99,11 @@ export class IdentityController {
     await this.identity.revoke(request.principal);
     response.clearCookie("reelforge_session", {
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+    });
+    response.clearCookie(CSRF_COOKIE, {
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",

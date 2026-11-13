@@ -1,4 +1,5 @@
-import { Module } from "@nestjs/common";
+import { Module, RequestMethod } from "@nestjs/common";
+import type { MiddlewareConsumer } from "@nestjs/common";
 import { HealthController } from "./health.controller.js";
 import { IdentityModule } from "./modules/identity/identity.module.js";
 import { WorkspaceModule } from "./modules/workspace/workspace.module.js";
@@ -20,6 +21,7 @@ import { OrchestrationModule } from "./modules/orchestration/orchestration.modul
 import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 import { UsageBudgetModule } from "./modules/usage-budget/usage-budget.module.js";
 import { AdminModule } from "./modules/admin/admin.module.js";
+import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
 
 @Module({
   imports: [
@@ -46,4 +48,9 @@ import { AdminModule } from "./modules/admin/admin.module.js";
   ],
   controllers: [HealthController],
 })
-export class AppModule {}
+// CSRF is deliberately middleware so it protects every cookie-authenticated unsafe route.
+export class AppModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(csrfMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+  }
+}
