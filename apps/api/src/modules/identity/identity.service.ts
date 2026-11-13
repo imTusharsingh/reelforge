@@ -125,13 +125,16 @@ export class IdentityService {
     displayName: string,
   ): Promise<{ userId: string; email: string; displayName: string | null }> {
     const normalized = normalizeDisplayName(displayName);
-    const user = await this.db.user.update({
-      where: { id: userId },
-      data: { displayName: normalized },
-      select: { id: true, email: true, displayName: true },
-    });
-    await this.db.authEvent.create({
-      data: { userId, eventType: "auth.profile_updated", outcome: "success" },
+    const user = await this.db.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { displayName: normalized },
+        select: { id: true, email: true, displayName: true },
+      });
+      await tx.authEvent.create({
+        data: { userId, eventType: "auth.profile_updated", outcome: "success" },
+      });
+      return updated;
     });
     return { userId: user.id, email: user.email, displayName: user.displayName };
   }

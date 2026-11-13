@@ -113,7 +113,7 @@ describe("M27 publishing model validation", () => {
           {
             renderJobId,
             channelId,
-            projectId: "10000000-0000-4000-8000-000000000009",
+            scriptId: "10000000-0000-4000-8000-000000000009",
             title: "Approved",
             durationMs: 42_000,
             completedAt: "2026-11-13T10:00:00.000Z",

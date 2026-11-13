@@ -398,8 +398,8 @@ export class PlanningClient {
   }
   async archiveIdea(idea: Idea, restore = false): Promise<Idea> {
     return this.write(
-      `ideas/${encodeURIComponent(idea.id)}${restore ? "/restore" : ""}`,
-      restore ? "POST" : "DELETE",
+      `ideas/${encodeURIComponent(idea.id)}${restore ? "/restore" : "/archive"}`,
+      "POST",
       { expectedUpdatedAt: idea.updatedAt },
       (v) => parseIdea(v, this.workspaceId),
     );

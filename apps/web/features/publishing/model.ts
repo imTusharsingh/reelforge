@@ -29,7 +29,7 @@ export type SocialAccount = {
 export type EligibleRender = {
   renderJobId: string;
   channelId: string;
-  projectId: string;
+  scriptId: string;
   title: string;
   durationMs: number;
   completedAt: string;
@@ -212,7 +212,7 @@ export function parseEligibleRenders(value: unknown): {
       return {
         renderJobId: text(row.renderJobId),
         channelId: text(row.channelId),
-        projectId: text(row.projectId),
+        scriptId: text(row.scriptId),
         title: text(row.title),
         durationMs: integer(row.durationMs, 1),
         completedAt: timestamp(row.completedAt),

@@ -81,7 +81,7 @@ export type PublishingPlatformView = Readonly<{
 export type EligibleRenderView = Readonly<{
   renderJobId: string;
   channelId: string;
-  projectId: string;
+  scriptId: string;
   title: string;
   durationMs: number;
   completedAt: string;

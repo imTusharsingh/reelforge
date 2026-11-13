@@ -799,6 +799,31 @@ describe("M27 post creation replay", () => {
     ).rejects.toThrow("IDEMPOTENCY_KEY_CONFLICT");
   });
 
+  it("rejects an unavailable destination before creating a post", async () => {
+    const db = {
+      scheduledPost: { findUnique: vi.fn().mockResolvedValue(null) },
+      channel: {
+        findUnique: vi.fn().mockResolvedValue({ id: request.channelId, status: "ACTIVE" }),
+      },
+      renderJob: {
+        findUnique: vi.fn().mockResolvedValue({ sceneMediaJob: { channelId: request.channelId } }),
+      },
+      qualityReviewRun: { findUnique: vi.fn().mockResolvedValue({ renderJobId }) },
+      socialAccount: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue({ channelId: request.channelId, platform: "YOUTUBE" }),
+      },
+    };
+    const publishing = service(db, {
+      socialAccounts: { youtubeConfigured: () => false },
+    });
+    await expect(publishing.createScheduledPost(context(), request)).rejects.toMatchObject({
+      status: 422,
+      response: { code: "PLATFORM_NOT_CONFIGURED" },
+    });
+  });
+
   it("recovers from a concurrent create unique violation by re-reading the original", async () => {
     const created = { id: scheduledPostId } as ScheduledPostView;
     let persisted: { id: string; clientRequestHash: string } | null = null;
@@ -861,7 +886,7 @@ describe("M27 draft listing", () => {
 
 describe("M27 eligible render discovery", () => {
   const channelId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  const projectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const scriptId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const reviewedAt = new Date("2026-11-12T05:00:00.000Z");
   const input = {
     schemaVersion: "1.0",
@@ -873,13 +898,14 @@ describe("M27 eligible render discovery", () => {
     id: string,
     updatedAt: string,
     run: { id: string; status: string; createdAt: Date } | null,
+    completedAt = updatedAt,
   ): object {
     return {
       id,
       updatedAt: new Date(updatedAt),
       input,
-      sceneMediaJob: { channelId, scriptId: projectId },
-      artifacts: [{ id: `artifact-${id}` }],
+      sceneMediaJob: { channelId, scriptId },
+      artifacts: [{ id: `artifact-${id}`, createdAt: new Date(completedAt) }],
       qualityReviewRuns: run === null ? [] : [run],
     };
   }
@@ -888,11 +914,16 @@ describe("M27 eligible render discovery", () => {
     status: "APPROVED",
     createdAt: reviewedAt,
   });
-  const autoRow = row("22222222-2222-4222-8222-222222222222", "2026-11-12T05:30:00.000Z", {
-    id: "99999999-9999-4999-8999-999999999999",
-    status: "AUTO_APPROVED",
-    createdAt: reviewedAt,
-  });
+  const autoRow = row(
+    "22222222-2222-4222-8222-222222222222",
+    "2026-11-12T05:30:00.000Z",
+    {
+      id: "99999999-9999-4999-8999-999999999999",
+      status: "AUTO_APPROVED",
+      createdAt: reviewedAt,
+    },
+    "2026-11-12T05:30:00.000Z",
+  );
   const pendingRow = row("33333333-3333-4333-8333-333333333333", "2026-11-12T05:15:00.000Z", {
     id: reviewId,
     status: "REVIEW_REQUIRED",
@@ -920,7 +951,7 @@ describe("M27 eligible render discovery", () => {
       {
         renderJobId: "11111111-1111-4111-8111-111111111111",
         channelId,
-        projectId,
+        scriptId,
         title: "Eligible render",
         durationMs: 5000,
         completedAt: "2026-11-12T06:00:00.000Z",
@@ -931,7 +962,7 @@ describe("M27 eligible render discovery", () => {
       {
         renderJobId: "22222222-2222-4222-8222-222222222222",
         channelId,
-        projectId,
+        scriptId,
         title: "Eligible render",
         durationMs: 5000,
         completedAt: "2026-11-12T05:30:00.000Z",

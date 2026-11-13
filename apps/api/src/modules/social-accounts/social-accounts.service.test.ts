@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { Prisma, type PrismaClient } from "@reelforge/database";
@@ -819,7 +818,10 @@ describe("SocialAccountsService", () => {
       service.startConnection(ownerContext, channelId, "INSTAGRAM", {
         remoteAccountId: "fixture-ig-account",
       }),
-    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    ).rejects.toMatchObject({
+      status: 503,
+      response: { code: "INSTAGRAM_NOT_VERIFIED" },
+    });
     expect(db.socialOAuthState.create).not.toHaveBeenCalled();
   });
 });

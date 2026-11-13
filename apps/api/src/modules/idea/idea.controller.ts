@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Delete,
@@ -91,7 +92,7 @@ export class IdeaController {
     );
   }
 
-  @Delete(":ideaId")
+  @Post(":ideaId/archive")
   public archive(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
@@ -103,6 +104,17 @@ export class IdeaController {
     return this.context(request, workspaceId).then((context) =>
       this.ideas.archive(context, ideaId, new Date(parsed.data.expectedUpdatedAt)),
     );
+  }
+
+  @Delete(":ideaId")
+  @Header("Deprecation", "true")
+  public deprecatedArchive(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("ideaId") ideaId: string,
+    @Body() body: unknown,
+  ): Promise<unknown> {
+    return this.archive(request, workspaceId, ideaId, body);
   }
 
   @Post(":ideaId/restore")

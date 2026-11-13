@@ -51,7 +51,7 @@ export const accounts: SocialAccount[] = [
 export const eligibleRender: EligibleRender = {
   renderJobId,
   channelId,
-  projectId: "20000000-0000-4000-8000-000000000011",
+  scriptId: "20000000-0000-4000-8000-000000000011",
   title: "Fixture approved render",
   durationMs: 42_000,
   completedAt: "2026-11-13T09:00:00.000Z",

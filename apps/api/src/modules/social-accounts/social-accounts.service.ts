@@ -105,6 +105,13 @@ export class SocialAccountsService {
     });
     if (!channel || channel.status === "ARCHIVED") throw new NotFoundException("Channel not found");
 
+    if (platform === "INSTAGRAM") {
+      throw new ServiceUnavailableException({
+        code: "INSTAGRAM_NOT_VERIFIED",
+        message: "Instagram is not verified for connections",
+      });
+    }
+
     const connector = this.connector(platform);
     const callbackUrl = this.requireCallbackUrl();
     const state = randomBytes(32).toString("base64url");
