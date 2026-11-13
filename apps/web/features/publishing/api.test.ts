@@ -58,7 +58,7 @@ describe("M27 publishing client", () => {
             {
               renderJobId: post.renderJobId,
               channelId: post.channelId,
-              projectId: "20000000-0000-4000-8000-000000000011",
+              scriptId: "20000000-0000-4000-8000-000000000011",
               title: "Fixture",
               durationMs: 42_000,
               completedAt: "2026-11-13T09:00:00.000Z",

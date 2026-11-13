@@ -8,6 +8,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import {
   DisclosureDecisionSchema,
@@ -188,6 +189,18 @@ export class PublishingService {
         throw new BadRequestException(
           "Each destination must be a connected account on this channel",
         );
+      const availability =
+        typeof this.socialAccounts.youtubeConfigured === "function"
+          ? this.platforms().find((item) => item.platform === destination.platform)
+          : destination.platform === "INSTAGRAM"
+            ? { publishable: false, reasonCode: "INSTAGRAM_NOT_VERIFIED" as const }
+            : { publishable: true, reasonCode: null };
+      if (!availability?.publishable) {
+        throw new UnprocessableEntityException({
+          code: availability?.reasonCode ?? "PLATFORM_NOT_CONFIGURED",
+          message: `Publishing to ${destination.platform} is unavailable`,
+        });
+      }
     }
 
     await this.quality.assertPublishable(context, request.renderJobId, request.qualityReviewRunId);
@@ -326,7 +339,12 @@ export class PublishingService {
         updatedAt: true,
         input: true,
         sceneMediaJob: { select: { channelId: true, scriptId: true } },
-        artifacts: { where: videoArtifact, take: 1, select: { id: true } },
+        artifacts: {
+          where: videoArtifact,
+          take: 1,
+          orderBy: { createdAt: "asc" },
+          select: { id: true, createdAt: true },
+        },
         qualityReviewRuns: {
           where: {
             workspaceId: context.workspaceId,
@@ -364,10 +382,10 @@ export class PublishingService {
       items.push({
         renderJobId: row.id,
         channelId: rowChannelId,
-        projectId: row.sceneMediaJob.scriptId,
+        scriptId: row.sceneMediaJob.scriptId,
         title: details.title,
         durationMs: details.durationMs,
-        completedAt: row.updatedAt.toISOString(),
+        completedAt: row.artifacts[0]!.createdAt.toISOString(),
         qualityReviewRunId: run.id,
         reviewStatus: run.status,
         reviewedAt: (run.decisions?.[0]?.createdAt ?? run.createdAt).toISOString(),

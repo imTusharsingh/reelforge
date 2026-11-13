@@ -136,7 +136,8 @@ describe("M24 HTTP integration adapter", () => {
     });
     await client().archiveIdea(idea);
     await client().archiveIdea(idea, true);
-    expect(fetch.mock.calls[1]?.[1].method).toBe("DELETE");
+    expect(fetch.mock.calls[1]?.[0]).toContain("/archive");
+    expect(fetch.mock.calls[1]?.[1].method).toBe("POST");
     expect(fetch.mock.calls[2]?.[0]).toContain("/restore");
   });
   it("does not dispatch viewer writes", async () => {

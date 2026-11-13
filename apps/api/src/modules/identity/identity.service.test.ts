@@ -11,6 +11,7 @@ const principal: Principal = {
 
 type MockFunction = ReturnType<typeof vi.fn>;
 type TestTransaction = {
+  user: { update: MockFunction };
   passwordCredential: { upsert: MockFunction };
   session: { updateMany: MockFunction };
   authEvent: { create: MockFunction };
@@ -23,6 +24,13 @@ type TestDatabase = TestTransaction & {
 };
 function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
   const tx = {
+    user: {
+      update: vi.fn().mockResolvedValue({
+        id: principal.userId,
+        email: "user@example.com",
+        displayName: "Updated",
+      }),
+    },
     passwordCredential: { upsert: vi.fn().mockResolvedValue({}) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     authEvent: { create: vi.fn().mockResolvedValue({}) },
@@ -77,6 +85,17 @@ describe("IdentityService C5 account", () => {
     await expect(service.updateProfile(principal.userId, "a".repeat(81))).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it("updates the profile and audit event in one transaction", async () => {
+    const db = createDb();
+    const service = new IdentityService(db as never);
+    await service.updateProfile(principal.userId, "New Name");
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db._tx.authEvent.create).toHaveBeenCalledWith({
+      data: { userId: principal.userId, eventType: "auth.profile_updated", outcome: "success" },
+    });
+    expect(db.authEvent.create).not.toHaveBeenCalled();
   });
 
   it("returns 429 on the 6th recent failure without calling scrypt", async () => {
