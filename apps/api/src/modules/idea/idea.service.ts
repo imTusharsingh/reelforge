@@ -12,6 +12,13 @@ import { IDEA_PROPOSAL_LLM } from "@reelforge/ai-providers";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import type { ApprovedIdeaSnapshot, IdeaInput } from "./idea.types.js";
 import { aiMetadataSchema, parseAiProposal } from "./idea.validation.js";
+import { Optional, ServiceUnavailableException } from "@nestjs/common";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import {
+  createPendingPaidLedger,
+  finishPaidLedger,
+  paidCapability,
+} from "../usage-budget/paid-call.js";
 
 const transitions: Record<string, ReadonlySet<string>> = {
   DRAFT: new Set(["BACKLOG", "APPROVED", "REJECTED"]),
@@ -64,6 +71,7 @@ export class IdeaService {
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
     @Inject(IDEA_PROPOSAL_LLM) private readonly llm: IdeaProposalLlmPort,
+    @Optional() @Inject(UsageBudgetService) private readonly usage?: UsageBudgetService,
   ) {}
 
   public async create(
@@ -156,25 +164,91 @@ export class IdeaService {
     },
   ): Promise<unknown> {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
-    const result = await this.llm.proposeIdea(
-      request.contextText === undefined
-        ? { prompt: request.prompt }
-        : { prompt: request.prompt, context: request.contextText },
-    );
-    let proposal: IdeaInput;
+    const capability = paidCapability(this.llm);
+    const correlationId = randomUUID();
+    const estimate = capability?.costModel.amount;
+    if (
+      capability === null ||
+      estimate === null ||
+      estimate === undefined ||
+      this.usage === undefined
+    )
+      throw new ServiceUnavailableException(
+        "Idea proposal LLM is not configured for paid dispatch",
+      );
+    const reservation = await this.usage.reservePaidCall({
+      workspaceId: context.workspaceId,
+      channelId: request.channelId ?? null,
+      correlationId,
+      category: "LLM",
+      currency: capability.costModel.currency,
+      estimate,
+    });
+    if (reservation === null)
+      throw new ServiceUnavailableException("Budget policy is unavailable; idea proposal refused");
+    const prompt = request.prompt;
+    await createPendingPaidLedger(this.db, {
+      workspaceId: context.workspaceId,
+      channelId: request.channelId ?? null,
+      correlationId,
+      capability,
+      prompt,
+    });
+    let dispatched = false;
+    const started = Date.now();
     try {
-      proposal = parseAiProposal(result.proposal, {
-        ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
-        ...(request.seriesId === undefined ? {} : { seriesId: request.seriesId }),
+      dispatched = true;
+      const result = await this.llm.proposeIdea(
+        request.contextText === undefined
+          ? { prompt: request.prompt }
+          : { prompt: request.prompt, context: request.contextText },
+      );
+      let proposal: IdeaInput;
+      try {
+        proposal = parseAiProposal(result.proposal, {
+          ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
+          ...(request.seriesId === undefined ? {} : { seriesId: request.seriesId }),
+        });
+      } catch {
+        throw new BadRequestException("AI provider returned an invalid proposal");
+      }
+      const metadataResult = aiMetadataSchema.safeParse(result.metadata);
+      if (!metadataResult.success)
+        throw new BadRequestException("AI provider returned invalid provenance metadata");
+      const metadata = metadataResult.data;
+      const created = await this.create(context, proposal, "AI", metadata);
+      await finishPaidLedger(this.db, {
+        workspaceId: context.workspaceId,
+        correlationId,
+        capability,
+        dispatched,
+        actualCost: metadata.cost,
+        currency: metadata.currency ?? null,
+        metadata: { dispatched: true, costKnown: metadata.cost !== null },
+        latencyMs: Date.now() - started,
+        prompt,
       });
-    } catch {
-      throw new BadRequestException("AI provider returned an invalid proposal");
+      await this.usage.finishPaidCall(reservation, {
+        dispatched,
+        actualCost: metadata.cost,
+        actualCurrency: metadata.currency ?? null,
+      });
+      return created;
+    } catch (error) {
+      await finishPaidLedger(this.db, {
+        workspaceId: context.workspaceId,
+        correlationId,
+        capability,
+        dispatched,
+        actualCost: null,
+        metadata: { dispatched, costKnown: false },
+        latencyMs: Date.now() - started,
+        prompt,
+        error,
+      });
+      await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
+      throw error;
     }
-    const metadataResult = aiMetadataSchema.safeParse(result.metadata);
-    if (!metadataResult.success)
-      throw new BadRequestException("AI provider returned invalid provenance metadata");
-    const metadata = metadataResult.data;
-    return this.create(context, proposal, "AI", metadata);
   }
 
   public async list(

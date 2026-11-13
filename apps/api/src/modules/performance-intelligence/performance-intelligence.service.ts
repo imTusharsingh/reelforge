@@ -5,7 +5,10 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
 import {
   PerformanceDimensionSummarySchema,
@@ -39,6 +42,12 @@ import {
 import { AnalyticsService } from "../analytics/analytics.service.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { PublishingService } from "../publishing/publishing.service.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import {
+  createPendingPaidLedger,
+  finishPaidLedger,
+  paidCapability,
+} from "../usage-budget/paid-call.js";
 import {
   INSIGHT_REPORT_LLM,
   type InsightReportLlmPort,
@@ -457,6 +466,7 @@ export class PerformanceIntelligenceService {
     private readonly analytics: AnalyticsService,
     private readonly publishing: PublishingService,
     @Inject(INSIGHT_REPORT_LLM) private readonly llm: InsightReportLlmPort,
+    @Optional() private readonly usage?: UsageBudgetService,
   ) {}
 
   public kpiDefinitions(): readonly PerformanceKpiDefinition[] {
@@ -541,8 +551,53 @@ export class PerformanceIntelligenceService {
       limitations.push(
         "KPI comparison uses VIDEO-granularity snapshots for both windows because CHANNEL snapshots were unavailable in one window.",
       );
-    if (status !== "INSUFFICIENT_DATA" && this.llm.isConfigured()) {
+    if (status !== "INSUFFICIENT_DATA") {
+      if (!this.llm.isConfigured())
+        throw new ServiceUnavailableException(
+          "Insight report LLM is not configured for paid dispatch",
+        );
+      const capability = paidCapability(this.llm);
+      const estimate = capability?.costModel.amount;
+      if (
+        capability === null ||
+        estimate === null ||
+        estimate === undefined ||
+        this.usage === undefined
+      )
+        throw new ServiceUnavailableException(
+          "Insight report LLM is not configured for paid dispatch",
+        );
+      const correlationId = randomUUID();
+      const reservation = await this.usage.reservePaidCall({
+        workspaceId: context.workspaceId,
+        channelId: input.channelId,
+        correlationId,
+        category: "LLM",
+        currency: capability.costModel.currency,
+        estimate,
+      });
+      if (reservation === null)
+        throw new ServiceUnavailableException(
+          "Budget policy is unavailable; insight report refused",
+        );
+      const prompt = JSON.stringify({
+        channelId: input.channelId,
+        currentWindow,
+        previousWindow,
+        kpis,
+        dimensions,
+      });
+      await createPendingPaidLedger(this.db, {
+        workspaceId: context.workspaceId,
+        channelId: input.channelId,
+        correlationId,
+        capability,
+        prompt,
+      });
+      let dispatched = false;
+      const started = Date.now();
       try {
+        dispatched = true;
         const result = await this.llm.generate({
           channelId: input.channelId,
           currentWindow,
@@ -559,16 +614,40 @@ export class PerformanceIntelligenceService {
           cost: result.provenance.cost,
           currency: result.provenance.currency ?? null,
         };
+        await finishPaidLedger(this.db, {
+          workspaceId: context.workspaceId,
+          correlationId,
+          capability,
+          dispatched,
+          actualCost: result.provenance.cost,
+          currency: result.provenance.currency ?? null,
+          metadata: { dispatched: true, costKnown: result.provenance.cost !== null },
+          latencyMs: Date.now() - started,
+          prompt,
+        });
+        await this.usage.finishPaidCall(reservation, {
+          dispatched: true,
+          actualCost: result.provenance.cost,
+          actualCurrency: result.provenance.currency ?? null,
+        });
       } catch {
+        await finishPaidLedger(this.db, {
+          workspaceId: context.workspaceId,
+          correlationId,
+          capability,
+          dispatched,
+          actualCost: null,
+          metadata: { dispatched, costKnown: false },
+          latencyMs: Date.now() - started,
+          prompt,
+          error: new Error("Insight provider failed"),
+        });
+        await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
         aiStatus = "NOT_GENERATED";
         limitations.push(
           "The AI insight provider failed; only deterministic summaries are included.",
         );
       }
-    } else if (status !== "INSUFFICIENT_DATA") {
-      limitations.push(
-        "AI insight generation is not configured; only deterministic summaries are included.",
-      );
     }
     if (status === "INSUFFICIENT_DATA")
       limitations.push(

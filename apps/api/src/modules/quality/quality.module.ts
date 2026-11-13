@@ -8,6 +8,7 @@ import {
 } from "@reelforge/ai-providers";
 import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
+import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { CompositionModule } from "../composition/composition.module.js";
 import { QualityController } from "./quality.controller.js";
 import { QualityService } from "./quality.service.js";
@@ -23,7 +24,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
 }
 
 @Module({
-  imports: [IdentityModule, WorkspaceModule, CompositionModule],
+  imports: [IdentityModule, WorkspaceModule, CompositionModule, UsageBudgetModule],
   controllers: [QualityController],
   providers: [
     QualityService,

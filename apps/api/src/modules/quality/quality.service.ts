@@ -8,6 +8,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { z } from "zod";
 import { Prisma } from "@reelforge/database";
@@ -44,6 +45,13 @@ import {
   qualityScorecardSchema,
 } from "./quality.validation.js";
 import { currentQualityReviewOrder, currentQualityReviewWhere } from "./quality.current-review.js";
+import { Optional } from "@nestjs/common";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import {
+  createPendingPaidLedger,
+  finishPaidLedger,
+  paidCapability,
+} from "../usage-budget/paid-call.js";
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const qualityInputSchema = createRenderSchema.shape.input;
@@ -54,6 +62,7 @@ export class QualityService {
     @Inject("DATABASE") private readonly db: Database,
     private readonly composition: CompositionService,
     @Inject(QUALITY_REVIEW_PORT) private readonly aiReview: QualityReviewPort,
+    @Optional() private readonly usage?: UsageBudgetService,
   ) {}
 
   public async create(context: WorkspaceContext, body: unknown): Promise<QualityRunView> {
@@ -416,7 +425,41 @@ export class QualityService {
         })),
         requiredDisclosures: disclosures,
       };
+      const capability = paidCapability(this.aiReview);
+      const estimate = capability?.costModel.amount;
+      if (
+        capability === null ||
+        estimate === null ||
+        estimate === undefined ||
+        this.usage === undefined
+      )
+        throw new ServiceUnavailableException(
+          "Quality review provider is not configured for paid dispatch",
+        );
+      const reservation = await this.usage.reservePaidCall({
+        workspaceId: context.workspaceId,
+        channelId: job.sceneMediaJob.channelId,
+        correlationId: request.correlationId,
+        category: "LLM",
+        currency: capability.costModel.currency,
+        estimate,
+      });
+      if (reservation === null)
+        throw new ServiceUnavailableException(
+          "Budget policy is unavailable; quality review refused",
+        );
+      const prompt = JSON.stringify(request);
+      await createPendingPaidLedger(this.db, {
+        workspaceId: context.workspaceId,
+        channelId: job.sceneMediaJob.channelId,
+        correlationId: request.correlationId,
+        capability,
+        prompt,
+      });
+      let dispatched = false;
+      const started = Date.now();
       try {
+        dispatched = true;
         const untrustedResult = await this.aiReview.review(request);
         const parsedResult = qualityReviewResultSchema.safeParse(untrustedResult);
         if (!parsedResult.success)
@@ -470,7 +513,35 @@ export class QualityService {
             ? "AUTO_APPROVED"
             : "REVIEW_REQUIRED";
         limitations.push(...Object.values(criteria).flatMap((criterion) => criterion.limitations));
+        await finishPaidLedger(this.db, {
+          workspaceId: context.workspaceId,
+          correlationId: request.correlationId,
+          capability,
+          dispatched,
+          actualCost: metadata.cost,
+          currency: metadata.currency ?? null,
+          metadata: { dispatched: true, costKnown: metadata.cost !== null },
+          latencyMs: Date.now() - started,
+          prompt,
+        });
+        await this.usage.finishPaidCall(reservation, {
+          dispatched: true,
+          actualCost: metadata.cost,
+          actualCurrency: metadata.currency ?? null,
+        });
       } catch (error) {
+        await finishPaidLedger(this.db, {
+          workspaceId: context.workspaceId,
+          correlationId: request.correlationId,
+          capability,
+          dispatched,
+          actualCost: null,
+          metadata: { dispatched, costKnown: false },
+          latencyMs: Date.now() - started,
+          prompt,
+          error,
+        });
+        await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
         if (error instanceof ProviderError && error.code === "NOT_CONFIGURED") {
           status = "REVIEW_REQUIRED";
           limitations.push(
