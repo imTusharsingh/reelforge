@@ -1,5 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
-import { withCsrf } from "../../lib/csrf";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 
 export type IdeaStatus = "DRAFT" | "BACKLOG" | "APPROVED" | "REJECTED" | "SCHEDULED";
 export type Idea = {
@@ -332,9 +332,11 @@ export class PlanningClient {
     const payload: unknown = await response.json().catch(() => undefined);
     this.signal.throwIfAborted();
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) this.accessDenied();
+      const csrfMessage = csrfFailureMessage(payload);
+      if (response.status === 401 || (response.status === 403 && !csrfMessage)) this.accessDenied();
       const message =
-        record(payload) && string(payload.message) ? payload.message : "Request failed.";
+        csrfMessage ??
+        (record(payload) && string(payload.message) ? payload.message : "Request failed.");
       throw new PlanningApiError(
         response.status,
         message,

@@ -7,6 +7,7 @@ import { me, workspace } from "./fixtures";
 const query = new URLSearchParams(location.search);
 const mode = query.get("mode") ?? "account";
 const calls: Array<{ path: string; method: string; body: unknown }> = [];
+let csrfSignedIn = false;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -21,6 +22,30 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   const method = (init?.method ?? "GET").toUpperCase();
   const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
   calls.push({ path, method, body });
+
+  if (mode === "csrf") {
+    const headers = new Headers(init?.headers);
+    if (path === "/auth/csrf" && method === "GET") {
+      document.cookie = "reelforge_csrf=fixture-csrf-token; path=/";
+      return json({ token: "fixture-csrf-token" });
+    }
+    if (path === "/auth/login" && method === "POST") {
+      if (headers.get("X-CSRF-Token") !== "fixture-csrf-token")
+        return json({ code: "CSRF_TOKEN_INVALID", message: "CSRF_TOKEN_INVALID" }, 403);
+      csrfSignedIn = true;
+      document.cookie = "reelforge_session=fixture-session; path=/";
+      return json({ userId: me.userId });
+    }
+    if (path === "/workspaces" && method === "GET")
+      return csrfSignedIn ? json([workspace]) : json({ message: "Unauthenticated" }, 401);
+    if (path === "/auth/me" && method === "GET") return json(me);
+    if (path === "/auth/me" && method === "PATCH") {
+      if (headers.get("X-CSRF-Token") !== "fixture-csrf-token")
+        return json({ code: "CSRF_TOKEN_INVALID", message: "CSRF_TOKEN_INVALID" }, 403);
+      return json({ ...me, displayName: String(body?.displayName ?? me.displayName) });
+    }
+    return json({ message: `Unexpected ${method} ${path}` }, 404);
+  }
 
   if (mode === "login") {
     return json({ message: "Unauthenticated" }, 401);
@@ -65,5 +90,5 @@ function Fixture(): JSX.Element {
   );
 }
 
-if (mode !== "login") window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
+if (mode === "account") window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
 createRoot(document.getElementById("root")!).render(<Fixture />);

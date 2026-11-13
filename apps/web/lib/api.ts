@@ -118,13 +118,14 @@ async function request<T>(
       typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : null;
     const code = record && typeof record.code === "string" ? record.code : undefined;
     const message =
-      record && "message" in record
+      csrfFailureMessage(payload) ??
+      (record && "message" in record
         ? String(record.message)
         : response.status === 401
           ? "Your session has expired. Sign in again."
           : response.status === 403
-            ? (csrfFailureMessage(payload) ?? "You do not have access to this workspace.")
-            : "The request could not be completed.";
+            ? "You do not have access to this workspace."
+            : "The request could not be completed.");
     throw new ApiError(response.status, message, code);
   }
   if (!guard(payload)) throw new ApiError(502, "The service returned an invalid response.");
