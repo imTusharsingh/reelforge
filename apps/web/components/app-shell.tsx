@@ -14,7 +14,7 @@ const destinations = [
   { name: "Production", href: "/production" },
   { name: "Review queue", href: "/review" },
   { name: "Publishing", href: "/publishing" },
-  { name: "Insights", href: null },
+  { name: "Insights", href: "/insights" },
   { name: "Account", href: "/account" },
 ];
 
@@ -45,9 +45,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
                 {name}
               </StudioLink>
             ) : (
-              <span className="rf-nav-item rf-nav-item--disabled">
-                {name} <span className="rf-nav-soon">Planned</span>
-              </span>
+              <span className="rf-nav-item rf-nav-item--disabled">{name}</span>
             )}
           </li>
         ))}
@@ -84,11 +82,13 @@ export function AppShell({
           ? "Studio / Planning"
           : pathname.startsWith("/channels")
             ? "Studio / Channels"
-            : pathname === "/operations"
-              ? "Studio / Operations"
-              : pathname.startsWith("/account")
-                ? "Studio / Account"
-                : "Studio / Overview";
+            : pathname.startsWith("/insights")
+              ? "Studio / Insights"
+              : pathname === "/operations"
+                ? "Studio / Operations"
+                : pathname.startsWith("/account")
+                  ? "Studio / Account"
+                  : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">

@@ -1,9 +1,9 @@
 # M28 Status - Analytics, Insights & Recommendations
 
-- **State:** NOT_STARTED
-- **Assigned session/editor:** none
-- **Branch/worktree:** none
-- **Last updated:** 2026-11-11
+- **State:** IMPLEMENTED_PENDING_REVIEW
+- **Assigned session/editor:** Codex
+- **Branch/worktree:** work/m28-analytics-insights-and-recommendations
+- **Last updated:** 2026-11-13
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** none
 
@@ -13,41 +13,37 @@ Build channel overview; published-video performance; verified M14 metrics; date 
 
 ## Completion estimate
 
-0% - planning package created; implementation has not started.
+Implementation pass complete; pending Core review and CI evidence.
 
 ## Task checklist
 
-- [ ] **M28-T01:** Build channel overview
-- [ ] **M28-T02:** published-video performance
-- [ ] **M28-T03:** verified M14 metrics
-- [ ] **M28-T04:** date filters/details/comparisons/trends/top content
-- [ ] **M28-T05:** supported genre/series comparisons
-- [ ] **M28-T06:** M15 explainable recommendations
-- [ ] **M28-T07:** missing/delayed/partial data states.
+- [x] M28-T01–T07 implementation pass: Insights route, verified snapshot read, views, role-aware controls, supported dimensions, and explicit unavailable/partial/insufficient states.
 
 ## Files changed
 
-- Work-package planning documentation only.
+- Analytics controller/validation; Insights page/screen; app shell navigation.
 
 ## Commands and evidence
 
-- No implementation or test commands run. This is not a passing test result.
+- `pnpm install --frozen-lockfile` with Node 24.22.2: PASS.
+- `pnpm --filter @reelforge/web typecheck`: PASS.
+- API typecheck with a syntactically valid local `DATABASE_URL`: PASS.
+- `git diff --check`: PASS.
+- Focused test runner output was not retained; rerun in CI/local verification before review.
 
 ## Contract/schema proposals
 
-- None. Shared API/schema changes require proposal and approval.
+- No new contract types or schema/migration changes. The approved snapshots route exposes the existing service/query contract.
 
 ## Blockers / risks / unknowns
 
-- Inspect current repository code and existing M00-M20 contracts before implementation.
-- Do not duplicate completed functionality.
-- Provider/platform availability must be based on configured and verified adapters.
+- Browser visual regression and route/role integration coverage remain to be verified; no live provider calls were added.
 
 
 
 ## Next exact action
 
-Inspect the current repository and dependencies, refine the implementation plan against actual code and API contracts, then start after required decisions are confirmed.
+Run the full CI suite, including 390px/1440px visual coverage and existing publishing tests, then submit for Minu review.
 
 ## Handoff notes
 

@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { type AnalyticsMetricDefinition, type MetricAggregate } from "@reelforge/contracts";
+import {
+  type AnalyticsMetricDefinition,
+  type LatestMetricSnapshot,
+  type MetricAggregate,
+} from "@reelforge/contracts";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -8,6 +12,7 @@ import {
   parseMetricAggregateQuery,
   parseMetricCollectionJobId,
   parseMetricCollectionRequest,
+  parseLatestMetricSnapshotQuery,
 } from "./analytics.validation.js";
 
 @Controller("workspaces/:workspaceId")
@@ -64,6 +69,22 @@ export class AnalyticsController {
   ): Promise<MetricAggregate[]> {
     const context = await this.context(request, workspaceId);
     return this.analytics.aggregate(context, channelId, parseMetricAggregateQuery(query));
+  }
+
+  @Get("channels/:channelId/metrics/snapshots")
+  public async snapshots(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("channelId") channelId: string,
+    @Query() query: unknown,
+  ): Promise<LatestMetricSnapshot[]> {
+    const context = await this.context(request, workspaceId);
+    const rawQuery =
+      query !== null && typeof query === "object" && !Array.isArray(query) ? query : {};
+    return this.analytics.listLatestSnapshots(
+      context,
+      parseLatestMetricSnapshotQuery({ ...rawQuery, channelId }),
+    );
   }
 
   private context(request: AuthenticatedRequest, workspaceId: string): Promise<WorkspaceContext> {
