@@ -1212,9 +1212,8 @@ export class QualityService {
 function parseCreateBody(body: unknown): { renderJobId: string; correlationId?: string } {
   const parsed = createBodySchema.safeParse(body);
   if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-  return parsed.data.correlationId === undefined
-    ? { renderJobId: parsed.data.renderJobId }
-    : parsed.data;
+  const { renderJobId, correlationId } = parsed.data;
+  return typeof correlationId === "string" ? { renderJobId, correlationId } : { renderJobId };
 }
 
 function parseScriptDocument(value: unknown): ScriptDocument | null {
