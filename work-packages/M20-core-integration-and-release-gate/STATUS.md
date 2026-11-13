@@ -1,9 +1,9 @@
 # M20 Status - Core Integration & Release Gate
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (estimate ~85%: T05 blocked on owner authorization; T04 partial at the provider boundary; T07 PROJECT_STATE update proposed, not edited)
+- **State:** INTEGRATED (existing main merge via PR #40; documentation reconciliation only)
 - **Assigned session/editor:** Minu backup implementation session (local, Desktop TRACXN-LP-784, no cloud agent), run in parallel with the VS Code session on the main checkout.
 - **Branch/worktree:** `work/m20-core-integration-and-release-gate-minu` in worktree `/home/tracxn-lp-784/Desktop/project/reelforge-m20-minu`, merged with latest `origin/main` `cd2ab662b727471ce65739f3db1d729c2d8229e3`; final local candidate `3eac5d2dcadf68065af1beaaef5143e4a0e0750a`.
-- **Last updated:** 2026-11-11 (IST)
+- **Last updated:** 2026-11-13
 - **Reviewer:** Core Architect/Reviewer (Minu)
 - **Approved commit:** none
 
@@ -81,7 +81,7 @@ All are conservative and OPEN; nothing below was implemented.
 - Add an "M20 release gate" paragraph linking `INTEGRATION_REVIEW.md` and `RELEASE_CHECKLIST.md`, listing E1–E6, S1–S6, C1–C3.
 - Next exact action → owner decisions (Core decisions 2–4) and the Core decisions 5–7/10/11 follow-up PRs.
 
-## Next exact action
+## Historical next action (superseded by the 2026-11-13 closeout below)
 Minu compares this branch with the VS Code session's M20 PR and picks one to land (or merges the useful parts: the in-memory audit sink fix and the provider-boundary test). Then the owner answers Core decisions 1–4.
 
 ## Handoff notes
@@ -89,3 +89,10 @@ Disposable containers `reelforge-m20-minu-db` and `reelforge-m20-minu-redis` wer
 
 ## Reviewer decision
 - Pending.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #40](https://github.com/imTusharsingh/reelforge/pull/40), head `f13df9efd786ddb781e64486a9655fecb9d397fc`, merge `7eb679891ba49c011e16dbc31f3d178c2d1e9719`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Offline integration is merged; owner-authorized live verification and release acceptance remain separate gates.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

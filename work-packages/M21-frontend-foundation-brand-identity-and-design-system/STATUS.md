@@ -1,10 +1,10 @@
 # M21 Status - Frontend Foundation, Brand Identity & Design System
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (not APPROVED or INTEGRATED)
+- **State:** INTEGRATED (existing main merge via PR #41; documentation reconciliation only)
 - **Assigned session/editor:** ChatGPT implementation session (repository-connected GitHub tools)
 - **Branch:** `work/m21-frontend-foundation-design-system`
 - **Base:** `main` `5463226fc1497c1c427aee5c8fd2b00f199339d6`
-- **Last updated:** 2026-11-11 (IST)
+- **Last updated:** 2026-11-13
 - **Reviewer:** Minu (independent Core Architect/Reviewer)
 - **Approved commit:** none
 
@@ -43,5 +43,12 @@ On 2026-11-11 the project owner explicitly approved the M21 representative scree
 3. Future module pages must consume the shared shell/components; do not enable planned navigation until routes exist.
 4. M21 stays `IMPLEMENTED_PENDING_REVIEW`; after approval and owner merge, propose `PROJECT_STATE.md` closeout entry in a separate reviewed docs change.
 
-## Next exact action
+## Historical next action (superseded by the 2026-11-13 closeout below)
 PR #41 remains open. Obtain actual browser/responsive/keyboard/accessibility evidence and request independent Minu re-review; do not self-approve or merge.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #41](https://github.com/imTusharsingh/reelforge/pull/41), head `a8eeb37a86b2160e63597bf9abefd026afeb6846`, merge `09c1e76c7ba727a05985c3e40fc9ee21a8404a14`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Brand foundation also landed in #38/#39. Broader accessibility/E2E evidence remains open in #79.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

@@ -84,3 +84,7 @@ State: IMPLEMENTED_PENDING_REVIEW for this follow-up only. Refs #75.
 - `pnpm lint`, `pnpm format:check`, `pnpm security:secrets`, `pnpm db:check-migrations`, `pnpm db:migrate:deploy`: passed against disposable PostgreSQL 18.6 on 55437.
 - Full typecheck/test/build results will be recorded below after completion. Next action: verify hosted CI on the pushed head and request Minu review; never merge.
 - Full `pnpm typecheck`: passed. Full `DATABASE_URL=postgresql://postgres:postgres@localhost:55437/reelforge pnpm test`: 98 files passed, 2 skipped; 779 tests passed, 8 skipped. `NEXT_TELEMETRY_DISABLED=1 pnpm build`: passed. Hosted CI on 01ce9bd passed all checks. Final follow-up strengthens PostgreSQL coverage to prove VIDEO reuse alongside IMAGE assignment; verify hosted CI on the new head.
+
+## Workstream C integration closeout — 2026-11-13 (#80)
+
+C3 scene asset assignment; ASSIGNED export/composition compatibility and stable action keys landed via [PR #97](https://github.com/imTusharsingh/reelforge/pull/97), reviewed head `8979e25df4a5657cad371b69bcbc9f119d678565`, main merge `3b393023cb36ff5f2a2741f1bbb558c3a16b049a`. Earlier follow-up pending-review text is historical; no new implementation approval or live verification is claimed. Cross-flow E2E remains #79.

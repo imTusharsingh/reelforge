@@ -1,7 +1,7 @@
 # M27 Status — Social Accounts, Publishing & Content Calendar
 
-- State: IMPLEMENTED_PENDING_REVIEW
-- Branch: work/m27-publishing-and-calendar-ui; draft PR #93, refs #82.
+- State: INTEGRATED (existing merge #93; documentation reconciliation only)
+- Branch: main; merged PR #93, refs #82. Original implementation branch: work/m27-publishing-and-calendar-ui.
 - Session: Codex cloud continuation of c9c2537, 2026-11-13.
 - Reviewer: Minu. No implementation-agent approval or merge.
 
@@ -42,3 +42,10 @@ Latest main b64993e (including C3 and C5) was merged without rebase/force push; 
 ## Hosted baseline reconciliation
 
 Head b04cea0e38dae5fb4cad7cf7c0915b2514952310 passed every pull-request CI job in run 43390832035, including fresh migrations and Required CI. The separate push run 43390825062 compared migrations against the old unmerged checkpoint c9c2537 and rejected the R100 directory rename. That is the rename documented above, with identical SQL, required because main's C3 migration occupied the old timestamp. No main migration was changed. The final documentation handoff commit retains the validated schema/SQL and runs both push and PR checks again; CI configuration and the migration guard are unchanged.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #93](https://github.com/imTusharsingh/reelforge/pull/93), head `263c518e6810e9951285dd85f1ce1ca9ae575993`, merge `94f0f5325ce5835ef3281e75a278238dad5cf07b`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: D1–D4 and publishing/calendar/account recovery are merged. Instagram remains unavailable; unconfigured schedule/budget/provider ports remain fail-closed.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

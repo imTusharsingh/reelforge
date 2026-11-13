@@ -130,3 +130,7 @@ Endpoint family: `POST /workspaces/:workspaceId/composition/jobs`, `GET /jobs/:j
 
 ## Reviewer decision
 - **INTEGRATED:** Minu approved PR #18 head `2c6fcbb4cb056bd1d9fa4bd42790d59c38217e5a` (review `5829841015`); squash merge `7d00ced8be55bf9569fa699ff23a120a8a853bae`. This status records reviewer/merge evidence, not self-approval.
+
+## Workstream C integration closeout — 2026-11-13 (#80)
+
+C4 start render from successful scene production; C3 #97 also accepts ASSIGNED outputs in composition landed via [PR #96](https://github.com/imTusharsingh/reelforge/pull/96), reviewed head `717b621256a7490194316b7e8b64d305d57a0dd6`, main merge `1409ae05540a7bef21d469ea13a4fd7ccccd8d8a`. Earlier follow-up pending-review text is historical; no new implementation approval or live verification is claimed. Cross-flow E2E remains #79.

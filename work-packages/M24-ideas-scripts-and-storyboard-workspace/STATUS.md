@@ -1,9 +1,9 @@
 # M24 Status — Ideas, Scripts & Storyboard Workspace
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (existing main merge via PR #55; documentation reconciliation only)
 - **Assigned engineer:** Developer `imTusharsingh`
 - **Branch / PR:** `work/m24-ideas-scripts-storyboard-ui` / [#55](https://github.com/imTusharsingh/reelforge/pull/55)
-- **Updated:** 2026-11-12 (Asia/Kolkata)
+- **Last updated:** 2026-11-13
 - **Reviewer:** `minu-the-reviewer`; independent review required. No self-approval or merge.
 
 ## Core #56 integration
@@ -75,3 +75,10 @@ Reproduction and test-only fixture boundaries: `apps/web/features/planning/verif
 ## Review handoff
 
 Core #56's atomic API prerequisite is consumed; the previous frontend release gate is superseded by the actual caller-token integration and real persistence/concurrency evidence. Review exact request shapes and caller-version provenance, no-retry behavior, 409 comparison/rebase, approved export binding, recovery, roles/tenant isolation and supported-vs-unavailable capability copy. Request independent review from `minu-the-reviewer`. Do not self-approve or merge.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #55](https://github.com/imTusharsingh/reelforge/pull/55), head `2ec7d434e82968a0ac22f922c34619192c5bc7c4`, merge `7a81e0710b4c1ff6ae1375aacb3ef6d89634db0e`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Core planning prerequisites #53/#57 are merged; C2 #95 enables script generation from approved ideas. Unconfigured real providers still fail closed.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

@@ -1,9 +1,9 @@
 # M25 Status - Generation Studio & Video Production UI
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (existing main merge via PR #66; documentation reconciliation only)
 - **Assigned session/editor:** Codex M25 implementation
 - **Branch/worktree:** `feat/m25-generation-studio` / `/workspace/reelforge-m25`
-- **Last updated:** 2026-11-12
+- **Last updated:** 2026-11-13
 - **Reviewer:** `minu-the-reviewer`
 - **Approved commit:** none
 
@@ -73,7 +73,7 @@ Build the generation project and scene workspace against real M08–M10, M16 and
 - Browser evidence uses Chromium and isolated persisted-response fixtures. Live provider readiness, other browser engines and full screen-reader certification are not claimed.
 - Branch commit and PR ownership are verified as `imTusharsingh`; PR #66 is non-draft and requests `minu-the-reviewer`.
 
-## Next exact action
+## Historical next action (superseded by the 2026-11-13 closeout below)
 
 Commit and push the R1/R2 plus #64 review fixes, request re-review on PR #66, and monitor hosted checks and the independent reviewer decision. Do not self-approve or merge.
 
@@ -84,3 +84,10 @@ All supported production UI reads and actions use authenticated workspace-scoped
 ## Reviewer decision
 
 PR #66 received CHANGES_REQUESTED at `4eb0aa3`. R1 exact immutable revision loading, R2 uncertain malformed-success/key preservation, and the #64 media recovery follow-up are fixed locally with regression coverage; re-review is pending after push. Not approved or integrated.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #66](https://github.com/imTusharsingh/reelforge/pull/66), head `d5c6cb6215c8e647a389c62ef7f2f9d70bff5d7d`, merge `fd8692588c5628d7dda25bd041ff2292b22e99ef`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Core media/discovery prerequisites #62/#63, C3 #97 asset assignment and C4 #96 render start are merged. Offline fixtures do not establish live provider readiness.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

@@ -1,9 +1,9 @@
 # M26 Status - Quality Review, Approval & Regeneration
 
-- **State:** IMPLEMENTED_PENDING_REVIEW
+- **State:** INTEGRATED (existing main merge via PR #68; documentation reconciliation only)
 - **Assigned session/editor:** Codex implementation session
 - **Branch/worktree:** `feat/m26-quality-review-ui`, `/workspace/reelforge`
-- **Last updated:** 2026-11-12
+- **Last updated:** 2026-11-13
 - **Reviewer:** `minu-the-reviewer` / Core Architect
 - **Approved commit:** none; independent review required
 
@@ -90,3 +90,10 @@ Addressed the [changes-requested review](https://github.com/imTusharsingh/reelfo
 - Changed files for this follow-up: review `model.ts`, `model.test.ts`, `workspace.tsx`, browser `mounted-fixture.tsx`, `mounted-browser.mjs`, verification `README.md`, this status and the appended work-log record.
 - Focused model/API suite: 44 tests passed. Mounted Chromium: 20 scenarios passed, including exact persisted-render routing, missing-script-context/path encoding, successful-render limitation messaging, no generation POST, and distinct missing/unavailable queue wording. Existing desktop/390px, role, evidence and reconciliation scenarios remain passing.
 - Full repository verification after the review fixes passed: `pnpm install --frozen-lockfile`, `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `NODE_ENV=test pnpm test` (745 passed / 8 skipped; 97 files passed / 2 skipped), `NODE_ENV=production pnpm build`, `pnpm db:validate`, `pnpm db:check-migrations` (30 immutable ordered migrations), `pnpm security:secrets`, and `git diff --check` all exited 0. The local PostgreSQL readiness check passed. No paid/provider calls or backend/shared-contract/tooling changes. Independent re-review is still required. No self-approval or merge.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #68](https://github.com/imTusharsingh/reelforge/pull/68), head `bc2e94a5e9729e2eca387ec58fbfbfe8962829da`, merge `351a101439d6e61eb5a16df8f7f3a895b1f1e843`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Quality review, approval and regeneration UI is merged. Missing/unconfigured AI quality adapters remain explicit; #79 adds cross-flow browser/axe coverage.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.
