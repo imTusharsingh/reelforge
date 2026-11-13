@@ -19,14 +19,17 @@
     "db:validate": "pnpm --filter @reelforge/database db:validate",
     "db:check-migrations": "node scripts/check-migrations.mjs",
     "db:migrate:dev": "pnpm --filter @reelforge/database db:migrate:dev",
-    "db:migrate:deploy": "pnpm --filter @reelforge/database db:migrate:deploy"
+    "db:migrate:deploy": "pnpm --filter @reelforge/database db:migrate:deploy",
+    "prepare": "husky || true"
   },
   "devDependencies": {
-    "@types/node": "24.19.2",
     "@types/express": "5.0.6",
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "eslint": "10.14.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1",
