@@ -19,7 +19,8 @@ import {
 } from "./fixtures";
 
 const query = new URLSearchParams(location.search);
-const role = query.get("role") === "VIEWER" ? "VIEWER" : "EDITOR";
+const role =
+  query.get("role") === "VIEWER" ? "VIEWER" : query.get("role") === "OWNER" ? "OWNER" : "EDITOR";
 const mode = query.get("mode") ?? "studio";
 const calls: { path: string; method: string; body: unknown }[] = [];
 let mutationResponses = 0;
@@ -29,6 +30,17 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   const method = init?.method ?? "GET";
   const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
   calls.push({ path, method, body });
+  if (method === "POST" && path.endsWith("/assign-asset")) {
+    mutationResponses += 1;
+    const status = Number(query.get("error"));
+    if (status)
+      return new Response(JSON.stringify({ message: `Assignment rejected ${status}` }), { status });
+    if (mode === "assign-reconcile" && mutationResponses === 1)
+      throw new TypeError("Network interrupted");
+    return new Response(JSON.stringify({ ...production, version: production.version + 1 }), {
+      status: 200,
+    });
+  }
   if (method === "POST" && path === "composition/jobs") {
     if (mode === "render-budget")
       return new Response(JSON.stringify({ message: "BUDGET_EXHAUSTED" }), { status: 409 });

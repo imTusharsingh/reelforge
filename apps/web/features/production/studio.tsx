@@ -72,13 +72,23 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
     setError("");
     setNotice("");
     try {
-      const updated = await client.mutate(
-        attempt.job,
-        attempt.operation,
-        attempt.key,
-        attempt.sceneId,
-        attempt.kind,
-      );
+      const updated =
+        attempt.operation === "assign"
+          ? await client.assignAsset(
+              attempt.job,
+              attempt.sceneId,
+              attempt.kind,
+              attempt.assetId,
+              attempt.assetVersion,
+              attempt.key,
+            )
+          : await client.mutate(
+              attempt.job,
+              attempt.operation,
+              attempt.key,
+              attempt.sceneId,
+              attempt.kind,
+            );
       pendingMutation.current = null;
       setUncertain(false);
       setNotice(
@@ -94,6 +104,10 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       } else {
         pendingMutation.current = null;
         setUncertain(false);
+        if (cause instanceof ProductionApiError && cause.status === 409) {
+          setNotice("Production state changed. Reloading the job before another action.");
+          refresh();
+        }
       }
     } finally {
       setBusy("");
@@ -113,6 +127,33 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       label: `${operation}:${target?.sceneId ?? "job"}:${kind ?? "all"}`,
       ...(target ? { sceneId: target.sceneId } : {}),
       ...(kind ? { kind } : {}),
+    };
+    pendingMutation.current = attempt;
+    await dispatchMutation(attempt);
+  };
+
+  const assignAsset = async (
+    target: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+  ): Promise<void> => {
+    if (!job || uncertain || !canWrite(client.role)) return;
+    if (
+      !window.confirm(
+        `Assign this asset (v${assetVersion}) to scene ${target.ordinal + 1} ${kind}?`,
+      )
+    )
+      return;
+    const attempt: PendingSceneMutation = {
+      job,
+      operation: "assign",
+      key: crypto.randomUUID(),
+      label: `assign:${target.sceneId}:${kind}`,
+      sceneId: target.sceneId,
+      kind,
+      assetId,
+      assetVersion,
     };
     pendingMutation.current = attempt;
     await dispatchMutation(attempt);
@@ -191,7 +232,9 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
                     uncertain={uncertain}
                     capability={capability}
                     allAvailable={allAvailable}
+                    assets={state.data!.assets}
                     mutate={mutate}
+                    assign={assignAsset}
                   />
                 )}
               </main>
@@ -422,7 +465,9 @@ function SceneWorkspace({
   uncertain,
   capability,
   allAvailable,
+  assets,
   mutate,
+  assign,
 }: {
   scene: ProductionScene;
   scriptScene: import("./model").ScriptScene;
@@ -432,10 +477,17 @@ function SceneWorkspace({
   uncertain: boolean;
   capability: Map<OutputKind, import("./model").Capability>;
   allAvailable: boolean;
+  assets: import("./model").Asset[];
   mutate: (
     operation: "retry" | "regenerate" | "replace",
     scene?: ProductionScene,
     kind?: OutputKind,
+  ) => Promise<void>;
+  assign: (
+    scene: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
   ) => Promise<void>;
 }): JSX.Element {
   return (
@@ -489,6 +541,15 @@ function SceneWorkspace({
             >
               Regenerate {output.kind.toLowerCase()}
             </Button>
+            <AssignAssetAction
+              scene={scene}
+              kind={output.kind}
+              assets={assets}
+              writable={writable}
+              busy={busy}
+              uncertain={uncertain}
+              onAssign={assign}
+            />
           </div>
         ))}
       </div>
@@ -501,8 +562,8 @@ function SceneWorkspace({
         Regenerate entire scene
       </Button>
       <p className={styles.notice}>
-        “Replace” regenerates the selected output through its configured provider. Assigning an
-        existing library asset is not supported by the current server contract.
+        “Replace” regenerates the selected output through its configured provider. “Assign existing
+        asset” uses a published workspace asset without a provider call.
       </p>
     </article>
   );
@@ -558,12 +619,96 @@ export function MediaPreview({
 
 type PendingSceneMutation = {
   job: SceneMediaPackage;
-  operation: "retry" | "regenerate" | "replace";
   key: string;
   label: string;
-  sceneId?: string;
-  kind?: OutputKind;
+} & (
+  | {
+      operation: "assign";
+      sceneId: string;
+      kind: OutputKind;
+      assetId: string;
+      assetVersion: number;
+    }
+  | {
+      operation: "retry" | "regenerate" | "replace";
+      sceneId?: string;
+      kind?: OutputKind;
+    }
+);
+
+const KIND_MEDIA_TYPES: Record<OutputKind, readonly string[]> = {
+  IMAGE: ["image/png", "image/jpeg", "image/webp"],
+  VIDEO: ["video/mp4"],
+  NARRATION: ["audio/mpeg", "audio/wav"],
+  DIALOGUE: ["audio/mpeg", "audio/wav"],
 };
+
+function AssignAssetAction({
+  scene,
+  kind,
+  assets,
+  writable,
+  busy,
+  uncertain,
+  onAssign,
+}: {
+  scene: ProductionScene;
+  kind: OutputKind;
+  assets: import("./model").Asset[];
+  writable: boolean;
+  busy: string;
+  uncertain: boolean;
+  onAssign: (
+    scene: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+  ) => Promise<void>;
+}): JSX.Element {
+  const options = assets.filter(
+    (asset) => asset.status === "PUBLISHED" && KIND_MEDIA_TYPES[kind].includes(asset.mediaType),
+  );
+  const [selected, setSelected] = useState("");
+  const label = `assign:${scene.sceneId}:${kind}`;
+  const disabled = !writable || uncertain || busy !== "";
+  return (
+    <div className={styles.workspace}>
+      <label className={styles.meta} htmlFor={`${scene.sceneId}-${kind}-assign`}>
+        Assign existing asset
+      </label>
+      <select
+        id={`${scene.sceneId}-${kind}-assign`}
+        value={selected}
+        disabled={disabled}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">Select a published asset</option>
+        {options.map((asset) => (
+          <option key={`${asset.id}:${asset.version}`} value={`${asset.id}:${asset.version}`}>
+            {(asset.filename ?? asset.id.slice(0, 8)) + ` (v${asset.version})`}
+          </option>
+        ))}
+      </select>
+      <Button
+        tone="secondary"
+        loading={busy === label}
+        disabled={disabled || selected === ""}
+        onClick={() => {
+          const [id, ver] = selected.split(":");
+          if (!id || !ver) return;
+          void onAssign(scene, kind, id, Number(ver));
+        }}
+      >
+        Assign asset
+      </Button>
+      {options.length === 0 && (
+        <p className={styles.meta}>
+          No published {kind.toLowerCase()}-compatible assets available.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function AssetGallery({
   assets,
@@ -577,8 +722,8 @@ function AssetGallery({
     <Panel>
       <h2>Workspace asset gallery</h2>
       <p>
-        Published immutable versions are available for inspection. Scene assignment is unavailable
-        until the server exposes a rights-checked assignment operation.
+        Published immutable versions are available for inspection and can be assigned to scene
+        outputs in the scene panel (owner/editor).
       </p>
       {published.length === 0 ? (
         <StateMessage kind="empty" description="No published assets exist in this workspace." />
@@ -595,7 +740,7 @@ function AssetGallery({
               <span className={styles.meta}>
                 Version {asset.version} · {asset.mediaType}
               </span>
-              <Button disabled>Select for scene</Button>
+              <span className={styles.meta}>Use “Assign existing asset” in the scene panel.</span>
             </article>
           ))}
         </div>

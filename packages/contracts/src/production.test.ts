@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AssignSceneAssetRequestSchema,
   RenderJobListQuerySchema,
   SceneMediaCapabilityCatalogSchema,
   SceneMediaJobListQuerySchema,
@@ -52,6 +53,34 @@ describe("production contracts", () => {
         idempotencyKey: "mutation-1",
         expectedJobVersion: 3,
         kind: "UNKNOWN",
+      }).success,
+    ).toBe(false);
+    expect(
+      AssignSceneAssetRequestSchema.safeParse({
+        idempotencyKey: "mutation-1",
+        expectedJobVersion: 3,
+        kind: "IMAGE",
+        assetId: scriptId,
+        assetVersion: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      AssignSceneAssetRequestSchema.safeParse({
+        idempotencyKey: "mutation-1",
+        expectedJobVersion: 3,
+        kind: "IMAGE",
+        assetId: scriptId,
+        assetVersion: 1,
+        extra: "nope",
+      }).success,
+    ).toBe(false);
+    expect(
+      AssignSceneAssetRequestSchema.safeParse({
+        idempotencyKey: "mutation-1",
+        expectedJobVersion: 3,
+        kind: "IMAGE",
+        assetId: "not-a-uuid",
+        assetVersion: 1,
       }).success,
     ).toBe(false);
   });

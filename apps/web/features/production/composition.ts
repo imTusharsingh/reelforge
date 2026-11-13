@@ -60,7 +60,12 @@ export function makeRenderInput(
         !script ||
         script.id !== scene.sceneId ||
         scene.status !== "SUCCEEDED" ||
-        scene.outputs.some((output) => output.status !== "SUCCEEDED" && output.status !== "REUSED")
+        scene.outputs.some(
+          (output) =>
+            output.status !== "SUCCEEDED" &&
+            output.status !== "REUSED" &&
+            output.status !== "ASSIGNED",
+        )
       )
         throw new Error("Every scene must match the pinned revision and have complete outputs.");
       const visual =

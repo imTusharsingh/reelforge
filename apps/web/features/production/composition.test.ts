@@ -31,6 +31,18 @@ describe("render input", () => {
     ]);
     expect(input.coverFrames).toEqual([{ assetId, assetVersion: 1, timestampMs: 0 }]);
   });
+  it("accepts manually ASSIGNED visuals in the pinned package", () => {
+    const assigned = {
+      ...complete,
+      scenes: complete.scenes.map((scene) => ({
+        ...scene,
+        outputs: scene.outputs.map((output) => ({ ...output, status: "ASSIGNED" as const })),
+      })),
+    };
+    expect(makeRenderInput(assigned, pinnedRevision, "assigned-key").scenes[0]?.assetId).toBe(
+      assetId,
+    );
+  });
   it("rejects incomplete packages and mismatched pinned revisions", () => {
     expect(() => makeRenderInput(production, pinnedRevision, "12345678")).toThrow();
     expect(() =>

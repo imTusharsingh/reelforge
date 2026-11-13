@@ -79,7 +79,12 @@ export type SceneMediaJobList = z.infer<typeof SceneMediaJobListSchema>;
  * Stable mutation idempotency. The same key must always describe the same operation, target scene,
  * output kind, and observed job version. A different payload under the same key is a conflict.
  */
-export const SceneMediaMutationOperationSchema = z.enum(["RETRY", "REGENERATE", "REPLACE"]);
+export const SceneMediaMutationOperationSchema = z.enum([
+  "RETRY",
+  "REGENERATE",
+  "REPLACE",
+  "ASSIGN_ASSET",
+]);
 export type SceneMediaMutationOperation = z.infer<typeof SceneMediaMutationOperationSchema>;
 
 export const SceneMediaJobMutationRequestSchema = z
@@ -98,6 +103,17 @@ export const ReplaceSceneMediaOutputRequestSchema = z
   })
   .strict();
 export type ReplaceSceneMediaOutputRequest = z.infer<typeof ReplaceSceneMediaOutputRequestSchema>;
+
+export const AssignSceneAssetRequestSchema = z
+  .object({
+    idempotencyKey: z.string().trim().min(1).max(200),
+    expectedJobVersion: z.number().int().positive(),
+    kind: SceneMediaKindSchema,
+    assetId: z.string().uuid(),
+    assetVersion: z.number().int().min(1),
+  })
+  .strict();
+export type AssignSceneAssetRequest = z.infer<typeof AssignSceneAssetRequestSchema>;
 
 export const SCENE_MEDIA_CAPABILITY_UNAVAILABLE_REASONS = [
   "PROVIDER_NOT_CONFIGURED",
