@@ -414,7 +414,7 @@ try {
     "PASS stale approval cannot approve unseen revision; explicit revision 4 approval/export/reload is immutable",
   );
   await page.goto(`${base}/planning/ideas/${approved.id}`);
-  await page.getByText("Script generation is not configured", { exact: true }).waitFor();
+  await page.getByText(/Generation requires a configured provider/).waitFor();
   assert.equal(
     await page.getByRole("button", { name: "Generate script", exact: true }).isDisabled(),
     true,

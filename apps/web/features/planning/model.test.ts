@@ -281,6 +281,29 @@ describe("M24 HTTP integration adapter", () => {
     await client().generateScript(input);
     expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual(input);
   });
+  it("keeps failed generation pending until it is reconciled", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    const fetch = vi.fn().mockResolvedValue(response({ message: "Rejected" }, 409));
+    vi.stubGlobal("fetch", fetch);
+    const input = {
+      approvedIdeaSnapshotId: "a",
+      approvedIdeaChecksum: "checksum",
+      configSnapshotId: "config",
+      promptSnapshotId: "prompt",
+      prompt: "Generate",
+    };
+    await expect(client().generateScript(input)).rejects.toThrow();
+    expect(pendingSave(idea.workspaceId)).toBe("scripts");
+    await expect(client().generateScript(input)).rejects.toMatchObject({ status: 409 });
+    expect(fetch).toHaveBeenCalledOnce();
+    clearPendingSave(idea.workspaceId);
+  });
   it("keeps uncertain writes pending and never automatically retries them", async () => {
     const storage = new Map<string, string>();
     vi.stubGlobal("window", {});
