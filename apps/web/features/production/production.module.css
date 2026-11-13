@@ -112,6 +112,7 @@
 }
 .output {
   display: grid;
+  min-width: 0;
   gap: var(--rf-space-2);
   padding: var(--rf-space-3);
   border: 1px solid var(--rf-border);
@@ -124,10 +125,14 @@
 }
 .preview video,
 .preview img,
+.output img,
+.output video,
+.output audio,
 .asset img,
 .asset video {
   display: block;
   inline-size: 100%;
+  max-inline-size: 100%;
   max-block-size: 32rem;
   object-fit: contain;
   background: var(--rf-deep-ink);

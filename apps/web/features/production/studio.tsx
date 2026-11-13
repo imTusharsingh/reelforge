@@ -431,14 +431,13 @@ function Timeline({
   return (
     <div>
       <h2>Scene sequence</h2>
-      <div className={styles.timeline} role="list" aria-label="Scene timeline">
+      <div className={styles.timeline} role="group" aria-label="Scene timeline">
         {scenes.map((scene, index) => {
           const script = scriptScenes.find((item) => item.id === scene.sceneId);
           return (
             <button
               key={scene.sceneId}
               type="button"
-              role="listitem"
               aria-pressed={selected === index}
               onClick={() => onSelect(index)}
             >
@@ -677,6 +676,7 @@ function AssignAssetAction({
         Assign existing asset
       </label>
       <select
+        className="rf-input"
         id={`${scene.sceneId}-${kind}-assign`}
         value={selected}
         disabled={disabled}
