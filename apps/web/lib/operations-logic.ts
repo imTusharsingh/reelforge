@@ -1,6 +1,10 @@
 import type { OperationsContext } from "./operations-api";
 import type { WorkflowRun } from "./operations-types";
 
+export function canEditOperations(role: OperationsContext["role"]): boolean {
+  return role === "OWNER" || role === "EDITOR";
+}
+
 export function redacted(message: string | null): string {
   if (!message) return "No additional detail was provided.";
   return message
@@ -15,7 +19,7 @@ export function safeActions(
   run: WorkflowRun,
   role: OperationsContext["role"],
 ): readonly ("cancel" | "retry" | "resume")[] {
-  if (role !== "OWNER" && role !== "EDITOR") return [];
+  if (!canEditOperations(role)) return [];
   if (run.state === "WAITING_APPROVAL") return ["resume", "cancel"];
   if (["RUNNING", "QUEUED", "RETRY_WAIT"].includes(run.state)) return ["cancel"];
   if (

@@ -17,7 +17,7 @@ import type {
   NotificationPreference,
   WorkflowRun,
 } from "../lib/operations-types";
-import { redacted, safeActions } from "../lib/operations-logic";
+import { canEditOperations, redacted, safeActions } from "../lib/operations-logic";
 import styles from "./operations-dashboard.module.css";
 
 export const currency = (minor: number, code: string): string =>
@@ -152,6 +152,7 @@ function Preferences({
 }): JSX.Element {
   const [preferences, setPreferences] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const readOnly = !canEditOperations(context.role);
   useEffect(() => setPreferences(initial), [initial]);
   const save = async (): Promise<void> => {
     const signal = createSignal();
@@ -179,6 +180,7 @@ function Preferences({
             <label>
               <input
                 type="checkbox"
+                disabled={readOnly}
                 checked={preference.inApp}
                 onChange={(event) =>
                   setPreferences(
@@ -193,6 +195,7 @@ function Preferences({
             <label>
               <input
                 type="checkbox"
+                disabled={readOnly}
                 checked={preference.email}
                 onChange={(event) =>
                   setPreferences(
@@ -207,9 +210,11 @@ function Preferences({
           </li>
         ))}
       </ul>
-      <Button disabled={busy} onClick={() => void save()}>
-        {busy ? "Saving…" : "Save preferences"}
-      </Button>
+      {!readOnly && (
+        <Button disabled={busy} onClick={() => void save()}>
+          {busy ? "Saving…" : "Save preferences"}
+        </Button>
+      )}
     </Panel>
   );
 }
@@ -362,6 +367,7 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
       />
     );
   const currentGeneration = version.current;
+  const canMutate = canEditOperations(context.role);
   const isCurrent = (): boolean => currentGeneration === version.current;
   return (
     <section className={styles.dashboard} aria-labelledby="operations-title">
@@ -410,29 +416,31 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
           <h2>
             Notifications <Badge tone="info">{data.notifications.unreadCount} unread</Badge>
           </h2>
-          <div className={styles.actions}>
-            <Button
-              tone="secondary"
-              disabled={!data.notifications.unreadCount}
-              onClick={() => {
-                setMutationError("");
-                const generation = version.current;
-                const signal = createSignal();
-                void markAllNotificationsRead(context, signal)
-                  .then(() => {
-                    if (generation === version.current) refresh();
-                  })
-                  .catch((e: unknown) => {
-                    if (generation === version.current)
-                      setMutationError(
-                        e instanceof Error ? e.message : "Notifications could not be updated.",
-                      );
-                  });
-              }}
-            >
-              Mark all read
-            </Button>
-          </div>
+          {canMutate && (
+            <div className={styles.actions}>
+              <Button
+                tone="secondary"
+                disabled={!data.notifications.unreadCount}
+                onClick={() => {
+                  setMutationError("");
+                  const generation = version.current;
+                  const signal = createSignal();
+                  void markAllNotificationsRead(context, signal)
+                    .then(() => {
+                      if (generation === version.current) refresh();
+                    })
+                    .catch((e: unknown) => {
+                      if (generation === version.current)
+                        setMutationError(
+                          e instanceof Error ? e.message : "Notifications could not be updated.",
+                        );
+                    });
+                }}
+              >
+                Mark all read
+              </Button>
+            </div>
+          )}
           <ul className={styles.list}>
             {data.notifications.items.length ? (
               data.notifications.items.map((notification) => (
@@ -442,7 +450,7 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
                     <p>{notification.body}</p>
                     <small>{new Date(notification.createdAt).toLocaleString()}</small>
                   </div>
-                  {!notification.readAt && (
+                  {canMutate && !notification.readAt && (
                     <Button
                       tone="ghost"
                       onClick={() => {

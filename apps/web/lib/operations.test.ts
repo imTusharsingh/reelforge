@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseRun } from "./operations-api";
-import { redacted, safeActions } from "./operations-logic";
+import { canEditOperations, redacted, safeActions } from "./operations-logic";
 import type { WorkflowRun } from "./operations-types";
 
 const run = (state: WorkflowRun["state"], stepStatus = "SUCCEEDED"): WorkflowRun => ({
@@ -36,6 +36,11 @@ const run = (state: WorkflowRun["state"], stepStatus = "SUCCEEDED"): WorkflowRun
 
 describe("Operations contracts and permissions", () => {
   it("does not expose workflow mutations to viewers", () => {
+    expect(
+      ["OWNER", "EDITOR", "VIEWER", "UNKNOWN"].map((role) =>
+        canEditOperations(role as "OWNER" | "EDITOR" | "VIEWER" | "UNKNOWN"),
+      ),
+    ).toEqual([true, true, false, false]);
     expect(safeActions(run("RUNNING"), "VIEWER")).toEqual([]);
     expect(safeActions(run("RUNNING"), "EDITOR")).toEqual(["cancel"]);
     expect(safeActions(run("FAILED", "FAILED"), "OWNER")).toEqual(["retry"]);
