@@ -55,11 +55,12 @@ function ProfilePanel(): JSX.Element {
 
   const save = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    if (saving) return;
     setError("");
     setSuccess("");
     const trimmed = displayName.trim();
-    if (!trimmed) {
-      setError("Display name is required.");
+    if (!trimmed || trimmed.length > 80 || /[\p{Cc}]/u.test(trimmed)) {
+      setError("Use 1–80 characters without control characters for your display name.");
       return;
     }
     setSaving(true);
@@ -115,6 +116,7 @@ function ProfilePanel(): JSX.Element {
           label="Display name"
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
+          maxLength={80}
           autoComplete="name"
         />
         <Button type="submit" loading={saving}>
@@ -135,6 +137,7 @@ function PasswordPanel(): JSX.Element {
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    if (busy) return;
     setError("");
     setSuccess("");
     if (newPassword.length < 12) {

@@ -174,7 +174,7 @@ export class IdentityService {
       currentPassword,
       user.credential?.passwordHash ?? DUMMY_PASSWORD_HASH,
     );
-    if (!valid) {
+    if (!user.credential || !valid) {
       await this.db.authEvent.create({
         data: {
           userId: principal.userId,

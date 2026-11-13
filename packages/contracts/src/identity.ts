@@ -17,7 +17,12 @@ export type AuthMeResponse = z.infer<typeof AuthMeResponseSchema>;
 
 export const UpdateAuthMeRequestSchema = z
   .object({
-    displayName: z.string(),
+    displayName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .refine((value) => !/[\p{Cc}]/u.test(value), "Display name contains invalid characters"),
   })
   .strict();
 export type UpdateAuthMeRequest = z.infer<typeof UpdateAuthMeRequestSchema>;

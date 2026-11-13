@@ -75,87 +75,95 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
 
 try {
   for (const width of [390, 1440]) {
+    const viewport = { width, height: 1000 };
     await test(
       `profile save and password success at ${width}px`,
       async (page) => {
-        await page.getByRole("heading", { name: "Profile and security" }).waitFor();
         await page.getByLabel("Display name").fill("  Updated Creator  ");
         await page.getByRole("button", { name: "Save profile" }).click();
         await page.getByText("Profile updated.").waitFor();
         const calls = await page.evaluate(() => window.m22Fixture.calls);
         assert(
           calls.some(
-            (c) =>
-              c.method === "PATCH" &&
-              c.path === "/auth/me" &&
-              c.body.displayName === "  Updated Creator  ",
+            (call) =>
+              call.method === "PATCH" &&
+              call.path === "/auth/me" &&
+              call.body.displayName === "Updated Creator",
           ),
         );
-
-        await page.getByLabel("Current password").fill("current-password-123");
-        await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
-        await page.getByLabel("Confirm new password").fill("new-password-12345");
-        await page.getByRole("button", { name: "Change password" }).click();
+        await fillPassword(page);
+        await page.getByRole("button", { name: "Change password", exact: true }).click();
         await page.getByText("Password changed. 2 other sessions were signed out.").waitFor();
+        assert.equal(await page.getByLabel("Current password").inputValue(), "");
         assert.equal(
           await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth),
           true,
         );
       },
       "mode=account",
-      { width, height: 900 },
+      viewport,
+    );
+    for (const [status, message] of [
+      [401, "Current password is incorrect."],
+      [429, "Too many attempts. Try again later."],
+      [400, "New password must differ from the current password."],
+    ]) {
+      await test(
+        `password ${status} at ${width}px`,
+        async (page) => {
+          await fillPassword(page);
+          await page.getByRole("button", { name: "Change password", exact: true }).click();
+          await page.getByText(message, { exact: true }).waitFor();
+        },
+        `mode=password-${status}`,
+        viewport,
+      );
+    }
+    await test(
+      `password validation at ${width}px`,
+      async (page) => {
+        await page.getByLabel("Current password").fill("current-password-123");
+        await page.getByLabel("New password", { exact: true }).fill("short");
+        await page.getByRole("button", { name: "Change password", exact: true }).click();
+        await page
+          .getByText("New password must be at least 12 characters.", { exact: true })
+          .waitFor();
+        await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
+        await page.getByLabel("Confirm new password").fill("different-password-12345");
+        await page.getByRole("button", { name: "Change password", exact: true }).click();
+        await page.getByText("New password and confirmation must match.").waitFor();
+        assert.equal(
+          await page.evaluate(
+            () => window.m22Fixture.calls.filter((call) => call.path.endsWith("/password")).length,
+          ),
+          0,
+        );
+      },
+      "mode=account",
+      viewport,
+    );
+    await test(
+      `forgot password unavailable at ${width}px`,
+      async (page) => {
+        await page
+          .getByText(
+            "Forgot password? Password reset isn't available yet. Contact your workspace owner.",
+          )
+          .waitFor();
+        assert.equal(await page.locator('a:has-text("Forgot password")').count(), 0);
+      },
+      "mode=login",
+      viewport,
     );
   }
-
-  await test("password change shows clear 401, 429 and 400 states", async (page) => {
-    await page.getByRole("heading", { name: "Profile and security" }).waitFor();
-
-    await page.goto(`http://127.0.0.1:${server.address().port}/?mode=password-401`);
-    await page.getByRole("heading", { name: "Profile and security" }).waitFor();
-    await page.getByLabel("Current password").fill("wrong-password-12345");
-    await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
-    await page.getByLabel("Confirm new password").fill("new-password-12345");
-    await page.getByRole("button", { name: "Change password" }).click();
-    await page.getByText("Current password is incorrect.").waitFor();
-
-    await page.goto(`http://127.0.0.1:${server.address().port}/?mode=password-429`);
-    await page.getByRole("heading", { name: "Profile and security" }).waitFor();
-    await page.getByLabel("Current password").fill("current-password-123");
-    await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
-    await page.getByLabel("Confirm new password").fill("new-password-12345");
-    await page.getByRole("button", { name: "Change password" }).click();
-    await page.getByText("Too many attempts. Try again later.").waitFor();
-
-    await page.goto(`http://127.0.0.1:${server.address().port}/?mode=password-400`);
-    await page.getByRole("heading", { name: "Profile and security" }).waitFor();
-    await page.getByLabel("Current password").fill("current-password-123");
-    await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
-    await page.getByLabel("Confirm new password").fill("new-password-12345");
-    await page.getByRole("button", { name: "Change password" }).click();
-    await page.getByText(/New password must differ|Check the form and try again/).waitFor();
-  });
-
-  await test(
-    "forgot password is shown as unavailable on login",
-    async (page) => {
-      await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-      await page
-        .getByText(
-          "Forgot password? Password reset isn't available yet. Contact your workspace owner.",
-        )
-        .waitFor();
-      assert.equal(await page.locator('a:has-text("Forgot password")').count(), 0);
-      assert.equal(
-        await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth),
-        true,
-      );
-    },
-    "mode=login",
-    { width: 390, height: 844 },
-  );
-
   console.log(`PASS ${count} mounted account browser scenarios`);
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
+}
+
+async function fillPassword(page) {
+  await page.getByLabel("Current password").fill("current-password-123");
+  await page.getByLabel("New password", { exact: true }).fill("new-password-12345");
+  await page.getByLabel("Confirm new password").fill("new-password-12345");
 }

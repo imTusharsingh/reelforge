@@ -14,6 +14,13 @@ describe("identity account contracts", () => {
     expect(UpdateAuthMeRequestSchema.safeParse({ email: "x@example.com" }).success).toBe(false);
   });
 
+  it("trims display names and rejects empty, long and control-character names", () => {
+    expect(UpdateAuthMeRequestSchema.parse({ displayName: "  Creator  " })).toEqual({
+      displayName: "Creator",
+    });
+    for (const displayName of ["   ", "x".repeat(81), "a\u0000b", "a\nb"])
+      expect(UpdateAuthMeRequestSchema.safeParse({ displayName }).success).toBe(false);
+  });
   it("rejects unknown password-change keys", () => {
     expect(
       ChangePasswordRequestSchema.safeParse({

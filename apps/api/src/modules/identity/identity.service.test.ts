@@ -9,7 +9,19 @@ const principal: Principal = {
   sessionId: "22222222-2222-4222-8222-222222222222",
 };
 
-function createDb(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+type MockFunction = ReturnType<typeof vi.fn>;
+type TestTransaction = {
+  passwordCredential: { upsert: MockFunction };
+  session: { updateMany: MockFunction };
+  authEvent: { create: MockFunction };
+};
+type TestDatabase = TestTransaction & {
+  authEvent: { count: MockFunction; create: MockFunction };
+  user: { findUnique: MockFunction; update: MockFunction };
+  $transaction: MockFunction;
+  _tx: TestTransaction;
+};
+function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
   const tx = {
     passwordCredential: { upsert: vi.fn().mockResolvedValue({}) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
@@ -108,6 +120,25 @@ describe("IdentityService C5 account", () => {
     verify.mockRestore();
   });
 
+  it("uses dummy verification but rejects a missing credential", async () => {
+    const db = createDb({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: principal.userId, credential: null }) },
+    });
+    const verify = vi.spyOn(authCrypto, "verifyPassword").mockResolvedValue(true);
+    try {
+      await expect(
+        new IdentityService(db as never).changePassword(
+          principal,
+          "current-password-123",
+          "new-password-12345",
+        ),
+      ).rejects.toMatchObject({ status: 401 });
+      expect(verify).toHaveBeenCalledWith("current-password-123", authCrypto.DUMMY_PASSWORD_HASH);
+      expect(db.$transaction).not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+    }
+  });
   it("rejects same new password and updates in one transaction", async () => {
     const db = createDb();
     const service = new IdentityService(db as never);
