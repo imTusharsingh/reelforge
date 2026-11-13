@@ -83,6 +83,14 @@ describe("CSRF validation", () => {
     expect(
       runMiddleware({
         method: "POST",
+        path: "/api/v1/auth/login",
+        authorization: "Bearer token",
+        origin: "https://studio.example",
+      }),
+    ).toMatchObject({ response: { code: "CSRF_TOKEN_INVALID" } });
+    expect(
+      runMiddleware({
+        method: "POST",
         path: "/api/v1/auth/register",
         token,
         cookie: `reelforge_csrf=${token}`,

@@ -64,7 +64,8 @@ export function csrfMiddleware(request: Request, _response: Response, next: Next
   const session = cookieValue(request, SESSION_COOKIE);
   const preAuth = path === "/auth/login" || path === "/auth/register";
   if (session === undefined && !preAuth) return next();
-  if (session === undefined && request.headers.authorization?.startsWith("Bearer ")) return next();
+  if (session === undefined && !preAuth && request.headers.authorization?.startsWith("Bearer "))
+    return next();
   try {
     validateCsrf(request);
   } catch (error) {
