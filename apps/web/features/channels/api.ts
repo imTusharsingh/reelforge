@@ -1,6 +1,7 @@
 import { markPendingSave, clearPendingSave, pendingSave } from "./mutation-recovery";
 import { parseDomainResponse, parseChannel, InvalidDtoError } from "./dto";
 import { canEdit, isRecord, type Channel, type ApiObject, type Role } from "./model";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 export class ChannelApiError extends Error {
   constructor(
     public readonly status: number,
@@ -67,13 +68,16 @@ export class ChannelsClient {
     if (mutation) markPendingSave(this.workspaceId, path);
     let response: Response;
     try {
-      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
-        method: options.method ?? "GET",
-        credentials: "include",
-        signal: this.signal,
-        headers: { "Content-Type": "application/json" },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
+      response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
+        withCsrf({
+          method: options.method ?? "GET",
+          credentials: "include",
+          signal: this.signal,
+          headers: { "Content-Type": "application/json" },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        }),
+      );
     } catch (error) {
       this.signal.throwIfAborted();
       throw new ChannelApiError(
@@ -90,7 +94,8 @@ export class ChannelsClient {
       if (mutation && response.status < 500) clearPendingSave(this.workspaceId);
       const detail = isRecord(data) && typeof data.message === "string" ? data.message : "";
       const reason =
-        response.status === 401
+        csrfFailureMessage(data) ??
+        (response.status === 401
           ? "Your session expired. Sign out and sign in again."
           : response.status === 403
             ? "You do not have permission for this action."
@@ -98,7 +103,7 @@ export class ChannelsClient {
               ? "This item is unavailable in the selected workspace."
               : response.status === 409
                 ? "This item changed or conflicts with its current state. Refresh before retrying."
-                : "The request could not be completed.";
+                : "The request could not be completed.");
       throw new ChannelApiError(response.status, detail ? `${reason} ${detail}` : reason);
     }
     if (options.list) {

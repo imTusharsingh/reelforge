@@ -26,6 +26,7 @@ const foreignRunId = randomUUID();
 const registerEmail = `m19-${randomUUID()}@http.invalid`;
 const SECRET_PASSWORD = "Sup3r-Secret-Passw0rd!";
 const PREFIX = "/api/v1";
+const TEST_WEB_ORIGIN = "https://studio.example";
 
 /**
  * Records every model/raw call the application makes through the injected Prisma client, so the
@@ -100,6 +101,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
 
   beforeAll(async () => {
     if (!db) return;
+    process.env.WEB_APP_ORIGIN = TEST_WEB_ORIGIN;
     await db.user.createMany({
       data: [ownerId, editorId, viewerId, outsiderId].map((id) => ({
         id,
@@ -169,6 +171,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
   afterAll(async () => {
     await app?.close();
     delete process.env["LOG_LEVEL"];
+    delete process.env.WEB_APP_ORIGIN;
     if (!db) return;
     await db.workspace.deleteMany({ where: { id: { in: [workspaceId, foreignWorkspaceId] } } });
     await db.user.deleteMany({ where: { id: { in: [ownerId, editorId, viewerId, outsiderId] } } });
@@ -246,22 +249,60 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     if (!db) return;
     const since = new Date();
     const correlationId = randomUUID();
+    const csrfToken = "a".repeat(43);
     const registered = await request(server())
       .post(`${PREFIX}/auth/register`)
       .set("x-correlation-id", correlationId)
+      .set("Origin", TEST_WEB_ORIGIN)
+      .set("Cookie", `reelforge_csrf=${csrfToken}`)
+      .set("X-CSRF-Token", csrfToken)
       .send({ email: registerEmail, password: SECRET_PASSWORD, displayName: "M19" })
       .expect(201);
     registeredUserId = (registered.body as { userId: string }).userId;
+    const registeredSetCookieHeader: unknown = registered.headers["set-cookie"];
+    const registeredCookies =
+      Array.isArray(registeredSetCookieHeader) &&
+      registeredSetCookieHeader.every((value): value is string => typeof value === "string")
+        ? registeredSetCookieHeader
+        : typeof registeredSetCookieHeader === "string"
+          ? [registeredSetCookieHeader]
+          : [];
+    const csrfCookie =
+      registeredCookies.find((value) => value.startsWith("reelforge_csrf="))?.split(";")[0] ?? "";
+    const registeredCsrf = csrfCookie.split("=")[1] ?? "";
     await request(server())
       .post(`${PREFIX}/auth/login`)
+      .set("Origin", TEST_WEB_ORIGIN)
+      .set("Cookie", csrfCookie)
+      .set("X-CSRF-Token", registeredCsrf)
       .send({ email: registerEmail, password: "wrong-password-123!" })
       .expect(401);
     const login = await request(server())
       .post(`${PREFIX}/auth/login`)
+      .set("Origin", TEST_WEB_ORIGIN)
+      .set("Cookie", csrfCookie)
+      .set("X-CSRF-Token", registeredCsrf)
       .send({ email: registerEmail, password: SECRET_PASSWORD })
       .expect(201);
-    const cookie = String(login.headers["set-cookie"]?.[0] ?? "").split(";")[0] ?? "";
-    await request(server()).post(`${PREFIX}/auth/logout`).set("cookie", cookie).expect(201);
+    const loginSetCookieHeader: unknown = login.headers["set-cookie"];
+    const loginSetCookies =
+      Array.isArray(loginSetCookieHeader) &&
+      loginSetCookieHeader.every((value): value is string => typeof value === "string")
+        ? loginSetCookieHeader
+        : typeof loginSetCookieHeader === "string"
+          ? [loginSetCookieHeader]
+          : [];
+    const loginCookies = loginSetCookies
+      .map((value) => value.split(";")[0] ?? "")
+      .filter((value) => value.length > 0);
+    const loginCsrf =
+      loginCookies.find((value) => value.startsWith("reelforge_csrf="))?.split("=")[1] ?? "";
+    await request(server())
+      .post(`${PREFIX}/auth/logout`)
+      .set("Origin", TEST_WEB_ORIGIN)
+      .set("Cookie", loginCookies)
+      .set("X-CSRF-Token", loginCsrf)
+      .expect(201);
     const rows = (await audits(since)).filter((row) => row.category === "AUTH");
     expect(rows.map((row) => [row.action, row.outcome, row.statusCode])).toEqual([
       ["POST /auth/register", "SUCCESS", 201],
@@ -275,7 +316,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toContain(SECRET_PASSWORD);
     expect(serialized).not.toContain(registerEmail);
-    expect(serialized).not.toContain(cookie.split("=")[1] ?? "never");
+    expect(serialized).not.toContain(loginCsrf);
   });
 
   it("audits config, approval, connection and publishing attempts, including denials", async () => {
@@ -452,6 +493,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
  */
 const PUBLIC_ROUTES: string[] = [
   "HealthController.getHealth",
+  "IdentityController.csrf",
   "IdentityController.login",
   "IdentityController.register",
   "OpsMetricsController.metrics",

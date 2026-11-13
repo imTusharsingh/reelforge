@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 import {
   isEditableRole,
   parseAccounts,
@@ -180,13 +181,16 @@ export class PublishingClient {
       throw new PublishingApiError(403, "Access changed. Refresh your verified session.");
     let response: Response;
     try {
-      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
-        method,
-        credentials: "include",
-        signal: this.signal,
-        headers: { "Content-Type": "application/json" },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
+      response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
+        withCsrf({
+          method,
+          credentials: "include",
+          signal: this.signal,
+          headers: { "Content-Type": "application/json" },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        }),
+      );
     } catch (cause) {
       this.signal.throwIfAborted();
       throw new PublishingApiError(
@@ -199,7 +203,6 @@ export class PublishingClient {
         mutation,
       );
     }
-    if (response.status === 401 || response.status === 403) this.suspended = true;
     let payload: unknown;
     try {
       payload = await response.json();
@@ -213,8 +216,13 @@ export class PublishingClient {
       payload = undefined;
     }
     this.signal.throwIfAborted();
+    if ((response.status === 401 || response.status === 403) && !csrfFailureMessage(payload))
+      this.suspended = true;
     if (!response.ok)
-      throw new PublishingApiError(response.status, message(response.status, payload));
+      throw new PublishingApiError(
+        response.status,
+        csrfFailureMessage(payload) ?? message(response.status, payload),
+      );
     return payload;
   }
 
