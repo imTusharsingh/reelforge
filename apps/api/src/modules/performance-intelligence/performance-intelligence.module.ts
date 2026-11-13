@@ -11,7 +11,7 @@ import {
   NotConfiguredInsightReportLlm,
   type InsightReportLlmPort,
 } from "./performance-intelligence.ports.js";
-import { OpenAiInsightReportLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
+import { OpenAiInsightReportLlm, openAiRuntimeConfig } from "../openai/openai.adapters.js";
 
 @Module({
   imports: [IdentityModule, WorkspaceModule, AnalyticsModule, PublishingModule, UsageBudgetModule],
@@ -21,10 +21,10 @@ import { OpenAiInsightReportLlm, openAiKey, openAiTextModel } from "../openai/op
     {
       provide: INSIGHT_REPORT_LLM,
       useFactory: (): InsightReportLlmPort => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredInsightReportLlm()
-          : new OpenAiInsightReportLlm(key, openAiTextModel());
+          : new OpenAiInsightReportLlm(config.key, config.textModel);
       },
     },
   ],

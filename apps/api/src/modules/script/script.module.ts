@@ -7,7 +7,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { PROVIDER_REGISTRY, ProviderRegistry } from "@reelforge/ai-providers";
-import { OpenAiScriptLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
+import { OpenAiScriptLlm, openAiRuntimeConfig } from "../openai/openai.adapters.js";
 
 class NotConfiguredScriptLlm implements ScriptLlmPort {
   public readonly capability: CapabilityMetadata = {
@@ -34,25 +34,25 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
     {
       provide: SCRIPT_LLM,
       useFactory: (): ScriptLlmPort => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredScriptLlm()
-          : new OpenAiScriptLlm(key, openAiTextModel());
+          : new OpenAiScriptLlm(config.key, config.textModel);
       },
     },
     {
       provide: PROVIDER_REGISTRY,
       useFactory: (): ProviderRegistry => {
         const registry = new ProviderRegistry();
-        const key = openAiKey();
-        if (key !== undefined) {
-          const adapter = new OpenAiScriptLlm(key, openAiTextModel());
+        const config = openAiRuntimeConfig();
+        if (config.key !== undefined) {
+          const adapter = new OpenAiScriptLlm(config.key, config.textModel);
           registry.register({
             capability: adapter.capability,
             credential: {
               providerId: adapter.capability.providerId,
               environment: process.env.NODE_ENV === "production" ? "production" : "development",
-              secret: key,
+              secret: config.key,
             },
           });
         }

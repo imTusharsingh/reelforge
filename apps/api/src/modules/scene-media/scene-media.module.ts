@@ -18,14 +18,12 @@ import {
   SceneMediaController,
 } from "./scene-media.controller.js";
 import { SceneMediaService } from "./scene-media.service.js";
+import { providerEnvironment } from "./scene-media.validation.js";
 import {
   OpenAiImageProvider,
   OpenAiTtsProvider,
   OpenAiVideoProvider,
-  openAiImageModel,
-  openAiKey,
-  openAiTtsModel,
-  openAiVideoModel,
+  openAiRuntimeConfig,
 } from "../openai/openai.adapters.js";
 
 @Module({
@@ -38,50 +36,52 @@ import {
     {
       provide: IMAGE_PROVIDER,
       useFactory: (): NotConfiguredImageProvider | OpenAiImageProvider => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredImageProvider()
-          : new OpenAiImageProvider(key, openAiImageModel());
+          : new OpenAiImageProvider(config.key, config.imageModel);
       },
     },
     {
       provide: VIDEO_PROVIDER,
       useFactory: (): NotConfiguredVideoProvider | OpenAiVideoProvider => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined || config.videoModel === undefined
           ? new NotConfiguredVideoProvider()
-          : new OpenAiVideoProvider(key, openAiVideoModel());
+          : new OpenAiVideoProvider(config.key, config.videoModel);
       },
     },
     {
       provide: TTS_PROVIDER,
       useFactory: (): NotConfiguredTtsProvider | OpenAiTtsProvider => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredTtsProvider()
-          : new OpenAiTtsProvider(key, openAiTtsModel());
+          : new OpenAiTtsProvider(config.key, config.ttsModel);
       },
     },
     {
       provide: PROVIDER_REGISTRY,
       useFactory: (): ProviderRegistry => {
         const registry = new ProviderRegistry();
-        const key = openAiKey();
-        if (key !== undefined) {
-          const adapters = [
-            new OpenAiImageProvider(key, openAiImageModel()),
-            new OpenAiVideoProvider(key, openAiVideoModel()),
-            new OpenAiTtsProvider(key, openAiTtsModel()),
-          ];
-          for (const adapter of adapters)
-            registry.register({
-              capability: adapter.capability,
-              credential: {
-                providerId: adapter.capability.providerId,
-                environment: process.env.NODE_ENV === "production" ? "production" : "development",
-                secret: key,
-              },
-            });
+        const config = openAiRuntimeConfig();
+        if (config.key === undefined) return registry;
+        const adapters = [
+          new OpenAiImageProvider(config.key, config.imageModel),
+          new OpenAiTtsProvider(config.key, config.ttsModel),
+          ...(config.videoModel === undefined
+            ? []
+            : [new OpenAiVideoProvider(config.key, config.videoModel)]),
+        ];
+        for (const adapter of adapters) {
+          registry.register({
+            capability: adapter.capability,
+            credential: {
+              providerId: adapter.capability.providerId,
+              environment: providerEnvironment(),
+              secret: config.key,
+            },
+          });
         }
         return registry;
       },

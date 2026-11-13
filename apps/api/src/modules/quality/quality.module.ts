@@ -12,7 +12,7 @@ import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { CompositionModule } from "../composition/composition.module.js";
 import { QualityController } from "./quality.controller.js";
 import { QualityService } from "./quality.service.js";
-import { OpenAiQualityReviewPort, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
+import { OpenAiQualityReviewPort, openAiRuntimeConfig } from "../openai/openai.adapters.js";
 
 class NotConfiguredQualityReviewPort implements QualityReviewPort {
   public review(request: QualityReviewRequest): Promise<QualityReviewResult> {
@@ -32,10 +32,10 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
     {
       provide: QUALITY_REVIEW_PORT,
       useFactory: (): QualityReviewPort => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredQualityReviewPort()
-          : new OpenAiQualityReviewPort(key, openAiTextModel());
+          : new OpenAiQualityReviewPort(config.key, config.textModel);
       },
     },
   ],

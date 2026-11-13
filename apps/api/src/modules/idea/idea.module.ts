@@ -5,7 +5,7 @@ import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { IdeaController } from "./idea.controller.js";
 import { IdeaService } from "./idea.service.js";
-import { OpenAiIdeaProposalLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
+import { OpenAiIdeaProposalLlm, openAiRuntimeConfig } from "../openai/openai.adapters.js";
 
 class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
   public proposeIdea(): never {
@@ -21,10 +21,10 @@ class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
     {
       provide: IDEA_PROPOSAL_LLM,
       useFactory: (): IdeaProposalLlmPort => {
-        const key = openAiKey();
-        return key === undefined
+        const config = openAiRuntimeConfig();
+        return config.key === undefined
           ? new NotConfiguredIdeaLlm()
-          : new OpenAiIdeaProposalLlm(key, openAiTextModel());
+          : new OpenAiIdeaProposalLlm(config.key, config.textModel);
       },
     },
   ],
