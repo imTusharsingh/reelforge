@@ -38,3 +38,7 @@ Exact Node 24.22.2 / pnpm 12.16.1. Main was merged, then pnpm install --frozen-l
 ## Handoff
 
 Latest main b64993e (including C3 and C5) was merged without rebase/force push; AppShell, CSS and work-log conflicts preserve both packs. pnpm install --frozen-lockfile passed after the merge. Next: verify exact-head hosted CI, mark #93 ready and comment Ready for Minu review. The production schedule/budget/provider ports remain fail-closed when unconfigured; fixture tests do not establish live integration readiness. No new design decisions are requested.
+
+## Hosted baseline reconciliation
+
+Head b04cea0e38dae5fb4cad7cf7c0915b2514952310 passed every pull-request CI job in run 43390832035, including fresh migrations and Required CI. The separate push run 43390825062 compared migrations against the old unmerged checkpoint c9c2537 and rejected the R100 directory rename. That is the rename documented above, with identical SQL, required because main's C3 migration occupied the old timestamp. No main migration was changed. The final documentation handoff commit retains the validated schema/SQL and runs both push and PR checks again; CI configuration and the migration guard are unchanged.

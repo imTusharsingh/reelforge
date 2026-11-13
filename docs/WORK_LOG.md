@@ -1225,3 +1225,5 @@ Continued c9c2537 on work/m27-publishing-and-calendar-ui and merged main. Implem
 
 
 M27 final merged-checkout evidence: latest main b64993e merged with Account and Publishing shell/CSS preserved; frozen install, lint, formatting, full typecheck, full build, clean deployment of 32 migrations, migration guard and secret scan passed. Full suite: 853 passed / 8 skipped. Publishing mounted browser: 24 passed; merged Account browser: 12 passed. Dispatcher compatibility retains both create-time rejection and legacy-draft publish refusal; draft query authorization precedes validation. Hosted CI and independent Minu review remain the next gates.
+
+M27 hosted baseline evidence: PR CI run 43390832035 passed on b04cea0. Push run 43390825062 rejected the unchanged-SQL R100 rename against the old unmerged c9c2537 checkpoint; main-baseline migration immutability and fresh deployment passed. The final handoff documentation records the distinction and preserves the collision-free single additive migration for a new exact-head push/PR validation. No CI or guard edits.
