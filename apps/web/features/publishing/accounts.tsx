@@ -107,6 +107,10 @@ export function Accounts(): JSX.Element {
     accountId: string,
   ): Promise<void> => {
     if (!editable || locked || !targetChannel || !accountId) return;
+    if (!available.some((item) => item.platform === targetPlatform && item.connectable)) {
+      setError("Connection is unavailable for this platform.");
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
@@ -218,7 +222,13 @@ export function Accounts(): JSX.Element {
             hint="The account is authorized by the platform; no password or token is entered here."
           />
           <Button
-            disabled={locked || !channel || !platform || !remoteAccountId.trim()}
+            disabled={
+              locked ||
+              !channel ||
+              !platform ||
+              !remoteAccountId.trim() ||
+              !available.some((item) => item.platform === platform && item.connectable)
+            }
             loading={busy}
             onClick={() => void connect(channel, platform, remoteAccountId.trim())}
           >
@@ -264,7 +274,12 @@ export function Accounts(): JSX.Element {
                     </Button>
                     <Button
                       tone="secondary"
-                      disabled={locked}
+                      disabled={
+                        locked ||
+                        !available.some(
+                          (item) => item.platform === account.platform && item.connectable,
+                        )
+                      }
                       onClick={() =>
                         void connect(account.channelId, account.platform, account.remoteAccountId)
                       }

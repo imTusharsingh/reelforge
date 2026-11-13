@@ -112,7 +112,18 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   );
   const postMatch = path.match(/\/publishing\/posts\/([^/]+)(?:\/(cancel))?$/);
 
-  if (path.endsWith("/publishing/platforms")) return json(platforms);
+  if (path.endsWith("/publishing/platforms"))
+    return json(
+      mode === "unavailable"
+        ? platforms.map((item) => ({
+            ...item,
+            connectable: false,
+            publishable: false,
+            reasonCode:
+              item.platform === "INSTAGRAM" ? "INSTAGRAM_NOT_VERIFIED" : "PLATFORM_NOT_CONFIGURED",
+          }))
+        : platforms,
+    );
   if (path.endsWith("/social-accounts")) return json(currentAccounts);
   if (method === "POST" && path.includes("/social-accounts/")) {
     accountCalls += 1;

@@ -185,6 +185,17 @@ function ComposerForm(): JSX.Element {
       setError("Select at least one connected destination account.");
       return null;
     }
+    if (
+      selectedAccounts.some(
+        (account) =>
+          !platformStatus(account.platform)?.publishable ||
+          account.status !== "CONNECTED" ||
+          account.health !== "HEALTHY",
+      )
+    ) {
+      setError("Select a healthy connected account on an available publishing platform.");
+      return null;
+    }
     const disclosure: Disclosure =
       decision === "DISCLOSE"
         ? {
@@ -540,6 +551,11 @@ function ComposerForm(): JSX.Element {
                     <label key={account.id} className="rf-checkbox">
                       <input
                         type="checkbox"
+                        disabled={
+                          !availability?.publishable ||
+                          account.status !== "CONNECTED" ||
+                          account.health !== "HEALTHY"
+                        }
                         checked={selectedAccountIds.includes(account.id)}
                         onChange={(event) =>
                           setSelectedAccountIds((current) =>

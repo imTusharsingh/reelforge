@@ -20,7 +20,7 @@
 
 Core approvals: PR #93 comments 6845543699 (D1–D3) and 6845690430 (D4).
 
-Changed paths: publishing/social-accounts API and tests; extracted quality.current-review helper and quality service use; apps/web/features/publishing/** and publishing routes, AppShell, globals.css; scheduled-post schema and one additive migration; .env.example; module status and WORK_LOG. No ci.yml, PROJECT_STATE, dependency pins, .env, .local-* or .vscode edits.
+Changed paths: publishing/social-accounts API and tests; the dispatcher integration fixture (new-create rejection plus seeded legacy-draft publish refusal); extracted quality.current-review helper and quality service use; apps/web/features/publishing/** and publishing routes, AppShell, globals.css; scheduled-post schema and one additive migration; .env.example; module status and WORK_LOG. No ci.yml, PROJECT_STATE, dependency pins, .env, .local-* or .vscode edits.
 
 One M27 migration adds nullable client_request_id/client_request_hash and their workspace unique index. Its unmerged directory was renamed from 20261121010000_m27_idempotent_posts to 20261121020000_m27_idempotent_posts after C3 used the same timestamp. SQL unchanged; existing main migrations remain immutable.
 
@@ -30,11 +30,11 @@ Exact Node 24.22.2 / pnpm 12.16.1. Main was merged, then pnpm install --frozen-l
 
 - Focused publishing/social-account/web tests: 13 files / 84 tests passed.
 - Real persisted tests cover HTTP 201/200/conflict, concurrent service insert race with one post/destination, draft isolation, viewer reads, current approval exclusions, stable cursor paging, foreign channel 404 and unavailable artifact exclusion. Separate migration tests prove the index and legacy null-key behavior.
-- Mounted Chromium: 22 scenarios passed, including 390/1440 calendar/composer/account controls, viewer restrictions, interrupted account recovery and schedule editing; provider authorization navigation is locally intercepted.
-- pnpm lint and pnpm format:check passed after checkpoint fixes. Full typecheck, full test and build results are recorded in the PR handoff after completion.
-- db:validate and secret scan passed. db:check-migrations initially detected the timestamp collision; passed after the rename. Fresh deployment of the renamed migration must be checked on a clean disposable database before handoff.
-- Full tests exposed draft validation before workspace authorization; the handler now verifies context before validating status. The release-gate/dispatcher follow-up and final full suite are being verified.
+- Mounted Chromium: 24 scenarios passed, including 390/1440 calendar/composer/account controls, viewer restrictions, interrupted account recovery and schedule editing; provider authorization navigation is locally intercepted.
+- pnpm lint, pnpm format:check, pnpm typecheck and NEXT_TELEMETRY_DISABLED=1 pnpm build passed on the merged checkout. Full DATABASE_URL=postgresql://postgres:postgres@localhost:55440/reelforge pnpm test: 109 files passed / 2 skipped; 853 tests passed / 8 skipped. The account mounted harness also passed all 12 cases after resolving the shared AppShell/CSS merge.
+- db:validate and secret scan passed. db:check-migrations initially detected the timestamp collision; passed after the rename. Fresh deployment of all 32 migrations, including the renamed M27 migration, passed on the clean disposable 55440 database.
+- Full tests exposed draft validation before workspace authorization; the handler now verifies context first. The dispatcher fixture now asserts D4 creation rejection, then seeds a legacy draft to retain publish-time refusal coverage. Both follow-ups pass in isolation and in the final full suite. Actual HTTP OAuth callback coverage passed all 13 tests (every redirect code and JSON fallback).
 
 ## Handoff
 
-Merge the latest main (including C5) without rebase/force push, run pnpm install, finish clean migration/full checks, push, wait for exact-head CI, mark #93 ready and comment Ready for Minu review. The production schedule/budget/provider ports remain fail-closed when unconfigured; fixture tests do not establish live integration readiness. No new design decisions are requested.
+Latest main b64993e (including C3 and C5) was merged without rebase/force push; AppShell, CSS and work-log conflicts preserve both packs. pnpm install --frozen-lockfile passed after the merge. Next: verify exact-head hosted CI, mark #93 ready and comment Ready for Minu review. The production schedule/budget/provider ports remain fail-closed when unconfigured; fixture tests do not establish live integration readiness. No new design decisions are requested.

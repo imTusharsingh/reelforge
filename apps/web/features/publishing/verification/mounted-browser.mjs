@@ -289,6 +289,15 @@ try {
   for (const width of [390, 1440]) {
     const viewport = { width, height: 1000 };
     await test(
+      `unconfigured destinations cannot be selected at ${width}px`,
+      async (page) => {
+        await page.getByLabel("Approved render").selectOption({ index: 1 });
+        assert.equal(await page.getByLabel(/Fixture YouTube/).isDisabled(), true);
+      },
+      "mode=unavailable",
+      viewport,
+    );
+    await test(
       `account controls and reconnect at ${width}px`,
       async (page) => {
         page.on("dialog", (dialog) => dialog.accept());
