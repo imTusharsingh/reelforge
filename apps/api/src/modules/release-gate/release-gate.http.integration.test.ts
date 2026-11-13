@@ -54,12 +54,15 @@ const attackerChannelId = randomUUID();
 
 /** Routes reviewed in M20 INTEGRATION_REVIEW.md as intentionally outside a workspace scope. */
 const REVIEWED_UNSCOPED_ROUTES: readonly string[] = [
+  "GET /auth/me",
   "GET /health",
   "GET /ops/metrics",
   "GET /social-accounts/oauth/:platform/callback",
   "GET /workspaces",
+  "PATCH /auth/me",
   "POST /auth/login",
   "POST /auth/logout",
+  "POST /auth/me/password",
   "POST /auth/register",
   "POST /workspaces",
 ];
@@ -279,6 +282,10 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
       .sort();
     // A new route outside `/workspaces/:workspaceId` must be reviewed and added here on purpose.
     expect(unscoped).toEqual(REVIEWED_UNSCOPED_ROUTES);
+    // C5 account routes are user-scoped and require the existing auth guard.
+    await request(server()).get(`${PREFIX}/auth/me`).expect(401);
+    await request(server()).patch(`${PREFIX}/auth/me`).send({ displayName: "Creator" }).expect(401);
+    await request(server()).post(`${PREFIX}/auth/me/password`).send({}).expect(401);
     // The two member-facing unscoped routes still require a session.
     await request(server()).get(`${PREFIX}/workspaces`).expect(401);
     await request(server()).post(`${PREFIX}/workspaces`).send({ name: "m20-gate" }).expect(401);

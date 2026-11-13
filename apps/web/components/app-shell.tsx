@@ -15,6 +15,7 @@ const destinations = [
   { name: "Review queue", href: "/review" },
   { name: "Publishing", href: null },
   { name: "Insights", href: null },
+  { name: "Account", href: "/account" },
 ];
 
 function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
@@ -27,14 +28,15 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
           <li key={name}>
             {href ? (
               <StudioLink
-                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) || (href === "/review" && pathname.startsWith("/review/")) ? "rf-nav-item--current" : ""}`.trim()}
+                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) || (href === "/review" && pathname.startsWith("/review/")) || (href === "/account" && pathname.startsWith("/account")) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
                 aria-current={
                   pathname === href ||
                   (href === "/channels" && pathname.startsWith("/channels/")) ||
                   (href === "/planning" && pathname.startsWith("/planning/")) ||
                   (href === "/production" && pathname.startsWith("/production/")) ||
-                  (href === "/review" && pathname.startsWith("/review/"))
+                  (href === "/review" && pathname.startsWith("/review/")) ||
+                  (href === "/account" && pathname.startsWith("/account"))
                     ? "page"
                     : undefined
                 }
@@ -81,7 +83,9 @@ export function AppShell({
           ? "Studio / Channels"
           : pathname === "/operations"
             ? "Studio / Operations"
-            : "Studio / Overview";
+            : pathname.startsWith("/account")
+              ? "Studio / Account"
+              : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
