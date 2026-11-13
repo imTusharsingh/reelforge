@@ -752,6 +752,36 @@ describe("PerformanceIntelligenceService", () => {
     await expect(
       service(database()).generateRecommendations(ownerContext, reportId),
     ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service(database()).approveRecommendation(viewerContext, recommendationId),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("returns existing recommendations without creating duplicates", async () => {
+    const db = database();
+    db.performanceInsightReport.findUnique.mockResolvedValue(reportRecord());
+    db.performanceRecommendation.findMany.mockResolvedValue([
+      {
+        id: recommendationId,
+        workspaceId,
+        channelId,
+        reportId,
+        rank: 1,
+        dimension: "TOPIC",
+        action: "Prioritize AI tools",
+        rationale: "Evidence",
+        confidence: "MEDIUM",
+        limitations: ["Correlational evidence"],
+        evidenceSnapshotIds: ["77777777-7777-4777-8777-777777777777"],
+        status: "PROPOSED",
+        approvedAt: null,
+        createdAt: new Date("2026-11-10T00:00:00.000Z"),
+      },
+    ]);
+    const result = await service(db).generateRecommendations(ownerContext, reportId);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: recommendationId, status: "PROPOSED" });
+    expect(db.performanceRecommendation.create).not.toHaveBeenCalled();
   });
 
   it("records experiments with a hypothesis, variant, exposure, and outcome", async () => {

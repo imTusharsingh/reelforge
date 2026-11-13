@@ -29,7 +29,10 @@ Implementation pass complete; pending Core review and CI evidence.
 - `pnpm --filter @reelforge/web typecheck`: PASS.
 - API typecheck with a syntactically valid local `DATABASE_URL`: PASS.
 - `git diff --check`: PASS.
-- Focused test runner output was not retained; rerun in CI/local verification before review.
+- `pnpm lint`: PASS.
+- `pnpm test` without `DATABASE_URL`: PASS — 89 files / 672 tests passed, 27 files / 215 database tests skipped.
+- Focused M28/API suite: PASS — 6 files / 46 tests, followed by 3 files / 27 tests after extracting the video model.
+- Mounted Chromium verification with exact-pinned temporary Playwright/esbuild: PASS — 14 scenarios across 390px/1440px views, role controls, queue-and-run collection, video ranking/detail, and missing/partial/insufficient/unavailable/AI states.
 
 ## Contract/schema proposals
 
@@ -37,7 +40,7 @@ Implementation pass complete; pending Core review and CI evidence.
 
 ## Blockers / risks / unknowns
 
-- Browser visual regression and route/role integration coverage remain to be verified; no live provider calls were added.
+- No live provider calls were added. GitHub CI remains the integration authority for the branch.
 
 
 

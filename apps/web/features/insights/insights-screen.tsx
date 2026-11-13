@@ -3,22 +3,9 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { rankVideos, type Item, type Snapshot } from "./insights-model";
 
-type Item = Record<string, unknown>;
-type Option = { id: string; name: string; channelId?: string };
-type Snapshot = Item & {
-  id: string;
-  key: string;
-  value: number | null;
-  remoteEntityId: string | null;
-  completeness: string;
-  availability: string;
-  unavailableReason: string | null;
-  periodStart: string;
-  periodEnd: string;
-  collectedAt: string;
-  sourceApi: string;
-};
+type Option = { id: string; name: string; channelId?: string; platform?: string };
 type Report = Item & {
   id: string;
   status: string;
@@ -63,6 +50,7 @@ export function InsightsScreen(): JSX.Element {
     "Select a channel and YouTube account to load verified analytics.",
   );
   const [busy, setBusy] = useState(false);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const canEdit = workspace.role === "OWNER" || workspace.role === "EDITOR";
   const base = `/api/v1/workspaces/${encodeURIComponent(workspace.id)}`;
   const get = async (path: string): Promise<unknown> => {
@@ -108,13 +96,14 @@ export function InsightsScreen(): JSX.Element {
         if (isList(accountData))
           setAccounts(
             accountData
-              .filter((x) => x.platform === "YOUTUBE" && typeof x.id === "string")
+              .filter((x) => typeof x.id === "string")
               .map((x) => {
                 const account: Option = {
                   id: String(x.id),
                   name: text(x.displayName, text(x.handle, String(x.id))),
                 };
                 if (typeof x.channelId === "string") account.channelId = x.channelId;
+                if (typeof x.platform === "string") account.platform = x.platform;
                 return account;
               }),
           );
@@ -130,13 +119,19 @@ export function InsightsScreen(): JSX.Element {
     if (!channelId && channels[0]) setChannelId(channels[0].id);
   }, [channelId, channels]);
   useEffect(() => {
-    const match = accounts.find((account) => account.channelId === channelId);
+    const match = accounts.find(
+      (account) => account.channelId === channelId && account.platform === "YOUTUBE",
+    );
     if (match) setAccountId(match.id);
     else if (!accountId && accounts[0]) setAccountId(accounts[0].id);
   }, [accountId, accounts, channelId]);
   async function load(granularity: "CHANNEL" | "VIDEO" = "CHANNEL"): Promise<void> {
     if (!channelId || !accountId) {
       setStatus("Select a channel and verified YouTube account first.");
+      return;
+    }
+    if (accounts.find((account) => account.id === accountId)?.platform !== "YOUTUBE") {
+      setStatus("Analytics unavailable for this unverified platform. Select a YouTube account.");
       return;
     }
     setBusy(true);
@@ -180,15 +175,29 @@ export function InsightsScreen(): JSX.Element {
       setBusy(false);
     }
   }
+  async function collectNow(): Promise<void> {
+    await mutate(async () => {
+      const queued = await post("analytics/collection-jobs", {
+        channelId,
+        socialAccountId: accountId,
+        startDate,
+        endDate,
+      });
+      if (
+        typeof queued !== "object" ||
+        queued === null ||
+        !("id" in queued) ||
+        typeof queued.id !== "string"
+      )
+        throw new Error("The collection job response was invalid.");
+      return post(`analytics/collection-jobs/${encodeURIComponent(queued.id)}/run`, {});
+    }, "Collection completed.");
+  }
   const latestReport = reports[0];
-  const grouped = useMemo(
-    () =>
-      snapshots.reduce<Record<string, Snapshot[]>>((out, row) => {
-        (out[row.remoteEntityId ?? "channel"] ??= []).push(row);
-        return out;
-      }, {}),
-    [snapshots],
-  );
+  const videos = useMemo(() => rankVideos(snapshots, labels), [snapshots, labels]);
+  const selectedVideo = videos.find((video) => video.id === selectedVideoId) ?? null;
+  const selectedAccount = accounts.find((account) => account.id === accountId);
+  const unverifiedAccounts = accounts.filter((account) => account.platform !== "YOUTUBE");
   const metrics = snapshots.filter((row) => row.remoteEntityId === null).slice(0, 8);
   return (
     <div className="rf-insights" style={{ maxWidth: 1180 }}>
@@ -221,9 +230,9 @@ export function InsightsScreen(): JSX.Element {
             </select>
           </label>
           <label>
-            YouTube account
+            Analytics account
             <select
-              aria-label="YouTube account"
+              aria-label="Analytics account"
               value={accountId}
               onChange={(event) => setAccountId(event.target.value)}
             >
@@ -232,7 +241,7 @@ export function InsightsScreen(): JSX.Element {
                 .filter((item) => !item.channelId || item.channelId === channelId)
                 .map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name}
+                    {item.name} · {item.platform ?? "UNVERIFIED"}
                   </option>
                 ))}
             </select>
@@ -255,31 +264,29 @@ export function InsightsScreen(): JSX.Element {
           </label>
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-          <Button onClick={() => void load()} disabled={busy}>
+          <Button
+            onClick={() => void load()}
+            disabled={busy || selectedAccount?.platform !== "YOUTUBE"}
+          >
             Load verified metrics
           </Button>
           {canEdit && (
             <Button
               tone="secondary"
-              onClick={() =>
-                void mutate(
-                  () =>
-                    post("analytics/collection-jobs", {
-                      channelId,
-                      socialAccountId: accountId,
-                      startDate,
-                      endDate,
-                    }),
-                  "Collection queued.",
-                )
-              }
-              disabled={busy}
+              onClick={() => void collectNow()}
+              disabled={busy || selectedAccount?.platform !== "YOUTUBE"}
             >
               Collect data
             </Button>
           )}
         </div>
       </Panel>
+      {unverifiedAccounts.length > 0 && (
+        <StateMessage
+          kind="unavailable"
+          description={`${unverifiedAccounts.map((account) => account.platform ?? "Unverified platform").join(", ")} analytics unavailable: only verified YouTube Analytics is supported.`}
+        />
+      )}
       <nav
         aria-label="Insights views"
         style={{ display: "flex", gap: 8, margin: "20px 0", flexWrap: "wrap" }}
@@ -344,19 +351,32 @@ export function InsightsScreen(): JSX.Element {
             </h2>
             {tab === "Videos" && (
               <div>
-                {Object.entries(grouped)
-                  .filter(([id]) => id !== "channel")
-                  .map(([id, rows]) => (
-                    <p key={id}>
-                      <strong>
-                        {text(
-                          labels.find((label) => label.platformPostId === id)?.title,
-                          `Published video ${id}`,
-                        )}
-                      </strong>{" "}
-                      · {rows.filter((row) => row.value !== null).length} verified observations
-                    </p>
-                  ))}
+                <h3>Top content by available views</h3>
+                {videos.map((video, index) => (
+                  <div key={video.id}>
+                    <Button tone="ghost" onClick={() => setSelectedVideoId(video.id)}>
+                      #{index + 1} {video.label}
+                    </Button>
+                    <span>
+                      {" "}
+                      ·{" "}
+                      {video.views === null
+                        ? "Views unavailable"
+                        : `${video.views.toLocaleString()} views`}
+                    </span>
+                  </div>
+                ))}
+                {selectedVideo && (
+                  <section aria-label="Video detail">
+                    <h3>Video detail: {selectedVideo.label}</h3>
+                    {selectedVideo.rows.map((row) => (
+                      <p key={row.id}>
+                        {row.key}: {row.value === null ? "Unavailable" : row.value.toLocaleString()}{" "}
+                        · {row.completeness} · {row.sourceApi} · {row.periodStart}–{row.periodEnd}
+                      </p>
+                    ))}
+                  </section>
+                )}
               </div>
             )}
             {tab === "Comparisons" && (
@@ -454,7 +474,7 @@ export function InsightsScreen(): JSX.Element {
               "Report generated.",
             )
           }
-          disabled={busy}
+          disabled={busy || selectedAccount?.platform !== "YOUTUBE"}
         >
           Generate report
         </Button>
