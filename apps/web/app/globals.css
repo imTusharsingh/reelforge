@@ -1004,6 +1004,96 @@ button:disabled {
   max-width: 100%;
 }
 
+.rf-calendar-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--rf-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+.rf-calendar-day {
+  min-width: 0;
+  padding: var(--rf-space-4);
+  background: var(--rf-surface-muted);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius-panel);
+  overflow-wrap: anywhere;
+}
+.rf-calendar-day > h3 {
+  margin-block: 0 var(--rf-space-3);
+  font-size: var(--rf-text-sm);
+}
+.rf-calendar-day > ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--rf-space-3);
+}
+.rf-calendar-post {
+  min-width: 0;
+  padding-block-start: var(--rf-space-3);
+  border-block-start: 1px solid var(--rf-border);
+}
+.rf-calendar-post p {
+  margin-block: 0 var(--rf-space-2);
+}
+.rf-calendar-destination {
+  display: block;
+  color: var(--rf-text-muted);
+  font-size: var(--rf-text-sm);
+  overflow-wrap: anywhere;
+}
+.rf-account-list,
+.rf-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--rf-space-4);
+}
+.rf-account-card,
+.rf-history-row {
+  min-width: 0;
+  padding: var(--rf-space-4);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius-panel);
+  overflow-wrap: anywhere;
+}
+.rf-account-card h3 {
+  margin-block: 0 var(--rf-space-2);
+}
+.rf-account-id {
+  color: var(--rf-text-muted);
+  font-size: var(--rf-text-sm);
+  overflow-wrap: anywhere;
+}
+.rf-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--rf-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rf-field {
+  min-width: 0;
+}
+.rf-field label {
+  overflow-wrap: anywhere;
+}
+.rf-field .rf-input,
+select.rf-input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.rf-checkbox {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
 .rf-account-page {
   display: grid;
   gap: 1rem;

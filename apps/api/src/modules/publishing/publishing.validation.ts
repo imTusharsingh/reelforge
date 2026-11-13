@@ -27,6 +27,7 @@ export const PublishingDestinationInputSchema = z.discriminatedUnion("platform",
 
 export const CreateScheduledPostSchema = z
   .object({
+    clientRequestId: z.uuid().optional(),
     channelId: z.uuid(),
     renderJobId: z.uuid(),
     qualityReviewRunId: z.uuid(),

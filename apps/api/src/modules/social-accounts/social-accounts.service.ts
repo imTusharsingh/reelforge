@@ -31,6 +31,21 @@ import { WorkspaceService } from "../workspace/workspace.service.js";
 import { TokenVault, type EncryptedSecret } from "./token-vault.js";
 import type { OAuthCallbackQuery, StartConnectionRequest } from "./social-accounts.validation.js";
 
+export type OAuthReturnCode =
+  | "STATE_INVALID"
+  | "STATE_EXPIRED"
+  | "ACCESS_DENIED"
+  | "PLATFORM_NOT_CONFIGURED"
+  | "EXCHANGE_FAILED";
+export class OAuthReturnError extends BadRequestException {
+  public constructor(
+    public readonly returnCode: OAuthReturnCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const stateLifetimeMs = 10 * 60 * 1000;
 const refreshLeewayMs = 60 * 1000;
@@ -72,6 +87,10 @@ export class SocialAccountsService {
     @Inject("YOUTUBE_OAUTH_CALLBACK_URL")
     private readonly callbackUrl: string | undefined,
   ) {}
+
+  public youtubeConfigured(): boolean {
+    return this.youtube.isConfigured() && this.vault.isConfigured() && Boolean(this.callbackUrl);
+  }
 
   public async startConnection(
     context: WorkspaceContext,
@@ -129,24 +148,30 @@ export class SocialAccountsService {
       where: { stateHash: this.hashState(query.state) },
     });
     const now = new Date();
-    if (
-      !state ||
-      state.platform !== platform ||
-      state.expiresAt <= now ||
-      state.consumedAt !== null
-    ) {
-      throw new BadRequestException("OAuth state is invalid, expired, or already used");
+    if (!state || state.platform !== platform || state.consumedAt !== null) {
+      throw new OAuthReturnError(
+        "STATE_INVALID",
+        "OAuth state is invalid, expired, or already used",
+      );
     }
+    if (state.expiresAt <= now)
+      throw new OAuthReturnError(
+        "STATE_EXPIRED",
+        "OAuth state is invalid, expired, or already used",
+      );
     const claimed = await this.db.socialOAuthState.updateMany({
       where: { id: state.id, consumedAt: null, expiresAt: { gt: now } },
       data: { consumedAt: now },
     });
-    if (claimed.count !== 1) throw new BadRequestException("OAuth state was already used");
+    if (claimed.count !== 1)
+      throw new OAuthReturnError("STATE_INVALID", "OAuth state was already used");
     if (query.error !== undefined)
-      throw new BadRequestException("Platform authorization was denied");
+      throw new OAuthReturnError("ACCESS_DENIED", "Platform authorization was denied");
 
     const context = await this.workspaces.context(state.userId, state.workspaceId);
     this.requireEditor(context);
+    if (!this.platformAdapter(platform).isConfigured())
+      throw new OAuthReturnError("PLATFORM_NOT_CONFIGURED", "Platform is not configured");
     const connector = this.connector(platform);
     const encryptedVerifier: EncryptedSecret = {
       ciphertext: state.codeVerifierCiphertext,

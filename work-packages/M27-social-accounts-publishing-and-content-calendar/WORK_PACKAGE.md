@@ -1,7 +1,7 @@
 # M27 - Social Accounts, Publishing & Content Calendar
 
-**Status:** NOT_STARTED  
-**Assigned session:** Unassigned  
+**Status:** IMPLEMENTED_PENDING_REVIEW  
+**Assigned session:** Codex cloud continuation  
 **Branch convention:** `work/m27-short-description`  
 **Dependencies:** M12-M13, M21, M25-M26.
 
@@ -23,15 +23,15 @@ Build supported account connect/disconnect/reconnect; platform capability displa
 
 ## Tasks
 
-- [ ] **M27-T01:** Build supported account connect/disconnect/reconnect
-- [ ] **M27-T02:** platform capability display
-- [ ] **M27-T03:** publishing composer and metadata
-- [ ] **M27-T04:** publish-now/schedule
-- [ ] **M27-T05:** calendar
-- [ ] **M27-T06:** scheduled post editing where supported
-- [ ] **M27-T07:** delivery history
-- [ ] **M27-T08:** failures/reconciliation/retry
-- [ ] **M27-T09:** OAuth errors and duplicate-submit prevention.
+- [x] **M27-T01:** Build supported account connect/disconnect/reconnect
+- [x] **M27-T02:** platform capability display
+- [x] **M27-T03:** publishing composer and metadata
+- [x] **M27-T04:** publish-now/schedule
+- [x] **M27-T05:** calendar
+- [x] **M27-T06:** scheduled post editing where supported
+- [x] **M27-T07:** delivery history
+- [x] **M27-T08:** failures/reconciliation/retry
+- [x] **M27-T09:** OAuth errors and duplicate-submit prevention.
 
 ## Public interface / output contract
 

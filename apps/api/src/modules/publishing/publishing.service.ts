@@ -31,6 +31,10 @@ import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js
 import { CompositionService } from "../composition/composition.service.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
 import { QualityService } from "../quality/quality.service.js";
+import {
+  currentQualityReviewFilter,
+  currentQualityReviewOrder,
+} from "../quality/quality.current-review.js";
 import { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
 import {
   CalendarRangeSchema,
@@ -49,12 +53,27 @@ import {
   type EncryptedPublishingSession,
 } from "./publishing-session-vault.js";
 import type {
+  EligibleRenderPage,
+  EligibleRenderView,
   PublishingDestinationView,
+  PublishingPlatformView,
   PublishingPreflightGate,
   PublishingPreflightView,
   PublishedPostExport,
   ScheduledPostView,
 } from "./publishing.types.js";
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")} ]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
+      .join(",")} }`;
+  }
+  return JSON.stringify(value);
+}
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const uploadChunkSize = 8 * 1024 * 1024;
@@ -102,11 +121,36 @@ export class PublishingService {
   public async createScheduledPost(
     context: WorkspaceContext,
     body: unknown,
+    onReplay?: () => void,
   ): Promise<ScheduledPostView> {
     this.requireEditor(context);
     const parsed = CreateScheduledPostSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     const request = parsed.data;
+    const { clientRequestId, ...content } = request;
+    const requestHash =
+      clientRequestId === undefined
+        ? null
+        : createHash("sha256").update(canonicalJson(content)).digest("hex");
+    const replay = async (): Promise<ScheduledPostView | null> => {
+      if (clientRequestId === undefined) return null;
+      const existing = await this.db.scheduledPost.findUnique({
+        where: {
+          workspaceId_clientRequestId: { workspaceId: context.workspaceId, clientRequestId },
+        },
+        select: { id: true, clientRequestHash: true },
+      });
+      if (!existing) return null;
+      if (existing.clientRequestHash !== requestHash)
+        throw new ConflictException({
+          code: "IDEMPOTENCY_KEY_CONFLICT",
+          message: "IDEMPOTENCY_KEY_CONFLICT",
+        });
+      onReplay?.();
+      return this.getScheduledPost(context, existing.id);
+    };
+    const existing = await replay();
+    if (existing) return existing;
     const channel = await this.db.channel.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: request.channelId } },
       select: { id: true, status: true },
@@ -146,48 +190,213 @@ export class PublishingService {
         );
     }
 
+    await this.quality.assertPublishable(context, request.renderJobId, request.qualityReviewRunId);
+
     const scheduledAt = request.scheduledAt === null ? null : new Date(request.scheduledAt);
     const disclosure = DisclosureDecisionSchema.parse(request.disclosure);
-    const post = await this.db.$transaction(async (tx) => {
-      const created = await tx.scheduledPost.create({
-        data: {
-          workspaceId: context.workspaceId,
-          channelId: request.channelId,
-          renderJobId: request.renderJobId,
-          qualityReviewRunId: request.qualityReviewRunId,
-          scheduledAt,
-          status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
-          disclosureDecision: disclosure.decision,
-          disclosureText: disclosure.decision === "DISCLOSE" ? disclosure.disclosureText : null,
-          disclosureReason: disclosure.reason,
-          createdByUserId: context.userId,
-        },
-      });
-      for (const item of request.destinations) {
-        const idempotencyKey = randomUUID();
-        const destination = await tx.publishingDestination.create({
+    let post: { id: string };
+    try {
+      post = await this.db.$transaction(async (tx) => {
+        const created = await tx.scheduledPost.create({
           data: {
             workspaceId: context.workspaceId,
-            scheduledPostId: created.id,
-            socialAccountId: item.socialAccountId,
-            platform: item.platform,
-            metadata: item.metadata as Prisma.InputJsonValue,
+            clientRequestId: clientRequestId ?? null,
+            clientRequestHash: requestHash,
+            channelId: request.channelId,
+            renderJobId: request.renderJobId,
+            qualityReviewRunId: request.qualityReviewRunId,
+            scheduledAt,
             status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
-            idempotencyKey,
+            disclosureDecision: disclosure.decision,
+            disclosureText: disclosure.decision === "DISCLOSE" ? disclosure.disclosureText : null,
+            disclosureReason: disclosure.reason,
+            createdByUserId: context.userId,
           },
         });
-        await tx.publishJob.create({
-          data: {
-            workspaceId: context.workspaceId,
-            destinationId: destination.id,
-            status: destination.status,
-            idempotencyKey,
-          },
-        });
+        for (const item of request.destinations) {
+          const idempotencyKey = randomUUID();
+          const destination = await tx.publishingDestination.create({
+            data: {
+              workspaceId: context.workspaceId,
+              scheduledPostId: created.id,
+              socialAccountId: item.socialAccountId,
+              platform: item.platform,
+              metadata: item.metadata as Prisma.InputJsonValue,
+              status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
+              idempotencyKey,
+            },
+          });
+          await tx.publishJob.create({
+            data: {
+              workspaceId: context.workspaceId,
+              destinationId: destination.id,
+              status: destination.status,
+              idempotencyKey,
+            },
+          });
+        }
+        return created;
+      });
+    } catch (error) {
+      if (
+        clientRequestId !== undefined &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const raced = await replay();
+        if (raced) return raced;
       }
-      return created;
-    });
+      throw error;
+    }
     return this.getScheduledPost(context, post.id);
+  }
+
+  public platforms(): PublishingPlatformView[] {
+    const configured = this.socialAccounts.youtubeConfigured();
+    const publishable = configured && this.sessionVault.isConfigured();
+    return [
+      {
+        platform: "YOUTUBE",
+        connectable: configured,
+        publishable,
+        reasonCode: !configured
+          ? "PLATFORM_NOT_CONFIGURED"
+          : !publishable
+            ? "PUBLISHING_NOT_CONFIGURED"
+            : null,
+      },
+      {
+        platform: "INSTAGRAM",
+        connectable: false,
+        publishable: false,
+        reasonCode: "INSTAGRAM_NOT_VERIFIED",
+      },
+    ];
+  }
+
+  public async eligibleRenders(
+    context: WorkspaceContext,
+    query: { channelId?: string; cursor?: string; limit?: string },
+  ): Promise<EligibleRenderPage> {
+    const limit = parseEligibleLimit(query.limit);
+    const channelId = query.channelId?.trim() || null;
+    if (channelId !== null && !z.uuid().safeParse(channelId).success)
+      throw new BadRequestException("channelId must be a valid UUID");
+    if (channelId !== null) {
+      const channel = await this.db.channel.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: channelId } },
+        select: { id: true },
+      });
+      if (!channel) throw new NotFoundException("Channel not found");
+    }
+    const cursor = query.cursor === undefined ? null : decodeEligibleCursor(query.cursor);
+    const now = new Date();
+    const videoArtifact = {
+      kind: "VIDEO",
+      asset: { status: "PUBLISHED", byteSize: { gt: 0 }, checksumSha256: { not: null } },
+      OR: [{ retainedUntil: null }, { retainedUntil: { gt: now } }],
+    } satisfies Prisma.RenderArtifactWhereInput;
+    const rows = await this.db.renderJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        status: "SUCCEEDED",
+        expiredAt: null,
+        sceneMediaJob: { channelId: channelId ?? { not: null } },
+        artifacts: { some: videoArtifact },
+        qualityReviewRuns: {
+          some: {
+            workspaceId: context.workspaceId,
+            ...currentQualityReviewFilter,
+            status: { in: ["APPROVED", "AUTO_APPROVED"] },
+          },
+        },
+        ...(cursor === null
+          ? {}
+          : {
+              OR: [
+                { updatedAt: { lt: cursor.at } },
+                { updatedAt: cursor.at, id: { lt: cursor.id } },
+              ],
+            }),
+      },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      select: {
+        id: true,
+        updatedAt: true,
+        input: true,
+        sceneMediaJob: { select: { channelId: true, scriptId: true } },
+        artifacts: { where: videoArtifact, take: 1, select: { id: true } },
+        qualityReviewRuns: {
+          where: {
+            workspaceId: context.workspaceId,
+            ...currentQualityReviewFilter,
+          },
+          orderBy: currentQualityReviewOrder,
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            decisions: {
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              take: 1,
+              select: { createdAt: true },
+            },
+          },
+        },
+      },
+    });
+    const page = rows.slice(0, limit);
+    const items: EligibleRenderView[] = [];
+    for (const row of page) {
+      const run = row.qualityReviewRuns[0] ?? null;
+      const details = eligibleRenderDetails(row.input);
+      const rowChannelId = row.sceneMediaJob.channelId;
+      if (
+        run === null ||
+        (run.status !== "APPROVED" && run.status !== "AUTO_APPROVED") ||
+        details === null ||
+        rowChannelId === null ||
+        row.artifacts.length === 0
+      )
+        continue;
+      items.push({
+        renderJobId: row.id,
+        channelId: rowChannelId,
+        projectId: row.sceneMediaJob.scriptId,
+        title: details.title,
+        durationMs: details.durationMs,
+        completedAt: row.updatedAt.toISOString(),
+        qualityReviewRunId: run.id,
+        reviewStatus: run.status,
+        reviewedAt: (run.decisions?.[0]?.createdAt ?? run.createdAt).toISOString(),
+      });
+    }
+    return {
+      items,
+      nextCursor: rows.length > limit ? encodeEligibleCursor(rows[limit - 1]!) : null,
+    };
+  }
+
+  public async drafts(
+    context: WorkspaceContext,
+    cursor?: string,
+  ): Promise<{ items: ScheduledPostView[]; nextCursor: string | null }> {
+    if (cursor !== undefined && !z.uuid().safeParse(cursor).success)
+      throw new BadRequestException("Invalid cursor");
+    const rows = await this.db.scheduledPost.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        status: "DRAFT",
+        ...(cursor ? { id: { gt: cursor } } : {}),
+      },
+      orderBy: { id: "asc" },
+      take: 51,
+      include: postInclude,
+    });
+    const items = rows.slice(0, 50).map((row) => this.presentPost(row));
+    return { items, nextCursor: rows.length > 50 ? (rows[49]?.id ?? null) : null };
   }
 
   public async listCalendar(
@@ -1686,6 +1895,58 @@ function gate(
   evidence: string,
 ): PublishingPreflightGate {
   return { id, passed, evidence: [evidence] };
+}
+
+function parseEligibleLimit(value: string | undefined): number {
+  if (value === undefined) return 25;
+  if (!/^\d+$/.test(value)) throw new BadRequestException("limit must be an integer");
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    throw new BadRequestException("limit must be between 1 and 100");
+  return limit;
+}
+
+function encodeEligibleCursor(row: { updatedAt: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ at: row.updatedAt.toISOString(), id: row.id }),
+    "utf8",
+  ).toString("base64url");
+}
+
+function decodeEligibleCursor(value: string): { at: Date; id: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw new BadRequestException("Invalid cursor");
+  }
+  if (
+    !isRecord(parsed) ||
+    typeof parsed["at"] !== "string" ||
+    typeof parsed["id"] !== "string" ||
+    !z.uuid().safeParse(parsed["id"]).success
+  )
+    throw new BadRequestException("Invalid cursor");
+  const at = new Date(parsed["at"]);
+  if (Number.isNaN(at.getTime())) throw new BadRequestException("Invalid cursor");
+  return { at, id: parsed["id"] };
+}
+
+function eligibleRenderDetails(
+  input: Prisma.JsonValue,
+): { title: string; durationMs: number } | null {
+  if (!isRecord(input)) return null;
+  const title = input["title"];
+  const durationSeconds = renderDurationSeconds(input);
+  if (typeof title !== "string" || title.trim().length === 0 || durationSeconds === null)
+    return null;
+  const durationMs = Math.round(durationSeconds * 1000);
+  if (!Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
+  return { title, durationMs };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function renderDurationSeconds(input: Prisma.JsonValue): number | null {

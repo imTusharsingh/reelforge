@@ -900,6 +900,8 @@ model ScheduledPost {
   channelId                  String                         @map("channel_id") @db.Uuid
   renderJobId                String                         @map("render_job_id") @db.Uuid
   qualityReviewRunId         String                         @map("quality_review_run_id") @db.Uuid
+  clientRequestId            String?                        @map("client_request_id") @db.Uuid
+  clientRequestHash          String?                        @map("client_request_hash")
   revision                   Int                            @default(1)
   scheduledAt                DateTime?                      @map("scheduled_at") @db.Timestamptz(6)
   status                     PublishStatus                  @default(DRAFT)
@@ -920,6 +922,7 @@ model ScheduledPost {
   destinations               PublishingDestination[]
 
   @@unique([workspaceId, id])
+  @@unique([workspaceId, clientRequestId])
   @@index([workspaceId, channelId, scheduledAt, status])
   @@index([workspaceId, renderJobId, createdAt])
   @@map("scheduled_posts")

@@ -8,13 +8,16 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { PublishingService } from "./publishing.service.js";
 import type {
+  EligibleRenderPage,
   PublishingPreflightView,
   PublishedPostExport,
   ScheduledPostView,
@@ -33,8 +36,47 @@ export class PublishingController {
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Body() body: unknown,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<ScheduledPostView> {
-    return this.publishing.createScheduledPost(await this.context(request, workspaceId), body);
+    return this.publishing.createScheduledPost(await this.context(request, workspaceId), body, () =>
+      response.status(200),
+    );
+  }
+
+  @Get("platforms")
+  public async platforms(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+  ): Promise<ReturnType<PublishingService["platforms"]>> {
+    await this.context(request, workspaceId);
+    return this.publishing.platforms();
+  }
+
+  @Get("eligible-renders")
+  public async eligibleRenders(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query("channelId") channelId?: string,
+    @Query("cursor") cursor?: string,
+    @Query("limit") limit?: string,
+  ): Promise<EligibleRenderPage> {
+    return this.publishing.eligibleRenders(await this.context(request, workspaceId), {
+      ...(channelId === undefined ? {} : { channelId }),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(limit === undefined ? {} : { limit }),
+    });
+  }
+
+  @Get("posts")
+  public async drafts(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query("status") status: string,
+    @Query("cursor") cursor?: string,
+  ): ReturnType<PublishingService["drafts"]> {
+    const context = await this.context(request, workspaceId);
+    if (status !== "DRAFT") throw new BadRequestException("Only DRAFT is supported");
+    return this.publishing.drafts(context, cursor);
   }
 
   @Get("calendar")

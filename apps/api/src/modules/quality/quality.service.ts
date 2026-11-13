@@ -43,6 +43,7 @@ import {
   qualityReviewResultSchema,
   qualityScorecardSchema,
 } from "./quality.validation.js";
+import { currentQualityReviewOrder, currentQualityReviewWhere } from "./quality.current-review.js";
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const qualityInputSchema = createRenderSchema.shape.input;
@@ -663,13 +664,8 @@ export class QualityService {
     });
     if (!renderJob) throw new NotFoundException("Render job not found");
     const run = await this.db.qualityReviewRun.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        renderJobId,
-        status: { not: "SUPERSEDED" },
-        supersededAt: null,
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      where: currentQualityReviewWhere(context.workspaceId, renderJobId),
+      orderBy: currentQualityReviewOrder,
       select: { status: true, gateSummary: true },
     });
     if (!run) return { renderJobId, status: null, gateSummary: null };
@@ -700,13 +696,8 @@ export class QualityService {
     if ((run.status !== "APPROVED" && run.status !== "AUTO_APPROVED") || run.supersededAt !== null)
       throw new ConflictException("The current quality review is not approved for publishing");
     const currentRun = await this.db.qualityReviewRun.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        renderJobId,
-        status: { not: "SUPERSEDED" },
-        supersededAt: null,
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      where: currentQualityReviewWhere(context.workspaceId, renderJobId),
+      orderBy: currentQualityReviewOrder,
       select: { id: true },
     });
     if (currentRun?.id !== run.id)

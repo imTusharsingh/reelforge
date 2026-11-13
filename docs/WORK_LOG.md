@@ -1203,9 +1203,27 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Independent records outstanding: Manager/authorized integrator must resolve a safe pre-merge bootstrap mechanism because the actual Process Policy workflow is absent on main; normal CI fixture results are not actual pull_request_target integration evidence. Minu must independently create/attest the final base/head, complete paths/blobs, metadata digest, expiry and exceptions record; Developer cannot author that approval or replace placeholder 0 with self-authorization. Manager/B/Core must disposition the previously recorded composition/backoff full-suite failure; green runs do not erase it. No out-of-scope composition test change.
 - Preflight machine-readable data is retained in `/workspace/work/f-tools/pr72-integration-preflight.json` as PROPOSAL_NOT_AUTHORIZATION. Final head/blob/metadata values must be recomputed after this commit. Pending records prevent integration even if all checks pass.
 
+### 2026-11-13 — M27 backend interface investigation
+
+M27 developer created the isolated `work/m27-publishing-and-calendar-ui` worktree and inspected the existing publishing and social-account interfaces. Implementation is blocked pending a platform availability interface, recoverable idempotent post creation, and an OAuth return path to the UI. See the M27 status and draft PR for proposed changes. No implementation checks were run.
+
+### 2026-11-13 — M27 Core decision follow-up
+
+Minu approved the three backend proposals in PR #93. Initial D1–D3 code was started; further tests and UI remain. Inspection found that approved quality runs cannot be discovered with their IDs through the existing read interfaces, although post creation requires the ID. M27 status and the PR record the proposed read interface for Core decision.
+
 ## 2026-11-13 — C5 account follow-up (#77)
 
 Continued work/issue-69-c-m22-account from 7c07a58, merged origin/main and installed pinned dependencies. Finished strict profile validation, account responsive layout and browser evidence at 390/1440 (12 scenarios), guarded account HTTP routes, client unit coverage and missing-credential safety. Updated the release-gate inventory for Core-authorized GET/PATCH /auth/me and POST /auth/me/password. Existing hashing, sessions and auth events are reused; password reset stays deferred. No migration, dependency change or live provider call. Independent Minu review remains pending.
+
 ## 2026-11-13 — C3 PR #97 review follow-up
 
 On work/issue-69-c-scene-assets, merged origin/main and installed the exact pinned toolchain/dependencies. Addressed Minu B1–B5: formatting, ASSIGNED composition compatibility, consistent scene_generation_output usage, stable assign reconciliation keys, and service/Postgres/web/browser regression coverage. Focused suite: 128 passed; mounted production browser: 28 passed at 390/1440. No live provider calls. Pending independent Minu review and hosted CI.
+
+## 2026-11-13 — M27 cloud continuation (#82 / #93)
+
+Continued c9c2537 on work/m27-publishing-and-calendar-ui and merged main. Implemented and verified approved D1–D4 publishing reads, client-key replay/race handling, safe OAuth return, current approved-render discovery, and publishing/calendar/account UI. Added actual PostgreSQL service/HTTP concurrency and isolation tests, account-action recovery across reload, 22 offline mounted-browser scenarios, and checkpoint lint/format fixes. The one unmerged M27 migration was renamed to 20261121020000 after C3 occupied its timestamp; SQL and existing main migrations were preserved. Full validation and independent Minu review remain pending; no live provider calls, approvals or merges by this agent.
+
+
+M27 final merged-checkout evidence: latest main b64993e merged with Account and Publishing shell/CSS preserved; frozen install, lint, formatting, full typecheck, full build, clean deployment of 32 migrations, migration guard and secret scan passed. Full suite: 853 passed / 8 skipped. Publishing mounted browser: 24 passed; merged Account browser: 12 passed. Dispatcher compatibility retains both create-time rejection and legacy-draft publish refusal; draft query authorization precedes validation. Hosted CI and independent Minu review remain the next gates.
+
+M27 hosted baseline evidence: PR CI run 43390832035 passed on b04cea0. Push run 43390825062 rejected the unchanged-SQL R100 rename against the old unmerged c9c2537 checkpoint; main-baseline migration immutability and fresh deployment passed. The final handoff documentation records the distinction and preserves the collision-free single additive migration for a new exact-head push/PR validation. No CI or guard edits.
