@@ -1,0 +1,83 @@
+-- DropForeignKey
+ALTER TABLE "channels" DROP CONSTRAINT "channels_active_snapshot_fkey";
+
+-- DropForeignKey
+ALTER TABLE "script_revisions" DROP CONSTRAINT "script_revisions_created_by_user_id_fkey";
+
+-- DropForeignKey
+ALTER TABLE "scripts" DROP CONSTRAINT "scripts_created_by_user_id_fkey";
+
+-- AlterTable
+ALTER TABLE "genre_templates" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "genres" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "ideas" ALTER COLUMN "updated_at" DROP DEFAULT;
+
+-- RenameForeignKey
+ALTER TABLE "channel_config_snapshots" RENAME CONSTRAINT "channel_config_snapshots_workspace_id_fkey" TO "channel_config_snapshots_workspace_id_channel_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "performance_strategy_changes" RENAME CONSTRAINT "performance_strategy_changes_workspace_id_recommendation_id_fke" TO "performance_strategy_changes_workspace_id_recommendation_i_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_artifacts" RENAME CONSTRAINT "render_artifacts_asset_fkey" TO "render_artifacts_workspace_id_asset_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_artifacts" RENAME CONSTRAINT "render_artifacts_job_fkey" TO "render_artifacts_workspace_id_render_job_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_artifacts" RENAME CONSTRAINT "render_artifacts_workspace_fkey" TO "render_artifacts_workspace_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_jobs" RENAME CONSTRAINT "render_jobs_creator_fkey" TO "render_jobs_created_by_user_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_jobs" RENAME CONSTRAINT "render_jobs_parent_fkey" TO "render_jobs_workspace_id_parent_job_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_jobs" RENAME CONSTRAINT "render_jobs_scene_fkey" TO "render_jobs_workspace_id_scene_media_job_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "render_pending_objects" RENAME CONSTRAINT "render_pending_objects_job_fkey" TO "render_pending_objects_workspace_id_render_job_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_generation_outputs" RENAME CONSTRAINT "scene_outputs_workspace_fkey" TO "scene_generation_outputs_workspace_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_generations" RENAME CONSTRAINT "scene_generations_job_fkey" TO "scene_generations_workspace_id_job_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_media_jobs" RENAME CONSTRAINT "scene_media_jobs_channel_fkey" TO "scene_media_jobs_workspace_id_channel_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_media_jobs" RENAME CONSTRAINT "scene_media_jobs_config_fkey" TO "scene_media_jobs_workspace_id_config_snapshot_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_media_jobs" RENAME CONSTRAINT "scene_media_jobs_created_by_fkey" TO "scene_media_jobs_created_by_user_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_media_jobs" RENAME CONSTRAINT "scene_media_jobs_prompt_fkey" TO "scene_media_jobs_workspace_id_prompt_snapshot_id_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "scene_media_jobs" RENAME CONSTRAINT "scene_media_jobs_script_fkey" TO "scene_media_jobs_workspace_id_script_id_fkey";
+
+-- AddForeignKey
+ALTER TABLE "channels" ADD CONSTRAINT "channels_workspace_id_active_snapshot_id_fkey" FOREIGN KEY ("workspace_id", "active_snapshot_id") REFERENCES "channel_config_snapshots"("workspace_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- RenameIndex
+ALTER INDEX "performance_experiments_workspace_id_channel_id_status_created_" RENAME TO "performance_experiments_workspace_id_channel_id_status_crea_idx";
+
+-- RenameIndex
+ALTER INDEX "performance_insight_reports_workspace_id_channel_id_created_at_" RENAME TO "performance_insight_reports_workspace_id_channel_id_created_idx";
+
+-- RenameIndex
+ALTER INDEX "performance_recommendations_workspace_id_channel_id_status_rank" RENAME TO "performance_recommendations_workspace_id_channel_id_status__idx";
+
+-- RenameIndex
+ALTER INDEX "performance_strategy_changes_workspace_id_channel_id_created_at" RENAME TO "performance_strategy_changes_workspace_id_channel_id_create_idx";
+
+-- RenameIndex
+ALTER INDEX "performance_strategy_changes_workspace_id_channel_id_version_ke" RENAME TO "performance_strategy_changes_workspace_id_channel_id_versio_key";

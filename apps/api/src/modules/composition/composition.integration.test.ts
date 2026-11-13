@@ -125,6 +125,23 @@ function validArtifacts(
   ];
 }
 
+// PostgreSQL's queued-row default uses wall time. Pin that fixture value too,
+// so initial execution and retry persistence share the injected service clock.
+function withQueuedRenderClock(
+  db: ReturnType<typeof createDatabaseClient>,
+  now: () => Date,
+): Database {
+  return db.$extends({
+    query: {
+      renderJob: {
+        create({ args, query }) {
+          return query({ ...args, data: { ...args.data, nextAttemptAt: now() } });
+        },
+      },
+    },
+  }) as Database;
+}
+
 suite("CompositionService persisted lifecycle", () => {
   const db = databaseUrl ? createDatabaseClient(databaseUrl) : undefined;
   const storageRoot = join(tmpdir(), `reelforge-m10-integration-${workspaceId}`);
@@ -440,6 +457,12 @@ suite("CompositionService persisted lifecycle", () => {
     await expect(
       service.get({ ...context, workspaceId: otherWorkspaceId }, created.id),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("preserves the bounded edit parent chain and original input", async () => {
+    if (!db || !service) return;
+    fail = false;
+    const created = await service.create(context, body("bounded-edit-parent"));
     const edited = await service.edit(context, created.id, {
       idempotencyKey: "render-title-edit",
       retentionDays: 30,
@@ -484,6 +507,11 @@ suite("CompositionService persisted lifecycle", () => {
       });
       expect((await service.get(context, previous.id)).status).toBe("SUCCEEDED");
     }
+  });
+
+  it("substitutes audio without changing the parent render", async () => {
+    if (!db || !service) return;
+    fail = false;
     const audioAssetId = randomUUID();
     await db.asset.create({
       data: {
@@ -518,6 +546,14 @@ suite("CompositionService persisted lifecycle", () => {
       },
     });
     expect(audioEdited.input.audio.at(0)).toMatchObject({ kind: "SFX" });
+    expect(audioEdited).toMatchObject({
+      status: "SUCCEEDED",
+      parentJobId: audioParent.id,
+      attempt: 1,
+    });
+    expect((await service.get(context, audioParent.id)).input.audio.at(0)).toMatchObject({
+      kind: "MUSIC",
+    });
   });
 
   it("verifies stored video and each cover bytes before returning a manifest", async () => {
@@ -613,61 +649,217 @@ suite("CompositionService persisted lifecycle", () => {
     expect(again.id).toBe(retried.id);
   });
 
-  it("schedules bounded automatic retries, respects backoff and exhausts durably", async () => {
-    if (!db || !service) return;
-    await db.renderJob.updateMany({
-      where: { workspaceId, status: "FAILED_RETRYABLE" },
-      data: {
+  it.each([0, 1])(
+    "schedules bounded automatic retries at deadline +%i ms and exhausts durably",
+    async (offset) => {
+      if (!db || !service) return;
+      await db.renderJob.updateMany({
+        where: { workspaceId, status: "FAILED_RETRYABLE" },
+        data: {
+          status: "FAILED_FINAL",
+          errorCode: "RETRY_EXHAUSTED",
+          leaseToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      const request = body(`b4-backoff-${randomUUID()}`);
+      let now = new Date("2026-11-13T00:00:00.000Z").getTime();
+      const clock = { now: (): Date => new Date(now) };
+      const initial = new CompositionService(
+        withQueuedRenderClock(db, clock.now),
+        engine,
+        storage,
+        assetReference,
+        clock,
+      );
+      fail = true;
+      try {
+        await expect(initial.create(context, request)).rejects.toThrow(/no successful export/);
+      } finally {
+        fail = false;
+      }
+      const stored = await db.renderJob.findUniqueOrThrow({
+        where: {
+          workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
+        },
+      });
+      expect(stored.nextAttemptAt.getTime()).toBe(now + 250);
+      const alwaysFails: CompositionEnginePort = {
+        execute: async () => {
+          throw new Error("storage unavailable for committed recovery test");
+        },
+      };
+      const worker = new CompositionService(
+        db as Database,
+        alwaysFails,
+        storage,
+        assetReference,
+        clock,
+      );
+      let failedAt = now;
+      for (const [attempt, delay] of [250, 500, 1000].entries()) {
+        expect(await worker.runClaim(stored.id)).toBeNull();
+        const deadline = failedAt + delay;
+        now = deadline - 1;
+        expect(await worker.runClaim(stored.id)).toBeNull();
+        expect((await worker.runScheduled(10, stored.id)).claimed).toBe(0);
+        expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
+          attempt,
+          scheduledAttempts: attempt,
+          nextAttemptAt: new Date(deadline),
+        });
+        now = deadline + offset;
+        expect((await worker.runScheduled(10, stored.id)).claimed).toBe(1);
+        const failed = await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } });
+        expect(failed.scheduledAttempts).toBe(attempt + 1);
+        expect(failed.attempt).toBe(attempt + 1);
+        if (attempt < 2) {
+          expect(failed.status).toBe("FAILED_RETRYABLE");
+          expect(failed.nextAttemptAt.getTime()).toBe(now + [250, 500, 1000][attempt + 1]!);
+        } else {
+          expect(failed).toMatchObject({ status: "FAILED_FINAL", errorCode: "RETRY_EXHAUSTED" });
+          expect(failed.attempt).toBe(3);
+        }
+        now += 1;
+        expect(await worker.runClaim(stored.id)).toBeNull();
+        expect((await worker.runScheduled(10, stored.id)).claimed).toBe(0);
+        failedAt = now - 1;
+      }
+      expect((await worker.runScheduled(10, stored.id)).claimed).toBe(0);
+      expect(await worker.runClaim(stored.id)).toBeNull();
+      expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
         status: "FAILED_FINAL",
         errorCode: "RETRY_EXHAUSTED",
-        leaseToken: null,
-        leaseExpiresAt: null,
-      },
+        attempt: 3,
+      });
+    },
+  );
+
+  it("revalidates a retry deadline after another worker reschedules a stale eligibility read", async () => {
+    if (!db) return;
+    let now = new Date("2026-11-13T00:00:00.000Z").getTime();
+    const clock = { now: (): Date => new Date(now) };
+    const execute = vi.fn(async () => {
+      throw new Error("controlled concurrent retry failure");
     });
-    const request = body(`b4-backoff-${randomUUID()}`);
-    fail = true;
-    try {
-      await expect(service.create(context, request)).rejects.toThrow(/no successful export/);
-    } finally {
-      fail = false;
-    }
+    const alwaysFails: CompositionEnginePort = { execute };
+    const worker = new CompositionService(
+      withQueuedRenderClock(db, clock.now),
+      alwaysFails,
+      storage,
+      assetReference,
+      clock,
+    );
+    const request = body(`b2-concurrent-deadline-${randomUUID()}`);
+    await expect(worker.create(context, request)).rejects.toThrow(/no successful export/);
     const stored = await db.renderJob.findUniqueOrThrow({
       where: {
         workspaceId_idempotencyKey: { workspaceId, idempotencyKey: request.idempotencyKey },
       },
     });
-    let now = Date.now();
-    const alwaysFails: CompositionEnginePort = {
-      execute: async () => {
-        throw new Error("storage unavailable for committed recovery test");
+    now = stored.nextAttemptAt.getTime();
+    let entered!: () => void;
+    let release!: () => void;
+    const eligible = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pause = true;
+    const staleDb = db.$extends({
+      query: {
+        renderJob: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (pause && args.where.id === stored.id) {
+              pause = false;
+              entered();
+              await resume;
+            }
+            return row;
+          },
+        },
       },
-    };
-    const worker = new CompositionService(db as Database, alwaysFails, storage, assetReference, {
-      now: (): Date => new Date(now),
     });
-    for (const [attempt, delay] of [250, 500, 1000].entries()) {
-      expect(await worker.runClaim(stored.id)).toBeNull();
-      now += delay;
-      expect((await worker.runScheduled(10, stored.id)).claimed).toBe(1);
-      const failed = await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } });
-      expect(failed.scheduledAttempts).toBe(attempt + 1);
-      expect(failed.attempt).toBe(attempt + 1);
-      if (attempt < 2) {
-        expect(failed.status).toBe("FAILED_RETRYABLE");
-        expect(failed.nextAttemptAt.getTime()).toBe(now + [250, 500, 1000][attempt + 1]!);
-      } else {
-        expect(failed).toMatchObject({ status: "FAILED_FINAL", errorCode: "RETRY_EXHAUSTED" });
-        expect(failed.attempt).toBe(3);
-      }
+    const staleWorker = new CompositionService(
+      staleDb as Database,
+      alwaysFails,
+      storage,
+      assetReference,
+      clock,
+    );
+    const pending = staleWorker.runClaim(stored.id);
+    try {
+      await eligible;
+      expect((await worker.runClaim(stored.id))?.status).toBe("FAILED_RETRYABLE");
+      const rescheduled = await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } });
+      expect(rescheduled).toMatchObject({
+        attempt: 1,
+        scheduledAttempts: 1,
+        nextAttemptAt: new Date(now + 500),
+      });
+      release();
+      expect(await pending).toBeNull();
+      expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toEqual(
+        rescheduled,
+      );
+      expect(execute).toHaveBeenCalledTimes(2);
+      now = rescheduled.nextAttemptAt.getTime() - 1;
+      expect(await staleWorker.runClaim(stored.id)).toBeNull();
+      now += 1;
+      expect((await staleWorker.runClaim(stored.id))?.status).toBe("FAILED_RETRYABLE");
+      expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
+        attempt: 2,
+        scheduledAttempts: 2,
+        nextAttemptAt: new Date(now + 1000),
+      });
+      expect(execute).toHaveBeenCalledTimes(3);
+    } finally {
+      release();
+      await pending;
     }
-    expect((await worker.runScheduled(10, stored.id)).claimed).toBe(0);
-    expect(await worker.runClaim(stored.id)).toBeNull();
-    expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
-      status: "FAILED_FINAL",
-      errorCode: "RETRY_EXHAUSTED",
-      attempt: 3,
-    });
   });
+
+  it.each(["expired", "missing token", "missing lease"] as const)(
+    "recovers a stale RUNNING job with %s lease even when its retry deadline is future",
+    async (lease) => {
+      if (!db) return;
+      const now = new Date("2026-11-13T00:00:00.000Z");
+      const request = body(`b2-stale-future-${randomUUID()}`);
+      const stored = await db.renderJob.create({
+        data: {
+          workspaceId,
+          sceneMediaJobId,
+          idempotencyKey: request.idempotencyKey,
+          status: "RUNNING",
+          attempt: 0,
+          leaseToken: lease !== "expired" ? null : randomUUID(),
+          leaseExpiresAt: lease === "missing lease" ? null : new Date(now.getTime() - 1),
+          nextAttemptAt: new Date(now.getTime() + 60_000),
+          input: request.input,
+          inputFingerprint: canonicalRenderFingerprint(request.input),
+          createdByUserId: userId,
+        },
+      });
+      const recoveryEngine: CompositionEnginePort = {
+        execute: async (_context, id, input) => validArtifacts(input, id),
+      };
+      const worker = new CompositionService(
+        db as Database,
+        recoveryEngine,
+        storage,
+        assetReference,
+        { now: (): Date => now },
+      );
+      expect((await worker.runClaim(stored.id))?.status).toBe("SUCCEEDED");
+      expect(await db.renderJob.findUniqueOrThrow({ where: { id: stored.id } })).toMatchObject({
+        attempt: 1,
+        scheduledAttempts: 1,
+      });
+      expect(await worker.runClaim(stored.id)).toBeNull();
+    },
+  );
 
   it("terminalizes an exhausted stale running claim instead of stranding it", async () => {
     if (!db || !service) return;
