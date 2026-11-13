@@ -2,7 +2,8 @@ import type { WorkspaceRole } from "../../lib/api";
 
 export type ProductionStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED";
 export type OutputKind = "IMAGE" | "VIDEO" | "NARRATION" | "DIALOGUE";
-export type OutputStatus = "QUEUED" | "SUCCEEDED" | "REUSED" | "FAILED_RETRYABLE" | "FAILED_FINAL";
+export type OutputStatus =
+  "QUEUED" | "SUCCEEDED" | "REUSED" | "ASSIGNED" | "FAILED_RETRYABLE" | "FAILED_FINAL";
 export type SceneStatus =
   | "QUEUED"
   | "SUBMITTED"
@@ -215,6 +216,7 @@ const outputStatuses = [
   "QUEUED",
   "SUCCEEDED",
   "REUSED",
+  "ASSIGNED",
   "FAILED_RETRYABLE",
   "FAILED_FINAL",
 ] as const;
@@ -557,7 +559,7 @@ export function parseCost(value: unknown, workspaceId: string, scriptId: string)
 export const statusTone = (
   status: string,
 ): "neutral" | "success" | "warning" | "danger" | "info" =>
-  status === "SUCCEEDED" || status === "REUSED" || status === "APPROVED"
+  status === "SUCCEEDED" || status === "REUSED" || status === "ASSIGNED" || status === "APPROVED"
     ? "success"
     : status.includes("FAILED") || status === "FAILED"
       ? "danger"

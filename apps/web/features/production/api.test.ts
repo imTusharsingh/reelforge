@@ -130,6 +130,42 @@ describe("ProductionClient", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("sends the observed version and payload for an asset assignment", async () => {
+    const job: SceneMediaPackage = {
+      schemaVersion: "1.0",
+      jobId,
+      workspaceId,
+      scriptId,
+      scriptRevision: 1,
+      channelId: null,
+      status: "FAILED",
+      version: 4,
+      requestedOutputs: { image: true, video: false, narration: false, dialogue: false },
+      scenes: [],
+    };
+    const response = { ...job, status: "RUNNING", version: 5 };
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new ProductionClient(workspaceId, "EDITOR", new AbortController().signal);
+    await client.assignAsset(job, "scene-1", "IMAGE", assetId, 2, "assign-key");
+    const [url, init] = request.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      `/api/v1/workspaces/${workspaceId}/scene-media/jobs/${jobId}/scenes/scene-1/assign-asset`,
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      idempotencyKey: "assign-key",
+      expectedJobVersion: 4,
+      kind: "IMAGE",
+      assetId,
+      assetVersion: 2,
+    });
+  });
+
   it("sends the observed version and operation key for a scene mutation", async () => {
     const job: SceneMediaPackage = {
       schemaVersion: "1.0",

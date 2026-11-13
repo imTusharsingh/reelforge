@@ -16,7 +16,7 @@ export type SceneGenerationStatus =
   | "FAILED_FINAL"
   | "CANCELED";
 export type SceneOutputStatus =
-  "QUEUED" | "SUCCEEDED" | "REUSED" | "FAILED_RETRYABLE" | "FAILED_FINAL";
+  "QUEUED" | "SUCCEEDED" | "REUSED" | "ASSIGNED" | "FAILED_RETRYABLE" | "FAILED_FINAL";
 
 export type RequestedOutputs = Readonly<{
   image: true;

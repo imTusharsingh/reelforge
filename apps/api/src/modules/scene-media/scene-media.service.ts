@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
@@ -66,6 +67,7 @@ import {
   type SceneOutputStatus,
 } from "./scene-media.types.js";
 import {
+  KIND_MEDIA,
   applicableKinds,
   assertImageCapability,
   assertTtsCapability,
@@ -73,6 +75,7 @@ import {
   buildScenePrompt,
   isCompletePackage,
   normalizeMediaResult,
+  parseAssignAssetInput,
   parseCreateInput,
   parseMutationInput,
   parsePromptBundle,
@@ -118,7 +121,12 @@ type PinnedJob = Readonly<{
 type MutationTarget =
   | Readonly<{ sceneId: null; outputKind: null }>
   | Readonly<{ sceneId: string; outputKind: null }>
-  | Readonly<{ sceneId: string; outputKind: SceneMediaKind }>;
+  | Readonly<{
+      sceneId: string;
+      outputKind: SceneMediaKind;
+      assetId?: string;
+      assetVersion?: number;
+    }>;
 
 type ActiveOutput = {
   id: string;
@@ -352,6 +360,22 @@ export class SceneMediaService {
     });
   }
 
+  public async assignAsset(
+    context: WorkspaceContext,
+    jobId: string,
+    sceneId: string,
+    body: unknown,
+  ): Promise<SceneMediaPackage> {
+    this.editor(context);
+    const request = parseAssignAssetInput(body);
+    return this.mutate(context, jobId, "ASSIGN_ASSET", request, {
+      sceneId,
+      outputKind: request.kind,
+      assetId: request.assetId,
+      assetVersion: request.assetVersion,
+    });
+  }
+
   public async providerHealth(
     context: WorkspaceContext,
     providerId: string,
@@ -420,7 +444,7 @@ export class SceneMediaService {
     const operationId = randomUUID();
     let mutationId: string;
     try {
-      mutationId = await this.db.$transaction(async (tx) => {
+      mutationId = await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
         const now = new Date();
         const previousLease = await tx.sceneMediaJob.findUnique({
           where: { workspaceId_id: { workspaceId: context.workspaceId, id: jobId } },
@@ -525,21 +549,25 @@ export class SceneMediaService {
 
     try {
       await this.withOperationHeartbeat(context.workspaceId, jobId, operationId, async () => {
-        const plan = await this.plan(
-          context,
-          job.scriptId,
-          requestedOutputs(job.requestedOutputs),
-          {
-            mode: "pinned",
-            revision: job.scriptRevision,
-            configSnapshotId: job.configSnapshotId,
-            promptSnapshotId: job.promptSnapshotId,
-          },
-        );
-        const selection = selectionFor(operation, target);
-        await this.execute(context, jobId, plan, selection, operationId);
+        if (operation === "ASSIGN_ASSET") {
+          await this.executeAssign(context, jobId, job, target, operationId);
+        } else {
+          const plan = await this.plan(
+            context,
+            job.scriptId,
+            requestedOutputs(job.requestedOutputs),
+            {
+              mode: "pinned",
+              revision: job.scriptRevision,
+              configSnapshotId: job.configSnapshotId,
+              promptSnapshotId: job.promptSnapshotId,
+            },
+          );
+          const selection = selectionFor(operation, target);
+          await this.execute(context, jobId, plan, selection, operationId);
+        }
         const after = await this.activeGenerations(context.workspaceId, jobId);
-        await this.db.$transaction(async (tx) => {
+        await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
           await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
           await tx.sceneMediaMutation.updateMany({
             where: { workspaceId: context.workspaceId, id: mutationId, status: "IN_PROGRESS" },
@@ -861,7 +889,7 @@ export class SceneMediaService {
     operationId: string,
   ): Promise<void> {
     await this.requireOperationLease(context.workspaceId, jobId, operationId);
-    await this.db.$transaction(async (tx) => {
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       await tx.sceneMediaJob.updateMany({
         where: { workspaceId: context.workspaceId, id: jobId, leaseId: operationId },
@@ -926,7 +954,7 @@ export class SceneMediaService {
     operationId: string,
   ): Promise<void> {
     const sceneVersion = (previous?.sceneVersion ?? 0) + 1;
-    const generation = await this.db.$transaction(async (tx) => {
+    const generation = await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       if (previous) {
         await tx.sceneGeneration.updateMany({
@@ -981,7 +1009,7 @@ export class SceneMediaService {
             );
       statuses.push(status);
     }
-    await this.db.$transaction(async (tx) => {
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       await tx.sceneGeneration.update({
         where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
@@ -1015,7 +1043,7 @@ export class SceneMediaService {
       });
     }
     const outputId = randomUUID();
-    await this.db.$transaction(async (tx) => {
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       await tx.sceneGenerationOutput.create({
         data: {
@@ -1181,7 +1209,7 @@ export class SceneMediaService {
         actualCost: normalized.cost,
         usage: normalized.usage,
       });
-      await this.db.$transaction(async (tx) => {
+      await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
         await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
         await tx.asset.create({
           data: {
@@ -1392,7 +1420,7 @@ export class SceneMediaService {
     kind: SceneMediaKind,
     failure: { status: "FAILED_RETRYABLE" | "FAILED_FINAL"; code: string; message: string },
   ): Promise<SceneOutputStatus> {
-    await this.db.$transaction(async (tx) => {
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
       await tx.sceneGenerationOutput.create({
         data: {
@@ -1414,12 +1442,12 @@ export class SceneMediaService {
       include: { outputs: true },
       orderBy: { ordinal: "asc" },
     });
-    return rows.map((row) => ({
+    return rows.map((row: (typeof rows)[number]) => ({
       id: row.id,
       sceneId: row.sceneId,
       sceneVersion: row.sceneVersion,
       status: row.status,
-      outputs: row.outputs.map((output) => ({
+      outputs: row.outputs.map((output: (typeof row.outputs)[number]) => ({
         id: output.id,
         kind: output.kind,
         status: output.status,
@@ -1513,7 +1541,7 @@ export class SceneMediaService {
     jobId: string,
     operationId: string,
   ): Promise<void> {
-    await this.db.$transaction(async (tx) => {
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.requireOperationLease(workspaceId, jobId, operationId, tx);
       const scenes = await tx.sceneGeneration.findMany({
         where: { workspaceId, jobId, activeSlot: 1 },
@@ -1521,7 +1549,7 @@ export class SceneMediaService {
       });
       await tx.sceneMediaJob.updateMany({
         where: { workspaceId, id: jobId, leaseId: operationId },
-        data: { status: rollupJob(scenes.map((scene) => scene.status)) },
+        data: { status: rollupJob(scenes.map((scene: { status: SceneGenerationStatus }) => scene.status)) },
       });
     });
   }
@@ -1542,6 +1570,285 @@ export class SceneMediaService {
     });
     if (!job) throw new NotFoundException("Scene media job not found");
     return job;
+  }
+
+  private async executeAssign(
+    context: WorkspaceContext,
+    jobId: string,
+    job: PinnedJob,
+    target: MutationTarget,
+    operationId: string,
+  ): Promise<void> {
+    const sceneId = target.sceneId;
+    const kind = target.outputKind;
+    const assetId = "assetId" in target ? target.assetId : undefined;
+    const assetVersion = "assetVersion" in target ? target.assetVersion : undefined;
+    if (sceneId === null || kind === null || assetId === undefined || assetVersion === undefined) {
+      throw new BadRequestException("A scene id, output kind, asset id and version are required");
+    }
+
+    await this.requireOperationLease(context.workspaceId, jobId, operationId);
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+      await tx.sceneMediaJob.updateMany({
+        where: { workspaceId: context.workspaceId, id: jobId, leaseId: operationId },
+        data: { status: "RUNNING" },
+      });
+    });
+
+    try {
+      const active = await this.activeGenerations(context.workspaceId, jobId);
+      const previous = active.find((scene) => scene.sceneId === sceneId);
+      if (!previous) {
+        throw new NotFoundException({
+          code: "SCENE_NOT_FOUND",
+          message: "Scene generation not found",
+        });
+      }
+
+      const requested = requestedOutputs(job.requestedOutputs);
+      const script = await this.db.script.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: job.scriptId } },
+        include: { revisions: { where: { revision: job.scriptRevision }, take: 1 } },
+      });
+      const revision = script?.revisions[0];
+      if (!revision)
+        throw new ConflictException("The pinned approved script revision is unavailable");
+      const document = parseScriptDocument(revision.document);
+      const scriptScene = document.scenes.find((s) => s.id === sceneId);
+      if (!scriptScene) {
+        throw new NotFoundException({
+          code: "SCENE_NOT_FOUND",
+          message: "Scene generation not found",
+        });
+      }
+      const allowedKinds = applicableKinds(scriptScene, requested);
+      if (
+        !allowedKinds.includes(kind) ||
+        !previous.outputs.some((output) => output.kind === kind)
+      ) {
+        throw new ConflictException({
+          code: "KIND_NOT_APPLICABLE",
+          message: "Output kind is not applicable to this scene",
+        });
+      }
+
+      const asset = await this.db.asset.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          version: assetVersion,
+          OR: [{ id: assetId }, { rootAssetId: assetId }],
+        },
+      });
+      if (!asset) {
+        throw new NotFoundException({ code: "ASSET_NOT_FOUND", message: "Asset not found" });
+      }
+      if (asset.status !== "PUBLISHED") {
+        throw new ConflictException({
+          code: "ASSET_NOT_READY",
+          message: "Asset is not ready for assignment",
+        });
+      }
+      if (
+        asset.byteSize === null ||
+        asset.byteSize <= 0 ||
+        asset.checksumSha256 === null ||
+        asset.checksumSha256.length !== 64
+      ) {
+        throw new ConflictException({
+          code: "ASSET_NOT_READY",
+          message: "Asset is not ready for assignment",
+        });
+      }
+      const allowedMediaTypes = KIND_MEDIA[kind] as readonly string[];
+      if (!allowedMediaTypes.includes(asset.mediaType)) {
+        throw new UnprocessableEntityException({
+          code: "ASSET_KIND_INCOMPATIBLE",
+          message: "Asset media type is not compatible with this output kind",
+        });
+      }
+
+      const previousRow = await this.db.sceneGeneration.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: previous.id } },
+        select: { ordinal: true, sourceRefs: true, resolvedPrompt: true },
+      });
+      if (!previousRow) throw new NotFoundException("Scene generation not found");
+
+      await this.assignSceneOutput(
+        context,
+        jobId,
+        sceneId,
+        previous,
+        previousRow,
+        kind,
+        {
+          id: asset.id,
+          version: asset.version,
+          mediaType: asset.mediaType,
+          byteSize: asset.byteSize,
+          checksumSha256: asset.checksumSha256,
+        },
+        operationId,
+      );
+    } finally {
+      await this.refreshJobStatus(context.workspaceId, jobId, operationId);
+    }
+  }
+
+  private async assignSceneOutput(
+    context: WorkspaceContext,
+    jobId: string,
+    sceneId: string,
+    previous: ActiveGeneration,
+    previousRow: Readonly<{
+      ordinal: number;
+      sourceRefs: Prisma.JsonValue;
+      resolvedPrompt: string;
+    }>,
+    kind: SceneMediaKind,
+    asset: Readonly<{
+      id: string;
+      version: number;
+      mediaType: string;
+      byteSize: number;
+      checksumSha256: string;
+    }>,
+    operationId: string,
+  ): Promise<void> {
+    const sceneVersion = previous.sceneVersion + 1;
+    const outputId = randomUUID();
+    await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
+      await this.requireOperationLease(context.workspaceId, jobId, operationId, tx);
+      await tx.sceneGeneration.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          jobId,
+          sceneId,
+          activeSlot: 1,
+        },
+        data: { activeSlot: null },
+      });
+      const generation = await tx.sceneGeneration.create({
+        data: {
+          workspaceId: context.workspaceId,
+          jobId,
+          sceneId,
+          ordinal: previousRow.ordinal,
+          sceneVersion,
+          status: "PROVIDER_PROCESSING",
+          idempotencyKey: `${jobId}:${sceneId}:v${sceneVersion}`,
+          resolvedPrompt: previousRow.resolvedPrompt,
+          sourceRefs: previousRow.sourceRefs ?? Prisma.JsonNull,
+          activeSlot: 1,
+        },
+        select: { id: true },
+      });
+      const statuses: SceneOutputStatus[] = [];
+      for (const out of previous.outputs) {
+        if (out.kind === kind) {
+          await tx.sceneGenerationOutput.create({
+            data: {
+              id: outputId,
+              workspaceId: context.workspaceId,
+              sceneGenerationId: generation.id,
+              kind,
+              status: "ASSIGNED",
+              assetId: asset.id,
+              assetVersion: asset.version,
+              providerJobId: null,
+              providerAssetId: null,
+              correlationId: null,
+              mediaType: asset.mediaType,
+              byteSize: asset.byteSize,
+              checksumSha256: asset.checksumSha256,
+              metadata: { source: "WORKSPACE_ASSET" },
+            },
+          });
+          await tx.assetUsageReference.create({
+            data: {
+              workspaceId: context.workspaceId,
+              assetId: asset.id,
+              assetVersion: asset.version,
+              usedByType: "scene_output",
+              usedById: outputId,
+              context: { jobId, sceneId, sceneVersion, kind },
+            },
+          });
+          statuses.push("ASSIGNED");
+          continue;
+        }
+        if (out.status === "SUCCEEDED" || out.status === "REUSED" || out.status === "ASSIGNED") {
+          if (
+            out.assetId === null ||
+            out.assetVersion === null ||
+            out.byteSize === null ||
+            out.byteSize <= 0 ||
+            out.checksumSha256 === null ||
+            out.mediaType === null
+          ) {
+            await tx.sceneGenerationOutput.create({
+              data: {
+                workspaceId: context.workspaceId,
+                sceneGenerationId: generation.id,
+                kind: out.kind,
+                status: "FAILED_RETRYABLE",
+                errorCode: "REUSE_UNAVAILABLE",
+                errorMessage:
+                  "Successful scene output is missing persisted media and cannot be reused",
+              },
+            });
+            statuses.push("FAILED_RETRYABLE");
+            continue;
+          }
+          const reusedId = randomUUID();
+          await tx.sceneGenerationOutput.create({
+            data: {
+              id: reusedId,
+              workspaceId: context.workspaceId,
+              sceneGenerationId: generation.id,
+              kind: out.kind,
+              status: "REUSED",
+              assetId: out.assetId,
+              assetVersion: out.assetVersion,
+              providerJobId: out.providerJobId,
+              providerAssetId: out.providerAssetId,
+              mediaType: out.mediaType,
+              byteSize: out.byteSize,
+              checksumSha256: out.checksumSha256,
+              metadata: out.metadata ?? Prisma.JsonNull,
+              reusedFromOutputId: out.id,
+            },
+          });
+          await tx.assetUsageReference.create({
+            data: {
+              workspaceId: context.workspaceId,
+              assetId: out.assetId,
+              assetVersion: out.assetVersion,
+              usedByType: "scene_generation_output",
+              usedById: reusedId,
+              context: { jobId, sceneId, sceneVersion, kind: out.kind, reused: true },
+            },
+          });
+          statuses.push("REUSED");
+          continue;
+        }
+        await tx.sceneGenerationOutput.create({
+          data: {
+            workspaceId: context.workspaceId,
+            sceneGenerationId: generation.id,
+            kind: out.kind,
+            status: out.status,
+            errorCode: out.status.startsWith("FAILED") ? "NOT_READY" : null,
+            errorMessage: out.status.startsWith("FAILED") ? "Scene output is not ready" : null,
+          },
+        });
+        statuses.push(out.status);
+      }
+      await tx.sceneGeneration.update({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: generation.id } },
+        data: { status: rollupScene(statuses) },
+      });
+    });
   }
 
   private async present(context: WorkspaceContext, jobId: string): Promise<SceneMediaPackage> {
@@ -1617,7 +1924,12 @@ function requestedOutputs(value: Prisma.JsonValue): RequestedOutputs {
 
 function rollupScene(statuses: readonly SceneOutputStatus[]): SceneGenerationStatus {
   if (statuses.length === 0) return "FAILED_FINAL";
-  if (statuses.every((status) => status === "SUCCEEDED" || status === "REUSED")) return "SUCCEEDED";
+  if (
+    statuses.every(
+      (status) => status === "SUCCEEDED" || status === "REUSED" || status === "ASSIGNED",
+    )
+  )
+    return "SUCCEEDED";
   if (statuses.some((status) => status === "FAILED_RETRYABLE" || status === "QUEUED")) {
     return "FAILED_RETRYABLE";
   }
@@ -1727,6 +2039,18 @@ function mutationPayload(
     expectedJobVersion,
     sceneId: target.sceneId,
     outputKind: target.outputKind,
+    ...(operation === "ASSIGN_ASSET"
+      ? {
+          assetId:
+            target.sceneId !== null && target.outputKind !== null && "assetId" in target
+              ? (target.assetId ?? null)
+              : null,
+          assetVersion:
+            target.sceneId !== null && target.outputKind !== null && "assetVersion" in target
+              ? (target.assetVersion ?? null)
+              : null,
+        }
+      : {}),
   };
 }
 

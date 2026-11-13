@@ -5,9 +5,11 @@ import {
   type ProviderEnvironment,
 } from "@reelforge/ai-providers";
 import {
+  AssignSceneAssetRequestSchema,
   ReplaceSceneMediaOutputRequestSchema,
   SceneMediaJobListQuerySchema,
   SceneMediaJobMutationRequestSchema,
+  type AssignSceneAssetRequest,
   type ReplaceSceneMediaOutputRequest,
   type SceneMediaJobListQuery,
   type SceneMediaJobMutationRequest,
@@ -186,7 +188,7 @@ export const mediaResponseSchema = z.object({
   }),
 });
 
-const KIND_MEDIA: Readonly<Record<SceneMediaKind, readonly AssetMediaType[]>> = {
+export const KIND_MEDIA: Readonly<Record<SceneMediaKind, readonly AssetMediaType[]>> = {
   IMAGE: ["image/png", "image/jpeg", "image/webp"],
   VIDEO: ["video/mp4"],
   NARRATION: ["audio/mpeg", "audio/wav"],
@@ -214,6 +216,12 @@ export function parseMutationInput(body: unknown): SceneMediaJobMutationRequest 
 
 export function parseReplaceInput(body: unknown): ReplaceSceneMediaOutputRequest {
   const parsed = ReplaceSceneMediaOutputRequestSchema.safeParse(body);
+  if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+  return parsed.data;
+}
+
+export function parseAssignAssetInput(body: unknown): AssignSceneAssetRequest {
+  const parsed = AssignSceneAssetRequestSchema.safeParse(body);
   if (!parsed.success) throw new BadRequestException(parsed.error.issues);
   return parsed.data;
 }
@@ -366,20 +374,27 @@ export function isCompletePackage(pkg: SceneMediaPackage): boolean {
       (scene) =>
         scene.status === "SUCCEEDED" &&
         scene.outputs.length > 0 &&
-        scene.outputs.every(
-          (output) =>
-            (output.status === "SUCCEEDED" || output.status === "REUSED") &&
-            output.assetId !== null &&
-            output.assetVersion !== null &&
-            output.assetVersion >= 1 &&
-            output.byteSize !== null &&
-            output.byteSize > 0 &&
-            output.checksumSha256 !== null &&
-            output.checksumSha256.length === 64 &&
-            output.providerAssetId !== null &&
-            output.providerAssetId.length > 0 &&
-            output.mediaType !== null,
-        ),
+        scene.outputs.every((output) => {
+          if (
+            output.status !== "SUCCEEDED" &&
+            output.status !== "REUSED" &&
+            output.status !== "ASSIGNED"
+          )
+            return false;
+          if (
+            output.assetId === null ||
+            output.assetVersion === null ||
+            output.assetVersion < 1 ||
+            output.byteSize === null ||
+            output.byteSize <= 0 ||
+            output.checksumSha256 === null ||
+            output.checksumSha256.length !== 64 ||
+            output.mediaType === null
+          )
+            return false;
+          if (output.status === "ASSIGNED") return true;
+          return output.providerAssetId !== null && output.providerAssetId.length > 0;
+        }),
     )
   );
 }

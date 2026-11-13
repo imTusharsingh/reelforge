@@ -238,6 +238,27 @@ export class ProductionClient {
     );
   }
 
+  public async assignAsset(
+    job: SceneMediaPackage,
+    sceneId: string,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+    idempotencyKey: string,
+  ): Promise<SceneMediaPackage> {
+    return this.mutation(
+      `scene-media/jobs/${encodeURIComponent(job.jobId)}/scenes/${encodeURIComponent(sceneId)}/assign-asset`,
+      {
+        idempotencyKey,
+        expectedJobVersion: job.version,
+        kind,
+        assetId,
+        assetVersion,
+      },
+      (value) => parsePackage(value, this.workspaceId),
+    );
+  }
+
   public async assets(): Promise<Asset[]> {
     return parseAssets(await this.request("assets"), this.workspaceId);
   }
