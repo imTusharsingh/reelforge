@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type JSX } from "react";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { StudioLink } from "../../components/studio-link";
 import { ProductionApiError } from "./api";
 import { artifactPath, canWrite, statusTone } from "./model";
 import { LoadResult } from "./common";
@@ -66,6 +67,7 @@ export function RenderWorkspace({ jobId }: { jobId: string }): JSX.Element {
             <header className={styles.header}>
               <div>
                 <p className="rf-eyebrow">Production export</p>
+                <StudioLink href="/review">Open quality review queue</StudioLink>
                 <h1>Render {render.id.slice(0, 8)}</h1>
                 <p>
                   Attempt {render.attempt} · source production {render.sceneMediaJobId.slice(0, 8)}

@@ -1118,3 +1118,33 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 - Also completed backlog #64's nonblocking follow-up: media failure state is tied to media identity, so a regenerated asset URL can recover without remounting the surrounding output card.
 - Verification after fixes: focused production/shell tests 15/15; full PostgreSQL suite 701 passed / 8 skipped; lint, format, typecheck, production build, database validation, 30-migration guard, secret scan and `git diff --check` pass. Mounted Chromium passes 6/6 scenarios, including exact historical revision presentation, same-key truncated-response reconciliation and media recovery. No live provider or external production side effect.
 - Review fixes are pending commit/push and independent re-review. No self-approval or merge.
+
+
+## 2026-11-12 — M26 quality review, approval and regeneration UI
+
+- Preserved the existing M26 handoff commit `eb7a3be` and verified the branch includes latest main/M25 `fd86925`. Implemented authenticated Review queue/detail routes and enabled shell navigation, with the backend's explicit 50-current-pending-review scope, render context, pinned-scene links and authorized media preview.
+- Added strict frontend DTO validation for hard gates/evidence, scorecard criteria and model/prompt provenance, policy/disclosures/limitations, human history and regeneration requests. Missing evidence never counts as passing; unavailable AI is explicit; automatic approval remains distinct from human review.
+- Implemented Owner/Editor decisions and Viewer read-only behavior, required reasons, explicit regeneration target/pinned scene/override validation, confirmation and duplicate guards. Per-workspace/run recovery markers survive reloads without storing review text. Ambiguous, malformed, unconfirmed and conflicting writes require GET-only reconciliation and explicit comparison before another action; no automatic mutation replay. Storage unavailability fails closed.
+- Added safe links to existing Planning/Production workflows without dispatching provider calls or changing M25 idempotency/version protections. Publishing readiness reads current server quality status separately and explains blockers and authoritative publishing rechecks. Rights/disclosure routes conservatively require an override when a match cannot be proven; backend route/attempt checks remain authoritative.
+- Verification: frozen-lockfile install, lint, format check, full typecheck, production build, database validation, 30-migration guard, secrets scan and diff checks passed. Full disposable PostgreSQL suite: 743 passed / 8 skipped (97 files passed / 2 skipped); focused Review model/API suite: 42/42. Existing outstanding M24/M25 migrations were applied only to the local disposable database. No schema, migration, contract, backend or root-tooling changes.
+- Mounted Chromium: 17/17 controlled scenarios passed, including old-workspace delayed-response isolation, queue loading/empty/retry, Owner/Editor/Viewer behavior, unavailable/persisted AI, failed/missing evidence, approval and scene-change validation, overrides/history/routing, 409/ambiguous POST recovery without repeats, automatic approval, valid locally generated video and expired media, keyboard focus and no horizontal overflow at 390px/1440px. Reproduction and screenshot paths are in the module verification README and STATUS. No live AI/social calls were made.
+- Documented limits: pending-only queue without historic discovery, no quality-provider availability read endpoint (no speculative evaluation action), advisory publishing status, controlled rather than deployed browser APIs, conservative rights target overrides, local PostgreSQL 17.11 versus CI 18.6. State is IMPLEMENTED_PENDING_REVIEW; commit/push, non-draft PR with `Closes #67`, reviewer request and hosted CI confirmation follow. No self-approval or merge.
+
+
+## 2026-11-12 — M26 PR handoff
+
+- Pushed implementation commit `b6241dd` on `feat/m26-quality-review-ui` using verified `imTusharsingh` authentication. Opened non-draft PR #68 targeting `main` with `Closes #67` and explicitly requested `minu-the-reviewer`. Hosted CI queued; implementation and verification evidence remain in M26 STATUS and the PR description. No self-approval or merge.
+
+
+## 2026-11-12 — M26 scorecard boundary verification
+
+- Tightened scorecard validation to mirror the existing M11 strict allowed fields, criterion evidence/list limits and model/prompt provenance lengths, with a regression test. No backend/shared contract changes. Focused Review tests: 43 passed; full local PostgreSQL suite: 744 passed / 8 skipped; mounted Chromium: 17/17 passed. Lint, format, full typecheck and production build rerun successfully. Hosted CI passed for prior handoff commit `a94413a`; monitor the final follow-up commit before handoff. Independent review remains requested; no self-approval or merge.
+
+
+## 2026-11-12 — M26 PR #68 independent review fixes
+
+- Addressed the M26-T06 approval blocker from review `5872848055`: RENDER regeneration history now links to the exact persisted `/production/renders/:renderJobId` workspace, independently of script input context. Removed the incorrect scene-production creation destination. Added truthful messaging that successful renders cannot be retried and that creating a new render directly from a review request is unsupported. Existing M25/backend retry, idempotency, version and permission rules remain unchanged; recording or following a request dispatches no generation.
+- Also fixed the nonblocking queue wording note associated with #64: null scorecards say “No AI scorecard recorded” unless the persisted status positively identifies `AI_REVIEW_UNAVAILABLE`. No provider availability is inferred.
+- Updated the previously incorrect model/browser route assertions and added coverage for missing script context, escaped render IDs, exact persisted render routing, successful-render retry messaging, no generation POST, and three queue-scorecard states. Focused Review suite: 44 passed. Mounted Chromium: 20/20 passed, retaining desktop and 390px coverage.
+- Verification after fixes: frozen-lockfile install, format, lint, full typecheck, production build, database validation, 30-migration guard, secrets scan and diff checks all passed. Full local PostgreSQL suite: 745 passed / 8 skipped (97 files passed / 2 skipped). No backend, contracts, schema/migration or root-tooling changes; no live AI/social calls.
+- Follow-up is ready to push to the existing PR and request independent `minu-the-reviewer` re-review, with hosted CI monitoring for the new commit. State remains IMPLEMENTED_PENDING_REVIEW. No self-approval or merge.

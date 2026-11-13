@@ -12,7 +12,7 @@ const destinations = [
   { name: "Planning", href: "/planning" },
   { name: "Operations", href: "/operations" },
   { name: "Production", href: "/production" },
-  { name: "Review queue", href: null },
+  { name: "Review queue", href: "/review" },
   { name: "Publishing", href: null },
   { name: "Insights", href: null },
 ];
@@ -27,13 +27,14 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
           <li key={name}>
             {href ? (
               <StudioLink
-                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) ? "rf-nav-item--current" : ""}`.trim()}
+                className={`rf-nav-item ${pathname === href || (href === "/channels" && pathname.startsWith("/channels/")) || (href === "/planning" && pathname.startsWith("/planning/")) || (href === "/production" && pathname.startsWith("/production/")) || (href === "/review" && pathname.startsWith("/review/")) ? "rf-nav-item--current" : ""}`.trim()}
                 href={href}
                 aria-current={
                   pathname === href ||
                   (href === "/channels" && pathname.startsWith("/channels/")) ||
                   (href === "/planning" && pathname.startsWith("/planning/")) ||
-                  (href === "/production" && pathname.startsWith("/production/"))
+                  (href === "/production" && pathname.startsWith("/production/")) ||
+                  (href === "/review" && pathname.startsWith("/review/"))
                     ? "page"
                     : undefined
                 }
@@ -70,13 +71,17 @@ export function AppShell({
   const openInspector = (): void => inspectorDialog.current?.showModal();
   const closeInspector = (): void => inspectorDialog.current?.close();
   const pathname = usePathname();
-  const breadcrumb = pathname.startsWith("/planning")
-    ? "Studio / Planning"
-    : pathname.startsWith("/channels")
-      ? "Studio / Channels"
-      : pathname === "/operations"
-        ? "Studio / Operations"
-        : "Studio / Overview";
+  const breadcrumb = pathname.startsWith("/review")
+    ? "Studio / Review"
+    : pathname.startsWith("/production")
+      ? "Studio / Production"
+      : pathname.startsWith("/planning")
+        ? "Studio / Planning"
+        : pathname.startsWith("/channels")
+          ? "Studio / Channels"
+          : pathname === "/operations"
+            ? "Studio / Operations"
+            : "Studio / Overview";
   return (
     <div className="rf-shell">
       <a className="rf-skip-link" href="#main-content">
