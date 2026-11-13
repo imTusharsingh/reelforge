@@ -21,7 +21,9 @@ export type IdeaProposalResult = Readonly<{
 }>;
 
 export interface IdeaProposalLlmPort {
-  proposeIdea(input: Readonly<{ prompt: string; context?: string }>): Promise<IdeaProposalResult>;
+  proposeIdea(
+    input: Readonly<{ prompt: string; context?: string; correlationId: string }>,
+  ): Promise<IdeaProposalResult>;
 }
 
 export const IDEA_PROPOSAL_LLM = Symbol("IDEA_PROPOSAL_LLM");
@@ -138,6 +140,7 @@ export type VideoRequest = Readonly<{
   prompt: string;
   durationSeconds: number;
   correlationId: string;
+  providerJobId?: string;
 }>;
 export interface VideoProviderPort {
   readonly capability: CapabilityMetadata;

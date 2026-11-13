@@ -1,0 +1,1 @@
+ALTER TYPE "UsageCategory" ADD VALUE 'VIDEO_MEDIA';

@@ -5,6 +5,7 @@ import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { IdeaController } from "./idea.controller.js";
 import { IdeaService } from "./idea.service.js";
+import { OpenAiIdeaProposalLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
 
 class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
   public proposeIdea(): never {
@@ -15,7 +16,18 @@ class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
 @Module({
   imports: [IdentityModule, WorkspaceModule, UsageBudgetModule],
   controllers: [IdeaController],
-  providers: [IdeaService, { provide: IDEA_PROPOSAL_LLM, useClass: NotConfiguredIdeaLlm }],
+  providers: [
+    IdeaService,
+    {
+      provide: IDEA_PROPOSAL_LLM,
+      useFactory: (): IdeaProposalLlmPort => {
+        const key = openAiKey();
+        return key === undefined
+          ? new NotConfiguredIdeaLlm()
+          : new OpenAiIdeaProposalLlm(key, openAiTextModel());
+      },
+    },
+  ],
   exports: [IdeaService],
 })
 export class IdeaModule {}

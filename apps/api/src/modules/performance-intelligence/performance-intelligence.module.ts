@@ -7,7 +7,11 @@ import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { PerformanceIntelligenceController } from "./performance-intelligence.controller.js";
 import { PerformanceIntelligenceService } from "./performance-intelligence.service.js";
 import { INSIGHT_REPORT_LLM } from "./performance-intelligence.tokens.js";
-import { NotConfiguredInsightReportLlm } from "./performance-intelligence.ports.js";
+import {
+  NotConfiguredInsightReportLlm,
+  type InsightReportLlmPort,
+} from "./performance-intelligence.ports.js";
+import { OpenAiInsightReportLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
 
 @Module({
   imports: [IdentityModule, WorkspaceModule, AnalyticsModule, PublishingModule, UsageBudgetModule],
@@ -16,7 +20,12 @@ import { NotConfiguredInsightReportLlm } from "./performance-intelligence.ports.
     PerformanceIntelligenceService,
     {
       provide: INSIGHT_REPORT_LLM,
-      useClass: NotConfiguredInsightReportLlm,
+      useFactory: (): InsightReportLlmPort => {
+        const key = openAiKey();
+        return key === undefined
+          ? new NotConfiguredInsightReportLlm()
+          : new OpenAiInsightReportLlm(key, openAiTextModel());
+      },
     },
   ],
   exports: [PerformanceIntelligenceService],

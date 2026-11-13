@@ -1006,6 +1006,7 @@ export class SceneMediaService {
               generation.sceneVersion,
               kind,
               operationId,
+              previousOutput?.status === "FAILED_RETRYABLE" ? previousOutput.providerJobId : null,
             );
       statuses.push(status);
     }
@@ -1093,6 +1094,7 @@ export class SceneMediaService {
     sceneVersion: number,
     kind: SceneMediaKind,
     operationId: string,
+    resumeProviderJobId: string | null = null,
   ): Promise<SceneOutputStatus> {
     const correlationId = randomUUID();
     const capability = this.capabilityFor(kind);
@@ -1126,7 +1128,7 @@ export class SceneMediaService {
               workspaceId: context.workspaceId,
               channelId: plan.channelId,
               correlationId,
-              category: kind === "IMAGE" || kind === "VIDEO" ? "IMAGE_MEDIA" : "TTS",
+              category: kind === "IMAGE" ? "IMAGE_MEDIA" : kind === "VIDEO" ? "VIDEO_MEDIA" : "TTS",
               currency: capability.costModel.currency,
               estimate,
             });
@@ -1143,7 +1145,7 @@ export class SceneMediaService {
       });
       await this.requireOperationLease(context.workspaceId, jobId, operationId);
       dispatched = true;
-      const raw = await this.invoke(kind, planned, correlationId);
+      const raw = await this.invoke(kind, planned, correlationId, resumeProviderJobId);
       await this.requireOperationLease(context.workspaceId, jobId, operationId);
       normalized = normalizeMediaResult(raw);
       if (
@@ -1362,6 +1364,7 @@ export class SceneMediaService {
     kind: SceneMediaKind,
     planned: PlannedScene,
     correlationId: string,
+    resumeProviderJobId: string | null,
   ): Promise<unknown> {
     if (kind === "IMAGE") {
       return this.image.generate({
@@ -1375,6 +1378,7 @@ export class SceneMediaService {
         prompt: planned.prompt,
         durationSeconds: planned.scene.durationSeconds,
         correlationId,
+        ...(resumeProviderJobId === null ? {} : { providerJobId: resumeProviderJobId }),
       });
     }
     const lane = kind === "NARRATION" ? "narration" : "dialogue";

@@ -7,6 +7,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { PROVIDER_REGISTRY, ProviderRegistry } from "@reelforge/ai-providers";
+import { OpenAiScriptLlm, openAiKey, openAiTextModel } from "../openai/openai.adapters.js";
 
 class NotConfiguredScriptLlm implements ScriptLlmPort {
   public readonly capability: CapabilityMetadata = {
@@ -30,8 +31,34 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
   controllers: [ScriptController],
   providers: [
     ScriptService,
-    { provide: SCRIPT_LLM, useClass: NotConfiguredScriptLlm },
-    { provide: PROVIDER_REGISTRY, useClass: ProviderRegistry },
+    {
+      provide: SCRIPT_LLM,
+      useFactory: (): ScriptLlmPort => {
+        const key = openAiKey();
+        return key === undefined
+          ? new NotConfiguredScriptLlm()
+          : new OpenAiScriptLlm(key, openAiTextModel());
+      },
+    },
+    {
+      provide: PROVIDER_REGISTRY,
+      useFactory: (): ProviderRegistry => {
+        const registry = new ProviderRegistry();
+        const key = openAiKey();
+        if (key !== undefined) {
+          const adapter = new OpenAiScriptLlm(key, openAiTextModel());
+          registry.register({
+            capability: adapter.capability,
+            credential: {
+              providerId: adapter.capability.providerId,
+              environment: process.env.NODE_ENV === "production" ? "production" : "development",
+              secret: key,
+            },
+          });
+        }
+        return registry;
+      },
+    },
   ],
   exports: [ScriptService],
 })
