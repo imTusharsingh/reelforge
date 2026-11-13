@@ -31,6 +31,7 @@ export function parseAiProposal(
 }
 
 export const aiIdeaSchema = z.object({
+  correlationId: z.uuid().optional(),
   prompt: z.string().trim().min(1).max(5000),
   context: z.string().max(10000).optional(),
   channelId: z.string().uuid().optional(),

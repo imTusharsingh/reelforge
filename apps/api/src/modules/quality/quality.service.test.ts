@@ -173,6 +173,7 @@ type StoredRun = {
 };
 
 class FixtureDatabase {
+  public readonly providerRequest = { create: vi.fn(), update: vi.fn() };
   public readonly runs = new Map<string, StoredRun>();
   public readonly regenerations: StoredRegeneration[] = [];
   public assetOwnership: "USER_UPLOADED" | "STARTER_LIBRARY" | "SYSTEM_GENERATED" = "USER_UPLOADED";
@@ -424,9 +425,42 @@ class FixtureDatabase {
   }
 }
 
+function paidUsage(): {
+  reservePaidCall: ReturnType<typeof vi.fn>;
+  finishPaidCall: ReturnType<typeof vi.fn>;
+} {
+  return {
+    reservePaidCall: vi.fn().mockResolvedValue({
+      workspaceId,
+      reservationId: "reservation-a",
+      currency: "USD",
+      estimateMinor: 1,
+    }),
+    finishPaidCall: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function configuredReviewer(reviewer: QualityReviewPort): QualityReviewPort {
+  return Object.assign(reviewer, {
+    capability: {
+      providerId: "fixture",
+      capabilityId: "quality-review",
+      kind: "llm",
+      input: ["text"],
+      output: ["json"],
+      supportsReferenceImages: false,
+      asynchronous: false,
+      polling: false,
+      regions: [],
+      costModel: { currency: "USD", unit: "request", amount: 0.01 },
+    },
+  });
+}
+
 function service(
   db: FixtureDatabase,
-  reviewer: QualityReviewPort = { review: async () => fixtureResult() },
+  reviewer: QualityReviewPort = configuredReviewer({ review: async () => fixtureResult() }),
+  usagePort = paidUsage(),
 ): QualityService {
   const composition = {
     getManifest: vi.fn(async (_context: WorkspaceContext, jobId: string) => manifest(jobId)),
@@ -435,10 +469,39 @@ function service(
     db as unknown as Database,
     composition as unknown as CompositionService,
     reviewer,
+    usagePort as never,
   );
 }
 
 describe("quality review service", () => {
+  it("reserves before the quality provider and settles a dispatched failure", async () => {
+    const db = new FixtureDatabase();
+    const events: string[] = [];
+    const usage = paidUsage();
+    usage.reservePaidCall.mockImplementation(async () => {
+      events.push("reserve");
+      return { workspaceId, reservationId: "reservation-a", currency: "USD", estimateMinor: 1 };
+    });
+    db.providerRequest.create.mockImplementation(async () => {
+      events.push("ledger");
+    });
+    const reviewer = configuredReviewer({
+      review: vi.fn(async () => {
+        events.push("dispatch");
+        throw new Error("provider failed");
+      }),
+    });
+
+    await expect(service(db, reviewer, usage).create(context(), { renderJobId })).rejects.toThrow(
+      "provider failed",
+    );
+    expect(events).toEqual(["reserve", "ledger", "dispatch"]);
+    expect(usage.finishPaidCall).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ dispatched: true, actualCost: null }),
+    );
+  });
+
   it("uses manual review by default and stores criterion evidence and limitations", async () => {
     const db = new FixtureDatabase();
     const response = await service(db).create(context(), { renderJobId });
@@ -595,7 +658,7 @@ describe("quality review service", () => {
     const db = new FixtureDatabase();
     db.approvalPolicy = { mode: "AUTO", scoreThreshold: 80 };
     db.blockedTopics = ["short clear story"];
-    const reviewer: QualityReviewPort = { review: vi.fn(async () => fixtureResult(100)) };
+    const reviewer = configuredReviewer({ review: vi.fn(async () => fixtureResult(100)) });
 
     const response = await service(db, reviewer).create(context(), { renderJobId });
 
