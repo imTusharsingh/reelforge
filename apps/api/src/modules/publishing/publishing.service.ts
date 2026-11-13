@@ -31,6 +31,10 @@ import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js
 import { CompositionService } from "../composition/composition.service.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
 import { QualityService } from "../quality/quality.service.js";
+import {
+  currentQualityReviewFilter,
+  currentQualityReviewOrder,
+} from "../quality/quality.current-review.js";
 import { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
 import {
   CalendarRangeSchema,
@@ -49,7 +53,10 @@ import {
   type EncryptedPublishingSession,
 } from "./publishing-session-vault.js";
 import type {
+  EligibleRenderPage,
+  EligibleRenderView,
   PublishingDestinationView,
+  PublishingPlatformView,
   PublishingPreflightGate,
   PublishingPreflightView,
   PublishedPostExport,
@@ -180,6 +187,8 @@ export class PublishingService {
         );
     }
 
+    await this.quality.assertPublishable(context, request.renderJobId, request.qualityReviewRunId);
+
     const scheduledAt = request.scheduledAt === null ? null : new Date(request.scheduledAt);
     const disclosure = DisclosureDecisionSchema.parse(request.disclosure);
     let post: { id: string };
@@ -239,12 +248,7 @@ export class PublishingService {
     return this.getScheduledPost(context, post.id);
   }
 
-  public platforms(): Array<{
-    platform: "YOUTUBE" | "INSTAGRAM";
-    connectable: boolean;
-    publishable: boolean;
-    reasonCode: string | null;
-  }> {
+  public platforms(): PublishingPlatformView[] {
     const configured = this.socialAccounts.youtubeConfigured();
     const publishable = configured && this.sessionVault.isConfigured();
     return [
@@ -265,6 +269,101 @@ export class PublishingService {
         reasonCode: "INSTAGRAM_NOT_VERIFIED",
       },
     ];
+  }
+
+  public async eligibleRenders(
+    context: WorkspaceContext,
+    query: { channelId?: string; cursor?: string; limit?: string },
+  ): Promise<EligibleRenderPage> {
+    const limit = parseEligibleLimit(query.limit);
+    const channelId = query.channelId?.trim() || null;
+    if (channelId !== null && !z.uuid().safeParse(channelId).success)
+      throw new BadRequestException("channelId must be a valid UUID");
+    if (channelId !== null) {
+      const channel = await this.db.channel.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: channelId } },
+        select: { id: true },
+      });
+      if (!channel) throw new NotFoundException("Channel not found");
+    }
+    const cursor = query.cursor === undefined ? null : decodeEligibleCursor(query.cursor);
+    const now = new Date();
+    const videoArtifact = {
+      kind: "VIDEO",
+      OR: [{ retainedUntil: null }, { retainedUntil: { gt: now } }],
+    } satisfies Prisma.RenderArtifactWhereInput;
+    const rows = await this.db.renderJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        status: "SUCCEEDED",
+        expiredAt: null,
+        sceneMediaJob: { channelId: channelId ?? { not: null } },
+        artifacts: { some: videoArtifact },
+        qualityReviewRuns: {
+          some: {
+            workspaceId: context.workspaceId,
+            ...currentQualityReviewFilter,
+            status: { in: ["APPROVED", "AUTO_APPROVED"] },
+          },
+        },
+        ...(cursor === null
+          ? {}
+          : {
+              OR: [
+                { updatedAt: { lt: cursor.at } },
+                { updatedAt: cursor.at, id: { lt: cursor.id } },
+              ],
+            }),
+      },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      select: {
+        id: true,
+        updatedAt: true,
+        input: true,
+        sceneMediaJob: { select: { channelId: true, scriptId: true } },
+        artifacts: { where: videoArtifact, take: 1, select: { id: true } },
+        qualityReviewRuns: {
+          where: {
+            workspaceId: context.workspaceId,
+            ...currentQualityReviewFilter,
+          },
+          orderBy: currentQualityReviewOrder,
+          take: 1,
+          select: { id: true, status: true, createdAt: true },
+        },
+      },
+    });
+    const page = rows.slice(0, limit);
+    const items: EligibleRenderView[] = [];
+    for (const row of page) {
+      const run = row.qualityReviewRuns[0] ?? null;
+      const details = eligibleRenderDetails(row.input);
+      const rowChannelId = row.sceneMediaJob.channelId;
+      if (
+        run === null ||
+        (run.status !== "APPROVED" && run.status !== "AUTO_APPROVED") ||
+        details === null ||
+        rowChannelId === null ||
+        row.artifacts.length === 0
+      )
+        continue;
+      items.push({
+        renderJobId: row.id,
+        channelId: rowChannelId,
+        projectId: row.sceneMediaJob.scriptId,
+        title: details.title,
+        durationMs: details.durationMs,
+        completedAt: row.updatedAt.toISOString(),
+        qualityReviewRunId: run.id,
+        reviewStatus: run.status,
+        reviewedAt: run.createdAt.toISOString(),
+      });
+    }
+    return {
+      items,
+      nextCursor: rows.length > limit ? encodeEligibleCursor(rows[limit - 1]!) : null,
+    };
   }
 
   public async drafts(
@@ -1783,6 +1882,58 @@ function gate(
   evidence: string,
 ): PublishingPreflightGate {
   return { id, passed, evidence: [evidence] };
+}
+
+function parseEligibleLimit(value: string | undefined): number {
+  if (value === undefined) return 25;
+  if (!/^\d+$/.test(value)) throw new BadRequestException("limit must be an integer");
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    throw new BadRequestException("limit must be between 1 and 100");
+  return limit;
+}
+
+function encodeEligibleCursor(row: { updatedAt: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ at: row.updatedAt.toISOString(), id: row.id }),
+    "utf8",
+  ).toString("base64url");
+}
+
+function decodeEligibleCursor(value: string): { at: Date; id: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw new BadRequestException("Invalid cursor");
+  }
+  if (
+    !isRecord(parsed) ||
+    typeof parsed["at"] !== "string" ||
+    typeof parsed["id"] !== "string" ||
+    !z.uuid().safeParse(parsed["id"]).success
+  )
+    throw new BadRequestException("Invalid cursor");
+  const at = new Date(parsed["at"]);
+  if (Number.isNaN(at.getTime())) throw new BadRequestException("Invalid cursor");
+  return { at, id: parsed["id"] };
+}
+
+function eligibleRenderDetails(
+  input: Prisma.JsonValue,
+): { title: string; durationMs: number } | null {
+  if (!isRecord(input)) return null;
+  const title = input["title"];
+  const durationSeconds = renderDurationSeconds(input);
+  if (typeof title !== "string" || title.trim().length === 0 || durationSeconds === null)
+    return null;
+  const durationMs = Math.round(durationSeconds * 1000);
+  if (!Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
+  return { title, durationMs };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function renderDurationSeconds(input: Prisma.JsonValue): number | null {

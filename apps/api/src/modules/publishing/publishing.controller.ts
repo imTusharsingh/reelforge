@@ -17,6 +17,7 @@ import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { PublishingService } from "./publishing.service.js";
 import type {
+  EligibleRenderPage,
   PublishingPreflightView,
   PublishedPostExport,
   ScheduledPostView,
@@ -49,6 +50,21 @@ export class PublishingController {
   ): Promise<ReturnType<PublishingService["platforms"]>> {
     await this.context(request, workspaceId);
     return this.publishing.platforms();
+  }
+
+  @Get("eligible-renders")
+  public async eligibleRenders(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Query("channelId") channelId?: string,
+    @Query("cursor") cursor?: string,
+    @Query("limit") limit?: string,
+  ): Promise<EligibleRenderPage> {
+    return this.publishing.eligibleRenders(await this.context(request, workspaceId), {
+      ...(channelId === undefined ? {} : { channelId }),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(limit === undefined ? {} : { limit }),
+    });
   }
 
   @Get("posts")

@@ -1,15 +1,4 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Query,
-  Req,
-  Res,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import type { SocialAccount } from "@reelforge/contracts";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
@@ -110,18 +99,18 @@ export class SocialOAuthCallbackController {
       return this.socialAccounts.completeOAuth(parsePlatform(platform), parseOAuthCallback(query));
     const url = new URL("/publishing/accounts", origin);
     try {
-      const account = await this.socialAccounts.completeOAuth(
-        parsePlatform(platform),
-        parseOAuthCallback(query),
-      );
+      let parsedPlatform: ReturnType<typeof parsePlatform>;
+      let parsedQuery: ReturnType<typeof parseOAuthCallback>;
+      try {
+        parsedPlatform = parsePlatform(platform);
+        parsedQuery = parseOAuthCallback(query);
+      } catch {
+        throw new OAuthReturnError("STATE_INVALID", "Invalid OAuth callback");
+      }
+      const account = await this.socialAccounts.completeOAuth(parsedPlatform, parsedQuery);
       url.searchParams.set("connected", account.id);
     } catch (error) {
-      const code =
-        error instanceof OAuthReturnError
-          ? error.returnCode
-          : error instanceof BadRequestException
-            ? "STATE_INVALID"
-            : "EXCHANGE_FAILED";
+      const code = error instanceof OAuthReturnError ? error.returnCode : "EXCHANGE_FAILED";
       url.searchParams.set("oauthError", code);
     }
     response.redirect(302, url.toString());

@@ -69,3 +69,28 @@ export type ScheduledPostView = Readonly<{
 }>;
 
 export type PublishedPostExport = PublishedPostRecord;
+
+export type PublishingPlatformView = Readonly<{
+  platform: SocialPlatform;
+  connectable: boolean;
+  publishable: boolean;
+  reasonCode: "PLATFORM_NOT_CONFIGURED" | "PUBLISHING_NOT_CONFIGURED" | "INSTAGRAM_NOT_VERIFIED" | null;
+}>;
+
+export type EligibleRenderView = Readonly<{
+  renderJobId: string;
+  channelId: string;
+  projectId: string;
+  title: string;
+  durationMs: number;
+  completedAt: string;
+  qualityReviewRunId: string;
+  reviewStatus: "APPROVED" | "AUTO_APPROVED";
+  reviewedAt: string;
+}>;
+
+export type EligibleRenderPage = Readonly<{
+  items: readonly EligibleRenderView[];
+  nextCursor: string | null;
+}>;
+
