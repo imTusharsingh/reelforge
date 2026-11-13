@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import type { IdeaProposalLlmPort } from "@reelforge/ai-providers";
 import { describe, expect, it, vi } from "vitest";
 import { IdeaService } from "./idea.service.js";
 
@@ -68,9 +69,11 @@ function paidUsage(): { reservePaidCall: Mock; finishPaidCall: Mock } {
   };
 }
 
-function configuredIdeaLlm(llm: { proposeIdea: Mock }): typeof llm & { capability: unknown } {
+function configuredIdeaLlm(llm: {
+  proposeIdea: Mock;
+}): IdeaProposalLlmPort & { capability: unknown } {
   return {
-    ...llm,
+    proposeIdea: llm.proposeIdea as IdeaProposalLlmPort["proposeIdea"],
     capability: {
       providerId: "fixture",
       capabilityId: "idea-proposal",
