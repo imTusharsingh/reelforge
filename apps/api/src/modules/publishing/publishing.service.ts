@@ -56,6 +56,18 @@ import type {
   ScheduledPostView,
 } from "./publishing.types.js";
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")} ]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
+      .join(",")} }`;
+  }
+  return JSON.stringify(value);
+}
+
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const uploadChunkSize = 8 * 1024 * 1024;
 const latestAttemptInclude = {
@@ -102,11 +114,33 @@ export class PublishingService {
   public async createScheduledPost(
     context: WorkspaceContext,
     body: unknown,
+    onReplay?: () => void,
   ): Promise<ScheduledPostView> {
     this.requireEditor(context);
     const parsed = CreateScheduledPostSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     const request = parsed.data;
+    const { clientRequestId, ...content } = request;
+    const requestHash =
+      clientRequestId === undefined
+        ? null
+        : createHash("sha256").update(canonicalJson(content)).digest("hex");
+    const replay = async (): Promise<ScheduledPostView | null> => {
+      if (clientRequestId === undefined) return null;
+      const existing = await this.db.scheduledPost.findUnique({
+        where: {
+          workspaceId_clientRequestId: { workspaceId: context.workspaceId, clientRequestId },
+        },
+        select: { id: true, clientRequestHash: true },
+      });
+      if (!existing) return null;
+      if (existing.clientRequestHash !== requestHash)
+        throw new ConflictException("IDEMPOTENCY_KEY_CONFLICT");
+      onReplay?.();
+      return this.getScheduledPost(context, existing.id);
+    };
+    const existing = await replay();
+    if (existing) return existing;
     const channel = await this.db.channel.findUnique({
       where: { workspaceId_id: { workspaceId: context.workspaceId, id: request.channelId } },
       select: { id: true, status: true },
@@ -148,46 +182,109 @@ export class PublishingService {
 
     const scheduledAt = request.scheduledAt === null ? null : new Date(request.scheduledAt);
     const disclosure = DisclosureDecisionSchema.parse(request.disclosure);
-    const post = await this.db.$transaction(async (tx) => {
-      const created = await tx.scheduledPost.create({
-        data: {
-          workspaceId: context.workspaceId,
-          channelId: request.channelId,
-          renderJobId: request.renderJobId,
-          qualityReviewRunId: request.qualityReviewRunId,
-          scheduledAt,
-          status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
-          disclosureDecision: disclosure.decision,
-          disclosureText: disclosure.decision === "DISCLOSE" ? disclosure.disclosureText : null,
-          disclosureReason: disclosure.reason,
-          createdByUserId: context.userId,
-        },
-      });
-      for (const item of request.destinations) {
-        const idempotencyKey = randomUUID();
-        const destination = await tx.publishingDestination.create({
+    let post: { id: string };
+    try {
+      post = await this.db.$transaction(async (tx) => {
+        const created = await tx.scheduledPost.create({
           data: {
             workspaceId: context.workspaceId,
-            scheduledPostId: created.id,
-            socialAccountId: item.socialAccountId,
-            platform: item.platform,
-            metadata: item.metadata as Prisma.InputJsonValue,
+            clientRequestId: clientRequestId ?? null,
+            clientRequestHash: requestHash,
+            channelId: request.channelId,
+            renderJobId: request.renderJobId,
+            qualityReviewRunId: request.qualityReviewRunId,
+            scheduledAt,
             status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
-            idempotencyKey,
+            disclosureDecision: disclosure.decision,
+            disclosureText: disclosure.decision === "DISCLOSE" ? disclosure.disclosureText : null,
+            disclosureReason: disclosure.reason,
+            createdByUserId: context.userId,
           },
         });
-        await tx.publishJob.create({
-          data: {
-            workspaceId: context.workspaceId,
-            destinationId: destination.id,
-            status: destination.status,
-            idempotencyKey,
-          },
-        });
+        for (const item of request.destinations) {
+          const idempotencyKey = randomUUID();
+          const destination = await tx.publishingDestination.create({
+            data: {
+              workspaceId: context.workspaceId,
+              scheduledPostId: created.id,
+              socialAccountId: item.socialAccountId,
+              platform: item.platform,
+              metadata: item.metadata as Prisma.InputJsonValue,
+              status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
+              idempotencyKey,
+            },
+          });
+          await tx.publishJob.create({
+            data: {
+              workspaceId: context.workspaceId,
+              destinationId: destination.id,
+              status: destination.status,
+              idempotencyKey,
+            },
+          });
+        }
+        return created;
+      });
+    } catch (error) {
+      if (
+        clientRequestId !== undefined &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const raced = await replay();
+        if (raced) return raced;
       }
-      return created;
-    });
+      throw error;
+    }
     return this.getScheduledPost(context, post.id);
+  }
+
+  public platforms(): Array<{
+    platform: "YOUTUBE" | "INSTAGRAM";
+    connectable: boolean;
+    publishable: boolean;
+    reasonCode: string | null;
+  }> {
+    const configured = this.socialAccounts.youtubeConfigured();
+    const publishable = configured && this.sessionVault.isConfigured();
+    return [
+      {
+        platform: "YOUTUBE",
+        connectable: configured,
+        publishable,
+        reasonCode: !configured
+          ? "PLATFORM_NOT_CONFIGURED"
+          : !publishable
+            ? "PUBLISHING_NOT_CONFIGURED"
+            : null,
+      },
+      {
+        platform: "INSTAGRAM",
+        connectable: false,
+        publishable: false,
+        reasonCode: "INSTAGRAM_NOT_VERIFIED",
+      },
+    ];
+  }
+
+  public async drafts(
+    context: WorkspaceContext,
+    cursor?: string,
+  ): Promise<{ items: ScheduledPostView[]; nextCursor: string | null }> {
+    if (cursor !== undefined && !z.uuid().safeParse(cursor).success)
+      throw new BadRequestException("Invalid cursor");
+    const rows = await this.db.scheduledPost.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        status: "DRAFT",
+        ...(cursor ? { id: { gt: cursor } } : {}),
+      },
+      orderBy: { id: "asc" },
+      take: 51,
+      include: postInclude,
+    });
+    const items = rows.slice(0, 50).map((row) => this.presentPost(row));
+    return { items, nextCursor: rows.length > 50 ? (rows[49]?.id ?? null) : null };
   }
 
   public async listCalendar(

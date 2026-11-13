@@ -44,3 +44,16 @@ Review and assign the backend proposals or revise the requirements, then resume 
 ## Reviewer decision
 
 Pending.
+
+## 2026-11-13 Core decision follow-up
+
+Minu approved D1–D3 in PR #93. Their initial backend implementation is in progress and is not yet verified against the required new tests or migration integration. No UI has been implemented.
+
+A further interface gap blocks the composer: `GET quality/queue` only returns `REVIEW_REQUIRED`, `BLOCKED`, and `AI_REVIEW_UNAVAILABLE` runs, while `GET quality/renders/:renderJobId/status` returns the status and gates but not the review-run ID. `POST publishing/posts` requires `qualityReviewRunId`. Thus an approved render cannot be selected and submitted using the existing read interfaces. Proposed resolution: a workspace-scoped, paginated publishing read endpoint that returns eligible render IDs and their current approved review-run IDs, filtered to `APPROVED` / `AUTO_APPROVED` and non-superseded runs, with channel identity; alternatively, expose the current review-run ID on the quality status endpoint. Core decision/assignment is needed before expanding the approved backend scope.
+
+Evidence since the original investigation:
+
+- `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" pnpm install --frozen-lockfile` — passed.
+- `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:55440/reelforge?schema=public' pnpm exec vitest run apps/api/src/modules/publishing/publishing.service.test.ts apps/api/src/modules/publishing/publishing.validation.test.ts apps/api/src/modules/social-accounts/social-accounts.service.test.ts` — passed: 3 files, 31 tests. These are existing tests and do not establish acceptance of the new interfaces.
+- An initial API typecheck failed on an optional Prisma field; the field was corrected. The repeat result is recorded separately below when available.
+- Repeat `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:55440/reelforge?schema=public' pnpm --filter @reelforge/api typecheck` — passed.

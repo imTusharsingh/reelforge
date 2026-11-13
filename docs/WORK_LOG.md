@@ -1206,3 +1206,7 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ### 2026-11-13 — M27 backend interface investigation
 
 M27 developer created the isolated `work/m27-publishing-and-calendar-ui` worktree and inspected the existing publishing and social-account interfaces. Implementation is blocked pending a platform availability interface, recoverable idempotent post creation, and an OAuth return path to the UI. See the M27 status and draft PR for proposed changes. No implementation checks were run.
+
+### 2026-11-13 — M27 Core decision follow-up
+
+Minu approved the three backend proposals in PR #93. Initial D1–D3 code was started; further tests and UI remain. Inspection found that approved quality runs cannot be discovered with their IDs through the existing read interfaces, although post creation requires the ID. M27 status and the PR record the proposed read interface for Core decision.
