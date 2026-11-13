@@ -203,8 +203,8 @@ export class IdeaService {
       dispatched = true;
       const result = await this.llm.proposeIdea(
         request.contextText === undefined
-          ? { prompt: request.prompt }
-          : { prompt: request.prompt, context: request.contextText },
+          ? { prompt: request.prompt, correlationId }
+          : { prompt: request.prompt, context: request.contextText, correlationId },
       );
       let proposal: IdeaInput;
       try {

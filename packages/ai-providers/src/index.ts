@@ -21,7 +21,9 @@ export type IdeaProposalResult = Readonly<{
 }>;
 
 export interface IdeaProposalLlmPort {
-  proposeIdea(input: Readonly<{ prompt: string; context?: string }>): Promise<IdeaProposalResult>;
+  proposeIdea(
+    input: Readonly<{ prompt: string; context?: string; correlationId: string }>,
+  ): Promise<IdeaProposalResult>;
 }
 
 export const IDEA_PROPOSAL_LLM = Symbol("IDEA_PROPOSAL_LLM");
@@ -138,6 +140,11 @@ export type VideoRequest = Readonly<{
   prompt: string;
   durationSeconds: number;
   correlationId: string;
+  providerJobId?: string;
+  /** Reuses the first submit's idempotency key when that submit's result is uncertain. */
+  idempotencyKey?: string;
+  /** Called once the provider has accepted a job and before polling starts. */
+  onProviderJobAccepted?: (providerJobId: string) => Promise<void>;
 }>;
 export interface VideoProviderPort {
   readonly capability: CapabilityMetadata;
@@ -160,14 +167,26 @@ export type ProviderErrorCode =
   | "PROVIDER_UNAVAILABLE"
   | "PROVIDER_REJECTED"
   | "UNKNOWN";
+export type ProviderErrorDetails = Readonly<{
+  /** False only when this process provably did not send the provider request. */
+  providerCalled?: boolean;
+  providerJobId?: string;
+}>;
+
 export class ProviderError extends Error {
+  public readonly providerCalled: boolean;
+  public readonly providerJobId: string | undefined;
+
   public constructor(
     public readonly code: ProviderErrorCode,
     message: string,
     public readonly correlationId: string,
+    details: ProviderErrorDetails = {},
   ) {
     super(message);
     this.name = "ProviderError";
+    this.providerCalled = details.providerCalled !== false;
+    this.providerJobId = details.providerJobId;
   }
 }
 export type ProviderCredential = Readonly<{

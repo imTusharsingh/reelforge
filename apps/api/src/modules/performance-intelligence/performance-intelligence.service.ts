@@ -606,6 +606,7 @@ export class PerformanceIntelligenceService {
             ledgerCreated = true;
             dispatched = true;
             const result = await this.llm.generate({
+              correlationId,
               channelId: input.channelId,
               currentWindow,
               previousWindow: previous,

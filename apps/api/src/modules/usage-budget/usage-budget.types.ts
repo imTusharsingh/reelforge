@@ -5,6 +5,7 @@ export const USAGE_CATEGORIES = [
   "LLM",
   "TTS",
   "IMAGE_MEDIA",
+  "VIDEO_MEDIA",
   "RENDER",
   "PUBLISH",
   "ANALYTICS_API",

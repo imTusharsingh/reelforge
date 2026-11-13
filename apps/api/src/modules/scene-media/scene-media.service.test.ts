@@ -24,6 +24,12 @@ import { BudgetExhaustedError } from "../usage-budget/usage-budget.types.js";
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+function mp4Bytes(): Uint8Array {
+  const body = Buffer.alloc(16);
+  body.write("ftyp", 4, "ascii");
+  return new Uint8Array(body);
+}
+
 function wavBytes(): Uint8Array {
   const body = Buffer.alloc(12);
   body.write("RIFF", 0, "ascii");
@@ -664,6 +670,33 @@ function memoryDatabase(state: MemoryState): {
         outputs.push(row);
         return row;
       },
+      findFirst: async ({
+        where,
+      }: {
+        where: { workspaceId: string; sceneGenerationId: string; kind: string };
+      }): Promise<unknown> =>
+        outputs.find(
+          (row) =>
+            row.workspaceId === where.workspaceId &&
+            row.sceneGenerationId === where.sceneGenerationId &&
+            row.kind === where.kind,
+        ) ?? null,
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+        data: Record<string, unknown>;
+      }): Promise<unknown> => {
+        const row = outputs.find(
+          (item) =>
+            item.workspaceId === where.workspaceId_id.workspaceId &&
+            item.id === where.workspaceId_id.id,
+        );
+        if (!row) throw new Error("missing scene output");
+        Object.assign(row, data);
+        return row;
+      },
     },
     asset: {
       findFirst: async ({
@@ -1062,6 +1095,104 @@ describe("scene media generation", () => {
     expect(sceneTwo?.outputs.find((output) => output.kind === "NARRATION")?.status).toBe("REUSED");
   });
 
+  it("resumes polling from a stored video provider job", async () => {
+    const requests: Array<{ providerJobId?: string }> = [];
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      video: {
+        generate: async (request) => {
+          requests.push(
+            request.providerJobId === undefined ? {} : { providerJobId: request.providerJobId },
+          );
+          if (requests.length === 1) {
+            await request.onProviderJobAccepted?.("video_job_1");
+            throw new ProviderError("PROVIDER_UNAVAILABLE", "timed out", request.correlationId, {
+              providerCalled: true,
+              providerJobId: "video_job_1",
+            });
+          }
+          return {
+            mediaId: "video_job_1",
+            providerJobId: "video_job_1",
+            providerRequestId: "video_job_1",
+            metadata: { modelVersion: "m", promptVersion: "p", cost: null, currency: "USD" },
+            media: { declaredMediaType: "video/mp4", body: mp4Bytes() },
+          };
+        },
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: true, narration: false, dialogue: false },
+    });
+    expect(created.scenes[0]?.outputs.find((output) => output.kind === "VIDEO")).toMatchObject({
+      status: "FAILED_RETRYABLE",
+      providerJobId: "video_job_1",
+    });
+    const resumed = await env.service.retry(env.context, created.jobId, {
+      idempotencyKey: randomUUID(),
+      expectedJobVersion: created.version,
+    });
+    expect(requests[1]).toEqual({ providerJobId: "video_job_1" });
+    expect(resumed.scenes[0]?.outputs.find((output) => output.kind === "VIDEO")?.status).toBe(
+      "SUCCEEDED",
+    );
+  });
+
+  it("reuses the first submit key when a video request times out before a job id exists", async () => {
+    const requests: Array<{
+      correlationId: string;
+      idempotencyKey?: string;
+      providerJobId?: string;
+    }> = [];
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      video: {
+        generate: async (request) => {
+          requests.push({
+            correlationId: request.correlationId,
+            ...(request.providerJobId === undefined
+              ? {}
+              : { providerJobId: request.providerJobId }),
+            ...(request.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: request.idempotencyKey }),
+          });
+          if (requests.length === 1) {
+            throw new ProviderError(
+              "PROVIDER_UNAVAILABLE",
+              "submit timed out",
+              request.correlationId,
+              {
+                providerCalled: true,
+              },
+            );
+          }
+          return {
+            mediaId: "video_job_2",
+            providerJobId: "video_job_2",
+            providerRequestId: "video_job_2",
+            metadata: { modelVersion: "m", promptVersion: "p", cost: null, currency: "USD" },
+            media: { declaredMediaType: "video/mp4", body: mp4Bytes() },
+          };
+        },
+      },
+    });
+    const created = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: true, narration: false, dialogue: false },
+    });
+    expect(
+      created.scenes[0]?.outputs.find((output) => output.kind === "VIDEO")?.providerJobId,
+    ).toBe(null);
+    await env.service.retry(env.context, created.jobId, {
+      idempotencyKey: randomUUID(),
+      expectedJobVersion: created.version,
+    });
+    expect(requests[1]?.providerJobId).toBeUndefined();
+    expect(requests[1]?.idempotencyKey).toBe(requests[0]?.correlationId);
+  });
+
   it("regenerates and replaces one scene without restarting the other", async () => {
     const voiced = withVoice(["one", "two"]);
     const env = harness({ scenes: voiced.scenes, characters: voiced.characters });
@@ -1272,6 +1403,41 @@ describe("scene media generation", () => {
     });
     await failing.service.create(failing.context, createBody(failing.scriptId));
     expect(finished).toEqual([[hold, { dispatched: true, actualCost: null }]]);
+  });
+
+  it("reserves the paid call before the provider is invoked", async () => {
+    const events: string[] = [];
+    const env = harness({
+      scenes: [scene("one", { narration: undefined, dialogue: "" })],
+      usage: {
+        reservePaidCall: async (): Promise<{
+          workspaceId: string;
+          reservationId: string;
+          currency: string;
+          estimateMinor: number;
+        }> => {
+          events.push("reserve");
+          return { workspaceId: "w", reservationId: "r", currency: "USD", estimateMinor: 1 };
+        },
+        finishPaidCall: async (): Promise<void> => {
+          events.push("finish");
+        },
+      },
+      image: {
+        generate: async (request) => {
+          events.push("dispatch");
+          return {
+            mediaId: `img-${request.correlationId}`,
+            providerJobId: `job-${request.correlationId}`,
+            providerRequestId: `req-${request.correlationId}`,
+            metadata: { modelVersion: "m", promptVersion: "p", cost: 1, currency: "USD" },
+            media: { declaredMediaType: "image/png", body: PNG },
+          };
+        },
+      },
+    });
+    await env.service.create(env.context, createBody(env.scriptId));
+    expect(events).toEqual(["reserve", "dispatch", "finish"]);
   });
 
   it("does not call an unconfigured provider or publish media", async () => {
