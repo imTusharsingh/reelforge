@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { ProductionApiError } from "./api";
+import { makeRenderInput } from "./composition";
 import { LoadResult } from "./common";
 import {
   canWrite,
@@ -229,10 +230,11 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
             <AssetGallery assets={state.data!.assets} workspaceId={client.workspaceId} />
             <Panel>
               <h2>Render & export history</h2>
+              <RenderStart job={job} revision={scriptRevision} />
               {state.data!.renders.items.length === 0 ? (
                 <StateMessage
                   kind="empty"
-                  description="No persisted render exists for this script. Render creation is not exposed here because the current server requires a complete validated composition request."
+                  description="No persisted render exists for this script."
                 />
               ) : (
                 <ul className={styles.list}>
@@ -259,6 +261,116 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
         )}
       </LoadResult>
     </section>
+  );
+}
+
+function RenderStart({
+  job,
+  revision,
+}: {
+  job: SceneMediaPackage;
+  revision: import("./model").ScriptRevision;
+}): JSX.Element {
+  const { client } = useProduction();
+  const marker = `reelforge.render.pending:${client.workspaceId}:${job.jobId}`;
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState("");
+  useEffect(() => {
+    try {
+      setPending(sessionStorage.getItem(marker) !== null);
+    } catch {
+      setPending(true);
+      setError("Storage is unavailable; render creation is disabled.");
+    }
+  }, [marker]);
+  let reason = "";
+  try {
+    makeRenderInput(job, revision, "validation-seed");
+  } catch (cause) {
+    reason = cause instanceof Error ? cause.message : "Production is not ready to render.";
+  }
+  const start = async (): Promise<void> => {
+    if (!canWrite(client.role) || pending !== false || busy || reason || created) return;
+    if (
+      !window.confirm("Start a render using the pinned scene images and available voice outputs?")
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      const key = crypto.randomUUID();
+      const input = makeRenderInput(job, revision, crypto.randomUUID());
+      sessionStorage.setItem(marker, key);
+      setPending(true);
+      const result = await client.startRender(input, key);
+      sessionStorage.removeItem(marker);
+      setPending(false);
+      setCreated(result.id);
+    } catch (cause) {
+      const uncertain = !(cause instanceof ProductionApiError) || cause.uncertain;
+      if (!uncertain) {
+        sessionStorage.removeItem(marker);
+        setPending(false);
+      }
+      setError(cause instanceof Error ? cause.message : "Render could not be started.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={styles.workspace}>
+      <p>
+        Creates a vertical render using each scene’s image (or video if no image exists), one voice
+        output, cuts, and the first scene as its cover. Captions and music are not included.
+      </p>
+      {reason && <p className={styles.notice}>{reason}</p>}
+      {error && (
+        <Alert tone="danger" title="Render could not be started">
+          {error}
+        </Alert>
+      )}
+      {pending && (
+        <Alert tone="warning" title="Render request needs review">
+          The previous request may have succeeded. Refresh and inspect render history before
+          starting another render; no request is retried automatically.{" "}
+          <Button
+            tone="secondary"
+            onClick={() => {
+              if (window.confirm("Have you checked the render history for the earlier request?")) {
+                try {
+                  sessionStorage.removeItem(marker);
+                  setPending(false);
+                  setError("");
+                } catch {
+                  setError("Storage is unavailable; render creation is disabled.");
+                }
+              }
+            }}
+          >
+            I checked render history
+          </Button>
+        </Alert>
+      )}
+      <Button
+        loading={busy}
+        disabled={
+          !canWrite(client.role) || pending !== false || busy || Boolean(reason) || Boolean(created)
+        }
+        onClick={() => void start()}
+      >
+        Start render
+      </Button>
+      {created && (
+        <p role="status">
+          Render started.{" "}
+          <StudioLink href={`/production/renders/${encodeURIComponent(created)}`}>
+            Open render
+          </StudioLink>
+        </p>
+      )}
+    </div>
   );
 }
 

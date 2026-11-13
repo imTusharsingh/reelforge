@@ -90,6 +90,95 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
   }
 }
 try {
+  for (const width of [390, 1440]) {
+    await test(
+      `start render from pinned production at ${width}px`,
+      async (page) => {
+        const button = page.getByRole("button", { name: "Start render" });
+        await button.waitFor();
+        await page.waitForFunction(() =>
+          [...document.querySelectorAll("button")].some(
+            (b) => b.textContent === "Start render" && !b.disabled,
+          ),
+        );
+        page.once("dialog", (dialog) => dialog.accept());
+        await button.click();
+        await page.getByText("Render started.", { exact: false }).waitFor();
+        const writes = (await page.evaluate(() => window.m25Fixture.calls)).filter(
+          (call) => call.path === "composition/jobs" && call.method === "POST",
+        );
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].body.input.sourceMediaPackage.scriptRevision, 1);
+        assert.equal(writes[0].body.input.scenes.length, 2);
+        assert.equal(
+          await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth),
+          true,
+        );
+      },
+      "mode=render-start",
+      { width, height: 900 },
+    );
+    await test(
+      `viewer cannot start render at ${width}px`,
+      async (page) => {
+        const button = page.getByRole("button", { name: "Start render" });
+        await button.waitFor();
+        assert.equal(await button.isDisabled(), true);
+        assert.equal(
+          (await page.evaluate(() => window.m25Fixture.calls)).some(
+            (call) => call.method === "POST",
+          ),
+          false,
+        );
+      },
+      "mode=render-start&role=VIEWER",
+      { width, height: 900 },
+    );
+  }
+  await test(
+    "budget block is displayed without automatic retry",
+    async (page) => {
+      const button = page.getByRole("button", { name: "Start render" });
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent === "Start render" && !b.disabled,
+        ),
+      );
+      page.once("dialog", (dialog) => dialog.accept());
+      await button.click();
+      await page.getByText(/BUDGET_EXHAUSTED/).waitFor();
+      assert.equal(
+        (await page.evaluate(() => window.m25Fixture.calls)).filter(
+          (call) => call.path === "composition/jobs" && call.method === "POST",
+        ).length,
+        1,
+      );
+    },
+    "mode=render-budget",
+  );
+  await test(
+    "unreadable response remains blocked after reload without retry",
+    async (page) => {
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent === "Start render" && !b.disabled,
+        ),
+      );
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.getByRole("button", { name: "Start render" }).click();
+      await page.getByText("Render request needs review").waitFor();
+      await page.reload();
+      await page.getByText("Render request needs review").waitFor();
+      assert.equal(await page.getByRole("button", { name: "Start render" }).isDisabled(), true);
+      assert.equal(
+        (await page.evaluate(() => window.m25Fixture.calls)).filter(
+          (call) => call.path === "composition/jobs" && call.method === "POST",
+        ).length,
+        0,
+      );
+    },
+    "mode=render-uncertain",
+  );
   await test("persisted scene timeline, narration and provider-unavailable controls", async (page) => {
     await page.getByRole("heading", { name: "The twenty-second reset" }).waitFor();
     assert.equal(await page.getByText("Latest revision must stay hidden").count(), 0);
