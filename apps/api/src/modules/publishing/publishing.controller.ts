@@ -74,8 +74,9 @@ export class PublishingController {
     @Query("status") status: string,
     @Query("cursor") cursor?: string,
   ): ReturnType<PublishingService["drafts"]> {
+    const context = await this.context(request, workspaceId);
     if (status !== "DRAFT") throw new BadRequestException("Only DRAFT is supported");
-    return this.publishing.drafts(await this.context(request, workspaceId), cursor);
+    return this.publishing.drafts(context, cursor);
   }
 
   @Get("calendar")

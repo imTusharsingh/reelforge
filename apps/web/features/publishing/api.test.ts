@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PublishingApiError, PublishingClient } from "./api";
 import {
+  accounts,
+  accountId,
   blockedPreflight,
   createRequest,
   passingPreflight,
@@ -20,6 +22,10 @@ const json = (value: unknown, status = 200): Response =>
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal("sessionStorage", {
+    get length() {
+      return values.size;
+    },
+    key: (index: number) => [...values.keys()][index] ?? null,
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value),
     removeItem: (key: string) => values.delete(key),
@@ -190,5 +196,26 @@ describe("M27 publishing client", () => {
       "https://accounts.example.test/auth",
     );
     await expect(api.connect(post.channelId, "YOUTUBE", "remote")).rejects.toThrow();
+  });
+});
+
+describe("account action recovery", () => {
+  it("keeps interrupted actions locked across reload until accounts are inspected", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(json({ message: "Unavailable" }, 503))
+      .mockImplementation(() => Promise.resolve(json(accounts)));
+    vi.stubGlobal("fetch", fetch);
+    const first = client();
+    await expect(first.refreshAccount(accountId)).rejects.toMatchObject({ uncertain: true });
+    const reloaded = client();
+    const scope = `account:${accountId}`;
+    expect(reloaded.pendingAccountScopes()).toEqual([scope]);
+    expect(() => reloaded.acknowledge(scope)).toThrow("Fetch the persisted");
+    await expect(reloaded.revokeAccount(accountId)).rejects.toMatchObject({ status: 409 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await reloaded.reconcileAccounts();
+    reloaded.acknowledge(scope);
+    expect(reloaded.pendingAccountScopes()).toEqual([]);
   });
 });

@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { Response } from "express";
+import { Test } from "@nestjs/testing";
+import type { INestApplication } from "@nestjs/common";
+import request from "supertest";
 import { SocialOAuthCallbackController } from "./social-accounts.controller.js";
-import { OAuthReturnError, type SocialAccountsService } from "./social-accounts.service.js";
+import { OAuthReturnError, SocialAccountsService } from "./social-accounts.service.js";
 
 const state = "a".repeat(43);
 const secret = "provider-secret-code";
@@ -59,5 +62,53 @@ describe("OAuth browser return", () => {
     await expect(
       controller.callback("YOUTUBE", { state, code: secret }, {} as Response),
     ).resolves.toEqual({ id: "account-id" });
+  });
+});
+
+describe("OAuth callback HTTP response", () => {
+  let app: INestApplication;
+  const completeOAuth = vi.fn();
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      controllers: [SocialOAuthCallbackController],
+      providers: [{ provide: SocialAccountsService, useValue: { completeOAuth } }],
+    }).compile();
+    app = module.createNestApplication();
+    await app.init();
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+  it.each([
+    "STATE_INVALID",
+    "STATE_EXPIRED",
+    "ACCESS_DENIED",
+    "PLATFORM_NOT_CONFIGURED",
+    "EXCHANGE_FAILED",
+  ] as const)("returns an actual 302 for %s", async (code) => {
+    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    completeOAuth.mockRejectedValueOnce(new OAuthReturnError(code, secret));
+    const response = await request(app.getHttpServer() as never)
+      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .expect(302);
+    expect(response.headers.location).toBe(
+      `https://studio.example/publishing/accounts?oauthError=${code}`,
+    );
+    expect(response.headers.location).not.toContain(secret);
+    expect(response.headers.location).not.toContain(state);
+  });
+  it("returns an actual success redirect and preserves JSON fallback", async () => {
+    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    completeOAuth.mockResolvedValueOnce({ id: "account-id" });
+    await request(app.getHttpServer() as never)
+      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .expect(302)
+      .expect("Location", "https://studio.example/publishing/accounts?connected=account-id");
+    delete process.env.WEB_APP_ORIGIN;
+    completeOAuth.mockResolvedValueOnce({ id: "account-id" });
+    const json = await request(app.getHttpServer() as never)
+      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .expect(200);
+    expect(json.body).toEqual({ id: "account-id" });
   });
 });

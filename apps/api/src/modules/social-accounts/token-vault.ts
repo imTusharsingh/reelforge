@@ -11,6 +11,15 @@ export type EncryptedSecret = Readonly<{
 export class TokenVault {
   public constructor(private readonly encodedKey: string | undefined) {}
 
+  public isConfigured(): boolean {
+    try {
+      this.key();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   public encrypt(value: string, context: string): EncryptedSecret {
     const key = this.key();
     const nonce = randomBytes(12);

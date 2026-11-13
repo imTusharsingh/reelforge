@@ -708,6 +708,23 @@ describe("M27 platform availability", () => {
       },
     ]);
   });
+  it("requires the publishing session vault for publishability", () => {
+    const publishing = new PublishingService(
+      {} as PrismaClient,
+      {} as CompositionService,
+      {} as QualityService,
+      { youtubeConfigured: () => true } as unknown as SocialAccountsService,
+      {} as StoragePort,
+      new UnconfiguredPublishingSchedulePort(),
+      new UnconfiguredPublishingBudgetPort(),
+      new PublishingSessionVault(undefined),
+    );
+    expect(publishing.platforms()[0]).toMatchObject({
+      connectable: true,
+      publishable: false,
+      reasonCode: "PUBLISHING_NOT_CONFIGURED",
+    });
+  });
   it("keeps unconfigured YouTube unavailable", () => {
     const publishing = service({}, { socialAccounts: { youtubeConfigured: () => false } });
     expect(publishing.platforms()[0]).toMatchObject({ connectable: false, publishable: false });
@@ -814,7 +831,9 @@ describe("M27 post creation replay", () => {
           publishJob: { create: async () => ({}) },
         }),
     };
-    const publishing = service(db, { quality: { assertPublishable: vi.fn().mockResolvedValue([]) } });
+    const publishing = service(db, {
+      quality: { assertPublishable: vi.fn().mockResolvedValue([]) },
+    });
     vi.spyOn(publishing, "getScheduledPost").mockResolvedValue(created);
     const onReplay = vi.fn();
     expect(await publishing.createScheduledPost(context(), request, onReplay)).toBe(created);
@@ -864,26 +883,26 @@ describe("M27 eligible render discovery", () => {
       qualityReviewRuns: run === null ? [] : [run],
     };
   }
-  const approvedRow = row(
-    "11111111-1111-4111-8111-111111111111",
-    "2026-11-12T06:00:00.000Z",
-    { id: reviewId, status: "APPROVED", createdAt: reviewedAt },
-  );
-  const autoRow = row(
-    "22222222-2222-4222-8222-222222222222",
-    "2026-11-12T05:30:00.000Z",
-    { id: "99999999-9999-4999-8999-999999999999", status: "AUTO_APPROVED", createdAt: reviewedAt },
-  );
-  const pendingRow = row(
-    "33333333-3333-4333-8333-333333333333",
-    "2026-11-12T05:15:00.000Z",
-    { id: reviewId, status: "REVIEW_REQUIRED", createdAt: reviewedAt },
-  );
-  const rejectedRow = row(
-    "44444444-4444-4444-8444-444444444444",
-    "2026-11-12T05:10:00.000Z",
-    { id: reviewId, status: "REJECTED", createdAt: reviewedAt },
-  );
+  const approvedRow = row("11111111-1111-4111-8111-111111111111", "2026-11-12T06:00:00.000Z", {
+    id: reviewId,
+    status: "APPROVED",
+    createdAt: reviewedAt,
+  });
+  const autoRow = row("22222222-2222-4222-8222-222222222222", "2026-11-12T05:30:00.000Z", {
+    id: "99999999-9999-4999-8999-999999999999",
+    status: "AUTO_APPROVED",
+    createdAt: reviewedAt,
+  });
+  const pendingRow = row("33333333-3333-4333-8333-333333333333", "2026-11-12T05:15:00.000Z", {
+    id: reviewId,
+    status: "REVIEW_REQUIRED",
+    createdAt: reviewedAt,
+  });
+  const rejectedRow = row("44444444-4444-4444-8444-444444444444", "2026-11-12T05:10:00.000Z", {
+    id: reviewId,
+    status: "REJECTED",
+    createdAt: reviewedAt,
+  });
   const supersededRow = row(
     "55555555-5555-4555-8555-555555555555",
     "2026-11-12T05:05:00.000Z",
@@ -940,11 +959,11 @@ describe("M27 eligible render discovery", () => {
   });
 
   it("excludes an older approval once a newer review replaces it", async () => {
-    const replaced = row(
-      "66666666-6666-4666-8666-666666666666",
-      "2026-11-12T06:00:00.000Z",
-      { id: reviewId, status: "REJECTED", createdAt: reviewedAt },
-    );
+    const replaced = row("66666666-6666-4666-8666-666666666666", "2026-11-12T06:00:00.000Z", {
+      id: reviewId,
+      status: "REJECTED",
+      createdAt: reviewedAt,
+    });
     const publishing = service({ renderJob: { findMany: vi.fn().mockResolvedValue([replaced]) } });
     await expect(publishing.eligibleRenders(context(), {})).resolves.toEqual({
       items: [],
@@ -983,7 +1002,10 @@ describe("M27 eligible render discovery", () => {
     };
     expect(where.OR).toEqual([
       { updatedAt: { lt: new Date("2026-11-12T06:00:00.000Z") } },
-      { updatedAt: new Date("2026-11-12T06:00:00.000Z"), id: { lt: "11111111-1111-4111-8111-111111111111" } },
+      {
+        updatedAt: new Date("2026-11-12T06:00:00.000Z"),
+        id: { lt: "11111111-1111-4111-8111-111111111111" },
+      },
     ]);
   });
 });

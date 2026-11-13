@@ -1213,3 +1213,7 @@ Minu approved the three backend proposals in PR #93. Initial D1–D3 code was st
 ## 2026-11-13 — C3 PR #97 review follow-up
 
 On work/issue-69-c-scene-assets, merged origin/main and installed the exact pinned toolchain/dependencies. Addressed Minu B1–B5: formatting, ASSIGNED composition compatibility, consistent scene_generation_output usage, stable assign reconciliation keys, and service/Postgres/web/browser regression coverage. Focused suite: 128 passed; mounted production browser: 28 passed at 390/1440. No live provider calls. Pending independent Minu review and hosted CI.
+
+## 2026-11-13 — M27 cloud continuation (#82 / #93)
+
+Continued c9c2537 on work/m27-publishing-and-calendar-ui and merged main. Implemented and verified approved D1–D4 publishing reads, client-key replay/race handling, safe OAuth return, current approved-render discovery, and publishing/calendar/account UI. Added actual PostgreSQL service/HTTP concurrency and isolation tests, account-action recovery across reload, 22 offline mounted-browser scenarios, and checkpoint lint/format fixes. The one unmerged M27 migration was renamed to 20261121020000 after C3 occupied its timestamp; SQL and existing main migrations were preserved. Full validation and independent Minu review remain pending; no live provider calls, approvals or merges by this agent.

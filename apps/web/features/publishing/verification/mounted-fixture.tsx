@@ -31,6 +31,8 @@ Object.assign(window, { m27Fixture: { calls } });
 
 let current: Post = structuredClone(post);
 let createCalls = 0;
+let accountCalls = 0;
+let currentAccounts = structuredClone(accounts);
 if (mode === "retry") {
   current = {
     ...current,
@@ -55,7 +57,10 @@ if (mode === "scheduled") {
 }
 if (mode === "post-pending") {
   try {
-    sessionStorage.setItem(`reelforge:publishing:pending:${workspaceId}:post:${post.id}`, "pending");
+    sessionStorage.setItem(
+      `reelforge:publishing:pending:${workspaceId}:post:${post.id}`,
+      "pending",
+    );
   } catch {
     // The fixture mirrors the browser storage contract.
   }
@@ -102,11 +107,29 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
     body: typeof init?.body === "string" ? init.body : null,
   });
   const publishing = path.slice(path.indexOf("/publishing"));
-  const destinationMatch = path.match(/\/destinations\/([^/]+)\/(preflight|publish|retry|reconcile)$/);
+  const destinationMatch = path.match(
+    /\/destinations\/([^/]+)\/(preflight|publish|retry|reconcile)$/,
+  );
   const postMatch = path.match(/\/publishing\/posts\/([^/]+)(?:\/(cancel))?$/);
 
   if (path.endsWith("/publishing/platforms")) return json(platforms);
-  if (path.endsWith("/social-accounts")) return json(accounts);
+  if (path.endsWith("/social-accounts")) return json(currentAccounts);
+  if (method === "POST" && path.includes("/social-accounts/")) {
+    accountCalls += 1;
+    if (mode === "accounts-interrupted" && accountCalls === 1)
+      return json({ message: "Interrupted" }, 503);
+    if (path.endsWith("/connect"))
+      return json({
+        authorizationUrl: "https://oauth.fixture.test/authorize",
+      });
+    if (path.endsWith("/revoke"))
+      currentAccounts = currentAccounts.map((account) => ({
+        ...account,
+        status: "REVOKED",
+        health: "UNAVAILABLE",
+      }));
+    return json({});
+  }
   if (path.endsWith("/channels")) return json(channels);
   if (path.endsWith("/publishing/eligible-renders"))
     return json({ items: [eligibleRender], nextCursor: null });
@@ -179,7 +202,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
 
 function Fixture(): JSX.Element {
   let content: JSX.Element;
-  if (mode === "accounts" || mode === "connect-error") content = <Accounts />;
+  if (mode.startsWith("accounts") || mode === "connect-error") content = <Accounts />;
   else if (mode === "history") content = <History />;
   else if (mode === "calendar" || mode === "calendar-mobile") content = <Calendar />;
   else if (mode.startsWith("post-") || mode === "retry" || mode === "scheduled")

@@ -142,7 +142,10 @@ export class PublishingService {
       });
       if (!existing) return null;
       if (existing.clientRequestHash !== requestHash)
-        throw new ConflictException("IDEMPOTENCY_KEY_CONFLICT");
+        throw new ConflictException({
+          code: "IDEMPOTENCY_KEY_CONFLICT",
+          message: "IDEMPOTENCY_KEY_CONFLICT",
+        });
       onReplay?.();
       return this.getScheduledPost(context, existing.id);
     };
@@ -290,6 +293,7 @@ export class PublishingService {
     const now = new Date();
     const videoArtifact = {
       kind: "VIDEO",
+      asset: { status: "PUBLISHED", byteSize: { gt: 0 }, checksumSha256: { not: null } },
       OR: [{ retainedUntil: null }, { retainedUntil: { gt: now } }],
     } satisfies Prisma.RenderArtifactWhereInput;
     const rows = await this.db.renderJob.findMany({
@@ -330,7 +334,16 @@ export class PublishingService {
           },
           orderBy: currentQualityReviewOrder,
           take: 1,
-          select: { id: true, status: true, createdAt: true },
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            decisions: {
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              take: 1,
+              select: { createdAt: true },
+            },
+          },
         },
       },
     });
@@ -357,7 +370,7 @@ export class PublishingService {
         completedAt: row.updatedAt.toISOString(),
         qualityReviewRunId: run.id,
         reviewStatus: run.status,
-        reviewedAt: run.createdAt.toISOString(),
+        reviewedAt: (run.decisions?.[0]?.createdAt ?? run.createdAt).toISOString(),
       });
     }
     return {

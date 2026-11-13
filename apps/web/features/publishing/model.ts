@@ -231,7 +231,8 @@ export function parseCreatePostRequest(
 ): CreatePostRequest {
   const row = record(value);
   const clientRequestId = text(row.clientRequestId);
-  if (expectedClientRequestId !== undefined && clientRequestId !== expectedClientRequestId) invalid();
+  if (expectedClientRequestId !== undefined && clientRequestId !== expectedClientRequestId)
+    invalid();
   if (!Array.isArray(row.destinations) || row.destinations.length === 0) invalid();
   const disclosureRow = record(row.disclosure);
   let disclosure: Disclosure;
@@ -313,7 +314,7 @@ function parseDestination(value: unknown): Destination {
     latestAttempt:
       attempt === null
         ? null
-        : (() => {
+        : ((): NonNullable<Destination["latestAttempt"]> => {
             const value = record(attempt);
             return {
               id: text(value.id),
@@ -371,7 +372,10 @@ export function parsePreflight(value: unknown, destinationId: string): Preflight
     canPublish: boolean(row.canPublish),
     gates: row.gates.map((item) => {
       const gate = record(item);
-      if (!Array.isArray(gate.evidence) || !gate.evidence.every((entry) => typeof entry === "string"))
+      if (
+        !Array.isArray(gate.evidence) ||
+        !gate.evidence.every((entry) => typeof entry === "string")
+      )
         invalid();
       return {
         id: text(gate.id),

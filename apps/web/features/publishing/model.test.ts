@@ -172,7 +172,9 @@ describe("M27 publishing model validation", () => {
     expect(parseAuthorizationUrl({ authorizationUrl: "https://accounts.example.test/auth" })).toBe(
       "https://accounts.example.test/auth",
     );
-    expect(() => parseAuthorizationUrl({ authorizationUrl: "http://accounts.example.test/auth" })).toThrow();
+    expect(() =>
+      parseAuthorizationUrl({ authorizationUrl: "http://accounts.example.test/auth" }),
+    ).toThrow();
     expect(formatDuration(65_000)).toBe("1:05");
   });
 });

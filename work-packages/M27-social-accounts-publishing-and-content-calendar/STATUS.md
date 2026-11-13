@@ -1,59 +1,40 @@
-# M27 Status - Social Accounts, Publishing & Content Calendar
+# M27 Status — Social Accounts, Publishing & Content Calendar
 
-- **State:** BLOCKED
-- **Assigned session/editor:** M27 developer
-- **Branch/worktree:** `work/m27-publishing-and-calendar-ui` / `reelforge-m27`
-- **Last updated:** 2026-11-13
-- **Reviewer:** Core Architect/Reviewer
-- **Approved commit:** none
+- State: IMPLEMENTED_PENDING_REVIEW
+- Branch: work/m27-publishing-and-calendar-ui; draft PR #93, refs #82.
+- Session: Codex cloud continuation of c9c2537, 2026-11-13.
+- Reviewer: Minu. No implementation-agent approval or merge.
 
-## Current objective and completion estimate
+## Implemented scope
 
-0% implemented. Deliver the M27 UI after the backend gaps below are resolved or the acceptance criteria are revised.
+- M27-T01/T02: supported connect/disconnect/reconnect, health/refresh, read-only platform capabilities; verified workspace roles; Instagram always unavailable. Availability checks connector/callback/token-vault readiness and publishing-session-vault readiness without exposing configuration.
+- M27-T03/T04: approved-render composer, YouTube metadata/disclosure, publish-now/schedule, server preflight evidence, busy/duplicate-submit protection, and persisted delivery state.
+- M27-T05/T06: date-range calendar plus unscheduled drafts, post detail, reschedule/move to draft/cancel before attempts. Unsupported metadata edits stay unavailable after an attempt.
+- M27-T07/T08/T09: delivery history, retry/reconcile according to backend state, safe OAuth messages, interrupted creation replay with the exact saved clientRequestId/payload, and account-action refresh/inspection/acknowledgment recovery across reload.
+- D1: GET publishing/platforms; viewer read allowed; Instagram false regardless of configuration.
+- D2: optional UUID clientRequestId plus canonical request SHA-256, workspace unique index, 201 create/200 replay/409 IDEMPOTENCY_KEY_CONFLICT, unique-race reread, and cursor-paginated GET posts?status=DRAFT. Existing destination keys unchanged.
+- D3: fixed WEB_APP_ORIGIN callback 302 with connected account ID or an allow-listed error code; JSON fallback when unset; one-use state retained. .env.example documents the origin.
+- D4: paginated eligible renders reuse the extracted quality current-review predicate/order. Latest pending/rejected/superseded/replaced runs and unavailable artifacts are excluded. No asset URLs/storage keys returned. Creation retains server-side approval re-checking.
 
-## Task checklist
+## Authorized files and migration
 
-- [ ] M27-T01 through M27-T09: implementation and verification remain outstanding.
+Core approvals: PR #93 comments 6845543699 (D1–D3) and 6845690430 (D4).
 
-## Files changed
+Changed paths: publishing/social-accounts API and tests; extracted quality.current-review helper and quality service use; apps/web/features/publishing/** and publishing routes, AppShell, globals.css; scheduled-post schema and one additive migration; .env.example; module status and WORK_LOG. No ci.yml, PROJECT_STATE, dependency pins, .env, .local-* or .vscode edits.
 
-- This status and the append-only work log document the investigation and blocker.
+One M27 migration adds nullable client_request_id/client_request_hash and their workspace unique index. Its unmerged directory was renamed from 20261121010000_m27_idempotent_posts to 20261121020000_m27_idempotent_posts after C3 used the same timestamp. SQL unchanged; existing main migrations remain immutable.
 
-## Commands and evidence
+## Verification
 
-- `git fetch origin && git worktree add ../reelforge-m27 -b work/m27-publishing-and-calendar-ui origin/main` — passed.
-- Inspected the publishing and social-account controllers, validation schemas, relevant service paths, and review pending-mark pattern. No tests, lint, format, typecheck, or build were run; no implementation is claimed.
+Exact Node 24.22.2 / pnpm 12.16.1. Main was merged, then pnpm install --frozen-lockfile passed. Disposable PostgreSQL 18.6 on 55440; no live AI/social calls.
 
-## Contract/schema proposals
+- Focused publishing/social-account/web tests: 13 files / 84 tests passed.
+- Real persisted tests cover HTTP 201/200/conflict, concurrent service insert race with one post/destination, draft isolation, viewer reads, current approval exclusions, stable cursor paging, foreign channel 404 and unavailable artifact exclusion. Separate migration tests prove the index and legacy null-key behavior.
+- Mounted Chromium: 22 scenarios passed, including 390/1440 calendar/composer/account controls, viewer restrictions, interrupted account recovery and schedule editing; provider authorization navigation is locally intercepted.
+- pnpm lint and pnpm format:check passed after checkpoint fixes. Full typecheck, full test and build results are recorded in the PR handoff after completion.
+- db:validate and secret scan passed. db:check-migrations initially detected the timestamp collision; passed after the rename. Fresh deployment of the renamed migration must be checked on a clean disposable database before handoff.
+- Full tests exposed draft validation before workspace authorization; the handler now verifies context before validating status. The release-gate/dispatcher follow-up and final full suite are being verified.
 
-- Expose workspace-scoped platform connection availability based on configured and verified connectors, without disclosing credentials.
-- Support a client-generated idempotency key on post creation, persisted and scoped to the workspace, with repeat requests returning the original post and conflicting payloads rejected. Provide a lookup/recovery path for interrupted requests, including unscheduled drafts.
-- Return OAuth success and failure to an authorized frontend route with a safe, validated redirect and no provider secrets in the URL; preserve one-use state validation.
+## Handoff
 
-## Blockers / risks / unknowns
-
-- No platform configuration endpoint exists; account capabilities describe existing accounts and cannot establish connection availability before the first account exists.
-- Post creation generates server-side IDs and keys, and the calendar excludes unscheduled drafts. A lost create response cannot be reliably reconciled, so client-side pending marks alone cannot safely recover the created post.
-- The OAuth callback responds with JSON or an API error, rather than returning the user to the UI.
-- Backend changes are outside the authorized implementation scope. These proposals require Core assignment and review.
-
-## Next exact action
-
-Review and assign the backend proposals or revise the requirements, then resume M27 against the approved interfaces.
-
-## Reviewer decision
-
-Pending.
-
-## 2026-11-13 Core decision follow-up
-
-Minu approved D1–D3 in PR #93. Their initial backend implementation is in progress and is not yet verified against the required new tests or migration integration. No UI has been implemented.
-
-A further interface gap blocks the composer: `GET quality/queue` only returns `REVIEW_REQUIRED`, `BLOCKED`, and `AI_REVIEW_UNAVAILABLE` runs, while `GET quality/renders/:renderJobId/status` returns the status and gates but not the review-run ID. `POST publishing/posts` requires `qualityReviewRunId`. Thus an approved render cannot be selected and submitted using the existing read interfaces. Proposed resolution: a workspace-scoped, paginated publishing read endpoint that returns eligible render IDs and their current approved review-run IDs, filtered to `APPROVED` / `AUTO_APPROVED` and non-superseded runs, with channel identity; alternatively, expose the current review-run ID on the quality status endpoint. Core decision/assignment is needed before expanding the approved backend scope.
-
-Evidence since the original investigation:
-
-- `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" pnpm install --frozen-lockfile` — passed.
-- `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:55440/reelforge?schema=public' pnpm exec vitest run apps/api/src/modules/publishing/publishing.service.test.ts apps/api/src/modules/publishing/publishing.validation.test.ts apps/api/src/modules/social-accounts/social-accounts.service.test.ts` — passed: 3 files, 31 tests. These are existing tests and do not establish acceptance of the new interfaces.
-- An initial API typecheck failed on an optional Prisma field; the field was corrected. The repeat result is recorded separately below when available.
-- Repeat `PATH="$HOME/.nvm/versions/node/v24.22.2/bin:$PATH" DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:55440/reelforge?schema=public' pnpm --filter @reelforge/api typecheck` — passed.
+Merge the latest main (including C5) without rebase/force push, run pnpm install, finish clean migration/full checks, push, wait for exact-head CI, mark #93 ready and comment Ready for Minu review. The production schedule/budget/provider ports remain fail-closed when unconfigured; fixture tests do not establish live integration readiness. No new design decisions are requested.

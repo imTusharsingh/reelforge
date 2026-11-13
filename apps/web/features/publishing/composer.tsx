@@ -120,7 +120,8 @@ function ComposerForm(): JSX.Element {
         setRenderCursor(page.nextCursor);
       })
       .catch((cause: unknown) => {
-        if (active) setLoadError(cause instanceof Error ? cause.message : "Unable to load composer.");
+        if (active)
+          setLoadError(cause instanceof Error ? cause.message : "Unable to load composer.");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -416,9 +417,7 @@ function ComposerForm(): JSX.Element {
       <header className="rf-page-heading">
         <p className="rf-eyebrow">Studio / Publishing</p>
         <h1>Publishing composer</h1>
-        <p>
-          Only approved renders for this workspace are available. Times use {timezone}.
-        </p>
+        <p>Only approved renders for this workspace are available. Times use {timezone}.</p>
         <StudioLink href="/publishing">Calendar</StudioLink>
         {" · "}
         <StudioLink href="/publishing/accounts">Social accounts</StudioLink>
@@ -717,7 +716,9 @@ function ComposerForm(): JSX.Element {
                 Scheduled for {new Date(created.scheduledAt ?? "").toLocaleString()} ({timezone}).
               </p>
             ) : (
-              <p>Unscheduled draft created. Preflight gates determine whether publishing may start.</p>
+              <p>
+                Unscheduled draft created. Preflight gates determine whether publishing may start.
+              </p>
             )}
           </Panel>
           {created.destinations.map((destination) => {

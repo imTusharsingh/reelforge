@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
-import { isEditableRole, type Channel, type PlatformAvailability, type SocialAccount } from "./model";
+import {
+  isEditableRole,
+  type Channel,
+  type PlatformAvailability,
+  type SocialAccount,
+} from "./model";
 import { usePublishingClient } from "./session";
 
 export function Accounts(): JSX.Element {
@@ -20,6 +25,31 @@ export function Accounts(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  const [pending, setPending] = useState(() => api.pendingAccountScopes());
+  const [inspected, setInspected] = useState(false);
+  const locked = busy || pending.length > 0;
+  const reconcile = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      setItems(await api.reconcileAccounts());
+      setInspected(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to refresh accounts.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const acknowledge = (): void => {
+    try {
+      for (const scope of pending) api.acknowledge(scope);
+      setPending(api.pendingAccountScopes());
+      setInspected(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to clear recovery state.");
+    }
+  };
 
   const load = useCallback(async (): Promise<void> => {
     const [nextAccounts, nextPlatforms, nextChannels] = await Promise.all([
@@ -55,7 +85,7 @@ export function Accounts(): JSX.Element {
   }, []);
 
   const act = async (operation: () => Promise<void>): Promise<void> => {
-    if (!editable || busy) return;
+    if (!editable || locked) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -64,6 +94,8 @@ export function Accounts(): JSX.Element {
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed.");
+      setPending(api.pendingAccountScopes());
+      setInspected(false);
     } finally {
       setBusy(false);
     }
@@ -74,7 +106,7 @@ export function Accounts(): JSX.Element {
     targetPlatform: string,
     accountId: string,
   ): Promise<void> => {
-    if (!editable || busy || !targetChannel || !accountId) return;
+    if (!editable || locked || !targetChannel || !accountId) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -83,6 +115,8 @@ export function Accounts(): JSX.Element {
       window.location.assign(authorizationUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Connection failed.");
+      setPending(api.pendingAccountScopes());
+      setInspected(false);
       setBusy(false);
     }
   };
@@ -92,7 +126,10 @@ export function Accounts(): JSX.Element {
       <header className="rf-page-heading">
         <p className="rf-eyebrow">Studio / Publishing</p>
         <h1>Social accounts</h1>
-        <p>Connect accounts and check publishing availability. Unverified platforms remain unavailable.</p>
+        <p>
+          Connect accounts and check publishing availability. Unverified platforms remain
+          unavailable.
+        </p>
       </header>
       {!editable && (
         <Alert tone="warning" title="Read-only">
@@ -107,6 +144,19 @@ export function Accounts(): JSX.Element {
       {notice && (
         <Alert tone="warning" title="Connection status">
           {notice}
+        </Alert>
+      )}
+      {pending.length > 0 && (
+        <Alert tone="warning" title="Previous account action may still be pending">
+          Refresh and inspect the saved account status before another action.
+          <div className="rf-action-row">
+            <Button disabled={busy} onClick={() => void reconcile()}>
+              Refresh accounts
+            </Button>
+            <Button disabled={busy || !inspected} onClick={acknowledge}>
+              I inspected the accounts
+            </Button>
+          </div>
         </Alert>
       )}
       <Panel>
@@ -168,7 +218,7 @@ export function Accounts(): JSX.Element {
             hint="The account is authorized by the platform; no password or token is entered here."
           />
           <Button
-            disabled={busy || !channel || !platform || !remoteAccountId.trim()}
+            disabled={locked || !channel || !platform || !remoteAccountId.trim()}
             loading={busy}
             onClick={() => void connect(channel, platform, remoteAccountId.trim())}
           >
@@ -188,7 +238,10 @@ export function Accounts(): JSX.Element {
               <li key={account.id} className="rf-account-card">
                 <h3>{account.displayName}</h3>
                 <p>
-                  {account.platform} · <Badge tone={account.health === "HEALTHY" ? "success" : "warning"}>{account.health}</Badge>{" "}
+                  {account.platform} ·{" "}
+                  <Badge tone={account.health === "HEALTHY" ? "success" : "warning"}>
+                    {account.health}
+                  </Badge>{" "}
                   · {account.status}
                   {account.username ? ` · ${account.username}` : ""}
                 </p>
@@ -197,21 +250,21 @@ export function Accounts(): JSX.Element {
                   <div className="rf-action-row">
                     <Button
                       tone="secondary"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() => void act(() => api.refreshAccount(account.id))}
                     >
                       Refresh
                     </Button>
                     <Button
                       tone="secondary"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() => void act(() => api.checkAccountHealth(account.id))}
                     >
                       Check health
                     </Button>
                     <Button
                       tone="secondary"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         void connect(account.channelId, account.platform, account.remoteAccountId)
                       }
@@ -220,7 +273,7 @@ export function Accounts(): JSX.Element {
                     </Button>
                     <Button
                       tone="danger"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() => {
                         if (window.confirm(`Disconnect ${account.displayName}?`))
                           void act(() => api.revokeAccount(account.id));

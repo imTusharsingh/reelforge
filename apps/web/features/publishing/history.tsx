@@ -63,9 +63,7 @@ export function History(): JSX.Element {
                   {new Date(item.publishedAt).toLocaleString()}
                 </p>
                 <p className="rf-account-id">Platform post ID: {item.platformPostId}</p>
-                <StudioLink
-                  href={`/publishing/posts/${encodeURIComponent(item.scheduledPostId)}`}
-                >
+                <StudioLink href={`/publishing/posts/${encodeURIComponent(item.scheduledPostId)}`}>
                   Post details
                 </StudioLink>
               </li>

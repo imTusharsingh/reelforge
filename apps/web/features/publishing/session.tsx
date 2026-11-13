@@ -16,9 +16,7 @@ export function PublishingScope({ children }: { children: ReactNode }): JSX.Elem
     };
   }, [workspace.id, workspace.role]);
   useEffect(() => (): void => session.controller.abort(), [session]);
-  return (
-    <PublishingContext.Provider value={session.client}>{children}</PublishingContext.Provider>
-  );
+  return <PublishingContext.Provider value={session.client}>{children}</PublishingContext.Provider>;
 }
 
 export function usePublishingClient(): PublishingClient {

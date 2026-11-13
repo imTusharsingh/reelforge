@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright-core");
 const esbuild = require(process.env.ESBUILD_MODULE || "esbuild");
 const root = path.resolve(directory, "../../../../..");
+if (process.env.M27_EVIDENCE_DIR) fs.mkdirSync(process.env.M27_EVIDENCE_DIR, { recursive: true });
 
 const output = await esbuild.build({
   entryPoints: [path.join(directory, "mounted-fixture.tsx")],
@@ -118,77 +119,112 @@ try {
     assert.equal(body.disclosure.decision, "NOT_REQUIRED");
   });
 
-  await test("blocked preflight keeps publish disabled with gate evidence", async (page) => {
-    await page.getByRole("heading", { name: "Publishing composer" }).waitFor();
-    await fillYouTube(page);
-    await page.getByLabel("Delivery").selectOption("publish-now");
-    await page.getByRole("button", { name: "Continue to preflight" }).click();
-    await page
-      .getByText("SCHEDULE: failed — Publishing schedule policy is not configured")
-      .waitFor();
-    assert.equal(await page.getByRole("button", { name: "Publish now" }).isDisabled(), true);
-    const publishes = (await calls(page)).filter((call) => call.path.endsWith("/publish"));
-    assert.equal(publishes.length, 0);
-  }, "mode=preflight-failure");
+  await test(
+    "blocked preflight keeps publish disabled with gate evidence",
+    async (page) => {
+      await page.getByRole("heading", { name: "Publishing composer" }).waitFor();
+      await fillYouTube(page);
+      await page.getByLabel("Delivery").selectOption("publish-now");
+      await page.getByRole("button", { name: "Continue to preflight" }).click();
+      await page
+        .getByText("SCHEDULE: failed — Publishing schedule policy is not configured")
+        .waitFor();
+      assert.equal(await page.getByRole("button", { name: "Publish now" }).isDisabled(), true);
+      const publishes = (await calls(page)).filter((call) => call.path.endsWith("/publish"));
+      assert.equal(publishes.length, 0);
+    },
+    "mode=preflight-failure",
+  );
 
-  await test("interrupted creation recovers by replaying the exact saved request", async (page) => {
-    await page.getByRole("heading", { name: "Publishing composer" }).waitFor();
-    await fillYouTube(page);
-    await page.getByLabel("Delivery").selectOption("publish-now");
-    await page.getByRole("button", { name: "Continue to preflight" }).click();
-    await page.getByText("An earlier creation may have been saved").waitFor();
-    await page.getByRole("button", { name: "Retry saved creation" }).click();
-    await page.getByRole("heading", { name: "Preflight" }).waitFor();
-    const posts = (await calls(page)).filter(
-      (call) => call.method === "POST" && call.path.endsWith("/publishing/posts"),
-    );
-    assert.equal(posts.length, 2);
-    assert.equal(JSON.parse(posts[0].body).clientRequestId, JSON.parse(posts[1].body).clientRequestId);
-    assert.deepEqual(JSON.parse(posts[0].body), JSON.parse(posts[1].body));
-  }, "mode=recovery");
+  await test(
+    "interrupted creation recovers by replaying the exact saved request",
+    async (page) => {
+      await page.getByRole("heading", { name: "Publishing composer" }).waitFor();
+      await fillYouTube(page);
+      await page.getByLabel("Delivery").selectOption("publish-now");
+      await page.getByRole("button", { name: "Continue to preflight" }).click();
+      await page.getByText("An earlier creation may have been saved").waitFor();
+      await page.getByRole("button", { name: "Retry saved creation" }).click();
+      await page.getByRole("heading", { name: "Preflight" }).waitFor();
+      const posts = (await calls(page)).filter(
+        (call) => call.method === "POST" && call.path.endsWith("/publishing/posts"),
+      );
+      assert.equal(posts.length, 2);
+      assert.equal(
+        JSON.parse(posts[0].body).clientRequestId,
+        JSON.parse(posts[1].body).clientRequestId,
+      );
+      assert.deepEqual(JSON.parse(posts[0].body), JSON.parse(posts[1].body));
+    },
+    "mode=recovery",
+  );
 
-  await test("retryable delivery retries once from persisted state", async (page) => {
-    await page.getByRole("heading", { name: "Post detail" }).waitFor();
-    await page.getByText("UPLOAD_INTERRUPTED: The upload was interrupted").waitFor();
-    await page.getByRole("button", { name: "Retry" }).click();
-    await page.getByText("Platform post ID: fixture-platform-post").waitFor();
-    const writes = (await calls(page)).filter((call) => call.method === "POST");
-    assert.equal(writes.length, 1);
-    assert(writes[0].path.endsWith("/retry"));
-  }, "mode=retry");
+  await test(
+    "retryable delivery retries once from persisted state",
+    async (page) => {
+      await page.getByRole("heading", { name: "Post detail" }).waitFor();
+      await page.getByText("UPLOAD_INTERRUPTED: The upload was interrupted").waitFor();
+      await page.getByRole("button", { name: "Retry" }).click();
+      await page.getByText("Platform post ID: fixture-platform-post").waitFor();
+      const writes = (await calls(page)).filter((call) => call.method === "POST");
+      assert.equal(writes.length, 1);
+      assert(writes[0].path.endsWith("/retry"));
+    },
+    "mode=retry",
+  );
 
-  await test("pending publish action stays locked until refreshed and acknowledged", async (page) => {
-    await page.getByText("Previous action may still be pending").waitFor();
-    assert.equal(
-      await page.getByRole("button", { name: "I inspected the saved state" }).isDisabled(),
-      true,
-    );
-    await page.getByRole("button", { name: "Refresh post" }).click();
-    await page.getByRole("button", { name: "I inspected the saved state" }).click();
-    assert.equal(await page.getByText("Previous action may still be pending").count(), 0);
-  }, "mode=post-pending");
+  await test(
+    "pending publish action stays locked until refreshed and acknowledged",
+    async (page) => {
+      await page.getByText("Previous action may still be pending").waitFor();
+      assert.equal(
+        await page.getByRole("button", { name: "I inspected the saved state" }).isDisabled(),
+        true,
+      );
+      await page.getByRole("button", { name: "Refresh post" }).click();
+      await page.getByRole("button", { name: "I inspected the saved state" }).click();
+      assert.equal(await page.getByText("Previous action may still be pending").count(), 0);
+    },
+    "mode=post-pending",
+  );
 
-  await test("Viewer sees no composer or delivery controls", async (page) => {
-    await page.getByText("Read-only").first().waitFor();
-    assert.equal(await page.getByRole("button", { name: "Continue to preflight" }).count(), 0);
-    assert.equal(await page.getByLabel("Approved render").count(), 0);
-  }, "role=VIEWER");
+  await test(
+    "Viewer sees no composer or delivery controls",
+    async (page) => {
+      await page.getByText("Read-only").first().waitFor();
+      assert.equal(await page.getByRole("button", { name: "Continue to preflight" }).count(), 0);
+      assert.equal(await page.getByLabel("Approved render").count(), 0);
+    },
+    "role=VIEWER",
+  );
 
-  await test("Viewer cannot retry a failed delivery", async (page) => {
-    await page.getByRole("heading", { name: "Post detail" }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Retry" }).count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Publish now" }).count(), 0);
-  }, "mode=retry&role=VIEWER");
+  await test(
+    "Viewer cannot retry a failed delivery",
+    async (page) => {
+      await page.getByRole("heading", { name: "Post detail" }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Retry" }).count(), 0);
+      assert.equal(await page.getByRole("button", { name: "Publish now" }).count(), 0);
+    },
+    "mode=retry&role=VIEWER",
+  );
 
-  await test("OAuth failure returns a safe, actionable message", async (page) => {
-    await page.getByText("Connection failed: access_denied. Try connecting again.").waitFor();
-    await page.getByText("INSTAGRAM_NOT_VERIFIED").waitFor();
-  }, "mode=connect-error&oauthError=access_denied");
+  await test(
+    "OAuth failure returns a safe, actionable message",
+    async (page) => {
+      await page.getByText("Connection failed: access_denied. Try connecting again.").waitFor();
+      await page.getByText("INSTAGRAM_NOT_VERIFIED").waitFor();
+    },
+    "mode=connect-error&oauthError=access_denied",
+  );
 
-  await test("delivery history shows persisted platform records", async (page) => {
-    await page.getByRole("heading", { name: "Delivery history" }).waitFor();
-    await page.getByText("Platform post ID: fixture-platform-post").waitFor();
-  }, "mode=history");
+  await test(
+    "delivery history shows persisted platform records",
+    async (page) => {
+      await page.getByRole("heading", { name: "Delivery history" }).waitFor();
+      await page.getByText("Platform post ID: fixture-platform-post").waitFor();
+    },
+    "mode=history",
+  );
 
   for (const width of [390, 1440])
     await test(
@@ -206,7 +242,10 @@ try {
           true,
         );
         await page.screenshot({
-          path: path.join(root, `work/m27-calendar-${width}.png`),
+          path: path.join(
+            process.env.M27_EVIDENCE_DIR || path.join(root, "work"),
+            `m27-calendar-${width}.png`,
+          ),
           fullPage: true,
         });
       },
@@ -236,13 +275,105 @@ try {
           true,
         );
         await page.screenshot({
-          path: path.join(root, `work/m27-composer-${width}.png`),
+          path: path.join(
+            process.env.M27_EVIDENCE_DIR || path.join(root, "work"),
+            `m27-composer-${width}.png`,
+          ),
           fullPage: true,
         });
       },
       "",
       { width, height: 1000 },
     );
+
+  for (const width of [390, 1440]) {
+    const viewport = { width, height: 1000 };
+    await test(
+      `account controls and reconnect at ${width}px`,
+      async (page) => {
+        page.on("dialog", (dialog) => dialog.accept());
+        await page.getByRole("heading", { name: "Fixture YouTube" }).waitFor();
+        assert.equal(
+          await page
+            .getByRole("option", { name: "INSTAGRAM — unavailable", exact: true })
+            .isDisabled(),
+          true,
+        );
+        await page.getByRole("button", { name: "Refresh", exact: true }).click();
+        await page.waitForFunction(() =>
+          window.m27Fixture.calls.some((call) => call.path.endsWith("/refresh")),
+        );
+        await page.getByRole("button", { name: "Check health", exact: true }).click();
+        await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+        await page.getByText(/REVOKED/).waitFor();
+        await page.route("https://oauth.fixture.test/**", (route) =>
+          route.fulfill({ contentType: "text/html", body: "<p>Fixture authorization handoff</p>" }),
+        );
+        await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+        await page.getByText("Fixture authorization handoff").waitFor();
+      },
+      "mode=accounts",
+      viewport,
+    );
+    await test(
+      `viewer account controls unavailable at ${width}px`,
+      async (page) => {
+        await page.getByRole("heading", { name: "Fixture YouTube" }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0);
+        assert.equal(
+          await page.getByRole("button", { name: "Disconnect", exact: true }).count(),
+          0,
+        );
+        assert.equal(await page.getByRole("button", { name: "Reconnect", exact: true }).count(), 0);
+      },
+      "mode=accounts&role=VIEWER",
+      viewport,
+    );
+    await test(
+      `interrupted account action reconciles after reload at ${width}px`,
+      async (page) => {
+        await page.getByRole("button", { name: "Refresh", exact: true }).click();
+        await page
+          .getByText("Previous account action may still be pending", { exact: true })
+          .waitFor();
+        await page.reload();
+        assert.equal(
+          await page.getByRole("button", { name: "Disconnect", exact: true }).isDisabled(),
+          true,
+        );
+        assert.equal(
+          await page.getByRole("button", { name: "I inspected the accounts" }).isDisabled(),
+          true,
+        );
+        await page.getByRole("button", { name: "Refresh accounts", exact: true }).click();
+        await page.getByRole("button", { name: "I inspected the accounts" }).click();
+        assert.equal(
+          await page.getByRole("button", { name: "Disconnect", exact: true }).isDisabled(),
+          false,
+        );
+        assert.equal((await calls(page)).filter((call) => call.method === "POST").length, 0);
+      },
+      "mode=accounts-interrupted",
+      viewport,
+    );
+    await test(
+      `scheduled post edit and move to draft at ${width}px`,
+      async (page) => {
+        await page.getByLabel(/^Reschedule/).fill("2026-11-25T10:00");
+        await page.getByRole("button", { name: "Reschedule", exact: true }).click();
+        await page.waitForFunction(() =>
+          window.m27Fixture.calls.some((call) => call.method === "PATCH"),
+        );
+        await page.getByRole("button", { name: "Move to draft", exact: true }).click();
+        await page.getByText("Unscheduled draft").waitFor();
+        const writes = (await calls(page)).filter((call) => call.method === "PATCH");
+        assert.equal(writes.length, 2);
+        assert.equal(JSON.parse(writes[1].body).scheduledAt, null);
+      },
+      "mode=scheduled",
+      viewport,
+    );
+  }
 
   console.log(`PASS ${count} mounted M27 browser scenarios`);
 } finally {

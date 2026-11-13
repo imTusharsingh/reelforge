@@ -4,13 +4,7 @@ import { useCallback, useEffect, useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Field, Panel } from "../../components/ui/primitives";
-import {
-  browserTimeZone,
-  describeGates,
-  isEditableRole,
-  type Post,
-  type Preflight,
-} from "./model";
+import { browserTimeZone, describeGates, isEditableRole, type Post, type Preflight } from "./model";
 import { usePublishingClient } from "./session";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info";
@@ -135,11 +129,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
         <div className="rf-action-row">
           <StudioLink href="/publishing">Calendar</StudioLink>
           <StudioLink href="/publishing/history">Delivery history</StudioLink>
-          {post && (
-            <StudioLink href={`/production/renders/${encodeURIComponent(post.renderJobId)}`}>
-              Render workflow
-            </StudioLink>
-          )}
+          {post && <StudioLink href="/production">Production</StudioLink>}
         </div>
       </header>
       {error && (
@@ -168,9 +158,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
           <Panel>
             <h2>
               <Badge tone={statusTone(post.status)}>{post.status}</Badge>{" "}
-              {post.scheduledAt
-                ? new Date(post.scheduledAt).toLocaleString()
-                : "Unscheduled draft"}
+              {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "Unscheduled draft"}
             </h2>
             <p>
               Times shown in {timezone}. Revision {post.revision}.
@@ -181,9 +169,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
             </p>
             <p>
               Quality review{" "}
-              <StudioLink
-                href={`/review/runs/${encodeURIComponent(post.qualityReviewRunId)}`}
-              >
+              <StudioLink href={`/review/runs/${encodeURIComponent(post.qualityReviewRunId)}`}>
                 {post.qualityReviewRunId}
               </StudioLink>
             </p>
@@ -218,8 +204,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
                     tone="danger"
                     disabled={busy || pending}
                     onClick={() => {
-                      if (window.confirm("Cancel this post?"))
-                        void write(() => api.cancel(postId));
+                      if (window.confirm("Cancel this post?")) void write(() => api.cancel(postId));
                     }}
                   >
                     Cancel post
@@ -233,8 +218,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
           </Panel>
           {post.destinations.map((destination) => {
             const checkResult = preflights[destination.id];
-            const canPublish =
-              checkResult !== undefined ? checkResult.canPublish : false;
+            const canPublish = checkResult !== undefined ? checkResult.canPublish : false;
             return (
               <Panel key={destination.id}>
                 <h2>

@@ -87,7 +87,10 @@ export class PublishingClient {
 
   private rememberCreateRequest(request: CreatePostRequest): void {
     try {
-      sessionStorage.setItem(this.createRequestKey(request.clientRequestId), JSON.stringify(request));
+      sessionStorage.setItem(
+        this.createRequestKey(request.clientRequestId),
+        JSON.stringify(request),
+      );
       sessionStorage.setItem(this.createLastKey(), request.clientRequestId);
     } catch {
       // The pending marker still fails closed; recovery may be unavailable.
@@ -122,9 +125,7 @@ export class PublishingClient {
 
   public pending(scope: string): boolean {
     try {
-      return (
-        this.local.has(scope) || sessionStorage.getItem(this.pendingKey(scope)) !== null
-      );
+      return this.local.has(scope) || sessionStorage.getItem(this.pendingKey(scope)) !== null;
     } catch {
       // If browser recovery storage is unavailable, fail closed before dispatch.
       return true;
@@ -179,16 +180,13 @@ export class PublishingClient {
       throw new PublishingApiError(403, "Access changed. Refresh your verified session.");
     let response: Response;
     try {
-      response = await fetch(
-        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
-        {
-          method,
-          credentials: "include",
-          signal: this.signal,
-          headers: { "Content-Type": "application/json" },
-          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-        },
-      );
+      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
+        method,
+        credentials: "include",
+        signal: this.signal,
+        headers: { "Content-Type": "application/json" },
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      });
     } catch (cause) {
       this.signal.throwIfAborted();
       throw new PublishingApiError(
@@ -215,7 +213,8 @@ export class PublishingClient {
       payload = undefined;
     }
     this.signal.throwIfAborted();
-    if (!response.ok) throw new PublishingApiError(response.status, message(response.status, payload));
+    if (!response.ok)
+      throw new PublishingApiError(response.status, message(response.status, payload));
     return payload;
   }
 
@@ -287,6 +286,32 @@ export class PublishingClient {
     return this.read("social-accounts", (value) => parseAccounts(value, this.workspaceId));
   }
 
+  public pendingAccountScopes(): string[] {
+    const prefix = this.pendingKey("");
+    const scopes = new Set(
+      [...this.local].filter(
+        (scope) => scope.startsWith("account:") || scope.startsWith("connect:"),
+      ),
+    );
+    try {
+      for (let index = 0; index < sessionStorage.length; index += 1) {
+        const key = sessionStorage.key(index);
+        if (!key?.startsWith(prefix)) continue;
+        const scope = key.slice(prefix.length);
+        if (scope.startsWith("account:") || scope.startsWith("connect:")) scopes.add(scope);
+      }
+    } catch {
+      /* mark() still refuses to dispatch when recovery storage is unavailable. */
+    }
+    return [...scopes];
+  }
+
+  public async reconcileAccounts(): Promise<SocialAccount[]> {
+    const items = await this.accounts();
+    for (const scope of this.pendingAccountScopes()) this.confirmed.add(scope);
+    return items;
+  }
+
   public async channels(): Promise<Channel[]> {
     return this.read("channels", (value) => parseChannels(value, this.workspaceId));
   }
@@ -327,8 +352,9 @@ export class PublishingClient {
   }
 
   public async preflight(destinationId: string): Promise<Preflight> {
-    return this.read(`publishing/destinations/${encodeURIComponent(destinationId)}/preflight`, (value) =>
-      parsePreflight(value, destinationId),
+    return this.read(
+      `publishing/destinations/${encodeURIComponent(destinationId)}/preflight`,
+      (value) => parsePreflight(value, destinationId),
     );
   }
 
@@ -468,7 +494,10 @@ export class PublishingClient {
     await this.accountAction(accountId, "revoke");
   }
 
-  private async accountAction(accountId: string, action: "refresh" | "health" | "revoke"): Promise<void> {
+  private async accountAction(
+    accountId: string,
+    action: "refresh" | "health" | "revoke",
+  ): Promise<void> {
     await this.mutate(
       `account:${accountId}`,
       "POST",

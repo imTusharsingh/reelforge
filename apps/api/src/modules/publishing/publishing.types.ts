@@ -74,7 +74,8 @@ export type PublishingPlatformView = Readonly<{
   platform: SocialPlatform;
   connectable: boolean;
   publishable: boolean;
-  reasonCode: "PLATFORM_NOT_CONFIGURED" | "PUBLISHING_NOT_CONFIGURED" | "INSTAGRAM_NOT_VERIFIED" | null;
+  reasonCode:
+    "PLATFORM_NOT_CONFIGURED" | "PUBLISHING_NOT_CONFIGURED" | "INSTAGRAM_NOT_VERIFIED" | null;
 }>;
 
 export type EligibleRenderView = Readonly<{
@@ -93,4 +94,3 @@ export type EligibleRenderPage = Readonly<{
   items: readonly EligibleRenderView[];
   nextCursor: string | null;
 }>;
-

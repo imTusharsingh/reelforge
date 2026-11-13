@@ -367,6 +367,29 @@ function createHarness(
 }
 
 describe("SocialAccountsService", () => {
+  it("reports connection availability only with connector, callback and token vault configured", () => {
+    const request = vi.fn();
+    const connector = new YouTubeConnector(
+      { clientId: "fixture", clientSecret: "fixture" },
+      request,
+    );
+    const configured = (
+      key: string | undefined,
+      callback: string | undefined,
+    ): SocialAccountsService =>
+      new SocialAccountsService(
+        {} as PrismaClient,
+        {} as WorkspaceService,
+        connector,
+        new InstagramNotConfiguredConnector(),
+        new TokenVault(key),
+        callback,
+      );
+    expect(configured(undefined, callbackUrl).youtubeConfigured()).toBe(false);
+    expect(configured(encryptionKey, undefined).youtubeConfigured()).toBe(false);
+    expect(configured(encryptionKey, callbackUrl).youtubeConfigured()).toBe(true);
+    expect(request).not.toHaveBeenCalled();
+  });
   it("creates one-time OAuth state with a state hash and encrypted PKCE verifier", async () => {
     const { db, service, getState } = createHarness();
     const result = await service.startConnection(ownerContext, channelId, "YOUTUBE", {

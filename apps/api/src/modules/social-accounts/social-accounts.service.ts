@@ -89,7 +89,7 @@ export class SocialAccountsService {
   ) {}
 
   public youtubeConfigured(): boolean {
-    return this.youtube.isConfigured();
+    return this.youtube.isConfigured() && this.vault.isConfigured() && Boolean(this.callbackUrl);
   }
 
   public async startConnection(

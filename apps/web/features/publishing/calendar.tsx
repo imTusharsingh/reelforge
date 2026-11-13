@@ -9,7 +9,8 @@ import { usePublishingClient } from "./session";
 type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
 function statusTone(status: string): Tone {
-  if (["PUBLISHED", "SCHEDULED"].includes(status)) return status === "PUBLISHED" ? "success" : "info";
+  if (["PUBLISHED", "SCHEDULED"].includes(status))
+    return status === "PUBLISHED" ? "success" : "info";
   if (["FAILED_RETRYABLE", "FAILED_FINAL", "RECONCILIATION_REQUIRED"].includes(status))
     return "danger";
   if (["REMOTE_PROCESSING", "CANCELED"].includes(status)) return "warning";
@@ -66,10 +67,7 @@ export function Calendar(): JSX.Element {
 
   const load = useCallback(
     async (signal: AbortSignal): Promise<void> => {
-      const [calendar, draftPage] = await Promise.all([
-        api.calendar(from, to),
-        api.drafts(),
-      ]);
+      const [calendar, draftPage] = await Promise.all([api.calendar(from, to), api.drafts()]);
       if (signal.aborted) return;
       setPosts(calendar);
       setDrafts(draftPage.items);
@@ -105,7 +103,10 @@ export function Calendar(): JSX.Element {
       <header className="rf-page-heading">
         <p className="rf-eyebrow">Studio / Publishing</p>
         <h1>Publishing calendar</h1>
-        <p>Times shown in {timezone}. Scheduled and delivered state comes from the publishing service.</p>
+        <p>
+          Times shown in {timezone}. Scheduled and delivered state comes from the publishing
+          service.
+        </p>
         <div className="rf-action-row">
           <StudioLink href="/publishing/new">New post</StudioLink>
           <StudioLink href="/publishing/accounts">Manage social accounts</StudioLink>
@@ -166,7 +167,9 @@ export function Calendar(): JSX.Element {
                         {post.destinations.map((destination) => (
                           <span key={destination.id} className="rf-calendar-destination">
                             {destination.platform}: {destination.status}
-                            {destination.lastErrorMessage ? ` — ${destination.lastErrorMessage}` : ""}
+                            {destination.lastErrorMessage
+                              ? ` — ${destination.lastErrorMessage}`
+                              : ""}
                           </span>
                         ))}
                       </p>

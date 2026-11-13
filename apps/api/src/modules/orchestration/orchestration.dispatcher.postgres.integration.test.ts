@@ -480,8 +480,8 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     expect(["AI_REVIEW_UNAVAILABLE", "REVIEW_REQUIRED"]).toContain(review.status);
     await expect(orchestration.resumeRun(context, started.id)).rejects.toThrow(/still pending/);
 
-    // PUBLISH while the M11 approval is missing: M13 preflight refuses, the step fails final.
-    const post = await publishing.createScheduledPost(context, {
+    // D4 rejects new post creation before approval, including legacy requests without a client key.
+    const unapprovedPostInput = {
       channelId,
       renderJobId,
       qualityReviewRunId: reviewId,
@@ -500,6 +500,52 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
           },
         },
       ],
+    };
+    await expect(
+      publishing.createScheduledPost(context, unapprovedPostInput),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await db.scheduledPost.count({ where: { workspaceId } })).toBe(0);
+    // Seed a pre-existing unapproved draft at the test seam to retain dispatcher/preflight
+    // defense-in-depth coverage. No runtime approval check is bypassed by an API call.
+    const destinationKey = randomUUID();
+    const post = await db.$transaction(async (tx) => {
+      const created = await tx.scheduledPost.create({
+        data: {
+          workspaceId,
+          channelId,
+          renderJobId,
+          qualityReviewRunId: reviewId,
+          disclosureDecision: "NOT_REQUIRED",
+          disclosureReason: "Fixture content",
+          createdByUserId: context.userId,
+        },
+      });
+      const destination = await tx.publishingDestination.create({
+        data: {
+          workspaceId,
+          scheduledPostId: created.id,
+          socialAccountId,
+          platform: "YOUTUBE",
+          status: "DRAFT",
+          idempotencyKey: destinationKey,
+          metadata: {
+            platform: "YOUTUBE",
+            title: "M16 fixture",
+            description: "Fixture",
+            privacyStatus: "private",
+            selfDeclaredMadeForKids: false,
+          },
+        },
+      });
+      await tx.publishJob.create({
+        data: {
+          workspaceId,
+          destinationId: destination.id,
+          idempotencyKey: destinationKey,
+          status: "DRAFT",
+        },
+      });
+      return { ...created, destinations: [destination] };
     });
     const destinationId = post.destinations[0]?.id;
     expect(destinationId).toBeDefined();

@@ -27,3 +27,11 @@ describe("TokenVault", () => {
     );
   });
 });
+
+describe("token vault availability", () => {
+  it("reports availability without encrypting or disclosing configuration", () => {
+    expect(new TokenVault(undefined).isConfigured()).toBe(false);
+    expect(new TokenVault("invalid").isConfigured()).toBe(false);
+    expect(new TokenVault(Buffer.alloc(32, 7).toString("base64url")).isConfigured()).toBe(true);
+  });
+});
