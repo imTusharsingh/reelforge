@@ -1549,7 +1549,9 @@ export class SceneMediaService {
       });
       await tx.sceneMediaJob.updateMany({
         where: { workspaceId, id: jobId, leaseId: operationId },
-        data: { status: rollupJob(scenes.map((scene: { status: SceneGenerationStatus }) => scene.status)) },
+        data: {
+          status: rollupJob(scenes.map((scene: { status: SceneGenerationStatus }) => scene.status)),
+        },
       });
     });
   }
@@ -1769,7 +1771,7 @@ export class SceneMediaService {
               workspaceId: context.workspaceId,
               assetId: asset.id,
               assetVersion: asset.version,
-              usedByType: "scene_output",
+              usedByType: "scene_generation_output",
               usedById: outputId,
               context: { jobId, sceneId, sceneVersion, kind },
             },

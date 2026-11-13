@@ -1534,7 +1534,10 @@ export class CompositionService {
         (scene) =>
           scene.status !== "SUCCEEDED" ||
           scene.outputs.some(
-            (output) => output.status !== "SUCCEEDED" && output.status !== "REUSED",
+            (output) =>
+              output.status !== "SUCCEEDED" &&
+              output.status !== "REUSED" &&
+              output.status !== "ASSIGNED",
           ),
       )
     )
@@ -1594,7 +1597,10 @@ export class CompositionService {
           "Composition scene is not in the pinned successful M09 package",
         );
       const outputs = approved.outputs.filter(
-        (output) => output.status === "SUCCEEDED" || output.status === "REUSED",
+        (output) =>
+          output.status === "SUCCEEDED" ||
+          output.status === "REUSED" ||
+          output.status === "ASSIGNED",
       );
       const visual = outputs.find(
         (output) =>

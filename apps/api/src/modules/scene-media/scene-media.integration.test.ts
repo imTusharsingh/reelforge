@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabaseClient } from "@reelforge/database";
 import { ProviderError, ProviderRegistry } from "@reelforge/ai-providers";
 import { compilePrompt, parsePromptTemplateBody, platformDefaults } from "@reelforge/config-engine";
@@ -381,6 +381,106 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
     expect(sha256Hex(bytes)).toBe(exported.scenes[0]?.outputs[0]?.checksumSha256);
     expect(asset.status).toBe("PUBLISHED");
     expect(asset.ownership).toBe("SYSTEM_GENERATED");
+  });
+
+  it("persists assignment, replay, usage and export without provider or paid reservation calls", async () => {
+    if (!db || !service) return;
+    const job = await service.create(context, {
+      scriptId,
+      expectedScriptRevision: 1,
+      idempotencyKey: randomUUID(),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    const assetId = job.scenes[1]!.outputs[0]!.assetId!;
+    const request = {
+      expectedJobVersion: job.version,
+      idempotencyKey: randomUUID(),
+      kind: "IMAGE",
+      assetId,
+      assetVersion: 1,
+    };
+    const before = imageCalls;
+    const reserve = vi.fn();
+    Object.assign(service, { usage: { reservePaidCall: reserve } });
+    try {
+      const result = await service.assignAsset(context, job.jobId, "one", request);
+      expect(result.scenes[0]!.outputs[0]).toMatchObject({
+        status: "ASSIGNED",
+        assetId,
+        providerJobId: null,
+        providerAssetId: null,
+      });
+      expect(await service.assignAsset(context, job.jobId, "one", request)).toEqual(result);
+      expect(await service.exportPackage(context, job.jobId)).toMatchObject({
+        status: "SUCCEEDED",
+      });
+      const assigned = await db.sceneGenerationOutput.findFirstOrThrow({
+        where: {
+          workspaceId,
+          status: "ASSIGNED",
+          sceneGeneration: { jobId: job.jobId, activeSlot: 1 },
+        },
+      });
+      expect(
+        await db.assetUsageReference.findFirst({
+          where: {
+            workspaceId,
+            assetId,
+            usedByType: "scene_generation_output",
+            usedById: assigned.id,
+          },
+        }),
+      ).not.toBeNull();
+      await expect(
+        service.assignAsset(context, job.jobId, "one", { ...request, assetId: randomUUID() }),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        service.assignAsset(context, job.jobId, "one", {
+          ...request,
+          idempotencyKey: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(imageCalls).toBe(before);
+      expect(reserve).not.toHaveBeenCalled();
+    } finally {
+      Object.assign(service, { usage: undefined });
+    }
+  });
+
+  it.each([
+    ["VIEWER", 403],
+    ["FOREIGN", 404],
+    ["PENDING", 409],
+    ["KIND", 422],
+  ] as const)("rejects %s assignment in Postgres", async (scenario, status) => {
+    if (!db || !service) return;
+    const job = await service.create(context, {
+      scriptId,
+      expectedScriptRevision: 1,
+      idempotencyKey: randomUUID(),
+      outputs: { image: true, video: false, narration: false, dialogue: false },
+    });
+    const assetId = job.scenes[0]!.outputs[0]!.assetId!;
+    if (scenario === "PENDING")
+      await db.asset.update({ where: { id: assetId }, data: { status: "PENDING" } });
+    if (scenario === "KIND")
+      await db.asset.update({ where: { id: assetId }, data: { mediaType: "audio/wav" } });
+    const before = imageCalls;
+    await expect(
+      service.assignAsset(
+        { ...context, role: scenario === "VIEWER" ? "VIEWER" : "EDITOR" },
+        job.jobId,
+        "one",
+        {
+          expectedJobVersion: job.version,
+          idempotencyKey: randomUUID(),
+          kind: "IMAGE",
+          assetId: scenario === "FOREIGN" ? randomUUID() : assetId,
+          assetVersion: 1,
+        },
+      ),
+    ).rejects.toMatchObject({ status });
+    expect(imageCalls).toBe(before);
   });
 
   it("reuses successful scenes when retry is requested", async () => {

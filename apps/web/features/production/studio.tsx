@@ -72,13 +72,23 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
     setError("");
     setNotice("");
     try {
-      const updated = await client.mutate(
-        attempt.job,
-        attempt.operation,
-        attempt.key,
-        attempt.sceneId,
-        attempt.kind,
-      );
+      const updated =
+        attempt.operation === "assign"
+          ? await client.assignAsset(
+              attempt.job,
+              attempt.sceneId,
+              attempt.kind,
+              attempt.assetId,
+              attempt.assetVersion,
+              attempt.key,
+            )
+          : await client.mutate(
+              attempt.job,
+              attempt.operation,
+              attempt.key,
+              attempt.sceneId,
+              attempt.kind,
+            );
       pendingMutation.current = null;
       setUncertain(false);
       setNotice(
@@ -94,6 +104,10 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       } else {
         pendingMutation.current = null;
         setUncertain(false);
+        if (cause instanceof ProductionApiError && cause.status === 409) {
+          setNotice("Production state changed. Reloading the job before another action.");
+          refresh();
+        }
       }
     } finally {
       setBusy("");
@@ -131,34 +145,18 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       )
     )
       return;
-    const label = `assign:${target.sceneId}:${kind}`;
-    setBusy(label);
-    setError("");
-    setNotice("");
-    try {
-      const updated = await client.assignAsset(
-        job,
-        target.sceneId,
-        kind,
-        assetId,
-        assetVersion,
-        crypto.randomUUID(),
-      );
-      setUncertain(false);
-      setNotice(
-        `Asset assigned. Job version is now ${updated.version}; displayed state was refreshed.`,
-      );
-      refresh();
-    } catch (cause) {
-      const msg = cause instanceof Error ? cause.message : "The assignment failed.";
-      setError(msg);
-      if (cause instanceof ProductionApiError && cause.status === 409) {
-        setNotice("Production state changed. Reload the job before trying again.");
-        refresh();
-      }
-    } finally {
-      setBusy("");
-    }
+    const attempt: PendingSceneMutation = {
+      job,
+      operation: "assign",
+      key: crypto.randomUUID(),
+      label: `assign:${target.sceneId}:${kind}`,
+      sceneId: target.sceneId,
+      kind,
+      assetId,
+      assetVersion,
+    };
+    pendingMutation.current = attempt;
+    await dispatchMutation(attempt);
   };
 
   const reconcile = async (): Promise<void> => {
@@ -621,12 +619,22 @@ export function MediaPreview({
 
 type PendingSceneMutation = {
   job: SceneMediaPackage;
-  operation: "retry" | "regenerate" | "replace";
   key: string;
   label: string;
-  sceneId?: string;
-  kind?: OutputKind;
-};
+} & (
+  | {
+      operation: "assign";
+      sceneId: string;
+      kind: OutputKind;
+      assetId: string;
+      assetVersion: number;
+    }
+  | {
+      operation: "retry" | "regenerate" | "replace";
+      sceneId?: string;
+      kind?: OutputKind;
+    }
+);
 
 const KIND_MEDIA_TYPES: Record<OutputKind, readonly string[]> = {
   IMAGE: ["image/png", "image/jpeg", "image/webp"],
