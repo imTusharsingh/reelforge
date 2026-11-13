@@ -385,11 +385,47 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
 
   it("persists assignment, replay, usage and export without provider or paid reservation calls", async () => {
     if (!db || !service) return;
-    const job = await service.create(context, {
+    let motionCalls = 0;
+    const motion: VideoProviderPort = {
+      capability: capability("video", "assignment-video"),
+      generate: async (request) => {
+        motionCalls += 1;
+        return {
+          mediaId: `video-${request.correlationId}`,
+          providerJobId: `job-${request.correlationId}`,
+          metadata: { modelVersion: "fixture", promptVersion: "fixture", cost: 1, currency: "USD" },
+          media: {
+            declaredMediaType: "video/mp4",
+            body: Buffer.from([0, 0, 0, 12, 102, 116, 121, 112, 105, 115, 111, 109]),
+          },
+        };
+      },
+    };
+    const assignmentRegistry = new ProviderRegistry();
+    for (const port of [image, motion, tts])
+      assignmentRegistry.register({
+        capability: port.capability,
+        credential: {
+          providerId: "fixture",
+          environment: providerEnvironment(),
+          secret: "fixture-secret",
+        },
+      });
+    const assignmentService = new SceneMediaService(
+      db as Database,
+      image,
+      motion,
+      tts,
+      assignmentRegistry,
+      storage,
+      new AssetService(db as Database, storage),
+      new PrismaSceneDispatchLedger(db as Database),
+    );
+    const job = await assignmentService.create(context, {
       scriptId,
       expectedScriptRevision: 1,
       idempotencyKey: randomUUID(),
-      outputs: { image: true, video: false, narration: false, dialogue: false },
+      outputs: { image: true, video: true, narration: false, dialogue: false },
     });
     const assetId = job.scenes[1]!.outputs[0]!.assetId!;
     const request = {
@@ -400,18 +436,21 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
       assetVersion: 1,
     };
     const before = imageCalls;
+    const motionBefore = motionCalls;
     const reserve = vi.fn();
-    Object.assign(service, { usage: { reservePaidCall: reserve } });
+    Object.assign(assignmentService, { usage: { reservePaidCall: reserve } });
     try {
-      const result = await service.assignAsset(context, job.jobId, "one", request);
+      const result = await assignmentService.assignAsset(context, job.jobId, "one", request);
       expect(result.scenes[0]!.outputs[0]).toMatchObject({
         status: "ASSIGNED",
         assetId,
         providerJobId: null,
         providerAssetId: null,
       });
-      expect(await service.assignAsset(context, job.jobId, "one", request)).toEqual(result);
-      expect(await service.exportPackage(context, job.jobId)).toMatchObject({
+      expect(await assignmentService.assignAsset(context, job.jobId, "one", request)).toEqual(
+        result,
+      );
+      expect(await assignmentService.exportPackage(context, job.jobId)).toMatchObject({
         status: "SUCCEEDED",
       });
       const assigned = await db.sceneGenerationOutput.findFirstOrThrow({
@@ -432,18 +471,25 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
         }),
       ).not.toBeNull();
       await expect(
-        service.assignAsset(context, job.jobId, "one", { ...request, assetId: randomUUID() }),
+        assignmentService.assignAsset(context, job.jobId, "one", {
+          ...request,
+          assetId: randomUUID(),
+        }),
       ).rejects.toMatchObject({ status: 409 });
       await expect(
-        service.assignAsset(context, job.jobId, "one", {
+        assignmentService.assignAsset(context, job.jobId, "one", {
           ...request,
           idempotencyKey: randomUUID(),
         }),
       ).rejects.toMatchObject({ status: 409 });
       expect(imageCalls).toBe(before);
+      expect(motionCalls).toBe(motionBefore);
+      expect(result.scenes[0]!.outputs.find((output) => output.kind === "VIDEO")).toMatchObject({
+        status: "REUSED",
+      });
       expect(reserve).not.toHaveBeenCalled();
     } finally {
-      Object.assign(service, { usage: undefined });
+      Object.assign(assignmentService, { usage: undefined });
     }
   });
 
@@ -535,6 +581,7 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
   it("does not fabricate video when the configured capability is not video", async () => {
     if (!db || !service) return;
     const before = videoCalls;
+    const videosBefore = await db.asset.count({ where: { workspaceId, mediaType: "video/mp4" } });
     const created = await service.create(context, {
       scriptId,
       expectedScriptRevision: 1,
@@ -543,7 +590,7 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
     });
     const videos = await db.asset.count({ where: { workspaceId, mediaType: "video/mp4" } });
     expect(videoCalls).toBe(before);
-    expect(videos).toBe(0);
+    expect(videos).toBe(videosBefore);
     expect(
       created.scenes.every((scene) =>
         scene.outputs.some((output) => output.kind === "VIDEO" && output.assetId === null),
