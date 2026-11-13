@@ -411,7 +411,6 @@ export function ScriptEditor({ script }: { script: Script }): JSX.Element {
             <button
               key={s.id}
               aria-pressed={s.id === scene.id}
-              aria-label={`Scene ${index + 1} · ${s.durationSeconds}s`}
               onClick={() => {
                 setSelected(s.id);
                 document.getElementById(`${id}-scene`)?.focus();

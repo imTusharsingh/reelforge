@@ -109,7 +109,7 @@ export function AppShell({
               type="button"
               className="rf-button rf-button--ghost rf-icon-button"
               onClick={openMenu}
-              aria-label="Open studio navigation"
+              aria-label="Menu: open studio navigation"
             >
               Menu
             </button>

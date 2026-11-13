@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "paths": {
+      "@reelforge/media": ["../packages/media/src/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "../playwright.config.ts", "../apps/api/e2e/**/*.ts"]
+}
