@@ -506,7 +506,28 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
       idempotencyKey: randomUUID(),
       outputs: { image: true, video: false, narration: false, dialogue: false },
     });
-    const assetId = job.scenes[0]!.outputs[0]!.assetId!;
+    let assetId = job.scenes[0]!.outputs[0]!.assetId!;
+    const foreignWorkspaceId = randomUUID();
+    if (scenario === "FOREIGN") {
+      await db.workspace.create({
+        data: { id: foreignWorkspaceId, name: "foreign asset fixture" },
+      });
+      assetId = randomUUID();
+      await db.asset.create({
+        data: {
+          id: assetId,
+          rootAssetId: assetId,
+          workspaceId: foreignWorkspaceId,
+          version: 1,
+          ownership: "USER_UPLOADED",
+          status: "PUBLISHED",
+          objectKey: "fixture/foreign",
+          mediaType: "image/png",
+          byteSize: 8,
+          checksumSha256: "a".repeat(64),
+        },
+      });
+    }
     if (scenario === "PENDING")
       await db.asset.update({ where: { id: assetId }, data: { status: "PENDING" } });
     if (scenario === "KIND")
@@ -521,12 +542,16 @@ suite("SceneMediaService persisted generation, budget, and media binding", () =>
           expectedJobVersion: job.version,
           idempotencyKey: randomUUID(),
           kind: "IMAGE",
-          assetId: scenario === "FOREIGN" ? randomUUID() : assetId,
+          assetId,
           assetVersion: 1,
         },
       ),
     ).rejects.toMatchObject({ status });
     expect(imageCalls).toBe(before);
+    if (scenario === "FOREIGN") {
+      await db.asset.deleteMany({ where: { workspaceId: foreignWorkspaceId } });
+      await db.workspace.delete({ where: { id: foreignWorkspaceId } });
+    }
   });
 
   it("reuses successful scenes when retry is requested", async () => {
