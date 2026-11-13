@@ -12,6 +12,8 @@ describe("M19 audit catalog", () => {
       ["/api/v1/auth/login", "AUTH"],
       ["/auth/register", "AUTH"],
       ["/auth/logout", "AUTH"],
+      ["/api/v1/auth/me", "AUTH"],
+      ["/api/v1/auth/me/password", "AUTH"],
       ["/workspaces/:workspaceId/config", "CONFIG"],
       ["/workspaces/:workspaceId/prompts/templates/:templateId", "CONFIG"],
       ["/workspaces/:workspaceId/channels/:channelId", "CONFIG"],

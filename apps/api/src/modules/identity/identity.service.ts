@@ -1,4 +1,11 @@
-import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from "@nestjs/common";
 import type { Database, Principal } from "./identity.types.js";
 import {
   createSessionToken,
@@ -7,6 +14,17 @@ import {
   hashSessionToken,
   verifyPassword,
 } from "./auth.crypto.js";
+
+function normalizeDisplayName(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 80) {
+    throw new BadRequestException("Display name must be between 1 and 80 characters.");
+  }
+  if (/[\p{Cc}]/u.test(trimmed)) {
+    throw new BadRequestException("Display name contains invalid characters.");
+  }
+  return trimmed;
+}
 
 @Injectable()
 export class IdentityService {
@@ -87,5 +105,118 @@ export class IdentityService {
     await this.db.authEvent.create({
       data: { userId: principal.userId, eventType: "auth.logout", outcome: "success" },
     });
+  }
+
+  public async me(userId: string): Promise<{
+    userId: string;
+    email: string;
+    displayName: string | null;
+  }> {
+    const user = await this.db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, displayName: true },
+    });
+    if (!user) throw new UnauthorizedException("Unauthenticated");
+    return { userId: user.id, email: user.email, displayName: user.displayName };
+  }
+
+  public async updateProfile(
+    userId: string,
+    displayName: string,
+  ): Promise<{ userId: string; email: string; displayName: string | null }> {
+    const normalized = normalizeDisplayName(displayName);
+    const user = await this.db.user.update({
+      where: { id: userId },
+      data: { displayName: normalized },
+      select: { id: true, email: true, displayName: true },
+    });
+    await this.db.authEvent.create({
+      data: { userId, eventType: "auth.profile_updated", outcome: "success" },
+    });
+    return { userId: user.id, email: user.email, displayName: user.displayName };
+  }
+
+  public async changePassword(
+    principal: Principal,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ ok: true; revokedSessions: number }> {
+    const now = new Date();
+    const recentFailures = await this.db.authEvent.count({
+      where: {
+        userId: principal.userId,
+        eventType: "auth.password_changed",
+        outcome: "failure",
+        occurredAt: { gte: new Date(now.getTime() - 15 * 60 * 1000) },
+      },
+    });
+    if (recentFailures >= 5) {
+      await this.db.authEvent.create({
+        data: {
+          userId: principal.userId,
+          eventType: "auth.password_changed",
+          outcome: "rate_limited",
+        },
+      });
+      throw new HttpException(
+        { message: "Too many attempts. Try again later.", code: "TOO_MANY_ATTEMPTS" },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const user = await this.db.user.findUnique({
+      where: { id: principal.userId },
+      include: { credential: true },
+    });
+    if (!user) throw new UnauthorizedException("Unauthenticated");
+
+    const valid = await verifyPassword(
+      currentPassword,
+      user.credential?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+    if (!valid) {
+      await this.db.authEvent.create({
+        data: {
+          userId: principal.userId,
+          eventType: "auth.password_changed",
+          outcome: "failure",
+        },
+      });
+      throw new UnauthorizedException({
+        message: "Invalid credentials",
+        code: "INVALID_CREDENTIALS",
+      });
+    }
+
+    if (newPassword === currentPassword) {
+      throw new BadRequestException("New password must differ from the current password.");
+    }
+    const passwordHash = await hashPassword(newPassword);
+
+    const revokedSessions = await this.db.$transaction(async (tx) => {
+      await tx.passwordCredential.upsert({
+        where: { userId: principal.userId },
+        update: { passwordHash },
+        create: { userId: principal.userId, passwordHash },
+      });
+      const revoked = await tx.session.updateMany({
+        where: {
+          userId: principal.userId,
+          id: { not: principal.sessionId },
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
+      await tx.authEvent.create({
+        data: {
+          userId: principal.userId,
+          eventType: "auth.password_changed",
+          outcome: "success",
+        },
+      });
+      return revoked.count;
+    });
+
+    return { ok: true, revokedSessions };
   }
 }
