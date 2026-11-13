@@ -22,7 +22,13 @@ checked as structures, not shell-pattern safety claims. An intended topology
 change requires independent review and a corresponding trusted policy update.
 The separate process-policy.yml likewise requires its actual policy job and
 complete trusted setup/checker sequence; removing or conditionally skipping the
-checker cannot turn that procedural gate into a successful no-op.
+checker cannot turn that procedural gate into a successful no-op. Its complete
+trigger map is also mandatory: pull_request_target targets main and the approved
+opened/synchronize/reopened/edited/ready_for_review types; workflow_dispatch has
+only the required string pr input. Missing/extra triggers, path filters, ignored
+branches or altered manual-input schemas fail closed. Exact read permissions and
+per-PR concurrency are part of this trusted path identity too. Intended changes
+to any of these reviewed invariants require a corresponding trusted policy update.
 Push coverage includes main, work/**, chore/**, feat/** and fix/**; all PRs to main
 retain checks. Issue #69 work continues to use work/ or chore/ branches.
 

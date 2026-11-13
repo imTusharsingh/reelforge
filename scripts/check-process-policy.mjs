@@ -221,6 +221,40 @@ function inspectCiTopology(flow, policy) {
 }
 
 function inspectProcessTopology(flow, policy) {
+  // Trigger liveness is part of this path's trust contract, not its display name.
+  if (
+    !isDeepStrictEqual(flow.on, {
+      pull_request_target: {
+        branches: ["main"],
+        types: ["opened", "synchronize", "reopened", "edited", "ready_for_review"],
+      },
+      workflow_dispatch: {
+        inputs: {
+          pr: {
+            description: "Current pull request number to revalidate",
+            required: true,
+            type: "string",
+          },
+        },
+      },
+    })
+  )
+    fail("Process Policy mandatory event/dispatch topology");
+  if (
+    !isDeepStrictEqual(flow.permissions, {
+      contents: "read",
+      "pull-requests": "read",
+      issues: "read",
+    })
+  )
+    fail("Process Policy exact read permissions");
+  if (
+    !isDeepStrictEqual(flow.concurrency, {
+      group: "process-policy-${{ github.event.pull_request.number || inputs.pr }}",
+      "cancel-in-progress": true,
+    })
+  )
+    fail("Process Policy per-PR concurrency");
   const trustedRef = "${{ github.event.pull_request.base.sha || 'refs/heads/main' }}";
   const trustedSha = "${{ github.event.pull_request.base.sha || github.sha }}";
   const action = (prefix) => policy.actions.find((value) => value.startsWith(prefix));

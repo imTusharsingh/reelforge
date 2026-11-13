@@ -662,3 +662,106 @@ for (const [name, mutate] of Object.entries({
     mutate(flow);
     assert.throws(() => inspectWorkflow(flow, policy, ".github/workflows/process-policy.yml"));
   });
+
+const processPath = ".github/workflows/process-policy.yml";
+const processTriggerBypasses = {
+  "impossible target branch": (flow) => {
+    flow.on.pull_request_target.branches = ["never-matches"];
+  },
+  "closed-only event type": (flow) => {
+    flow.on.pull_request_target.types = ["closed"];
+  },
+  "missing event types": (flow) => {
+    delete flow.on.pull_request_target.types;
+  },
+  "missing synchronize event": (flow) => {
+    flow.on.pull_request_target.types = flow.on.pull_request_target.types.filter(
+      (type) => type !== "synchronize",
+    );
+  },
+  "missing target trigger": (flow) => {
+    delete flow.on.pull_request_target;
+  },
+  "missing target branches": (flow) => {
+    delete flow.on.pull_request_target.branches;
+  },
+  "extra target branch": (flow) => {
+    flow.on.pull_request_target.branches.push("other");
+  },
+  "path-filtered target": (flow) => {
+    flow.on.pull_request_target.paths = ["never/**"];
+  },
+  "ignored target paths": (flow) => {
+    flow.on.pull_request_target["paths-ignore"] = ["**"];
+  },
+  "ignored target branch": (flow) => {
+    flow.on.pull_request_target["branches-ignore"] = ["main"];
+  },
+  "missing dispatch": (flow) => {
+    delete flow.on.workflow_dispatch;
+  },
+  "null dispatch": (flow) => {
+    flow.on.workflow_dispatch = null;
+  },
+  "missing PR input": (flow) => {
+    delete flow.on.workflow_dispatch.inputs.pr;
+  },
+  "optional PR input": (flow) => {
+    flow.on.workflow_dispatch.inputs.pr.required = false;
+  },
+  "changed PR input type": (flow) => {
+    flow.on.workflow_dispatch.inputs.pr.type = "choice";
+  },
+  "default PR input": (flow) => {
+    flow.on.workflow_dispatch.inputs.pr.default = "72";
+  },
+  "extra dispatch input": (flow) => {
+    flow.on.workflow_dispatch.inputs.branch = { type: "string" };
+  },
+  "extra push trigger": (flow) => {
+    flow.on.push = { branches: ["main"] };
+  },
+  "extra normal PR trigger": (flow) => {
+    flow.on.pull_request = { branches: ["main"] };
+  },
+  "missing issues read permission": (flow) => {
+    delete flow.permissions.issues;
+  },
+  "extra write permission": (flow) => {
+    flow.permissions.contents = "write";
+  },
+  "missing concurrency": (flow) => {
+    delete flow.concurrency;
+  },
+  "shared concurrency group": (flow) => {
+    flow.concurrency.group = "all-prs";
+  },
+  "changed cancellation": (flow) => {
+    flow.concurrency["cancel-in-progress"] = false;
+  },
+};
+for (const [name, mutate] of Object.entries(processTriggerBypasses))
+  test(`F-H3: reject ${name}`, () => {
+    const flow = structuredClone(submittedProcess);
+    assert.equal(inspectWorkflow(flow, policy, processPath), true);
+    mutate(flow);
+    assert.throws(() => inspectWorkflow(flow, policy, processPath));
+  });
+test("F-H3: live blob evaluation rejects disabled target events", async () => {
+  await assert.rejects(
+    evaluateLive(
+      liveFixture(({ path, value }) => {
+        if (path !== `git/blobs/${"d".repeat(40)}`) return;
+        const flow = structuredClone(submittedProcess);
+        flow.on.pull_request_target.branches = ["never-matches"];
+        flow.on.pull_request_target.types = ["closed"];
+        const source = JSON.stringify(flow);
+        return {
+          ...value,
+          size: Buffer.byteLength(source),
+          content: Buffer.from(source).toString("base64"),
+        };
+      }),
+    ),
+  );
+});
