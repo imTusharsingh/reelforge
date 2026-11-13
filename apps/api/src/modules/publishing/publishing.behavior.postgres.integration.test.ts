@@ -273,11 +273,11 @@ describe.skipIf(databaseUrl === undefined)("M27 persisted publishing behavior", 
       db,
       {} as CompositionService,
       { assertPublishable } as unknown as QualityService,
-      { youtubeConfigured: () => false } as unknown as SocialAccountsService,
+      { youtubeConfigured: () => true } as unknown as SocialAccountsService,
       {} as StoragePort,
       new UnconfiguredPublishingSchedulePort(),
       new UnconfiguredPublishingBudgetPort(),
-      new PublishingSessionVault(undefined),
+      new PublishingSessionVault(Buffer.alloc(32, 7).toString("base64url")),
     );
     const module = await Test.createTestingModule({
       imports: [IdentityModule, WorkspaceModule],

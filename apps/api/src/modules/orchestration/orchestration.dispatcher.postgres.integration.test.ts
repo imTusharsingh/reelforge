@@ -54,6 +54,7 @@ const templateId = randomUUID();
 const templateVersionId = randomUUID();
 const socialAccountId = randomUUID();
 const context: WorkspaceContext = { workspaceId, userId: ownerId, role: "OWNER" };
+const fixturePublishingKey = Buffer.alloc(32, 8).toString("base64url");
 
 const document = {
   schemaVersion: "1.0" as const,
@@ -205,6 +206,11 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
 
   beforeAll(async () => {
     if (!db) return;
+    process.env.YOUTUBE_OAUTH_CLIENT_ID = "fixture-client-id";
+    process.env.YOUTUBE_OAUTH_CLIENT_SECRET = "fixture-client-secret";
+    process.env.YOUTUBE_OAUTH_CALLBACK_URL = "http://localhost:3001/fixture-callback";
+    process.env.SOCIAL_TOKEN_ENCRYPTION_KEY = fixturePublishingKey;
+    process.env.PUBLISH_SESSION_ENCRYPTION_KEY = fixturePublishingKey;
     await db.user.create({ data: { id: ownerId, email: `${ownerId}@m16.dispatcher.invalid` } });
     await db.workspace.create({ data: { id: workspaceId, name: "m16-dispatcher" } });
     await db.workspaceMembership.create({ data: { workspaceId, userId: ownerId, role: "OWNER" } });
