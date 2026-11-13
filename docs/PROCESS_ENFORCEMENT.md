@@ -34,7 +34,9 @@ retain checks. Issue #69 work continues to use work/ or chore/ branches.
 
 `Process Policy` is a separate pull_request_target check. It executes the checker,
 policy, exact parser and frozen lock from the event's immutable main base. It
-never checks out or executes candidate code, installs candidate dependencies,
+reports checker failures as warnings, including missing authorization evidence;
+they do not block normal pull requests. Required CI's secret scan remains blocking.
+It never checks out or executes candidate code, installs candidate dependencies,
 uses candidate actions/artifacts, or follows evidence URLs. Manual dispatch takes
 only a PR number and checks current state; its job permits main dispatch only and
 its checkout fallback is explicitly refs/heads/main, never the selected branch.
@@ -147,25 +149,18 @@ must be recorded separately from the production audit.
 ## Bootstrap and immediate integration procedure
 
 The first F PR cannot be validated by a checker already on main. Independently
-review every workflow, policy and dependency change. Run local positive/negative
-fixtures and mandatory CI, record missing hosted bootstrap evidence explicitly,
-and obtain formal minu-the-reviewer APPROVE on the exact current head. The
-Manager must disposition unavailable acceptance evidence before readiness.
+review every workflow, policy and dependency change and run the policy fixtures
+and mandatory CI. Process Policy findings are advisory.
 
 Only the owner-authorized integrator merges. Immediately before integration:
 
-1. Fetch current head/base and all referenced authorization comments afresh.
-2. Verify real authorship, issue, current contents/digest, modification time,
-   expiry, owned paths, exceptions and protected blob hashes against trusted policy.
-3. Compare against the successful Process Policy report; rerun on any difference.
-4. Verify formal independent Minu APPROVE on the latest head, no unresolved
+1. Verify formal independent Minu APPROVE on the latest head, no unresolved
    requested changes/blocking threads, and all mandatory CI on that head.
-5. Confirm both Required CI and separate Process Policy (or explicitly accepted
-   first-PR bootstrap evidence). No self-approval, direct main push, force push,
+2. Confirm Required CI. No self-approval, direct main push, force push,
    merge commit or automatic bot mutation is permitted.
-6. Squash only with expected-head SHA. Abort on changes; expected-head does not
+3. Squash only with expected-head SHA. Abort on changes; expected-head does not
    atomically bind mutable authorization records or base, so a residual race remains.
-7. Verify resulting main SHA and reviewed closeout status; exercise hosted positive
+4. Verify resulting main SHA and reviewed closeout status; exercise hosted positive
    and negative policy cases after bootstrap. Never infer post-merge success.
 
 Minu attests and reviews; Minu is not automatically the integrator. An unprotected

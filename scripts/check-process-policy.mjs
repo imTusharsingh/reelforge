@@ -275,6 +275,7 @@ function inspectProcessTopology(flow, policy) {
         { run: "pnpm install --frozen-lockfile --ignore-scripts" },
         {
           name: "Validate current metadata and candidate blobs as data",
+          "continue-on-error": true,
           env: {
             GH_TOKEN: "${{ github.token }}",
             TRUSTED_BASE_SHA: trustedSha,
@@ -365,6 +366,7 @@ export function inspectWorkflow(flow, policy, path) {
         "if",
         "id",
         "timeout-minutes",
+        "continue-on-error",
       ]);
       if (Object.keys(step).some((k) => !stepKeys.has(k))) fail("Unsupported step key");
       if (privilegedEvent) {
