@@ -1,5 +1,16 @@
-import { BadRequestException, Body, Controller, Post, Req, Res, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 import type { Response } from "express";
+import { ChangePasswordRequestSchema, UpdateAuthMeRequestSchema } from "@reelforge/contracts";
 import { AuthGuard, type AuthenticatedRequest } from "./auth.guard.js";
 import { IdentityService } from "./identity.service.js";
 
@@ -14,6 +25,14 @@ function parseCredentials(body: unknown): Credentials {
     password: candidate.password,
     ...(typeof candidate.displayName === "string" ? { displayName: candidate.displayName } : {}),
   };
+}
+
+function parseStrict<T>(schema: { parse: (value: unknown) => T }, body: unknown): T {
+  try {
+    return schema.parse(body);
+  } catch {
+    throw new BadRequestException("Invalid request");
+  }
 }
 
 @Controller("auth")
@@ -66,5 +85,37 @@ export class IdentityController {
       path: "/",
     });
     return { ok: true };
+  }
+
+  @Get("me")
+  @UseGuards(AuthGuard)
+  public async me(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ userId: string; email: string; displayName: string | null }> {
+    return this.identity.me(request.principal.userId);
+  }
+
+  @Patch("me")
+  @UseGuards(AuthGuard)
+  public async updateMe(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: unknown,
+  ): Promise<{ userId: string; email: string; displayName: string | null }> {
+    const input = parseStrict(UpdateAuthMeRequestSchema, body);
+    return this.identity.updateProfile(request.principal.userId, input.displayName);
+  }
+
+  @Post("me/password")
+  @UseGuards(AuthGuard)
+  public async changePassword(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: unknown,
+  ): Promise<{ ok: true; revokedSessions: number }> {
+    const input = parseStrict(ChangePasswordRequestSchema, body);
+    return this.identity.changePassword(
+      request.principal,
+      input.currentPassword,
+      input.newPassword,
+    );
   }
 }

@@ -134,12 +134,9 @@ function AuthForm({ onAuthenticated }: { onAuthenticated: () => Promise<void> })
           >
             {mode === "signin" ? "Create an account" : "I already have an account"}
           </button>
-          <span
-            className="rf-auth-unavailable"
-            title="Password recovery is not available in the current API"
-          >
-            Password recovery unavailable
-          </span>
+          <p className="rf-auth-unavailable" aria-disabled="true">
+            Forgot password? Password reset isn&apos;t available yet. Contact your workspace owner.
+          </p>
         </div>
       </section>
     </main>
