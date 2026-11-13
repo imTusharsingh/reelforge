@@ -70,6 +70,45 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
   }
 }
 try {
+  for (const width of [390, 1440]) {
+    await test(
+      `script generation sends approved references at ${width}px`,
+      async (p) => {
+        await p.getByLabel("Generation configuration snapshot").selectOption("config-one");
+        await p.getByLabel("Matching prompt bundle snapshot").selectOption("bundle-one");
+        await p
+          .getByLabel("Additional generation instructions (not saved)")
+          .fill("Create a short script");
+        p.once("dialog", (dialog) => dialog.accept());
+        await p.getByRole("button", { name: "Generate script" }).click();
+        await p.getByText("Script created.", { exact: false }).waitFor();
+        const calls = await p.evaluate(() => window.m24Fixture.calls);
+        const writes = calls.filter((call) => call.path === "scripts" && call.method === "POST");
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].body.approvedIdeaSnapshotId, "snapshot-one");
+        assert.equal(writes[0].body.promptSnapshotId, "bundle-one");
+        assert.equal(
+          await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+          true,
+        );
+      },
+      "mode=generation",
+      { width, height: 900 },
+    );
+    await test(
+      `viewer cannot generate at ${width}px`,
+      async (p) => {
+        await p.getByRole("button", { name: "Generate script" }).waitFor();
+        assert.equal(await p.getByRole("button", { name: "Generate script" }).isDisabled(), true);
+        assert.equal(
+          (await p.evaluate(() => window.m24Fixture.calls)).some((call) => call.method !== "GET"),
+          false,
+        );
+      },
+      "mode=generation&role=VIEWER",
+      { width, height: 900 },
+    );
+  }
   await test("targeted edits persist with the observed revision and preserve unrelated scenes", async (p) => {
     await p.getByLabel("Scene dialogue", { exact: true }).fill("Targeted revision");
     const cues = p.getByLabel("Audio cues — one per line", { exact: true });

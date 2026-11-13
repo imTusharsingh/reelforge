@@ -269,14 +269,52 @@ function GenerationPreparation({
   ideaId: string;
   approved: boolean;
 }): JSX.Element {
-  const { client, suspended } = usePlanning();
+  const { client, suspended, refresh } = usePlanning();
   const snapshot = useLoad((c) => c.approvedIdea(ideaId), `generation-approval:${ideaId}`);
   const configs = useLoad((c) => c.objects("config/generation-snapshots"), "generation-configs");
   const bundles = useLoad((c) => c.objects("prompts/bundle-snapshots"), "generation-bundles");
   const [configId, setConfigId] = useState("");
   const [bundleId, setBundleId] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState("");
   const pairs = (bundles.data ?? []).filter((v) => v.configSnapshotId === configId);
+  const generate = async (): Promise<void> => {
+    if (
+      !approved ||
+      !snapshot.data ||
+      !canWrite(client.role) ||
+      suspended ||
+      busy ||
+      created ||
+      !configId ||
+      !bundleId ||
+      !prompt.trim()
+    )
+      return;
+    if (!window.confirm("Generate a script? This may incur provider charges.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await client.generateScript({
+        approvedIdeaSnapshotId: snapshot.data.id,
+        approvedIdeaChecksum: snapshot.data.checksumSha256,
+        configSnapshotId: configId,
+        promptSnapshotId: bundleId,
+        prompt: prompt.trim(),
+        ...(snapshot.data.channelId ? { channelId: snapshot.data.channelId } : {}),
+      });
+      if (!client.signal.aborted) setCreated(result.id);
+    } catch (cause) {
+      if (!client.signal.aborted) {
+        setError(message(cause));
+        refresh();
+      }
+    } finally {
+      if (!client.signal.aborted) setBusy(false);
+    }
+  };
   return (
     <Panel>
       <h2>Prepare script generation</h2>
@@ -310,23 +348,50 @@ function GenerationPreparation({
           label="Additional generation instructions (not saved)"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          disabled
+          disabled={!canWrite(client.role) || suspended || busy}
           maxLength={20000}
         />
       </div>
       {!approved && (
         <p className={styles.notice}>Approve the active idea before generating a script.</p>
       )}
-      <Alert tone="warning" title="Script generation is not configured">
-        The server has no configured script generation provider. Generation is unavailable; existing
-        scripts remain editable. An approved brief, valid snapshots and available budget will be
-        required when generation becomes available.
-      </Alert>
-      <Button disabled>Generate script</Button>
+      <p>
+        Generation requires a configured provider and may incur charges. The server checks the
+        budget before dispatch.
+      </p>
+      {error && (
+        <Alert tone="danger" title="Script generation failed">
+          {error}. Check the script library before making another request.
+        </Alert>
+      )}
+      <Button
+        disabled={
+          !approved ||
+          !snapshot.data ||
+          !canWrite(client.role) ||
+          suspended ||
+          busy ||
+          Boolean(created) ||
+          !configId ||
+          !bundleId ||
+          !prompt.trim()
+        }
+        onClick={() => void generate()}
+      >
+        {busy ? "Generating…" : "Generate script"}
+      </Button>
+      {created && (
+        <p role="status">
+          Script created.{" "}
+          <StudioLink href={`/planning/scripts/${encodeURIComponent(created)}`}>
+            Open script
+          </StudioLink>
+        </p>
+      )}
       {snapshot.data && configId && bundleId && (
         <p className={styles.meta}>
           Prepared references: approved snapshot {snapshot.data.id}; configuration {configId};
-          prompt bundle {bundleId}. No request dispatched.
+          prompt bundle {bundleId}.
         </p>
       )}
     </Panel>
