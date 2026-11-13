@@ -1,5 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
-import { withCsrf } from "../../lib/csrf";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 import {
   isEditableRole,
   parseAccounts,
@@ -203,7 +203,6 @@ export class PublishingClient {
         mutation,
       );
     }
-    if (response.status === 401 || response.status === 403) this.suspended = true;
     let payload: unknown;
     try {
       payload = await response.json();
@@ -217,8 +216,13 @@ export class PublishingClient {
       payload = undefined;
     }
     this.signal.throwIfAborted();
+    if ((response.status === 401 || response.status === 403) && !csrfFailureMessage(payload))
+      this.suspended = true;
     if (!response.ok)
-      throw new PublishingApiError(response.status, message(response.status, payload));
+      throw new PublishingApiError(
+        response.status,
+        csrfFailureMessage(payload) ?? message(response.status, payload),
+      );
     return payload;
   }
 

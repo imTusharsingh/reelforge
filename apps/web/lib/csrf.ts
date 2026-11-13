@@ -1,5 +1,13 @@
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+export function csrfFailureMessage(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const code = (payload as { code?: unknown }).code;
+  return code === "CSRF_TOKEN_INVALID" || code === "CSRF_ORIGIN_INVALID"
+    ? "Your secure session expired. Retry the request or sign in again."
+    : undefined;
+}
+
 export function csrfTokenFromCookie(): string | undefined {
   if (typeof document === "undefined") return undefined;
   return document.cookie

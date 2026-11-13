@@ -1,5 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { createCsrfToken, originAllowed, validateCsrf } from "./csrf.middleware.js";
+import { createCsrfToken, csrfMiddleware, originAllowed, validateCsrf } from "./csrf.middleware.js";
+
+function runMiddleware(input: {
+  method: string;
+  path: string;
+  cookie?: string;
+  token?: string;
+  origin?: string;
+  authorization?: string;
+}): unknown {
+  let result: unknown;
+  csrfMiddleware(
+    {
+      method: input.method,
+      path: input.path,
+      headers: {
+        ...(input.cookie === undefined ? {} : { cookie: input.cookie }),
+        ...(input.token === undefined ? {} : { "x-csrf-token": input.token }),
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
+        ...(input.authorization === undefined ? {} : { authorization: input.authorization }),
+      },
+    } as never,
+    {} as never,
+    (error?: unknown) => {
+      result = error;
+    },
+  );
+  return result;
+}
 
 describe("CSRF validation", () => {
   it("uses a cryptographically random base64url token and accepts matching origin", () => {
@@ -40,5 +68,82 @@ describe("CSRF validation", () => {
         "https://studio.example",
       ),
     ).toBe(true);
+  });
+
+  it("checks login and register before a session exists", () => {
+    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    const token = createCsrfToken();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/auth/login",
+        origin: "https://studio.example",
+      }),
+    ).toMatchObject({ response: { code: "CSRF_TOKEN_INVALID" } });
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/auth/register",
+        token,
+        cookie: `reelforge_csrf=${token}`,
+        origin: "https://studio.example",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("only exempts Bearer-only requests and leaves safe/exempt routes untouched", () => {
+    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    const token = createCsrfToken();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/workspaces/w1/items",
+        authorization: "Bearer token",
+      }),
+    ).toBeUndefined();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/workspaces/w1/items",
+        cookie: "reelforge_session=session",
+        authorization: "Bearer token",
+      }),
+    ).toMatchObject({ response: { code: "CSRF_TOKEN_INVALID" } });
+    expect(
+      runMiddleware({
+        method: "GET",
+        path: "/api/v1/workspaces/w1/items",
+        cookie: "reelforge_session=session",
+      }),
+    ).toBeUndefined();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/health",
+        cookie: "reelforge_session=session",
+      }),
+    ).toBeUndefined();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/workspaces/w1/items",
+        cookie: `reelforge_csrf=${token}`,
+        token,
+        origin: "https://studio.example",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("fails closed when WEB_APP_ORIGIN is unset", () => {
+    delete process.env.WEB_APP_ORIGIN;
+    const token = createCsrfToken();
+    expect(
+      runMiddleware({
+        method: "POST",
+        path: "/api/v1/auth/login",
+        cookie: `reelforge_csrf=${token}`,
+        token,
+      }),
+    ).toMatchObject({ response: { code: "CSRF_ORIGIN_INVALID" } });
   });
 });

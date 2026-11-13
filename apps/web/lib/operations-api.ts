@@ -10,7 +10,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from "./operations-types";
-import { withCsrf } from "./csrf";
+import { csrfFailureMessage, withCsrf } from "./csrf";
 
 export type OperationsContext = Readonly<{
   workspaceId: string;
@@ -257,15 +257,21 @@ async function request<T>(
       "The request could not be completed. Check your connection and try again.",
     );
   }
-  if (!response.ok)
+  if (!response.ok) {
+    const errorBody = await response
+      .clone()
+      .json()
+      .catch(() => undefined);
     throw new OperationsApiError(
       response.status,
-      response.status === 403
-        ? "You do not have permission for this action."
-        : response.status === 409
-          ? "The data changed. Refresh and try again."
-          : `Request failed (${response.status})`,
+      csrfFailureMessage(errorBody) ??
+        (response.status === 403
+          ? "You do not have permission for this action."
+          : response.status === 409
+            ? "The data changed. Refresh and try again."
+            : `Request failed (${response.status})`),
     );
+  }
   let body: unknown;
   try {
     body = await response.json();

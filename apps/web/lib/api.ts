@@ -1,4 +1,4 @@
-import { ensureCsrfToken, withCsrf } from "./csrf";
+import { csrfFailureMessage, ensureCsrfToken, withCsrf } from "./csrf";
 
 export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
 export type Workspace = {
@@ -123,9 +123,7 @@ async function request<T>(
         : response.status === 401
           ? "Your session has expired. Sign in again."
           : response.status === 403
-            ? code === "CSRF_TOKEN_INVALID" || code === "CSRF_ORIGIN_INVALID"
-              ? "Your secure session expired. Retry the request or sign in again."
-              : "You do not have access to this workspace."
+            ? (csrfFailureMessage(payload) ?? "You do not have access to this workspace.")
             : "The request could not be completed.";
     throw new ApiError(response.status, message, code);
   }

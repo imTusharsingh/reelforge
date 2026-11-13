@@ -54,16 +54,17 @@ export function validateCsrf(request: Pick<Request, "headers">): void {
 
 export function csrfMiddleware(request: Request, _response: Response, next: NextFunction): void {
   if (!UNSAFE_METHODS.has(request.method)) return next();
-  const session = cookieValue(request, SESSION_COOKIE);
-  if (session === undefined) return next();
-  const path = request.path;
+  const path = request.path.replace(/^\/api\/v1(?=\/|$)/, "");
   if (
-    path === "/api/v1/health" ||
-    path === "/api/v1/ops/metrics" ||
-    /^\/api\/v1\/social-accounts\/oauth\/[^/]+\/callback$/.test(path)
+    path === "/health" ||
+    path === "/ops/metrics" ||
+    /^\/social-accounts\/oauth\/[^/]+\/callback$/.test(path)
   )
     return next();
-  if (request.headers.authorization?.startsWith("Bearer ")) return next();
+  const session = cookieValue(request, SESSION_COOKIE);
+  const preAuth = path === "/auth/login" || path === "/auth/register";
+  if (session === undefined && !preAuth) return next();
+  if (session === undefined && request.headers.authorization?.startsWith("Bearer ")) return next();
   try {
     validateCsrf(request);
   } catch (error) {

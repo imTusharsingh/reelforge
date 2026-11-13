@@ -1,5 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
-import { withCsrf } from "../../lib/csrf";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 import type { RenderInput } from "./composition";
 import {
   canWrite,
@@ -108,7 +108,7 @@ export class ProductionClient {
     if (!response.ok)
       throw new ProductionApiError(
         response.status,
-        message(response.status, payload),
+        csrfFailureMessage(payload) ?? message(response.status, payload),
         mutation && response.status >= 500,
       );
     return payload;

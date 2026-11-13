@@ -9,7 +9,7 @@ import {
   type RenderStatus,
   type Run,
 } from "./model";
-import { withCsrf } from "../../lib/csrf";
+import { csrfFailureMessage, withCsrf } from "../../lib/csrf";
 
 export class ReviewApiError extends Error {
   public constructor(
@@ -68,19 +68,27 @@ export class ReviewClient {
         Boolean(decision),
       );
     }
-    if (response.status === 401 || response.status === 403) this.suspended = true;
+    let errorPayload: unknown;
+    if (!response.ok)
+      errorPayload = await response
+        .clone()
+        .json()
+        .catch(() => undefined);
+    if ((response.status === 401 || response.status === 403) && !csrfFailureMessage(errorPayload))
+      this.suspended = true;
     if (!response.ok)
       throw new ReviewApiError(
         response.status,
-        response.status === 401
-          ? "Session expired. Sign in again."
-          : response.status === 403
-            ? "Workspace access denied. Refresh your verified session."
-            : response.status === 404
-              ? "Review or render no longer available in this workspace."
-              : response.status === 409
-                ? "Review state changed or the server rejected this gate/target. Fetch persisted state before deciding again."
-                : "Quality request failed. Fetch persisted state before retrying a decision.",
+        csrfFailureMessage(errorPayload) ??
+          (response.status === 401
+            ? "Session expired. Sign in again."
+            : response.status === 403
+              ? "Workspace access denied. Refresh your verified session."
+              : response.status === 404
+                ? "Review or render no longer available in this workspace."
+                : response.status === 409
+                  ? "Review state changed or the server rejected this gate/target. Fetch persisted state before deciding again."
+                  : "Quality request failed. Fetch persisted state before retrying a decision."),
         Boolean(decision) && response.status >= 500,
       );
     try {
