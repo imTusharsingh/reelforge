@@ -593,6 +593,10 @@ export class CompositionService {
                 where: {
                   id: jobId,
                   status: { in: ["FAILED_RETRYABLE", "RUNNING"] },
+                  // Another worker may have failed and rescheduled since the
+                  // eligibility read. Recheck retry deadlines atomically while
+                  // allowing stale RUNNING leases to recover independently.
+                  AND: [{ OR: [{ status: "RUNNING" }, { nextAttemptAt: { lte: now } }] }],
                   cancelRequestedAt: null,
                   retrySupersededAt: null,
                   attempt: { lt: maxRetries },
