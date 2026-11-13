@@ -4,6 +4,9 @@ import type { WorkflowRun } from "./operations-types";
 export function canEditOperations(role: OperationsContext["role"]): boolean {
   return role === "OWNER" || role === "EDITOR";
 }
+export function canManageOwnNotifications(role: OperationsContext["role"]): boolean {
+  return role !== "UNKNOWN";
+}
 
 export function redacted(message: string | null): string {
   if (!message) return "No additional detail was provided.";

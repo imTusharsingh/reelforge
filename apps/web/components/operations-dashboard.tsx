@@ -17,7 +17,7 @@ import type {
   NotificationPreference,
   WorkflowRun,
 } from "../lib/operations-types";
-import { canEditOperations, redacted, safeActions } from "../lib/operations-logic";
+import { canManageOwnNotifications, redacted, safeActions } from "../lib/operations-logic";
 import styles from "./operations-dashboard.module.css";
 
 export const currency = (minor: number, code: string): string =>
@@ -152,7 +152,7 @@ function Preferences({
 }): JSX.Element {
   const [preferences, setPreferences] = useState(initial);
   const [busy, setBusy] = useState(false);
-  const readOnly = !canEditOperations(context.role);
+  const readOnly = !canManageOwnNotifications(context.role);
   useEffect(() => setPreferences(initial), [initial]);
   const save = async (): Promise<void> => {
     const signal = createSignal();
@@ -367,7 +367,7 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
       />
     );
   const currentGeneration = version.current;
-  const canMutate = canEditOperations(context.role);
+  const canManageNotifications = canManageOwnNotifications(context.role);
   const isCurrent = (): boolean => currentGeneration === version.current;
   return (
     <section className={styles.dashboard} aria-labelledby="operations-title">
@@ -416,7 +416,7 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
           <h2>
             Notifications <Badge tone="info">{data.notifications.unreadCount} unread</Badge>
           </h2>
-          {canMutate && (
+          {canManageNotifications && (
             <div className={styles.actions}>
               <Button
                 tone="secondary"
@@ -450,7 +450,7 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
                     <p>{notification.body}</p>
                     <small>{new Date(notification.createdAt).toLocaleString()}</small>
                   </div>
-                  {canMutate && !notification.readAt && (
+                  {canManageNotifications && !notification.readAt && (
                     <Button
                       tone="ghost"
                       onClick={() => {
@@ -584,8 +584,8 @@ export function OperationsDashboard({ context }: { context: OperationsContext })
       </Panel>
       {context.role === "UNKNOWN" && (
         <Alert tone="warning" title="Read-only operations mode">
-          Your workspace role is not available from the current authenticated context. Privileged
-          workflow and budget actions are disabled until Core exposes a trusted role contract.
+          Your role could not be verified; sign in again. Privileged workflow and budget actions are
+          disabled.
         </Alert>
       )}
       {context.role !== "OWNER" && context.role !== "UNKNOWN" && (

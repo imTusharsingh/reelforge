@@ -53,27 +53,25 @@ try {
         await page.getByRole("button", { name: "cancel", exact: true }).count(),
         Number(editor),
       );
-      assert.equal(
-        await page.getByRole("button", { name: "Mark all read" }).count(),
-        Number(editor),
-      );
-      assert.equal(
-        await page.getByRole("button", { name: "Save preferences" }).count(),
-        Number(editor),
-      );
+      assert.equal(await page.getByRole("button", { name: "Mark all read" }).count(), 1);
+      assert.equal(await page.getByRole("button", { name: "Save preferences" }).count(), 1);
       assert.equal(
         await page.getByRole("button", { name: "Save budget" }).count(),
         Number(role === "OWNER"),
       );
-      if (!editor) assert.equal(await page.locator('input[type="checkbox"]:disabled').count(), 2);
+      assert.equal(await page.locator('input[type="checkbox"]:disabled').count(), 0);
       assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         true,
       );
-      assert.equal(
-        await page.evaluate(() => window.calls.some((call) => !call.startsWith("GET "))),
-        false,
-      );
+      if (role === "VIEWER") {
+        await page.getByRole("button", { name: "Save preferences" }).click();
+        await page.waitForFunction(() => window.calls.some((call) => call.startsWith("PUT ")));
+        const writes = await page.evaluate(() =>
+          window.calls.filter((call) => !call.startsWith("GET ")),
+        );
+        assert.deepEqual(writes, ["PUT /api/v1/workspaces/workspace/notifications/preferences"]);
+      }
       await page.close();
       console.log(`PASS ${role} ${width}px`);
     }
