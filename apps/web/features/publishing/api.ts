@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import { withCsrf } from "../../lib/csrf";
 import {
   isEditableRole,
   parseAccounts,
@@ -180,13 +181,16 @@ export class PublishingClient {
       throw new PublishingApiError(403, "Access changed. Refresh your verified session.");
     let response: Response;
     try {
-      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
-        method,
-        credentials: "include",
-        signal: this.signal,
-        headers: { "Content-Type": "application/json" },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
+      response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
+        withCsrf({
+          method,
+          credentials: "include",
+          signal: this.signal,
+          headers: { "Content-Type": "application/json" },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        }),
+      );
     } catch (cause) {
       this.signal.throwIfAborted();
       throw new PublishingApiError(

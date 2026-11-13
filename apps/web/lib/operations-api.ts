@@ -10,6 +10,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from "./operations-types";
+import { withCsrf } from "./csrf";
 
 export type OperationsContext = Readonly<{
   workspaceId: string;
@@ -239,7 +240,7 @@ async function request<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    const requestInit: RequestInit = {
+    const requestInit: RequestInit = withCsrf({
       ...init,
       credentials: "include",
       headers: new Headers({
@@ -247,7 +248,7 @@ async function request<T>(
         "Content-Type": "application/json",
         ...(init?.headers ?? {}),
       }),
-    };
+    });
     if (signal) requestInit.signal = signal;
     response = await fetch(`/api/v1${path}`, requestInit);
   } catch {

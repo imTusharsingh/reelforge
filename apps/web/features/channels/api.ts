@@ -1,6 +1,7 @@
 import { markPendingSave, clearPendingSave, pendingSave } from "./mutation-recovery";
 import { parseDomainResponse, parseChannel, InvalidDtoError } from "./dto";
 import { canEdit, isRecord, type Channel, type ApiObject, type Role } from "./model";
+import { withCsrf } from "../../lib/csrf";
 export class ChannelApiError extends Error {
   constructor(
     public readonly status: number,
@@ -67,13 +68,16 @@ export class ChannelsClient {
     if (mutation) markPendingSave(this.workspaceId, path);
     let response: Response;
     try {
-      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
-        method: options.method ?? "GET",
-        credentials: "include",
-        signal: this.signal,
-        headers: { "Content-Type": "application/json" },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
+      response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
+        withCsrf({
+          method: options.method ?? "GET",
+          credentials: "include",
+          signal: this.signal,
+          headers: { "Content-Type": "application/json" },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        }),
+      );
     } catch (error) {
       this.signal.throwIfAborted();
       throw new ChannelApiError(

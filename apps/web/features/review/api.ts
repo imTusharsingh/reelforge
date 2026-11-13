@@ -9,6 +9,7 @@ import {
   type RenderStatus,
   type Run,
 } from "./model";
+import { withCsrf } from "../../lib/csrf";
 
 export class ReviewApiError extends Error {
   public constructor(
@@ -50,13 +51,13 @@ export class ReviewClient {
     try {
       response = await fetch(
         `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/quality/${path}`,
-        {
+        withCsrf({
           method: decision ? "POST" : "GET",
           credentials: "include",
           signal: this.signal,
           headers: { "Content-Type": "application/json" },
           ...(decision ? { body: JSON.stringify(decision) } : {}),
-        },
+        }),
       );
     } catch {
       throw new ReviewApiError(

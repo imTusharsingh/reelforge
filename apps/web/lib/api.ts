@@ -1,3 +1,5 @@
+import { ensureCsrfToken, withCsrf } from "./csrf";
+
 export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
 export type Workspace = {
   id: string;
@@ -99,11 +101,14 @@ async function request<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`/api/v1${path}`, {
-      ...init,
-      credentials: "include",
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
+    response = await fetch(
+      `/api/v1${path}`,
+      withCsrf({
+        ...init,
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      }),
+    );
   } catch {
     throw new ApiError(0, "The service is unavailable. Check your connection and try again.");
   }
@@ -118,7 +123,9 @@ async function request<T>(
         : response.status === 401
           ? "Your session has expired. Sign in again."
           : response.status === 403
-            ? "You do not have access to this workspace."
+            ? code === "CSRF_TOKEN_INVALID" || code === "CSRF_ORIGIN_INVALID"
+              ? "Your secure session expired. Retry the request or sign in again."
+              : "You do not have access to this workspace."
             : "The request could not be completed.";
     throw new ApiError(response.status, message, code);
   }
@@ -128,22 +135,26 @@ async function request<T>(
 
 export const api = {
   login: (email: string, password: string): Promise<{ userId: string }> =>
-    request(
-      "/auth/login",
-      {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      },
-      isAuthResponse,
+    ensureCsrfToken().then(() =>
+      request(
+        "/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        },
+        isAuthResponse,
+      ),
     ),
   register: (email: string, password: string, displayName: string): Promise<{ userId: string }> =>
-    request(
-      "/auth/register",
-      {
-        method: "POST",
-        body: JSON.stringify({ email, password, displayName }),
-      },
-      isAuthResponse,
+    ensureCsrfToken().then(() =>
+      request(
+        "/auth/register",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password, displayName }),
+        },
+        isAuthResponse,
+      ),
     ),
   logout: (): Promise<{ ok: true }> =>
     request("/auth/logout", { method: "POST" }, isLogoutResponse),

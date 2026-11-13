@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import { withCsrf } from "../../lib/csrf";
 
 export type IdeaStatus = "DRAFT" | "BACKLOG" | "APPROVED" | "REJECTED" | "SCHEDULED";
 export type Idea = {
@@ -311,14 +312,14 @@ export class PlanningClient {
     try {
       response = await fetch(
         "/api/v1/workspaces/" + encodeURIComponent(this.workspaceId) + "/" + path,
-        {
+        withCsrf({
           method,
           credentials: "include",
           cache: "no-store",
           signal: this.signal,
           headers: { "Content-Type": "application/json" },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        },
+        }),
       );
     } catch (cause) {
       if (this.signal.aborted) throw cause;

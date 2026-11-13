@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import { withCsrf } from "../../lib/csrf";
 import type { RenderInput } from "./composition";
 import {
   canWrite,
@@ -69,13 +70,16 @@ export class ProductionClient {
       throw new ProductionApiError(403, "A verified owner or editor role is required.");
     let response: Response;
     try {
-      response = await fetch(`/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`, {
-        method: options.method ?? "GET",
-        credentials: "include",
-        signal: this.signal,
-        headers: { "Content-Type": "application/json" },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
+      response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(this.workspaceId)}/${path}`,
+        withCsrf({
+          method: options.method ?? "GET",
+          credentials: "include",
+          signal: this.signal,
+          headers: { "Content-Type": "application/json" },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        }),
+      );
     } catch (cause) {
       this.signal.throwIfAborted();
       throw new ProductionApiError(
