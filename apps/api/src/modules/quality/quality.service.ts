@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   BadGatewayException,
   BadRequestException,
@@ -8,7 +7,6 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
-  ServiceUnavailableException,
 } from "@nestjs/common";
 import { z } from "zod";
 import { Prisma } from "@reelforge/database";
@@ -51,6 +49,7 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
+  stablePaidCorrelation,
 } from "../usage-budget/paid-call.js";
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
@@ -403,7 +402,7 @@ export class QualityService {
     const limitations: string[] = [];
     if (allGatesPass && script && genre && input) {
       const request: QualityReviewRequest = {
-        correlationId: randomUUID(),
+        correlationId: stablePaidCorrelation(`${context.workspaceId}:quality:${job.id}`),
         title: script.title,
         hook: script.hook,
         dialogue: script.dialogue,
@@ -432,123 +431,134 @@ export class QualityService {
         estimate === null ||
         estimate === undefined ||
         this.usage === undefined
-      )
-        throw new ServiceUnavailableException(
-          "Quality review provider is not configured for paid dispatch",
+      ) {
+        limitations.push(
+          "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
         );
-      const reservation = await this.usage.reservePaidCall({
-        workspaceId: context.workspaceId,
-        channelId: job.sceneMediaJob.channelId,
-        correlationId: request.correlationId,
-        category: "LLM",
-        currency: capability.costModel.currency,
-        estimate,
-      });
-      if (reservation === null)
-        throw new ServiceUnavailableException(
-          "Budget policy is unavailable; quality review refused",
-        );
-      const prompt = JSON.stringify(request);
-      await createPendingPaidLedger(this.db, {
-        workspaceId: context.workspaceId,
-        channelId: job.sceneMediaJob.channelId,
-        correlationId: request.correlationId,
-        capability,
-        prompt,
-      });
-      let dispatched = false;
-      const started = Date.now();
-      try {
-        dispatched = true;
-        const untrustedResult = await this.aiReview.review(request);
-        const parsedResult = qualityReviewResultSchema.safeParse(untrustedResult);
-        if (!parsedResult.success)
-          throw new BadGatewayException("AI quality review returned an invalid structured result");
-        const criteria = parsedResult.data.criteria;
-        const scores = Object.values(criteria).map((criterion) => criterion.score);
-        const computedScore = Math.round(
-          scores.reduce((sum, item) => sum + item, 0) / scores.length,
-        );
-        const metadata = parsedResult.data.metadata;
-        const normalizedMetadata = {
-          modelVersion: metadata.modelVersion,
-          promptVersion: metadata.promptVersion,
-          cost: metadata.cost,
-          ...(metadata.currency === undefined ? {} : { currency: metadata.currency }),
-          ...(metadata.usage === undefined
-            ? {}
-            : {
-                usage: {
-                  ...(metadata.usage.inputTokens === undefined
-                    ? {}
-                    : { inputTokens: metadata.usage.inputTokens }),
-                  ...(metadata.usage.outputTokens === undefined
-                    ? {}
-                    : { outputTokens: metadata.usage.outputTokens }),
-                  ...(metadata.usage.seconds === undefined
-                    ? {}
-                    : { seconds: metadata.usage.seconds }),
-                  ...(metadata.usage.characters === undefined
-                    ? {}
-                    : { characters: metadata.usage.characters }),
-                },
-              }),
-        };
-        scorecard = {
-          criteria,
-          score: computedScore,
-          metadata: normalizedMetadata,
-        };
-        const criteriaMeetThresholds = QUALITY_CRITERIA.every((criterionKey) => {
-          const result = criteria[criterionKey];
-          return (
-            result.score >=
-            (approvalPolicy.criterionThresholds[criterionKey] ?? approvalPolicy.scoreThreshold)
-          );
-        });
-        const allThresholdsMet =
-          computedScore >= approvalPolicy.scoreThreshold && criteriaMeetThresholds;
-        status =
-          approvalPolicy.mode === "AUTO" && scorecard !== null && allThresholdsMet
-            ? "AUTO_APPROVED"
-            : "REVIEW_REQUIRED";
-        limitations.push(...Object.values(criteria).flatMap((criterion) => criterion.limitations));
-        await finishPaidLedger(this.db, {
+      } else {
+        const reservation = await this.usage.reservePaidCall({
           workspaceId: context.workspaceId,
+          channelId: job.sceneMediaJob.channelId,
           correlationId: request.correlationId,
-          capability,
-          dispatched,
-          actualCost: metadata.cost,
-          currency: metadata.currency ?? null,
-          metadata: { dispatched: true, costKnown: metadata.cost !== null },
-          latencyMs: Date.now() - started,
-          prompt,
+          category: "LLM",
+          currency: capability.costModel.currency,
+          estimate,
         });
-        await this.usage.finishPaidCall(reservation, {
-          dispatched: true,
-          actualCost: metadata.cost,
-          actualCurrency: metadata.currency ?? null,
-        });
-      } catch (error) {
-        await finishPaidLedger(this.db, {
-          workspaceId: context.workspaceId,
-          correlationId: request.correlationId,
-          capability,
-          dispatched,
-          actualCost: null,
-          metadata: { dispatched, costKnown: false },
-          latencyMs: Date.now() - started,
-          prompt,
-          error,
-        });
-        await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
-        if (error instanceof ProviderError && error.code === "NOT_CONFIGURED") {
-          status = "REVIEW_REQUIRED";
+        if (reservation === null) {
           limitations.push(
             "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
           );
         } else {
-          throw error;
+          const prompt = JSON.stringify(request);
+          let dispatched = false;
+          let ledgerCreated = false;
+          const started = Date.now();
+          try {
+            await createPendingPaidLedger(this.db, {
+              workspaceId: context.workspaceId,
+              channelId: job.sceneMediaJob.channelId,
+              correlationId: request.correlationId,
+              capability,
+              prompt,
+            });
+            ledgerCreated = true;
+            dispatched = true;
+            const untrustedResult = await this.aiReview.review(request);
+            const parsedResult = qualityReviewResultSchema.safeParse(untrustedResult);
+            if (!parsedResult.success)
+              throw new BadGatewayException(
+                "AI quality review returned an invalid structured result",
+              );
+            const criteria = parsedResult.data.criteria;
+            const scores = Object.values(criteria).map((criterion) => criterion.score);
+            const computedScore = Math.round(
+              scores.reduce((sum, item) => sum + item, 0) / scores.length,
+            );
+            const metadata = parsedResult.data.metadata;
+            const normalizedMetadata = {
+              modelVersion: metadata.modelVersion,
+              promptVersion: metadata.promptVersion,
+              cost: metadata.cost,
+              ...(metadata.currency === undefined ? {} : { currency: metadata.currency }),
+              ...(metadata.usage === undefined
+                ? {}
+                : {
+                    usage: {
+                      ...(metadata.usage.inputTokens === undefined
+                        ? {}
+                        : { inputTokens: metadata.usage.inputTokens }),
+                      ...(metadata.usage.outputTokens === undefined
+                        ? {}
+                        : { outputTokens: metadata.usage.outputTokens }),
+                      ...(metadata.usage.seconds === undefined
+                        ? {}
+                        : { seconds: metadata.usage.seconds }),
+                      ...(metadata.usage.characters === undefined
+                        ? {}
+                        : { characters: metadata.usage.characters }),
+                    },
+                  }),
+            };
+            scorecard = {
+              criteria,
+              score: computedScore,
+              metadata: normalizedMetadata,
+            };
+            const criteriaMeetThresholds = QUALITY_CRITERIA.every((criterionKey) => {
+              const result = criteria[criterionKey];
+              return (
+                result.score >=
+                (approvalPolicy.criterionThresholds[criterionKey] ?? approvalPolicy.scoreThreshold)
+              );
+            });
+            const allThresholdsMet =
+              computedScore >= approvalPolicy.scoreThreshold && criteriaMeetThresholds;
+            status =
+              approvalPolicy.mode === "AUTO" && scorecard !== null && allThresholdsMet
+                ? "AUTO_APPROVED"
+                : "REVIEW_REQUIRED";
+            limitations.push(
+              ...Object.values(criteria).flatMap((criterion) => criterion.limitations),
+            );
+            await finishPaidLedger(this.db, {
+              workspaceId: context.workspaceId,
+              correlationId: request.correlationId,
+              capability,
+              dispatched,
+              actualCost: metadata.cost,
+              currency: metadata.currency ?? null,
+              metadata: { dispatched: true, costKnown: metadata.cost !== null },
+              latencyMs: Date.now() - started,
+              prompt,
+            });
+            await this.usage.finishPaidCall(reservation, {
+              dispatched: true,
+              actualCost: metadata.cost,
+              actualCurrency: metadata.currency ?? null,
+            });
+          } catch (error) {
+            if (ledgerCreated)
+              await finishPaidLedger(this.db, {
+                workspaceId: context.workspaceId,
+                correlationId: request.correlationId,
+                capability,
+                dispatched,
+                actualCost: null,
+                metadata: { dispatched, costKnown: false },
+                latencyMs: Date.now() - started,
+                prompt,
+                error,
+              });
+            await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
+            if (error instanceof ProviderError && error.code === "NOT_CONFIGURED") {
+              status = "REVIEW_REQUIRED";
+              limitations.push(
+                "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
+              );
+            } else {
+              throw error;
+            }
+          }
         }
       }
     }

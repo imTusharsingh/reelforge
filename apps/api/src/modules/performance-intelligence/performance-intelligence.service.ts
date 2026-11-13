@@ -6,9 +6,7 @@ import {
   Injectable,
   NotFoundException,
   Optional,
-  ServiceUnavailableException,
 } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
 import {
   PerformanceDimensionSummarySchema,
@@ -47,6 +45,7 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
+  stablePaidCorrelation,
 } from "../usage-budget/paid-call.js";
 import {
   INSIGHT_REPORT_LLM,
@@ -551,11 +550,7 @@ export class PerformanceIntelligenceService {
       limitations.push(
         "KPI comparison uses VIDEO-granularity snapshots for both windows because CHANNEL snapshots were unavailable in one window.",
       );
-    if (status !== "INSUFFICIENT_DATA") {
-      if (!this.llm.isConfigured())
-        throw new ServiceUnavailableException(
-          "Insight report LLM is not configured for paid dispatch",
-        );
+    if (status !== "INSUFFICIENT_DATA" && this.llm.isConfigured()) {
       const capability = paidCapability(this.llm);
       const estimate = capability?.costModel.amount;
       if (
@@ -563,91 +558,104 @@ export class PerformanceIntelligenceService {
         estimate === null ||
         estimate === undefined ||
         this.usage === undefined
-      )
-        throw new ServiceUnavailableException(
-          "Insight report LLM is not configured for paid dispatch",
-        );
-      const correlationId = randomUUID();
-      const reservation = await this.usage.reservePaidCall({
-        workspaceId: context.workspaceId,
-        channelId: input.channelId,
-        correlationId,
-        category: "LLM",
-        currency: capability.costModel.currency,
-        estimate,
-      });
-      if (reservation === null)
-        throw new ServiceUnavailableException(
-          "Budget policy is unavailable; insight report refused",
-        );
-      const prompt = JSON.stringify({
-        channelId: input.channelId,
-        currentWindow,
-        previousWindow,
-        kpis,
-        dimensions,
-      });
-      await createPendingPaidLedger(this.db, {
-        workspaceId: context.workspaceId,
-        channelId: input.channelId,
-        correlationId,
-        capability,
-        prompt,
-      });
-      let dispatched = false;
-      const started = Date.now();
-      try {
-        dispatched = true;
-        const result = await this.llm.generate({
-          channelId: input.channelId,
-          currentWindow,
-          previousWindow: previous,
-          kpis,
-          dimensions,
-        });
-        narrative = result.narrative;
-        aiStatus = "GENERATED";
-        provider = {
-          providerId: this.llm.capability.providerId,
-          modelVersion: result.provenance.modelVersion,
-          promptVersion: result.provenance.promptVersion,
-          cost: result.provenance.cost,
-          currency: result.provenance.currency ?? null,
-        };
-        await finishPaidLedger(this.db, {
-          workspaceId: context.workspaceId,
-          correlationId,
-          capability,
-          dispatched,
-          actualCost: result.provenance.cost,
-          currency: result.provenance.currency ?? null,
-          metadata: { dispatched: true, costKnown: result.provenance.cost !== null },
-          latencyMs: Date.now() - started,
-          prompt,
-        });
-        await this.usage.finishPaidCall(reservation, {
-          dispatched: true,
-          actualCost: result.provenance.cost,
-          actualCurrency: result.provenance.currency ?? null,
-        });
-      } catch {
-        await finishPaidLedger(this.db, {
-          workspaceId: context.workspaceId,
-          correlationId,
-          capability,
-          dispatched,
-          actualCost: null,
-          metadata: { dispatched, costKnown: false },
-          latencyMs: Date.now() - started,
-          prompt,
-          error: new Error("Insight provider failed"),
-        });
-        await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
-        aiStatus = "NOT_GENERATED";
+      ) {
         limitations.push(
-          "The AI insight provider failed; only deterministic summaries are included.",
+          "AI insight generation is unavailable; only deterministic summaries are included.",
         );
+      } else {
+        const correlationId = stablePaidCorrelation(
+          `${context.workspaceId}:insight:${input.channelId}:${input.startDate}:${input.endDate}`,
+        );
+        const reservation = await this.usage.reservePaidCall({
+          workspaceId: context.workspaceId,
+          channelId: input.channelId,
+          correlationId,
+          category: "LLM",
+          currency: capability.costModel.currency,
+          estimate,
+        });
+        if (reservation === null) {
+          limitations.push(
+            "AI insight generation is unavailable; only deterministic summaries are included.",
+          );
+        } else {
+          const prompt = JSON.stringify({
+            channelId: input.channelId,
+            currentWindow,
+            previousWindow,
+            kpis,
+            dimensions,
+          });
+          let dispatched = false;
+          let ledgerCreated = false;
+          const started = Date.now();
+          try {
+            await createPendingPaidLedger(this.db, {
+              workspaceId: context.workspaceId,
+              channelId: input.channelId,
+              correlationId,
+              capability,
+              prompt,
+            });
+            ledgerCreated = true;
+            dispatched = true;
+            const result = await this.llm.generate({
+              channelId: input.channelId,
+              currentWindow,
+              previousWindow: previous,
+              kpis,
+              dimensions,
+            });
+            narrative = result.narrative;
+            aiStatus = "GENERATED";
+            provider = {
+              providerId: this.llm.capability.providerId,
+              modelVersion: result.provenance.modelVersion,
+              promptVersion: result.provenance.promptVersion,
+              cost: result.provenance.cost,
+              currency: result.provenance.currency ?? null,
+            };
+            await finishPaidLedger(this.db, {
+              workspaceId: context.workspaceId,
+              correlationId,
+              capability,
+              dispatched,
+              actualCost: result.provenance.cost,
+              currency: result.provenance.currency ?? null,
+              metadata: { dispatched: true, costKnown: result.provenance.cost !== null },
+              latencyMs: Date.now() - started,
+              prompt,
+            });
+            await this.usage.finishPaidCall(reservation, {
+              dispatched: true,
+              actualCost: result.provenance.cost,
+              actualCurrency: result.provenance.currency ?? null,
+            });
+          } catch (error) {
+            if (ledgerCreated)
+              await finishPaidLedger(this.db, {
+                workspaceId: context.workspaceId,
+                correlationId,
+                capability,
+                dispatched,
+                actualCost: null,
+                metadata: { dispatched, costKnown: false },
+                latencyMs: Date.now() - started,
+                prompt,
+                error,
+              });
+            await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
+            aiStatus = "NOT_GENERATED";
+            limitations.push(
+              "The AI insight provider failed; only deterministic summaries are included.",
+            );
+          }
+        }
       }
+    } else if (status !== "INSUFFICIENT_DATA") {
+      limitations.push(
+        "AI insight generation is not configured; only deterministic summaries are included.",
+      );
     }
     if (status === "INSUFFICIENT_DATA")
       limitations.push(

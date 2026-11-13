@@ -18,6 +18,7 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
+  stablePaidCorrelation,
 } from "../usage-budget/paid-call.js";
 
 const transitions: Record<string, ReadonlySet<string>> = {
@@ -165,7 +166,9 @@ export class IdeaService {
   ): Promise<unknown> {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
     const capability = paidCapability(this.llm);
-    const correlationId = randomUUID();
+    const correlationId = stablePaidCorrelation(
+      `${context.workspaceId}:idea:${request.channelId ?? ""}:${request.seriesId ?? ""}:${request.prompt}:${request.contextText ?? ""}`,
+    );
     const estimate = capability?.costModel.amount;
     if (
       capability === null ||
@@ -187,16 +190,18 @@ export class IdeaService {
     if (reservation === null)
       throw new ServiceUnavailableException("Budget policy is unavailable; idea proposal refused");
     const prompt = request.prompt;
-    await createPendingPaidLedger(this.db, {
-      workspaceId: context.workspaceId,
-      channelId: request.channelId ?? null,
-      correlationId,
-      capability,
-      prompt,
-    });
     let dispatched = false;
+    let ledgerCreated = false;
     const started = Date.now();
     try {
+      await createPendingPaidLedger(this.db, {
+        workspaceId: context.workspaceId,
+        channelId: request.channelId ?? null,
+        correlationId,
+        capability,
+        prompt,
+      });
+      ledgerCreated = true;
       dispatched = true;
       const result = await this.llm.proposeIdea(
         request.contextText === undefined
@@ -235,17 +240,18 @@ export class IdeaService {
       });
       return created;
     } catch (error) {
-      await finishPaidLedger(this.db, {
-        workspaceId: context.workspaceId,
-        correlationId,
-        capability,
-        dispatched,
-        actualCost: null,
-        metadata: { dispatched, costKnown: false },
-        latencyMs: Date.now() - started,
-        prompt,
-        error,
-      });
+      if (ledgerCreated)
+        await finishPaidLedger(this.db, {
+          workspaceId: context.workspaceId,
+          correlationId,
+          capability,
+          dispatched,
+          actualCost: null,
+          metadata: { dispatched, costKnown: false },
+          latencyMs: Date.now() - started,
+          prompt,
+          error,
+        });
       await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
       throw error;
     }

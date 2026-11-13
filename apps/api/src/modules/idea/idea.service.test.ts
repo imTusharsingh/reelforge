@@ -30,6 +30,7 @@ function database(): {
   channel: { findUnique: Mock };
   contentSeries: { findUnique: Mock };
   ideaApprovalSnapshot: { findUnique: Mock; create: Mock };
+  providerRequest: { create: Mock; update: Mock };
   $transaction: Mock;
 } {
   const fake = {
@@ -49,9 +50,34 @@ function database(): {
     channel: { findUnique: vi.fn().mockResolvedValue({ id: "channel-a" }) },
     contentSeries: { findUnique: vi.fn() },
     ideaApprovalSnapshot: { findUnique: vi.fn(), create: vi.fn() },
+    providerRequest: { create: vi.fn(), update: vi.fn() },
     $transaction: vi.fn(async (callback: (tx: typeof fake) => Promise<unknown>) => callback(fake)),
   };
   return fake;
+}
+
+function paidUsage(): { reservePaidCall: Mock; finishPaidCall: Mock } {
+  return {
+    reservePaidCall: vi.fn().mockResolvedValue({
+      workspaceId: context.workspaceId,
+      reservationId: "reservation-a",
+      currency: "USD",
+      estimateMinor: 1,
+    }),
+    finishPaidCall: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function configuredIdeaLlm(llm: { proposeIdea: Mock }): typeof llm & { capability: unknown } {
+  return {
+    ...llm,
+    capability: {
+      providerId: "fixture",
+      capabilityId: "idea-proposal",
+      kind: "llm",
+      costModel: { currency: "USD", unit: "request", amount: 0.01 },
+    },
+  };
 }
 
 describe("IdeaService", () => {
@@ -233,22 +259,30 @@ describe("IdeaService", () => {
 
   it("rejects malformed AI proposals and invalid provenance without persisting", async () => {
     const db = database();
-    const service = new IdeaService(db as never, {
-      proposeIdea: vi.fn().mockResolvedValue({
-        proposal: { title: "bad" },
-        metadata: { modelVersion: "m", promptVersion: "p", cost: null },
+    const service = new IdeaService(
+      db as never,
+      configuredIdeaLlm({
+        proposeIdea: vi.fn().mockResolvedValue({
+          proposal: { title: "bad" },
+          metadata: { modelVersion: "m", promptVersion: "p", cost: null },
+        }),
       }),
-    });
+      paidUsage() as never,
+    );
     await expect(service.propose(context, { prompt: "suggest" })).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(db.idea.create).not.toHaveBeenCalled();
-    const invalid = new IdeaService(db as never, {
-      proposeIdea: vi.fn().mockResolvedValue({
-        proposal: { ...input },
-        metadata: { modelVersion: "", promptVersion: "p", cost: -1 },
+    const invalid = new IdeaService(
+      db as never,
+      configuredIdeaLlm({
+        proposeIdea: vi.fn().mockResolvedValue({
+          proposal: { ...input },
+          metadata: { modelVersion: "", promptVersion: "p", cost: -1 },
+        }),
       }),
-    });
+      paidUsage() as never,
+    );
     await expect(invalid.propose(context, { prompt: "suggest" })).rejects.toBeInstanceOf(
       BadRequestException,
     );
@@ -311,7 +345,7 @@ describe("IdeaService", () => {
         metadata: { modelVersion: "fixture-model", promptVersion: "prompt-1", cost: null },
       }),
     };
-    const service = new IdeaService(db as never, llm);
+    const service = new IdeaService(db as never, configuredIdeaLlm(llm), paidUsage() as never);
     await service.propose(context, {
       prompt: "suggest",
       channelId: "00000000-0000-4000-8000-000000000001",
@@ -332,5 +366,107 @@ describe("IdeaService", () => {
     await expect(
       service.propose(context, { prompt: "suggest a topic", channelId: "channel-a" }),
     ).rejects.toThrow("not configured");
+  });
+
+  it("reserves before dispatches and charges an estimate when dispatch fails", async () => {
+    const db = database();
+    const usage = paidUsage();
+    const events: string[] = [];
+    usage.reservePaidCall.mockImplementation(async () => {
+      events.push("reserve");
+      return {
+        workspaceId: context.workspaceId,
+        reservationId: "reservation-a",
+        currency: "USD",
+        estimateMinor: 1,
+      };
+    });
+    const llm = configuredIdeaLlm({
+      proposeIdea: vi.fn().mockImplementation(async () => {
+        events.push("dispatch");
+        throw new Error("provider failed");
+      }),
+    });
+    const service = new IdeaService(db as never, llm, usage as never);
+
+    await expect(service.propose(context, { prompt: "suggest" })).rejects.toThrow(
+      "provider failed",
+    );
+    expect(events).toEqual(["reserve", "dispatch"]);
+    expect(usage.finishPaidCall).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ dispatched: true, actualCost: null }),
+    );
+  });
+
+  it.each(["exhausted", "replayed"])("%s refusal never dispatches", async (reason) => {
+    const db = database();
+    const usage = paidUsage();
+    usage.reservePaidCall.mockRejectedValue(new Error(reason));
+    const proposeIdea = vi.fn();
+    const service = new IdeaService(
+      db as never,
+      configuredIdeaLlm({ proposeIdea }),
+      usage as never,
+    );
+
+    await expect(service.propose(context, { prompt: "suggest" })).rejects.toThrow(reason);
+    expect(proposeIdea).not.toHaveBeenCalled();
+  });
+
+  it("releases a reservation when the pre-dispatch ledger write fails", async () => {
+    const db = database();
+    db.providerRequest.create.mockRejectedValue(new Error("ledger unavailable"));
+    const usage = paidUsage();
+    const proposeIdea = vi.fn();
+    const service = new IdeaService(
+      db as never,
+      configuredIdeaLlm({ proposeIdea }),
+      usage as never,
+    );
+
+    await expect(service.propose(context, { prompt: "suggest" })).rejects.toThrow(
+      "ledger unavailable",
+    );
+    expect(proposeIdea).not.toHaveBeenCalled();
+    expect(usage.finishPaidCall).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ dispatched: false, actualCost: null }),
+    );
+  });
+
+  it("uses a stable paid-call key so a replay cannot dispatch twice", async () => {
+    const db = database();
+    db.idea.findMany.mockResolvedValue([]);
+    const usage = paidUsage();
+    const replay = new Error("PAID_CALL_REPLAYED");
+    usage.reservePaidCall.mockResolvedValueOnce({
+      workspaceId: context.workspaceId,
+      reservationId: "reservation-a",
+      currency: "USD",
+      estimateMinor: 1,
+    });
+    usage.reservePaidCall.mockRejectedValueOnce(replay);
+    const proposeIdea = vi.fn().mockResolvedValue({
+      proposal: {
+        title: "AI idea",
+        topic: "science",
+        hook: "hook",
+        angle: "angle",
+        audience: "students",
+        references: [],
+        expectedFormat: "short",
+      },
+      metadata: { modelVersion: "fixture", promptVersion: "prompt", cost: 0.01 },
+    });
+    const service = new IdeaService(
+      db as never,
+      configuredIdeaLlm({ proposeIdea }),
+      usage as never,
+    );
+    const request = { prompt: "same request", channelId: "00000000-0000-4000-8000-000000000001" };
+    await service.propose(context, request);
+    await expect(service.propose(context, request)).rejects.toThrow("PAID_CALL_REPLAYED");
+    expect(proposeIdea).toHaveBeenCalledOnce();
   });
 });

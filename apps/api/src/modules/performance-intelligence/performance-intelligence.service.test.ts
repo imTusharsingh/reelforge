@@ -160,6 +160,7 @@ function publishedContexts(): PublishedContextFixture[] {
 
 type MockDatabase = {
   channel: { findUnique: MockMethod };
+  providerRequest: { create: MockMethod; update: MockMethod };
   performanceInsightReport: { create: MockMethod; findUnique: MockMethod; findMany: MockMethod };
   performanceRecommendation: {
     create: MockMethod;
@@ -185,6 +186,7 @@ type MockDatabase = {
 function database(): MockDatabase {
   const db = {
     channel: { findUnique: vi.fn().mockResolvedValue({ id: channelId }) },
+    providerRequest: { create: vi.fn(), update: vi.fn() },
     performanceInsightReport: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
         id: reportId,
@@ -240,6 +242,18 @@ function database(): MockDatabase {
   } as MockDatabase;
   db.$transaction = vi.fn(async (callback: (transaction: MockDatabase) => unknown) => callback(db));
   return db;
+}
+
+function paidUsage(): { reservePaidCall: MockMethod; finishPaidCall: MockMethod } {
+  return {
+    reservePaidCall: vi.fn().mockResolvedValue({
+      workspaceId,
+      reservationId: "reservation-a",
+      currency: "USD",
+      estimateMinor: 1,
+    }),
+    finishPaidCall: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 function analytics(
@@ -319,12 +333,14 @@ function service(
   analyticsPort = analytics(),
   publishingPort = publishing(),
   llmPort = llm(),
+  usagePort = paidUsage(),
 ): PerformanceIntelligenceService {
   return new PerformanceIntelligenceService(
     db as never,
     analyticsPort as never,
     publishingPort as never,
     llmPort as never,
+    usagePort as never,
   );
 }
 
@@ -378,6 +394,55 @@ function reportRecord(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("PerformanceIntelligenceService", () => {
+  it("reserves before the insight provider and charges a dispatched failure at estimate", async () => {
+    const db = database();
+    const events: string[] = [];
+    const usage = paidUsage();
+    usage.reservePaidCall.mockImplementation(async () => {
+      events.push("reserve");
+      return { workspaceId, reservationId: "reservation-a", currency: "USD", estimateMinor: 1 };
+    });
+    db.providerRequest.create.mockImplementation(async () => {
+      events.push("ledger");
+    });
+    const insightLlm = llm(true, true);
+    insightLlm.generate.mockImplementation(async () => {
+      events.push("dispatch");
+      throw new Error("provider failed");
+    });
+    await expect(
+      service(
+        db,
+        analytics(
+          channelSnapshots(
+            ["2026-11-01", "2026-11-02", "2026-11-03"],
+            1,
+            "11111111-1111-4111-8111-",
+          ),
+          channelSnapshots(
+            ["2026-10-29", "2026-10-30", "2026-10-31"],
+            1,
+            "22222222-2222-4222-8222-",
+          ),
+          videoSnapshots(),
+        ),
+        publishing(),
+        insightLlm,
+        usage,
+      ).generateInsightReport(ownerContext, {
+        channelId,
+        socialAccountId: accountId,
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+      }),
+    ).resolves.toMatchObject({ aiStatus: "NOT_GENERATED" });
+    expect(events).toEqual(["reserve", "ledger", "dispatch"]);
+    expect(usage.finishPaidCall).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ dispatched: true, actualCost: null }),
+    );
+  });
+
   it("exposes every KPI with comparison windows and minimum sample rules", () => {
     const definitions = service(database()).kpiDefinitions();
     expect(definitions.map((definition) => definition.key)).toEqual([

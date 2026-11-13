@@ -1,4 +1,5 @@
 import { Prisma } from "@reelforge/database";
+import { createHash } from "node:crypto";
 import type { CapabilityMetadata } from "@reelforge/ai-providers";
 import type { Database } from "../identity/identity.types.js";
 
@@ -17,6 +18,14 @@ export function paidCapability(port: unknown): CapabilityMetadata | null {
     value.costModel.amount >= 0
     ? (capability as CapabilityMetadata)
     : null;
+}
+
+export function stablePaidCorrelation(seed: string): string {
+  const hex = createHash("sha256").update(seed).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${(
+    8 +
+    (Number.parseInt(hex[16] ?? "0", 16) % 4)
+  ).toString(16)}${hex.slice(17, 20)}-${hex.slice(20)}`;
 }
 
 export async function createPendingPaidLedger(
