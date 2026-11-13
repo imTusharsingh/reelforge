@@ -9,6 +9,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
 import {
   ProviderError,
@@ -49,8 +50,9 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
-  stablePaidCorrelation,
+  isPaidCallReplay,
 } from "../usage-budget/paid-call.js";
+import type { PaidCallReservation } from "../usage-budget/usage-budget.types.js";
 
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const qualityInputSchema = createRenderSchema.shape.input;
@@ -66,9 +68,11 @@ export class QualityService {
 
   public async create(context: WorkspaceContext, body: unknown): Promise<QualityRunView> {
     this.requireEditor(context);
-    const request = parseCreateBody(body);
+    const createRequest = parseCreateBody(body);
     const job = await this.db.renderJob.findUnique({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: request.renderJobId } },
+      where: {
+        workspaceId_id: { workspaceId: context.workspaceId, id: createRequest.renderJobId },
+      },
       include: { sceneMediaJob: { include: { channel: true } } },
     });
     if (!job) throw new NotFoundException("Render job not found");
@@ -402,7 +406,7 @@ export class QualityService {
     const limitations: string[] = [];
     if (allGatesPass && script && genre && input) {
       const request: QualityReviewRequest = {
-        correlationId: stablePaidCorrelation(`${context.workspaceId}:quality:${job.id}`),
+        correlationId: createRequest.correlationId ?? randomUUID(),
         title: script.title,
         hook: script.hook,
         dialogue: script.dialogue,
@@ -436,14 +440,20 @@ export class QualityService {
           "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
         );
       } else {
-        const reservation = await this.usage.reservePaidCall({
-          workspaceId: context.workspaceId,
-          channelId: job.sceneMediaJob.channelId,
-          correlationId: request.correlationId,
-          category: "LLM",
-          currency: capability.costModel.currency,
-          estimate,
-        });
+        let reservation: PaidCallReservation | null;
+        try {
+          reservation = await this.usage.reservePaidCall({
+            workspaceId: context.workspaceId,
+            channelId: job.sceneMediaJob.channelId,
+            correlationId: request.correlationId,
+            category: "LLM",
+            currency: capability.costModel.currency,
+            estimate,
+          });
+        } catch (error) {
+          if (isPaidCallReplay(error)) throw error;
+          reservation = null;
+        }
         if (reservation === null) {
           limitations.push(
             "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
@@ -1199,10 +1209,12 @@ export class QualityService {
   }
 }
 
-function parseCreateBody(body: unknown): { renderJobId: string } {
+function parseCreateBody(body: unknown): { renderJobId: string; correlationId?: string } {
   const parsed = createBodySchema.safeParse(body);
   if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-  return parsed.data;
+  return parsed.data.correlationId === undefined
+    ? { renderJobId: parsed.data.renderJobId }
+    : parsed.data;
 }
 
 function parseScriptDocument(value: unknown): ScriptDocument | null {
@@ -1361,4 +1373,6 @@ function safePolicySnapshot(value: Prisma.JsonValue): QualityRunView["policySnap
   return parsed.success ? parseApprovalPolicy(parsed.data) : null;
 }
 
-const createBodySchema = z.object({ renderJobId: z.string().uuid() }).strict();
+const createBodySchema = z
+  .object({ renderJobId: z.string().uuid(), correlationId: z.uuid().optional() })
+  .strict();

@@ -8,6 +8,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
+import { randomUUID } from "node:crypto";
 import {
   PerformanceDimensionSummarySchema,
   PerformanceInsightReportSchema,
@@ -17,7 +18,6 @@ import {
   PerformanceStrategyChangeSchema,
   type CreateExperimentRequest,
   type ExportStrategyChangeRequest,
-  type GenerateInsightReportRequest,
   type InsightReportStatus,
   type LatestMetricSnapshot,
   type MetricCompleteness,
@@ -45,8 +45,10 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
-  stablePaidCorrelation,
+  isPaidCallReplay,
 } from "../usage-budget/paid-call.js";
+import type { GenerateInsightReportInput } from "./performance-intelligence.validation.js";
+import type { PaidCallReservation } from "../usage-budget/usage-budget.types.js";
 import {
   INSIGHT_REPORT_LLM,
   type InsightReportLlmPort,
@@ -474,7 +476,7 @@ export class PerformanceIntelligenceService {
 
   public async generateInsightReport(
     context: WorkspaceContext,
-    input: GenerateInsightReportRequest,
+    input: GenerateInsightReportInput,
   ): Promise<PerformanceInsightReport> {
     this.requireEditor(context);
     await this.assertChannel(context, input.channelId);
@@ -563,17 +565,21 @@ export class PerformanceIntelligenceService {
           "AI insight generation is unavailable; only deterministic summaries are included.",
         );
       } else {
-        const correlationId = stablePaidCorrelation(
-          `${context.workspaceId}:insight:${input.channelId}:${input.startDate}:${input.endDate}`,
-        );
-        const reservation = await this.usage.reservePaidCall({
-          workspaceId: context.workspaceId,
-          channelId: input.channelId,
-          correlationId,
-          category: "LLM",
-          currency: capability.costModel.currency,
-          estimate,
-        });
+        const correlationId = input.correlationId ?? randomUUID();
+        let reservation: PaidCallReservation | null;
+        try {
+          reservation = await this.usage.reservePaidCall({
+            workspaceId: context.workspaceId,
+            channelId: input.channelId,
+            correlationId,
+            category: "LLM",
+            currency: capability.costModel.currency,
+            estimate,
+          });
+        } catch (error) {
+          if (isPaidCallReplay(error)) throw error;
+          reservation = null;
+        }
         if (reservation === null) {
           limitations.push(
             "AI insight generation is unavailable; only deterministic summaries are included.",
