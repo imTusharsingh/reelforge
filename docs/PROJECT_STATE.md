@@ -2,20 +2,19 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-13
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Overall phase:** Phase 1 in progress (M00–M19 integrated).
-- **Current release:** v1.
-- **Current integrated commit:** `3da846e10bc8b682639a32c46bcefc9f529f6e0b` (`origin/main` after M19 PR #34; the M17+M18 closeout PR #33 at `54db53f130fbde381a98db2c6836bc93487f030b` is an ancestor).
-- **Active implementation sessions:** none.
-- **Active work packages:** none; M20 is next after this docs-only closeout merges.
-- **Blocked work packages:** none recorded.
-- **Latest core review:** Minu approved M19 PR #34 at `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`, no blockers, 13 non-blocking residuals R1–R13 plus T07/R14 open); squash-merged by `minu-the-reviewer` at `3da846e10bc8b682639a32c46bcefc9f529f6e0b`.
+- **Snapshot:** 2026-11-13, main `94f0f5325ce5835ef3281e75a278238dad5cf07b` after M27 #93.
+- **Phase:** M00–M27 implementation code and M29 are merged; M28 remains NOT_STARTED. Code integration does not establish production release or live-provider acceptance.
+- **Repository:** PUBLIC (verified via GitHub repository metadata). Public visibility does not prove branch protection or squash-only settings are enabled.
+- **Current assigned follow-ups:** #80 docs closeout; #79 Playwright/axe E2E and API-origin spelling correction. #79 is OPEN at this snapshot and is not satisfied by earlier mounted fixture harnesses.
+- **Open budget gap:** [#78](https://github.com/imTusharsingh/reelforge/issues/78) remains OPEN: M06/M11/M15 paid paths require the M08/M18 boundary; exact SQL/implementation approval remains outstanding. ADR-021–024 architecture acceptance is not application authorization.
+- **Review/integration policy:** independent Minu review before merge; authorized integrator uses squash only. ci.yml and PROJECT_STATE changes use dedicated chore PRs. Required secret scan is enforced by #72; see ADR-020 and PROCESS_ENFORCEMENT.md for limits of technical enforcement.
 
 ## Frozen architecture summary
 
@@ -30,15 +29,11 @@
 
 ## Current milestone
 
-**Phase 1 in progress - M00–M19 integrated**
-
-Next exact action:
-1. Complete and submit this docs-only M19 integrated closeout PR for Minu's review; do not approve or merge.
-2. After this closeout merges, implement M20 (Core Integration & Release Gate) from the new `origin/main` tip. M19-T07 (retention/deletion/export) stays open until the retention ADR is decided.
+The creator, quality, publishing/calendar, account and operations UI implementations listed below are on main. Next: close this docs-only #80 PR after Minu review, complete #79 browser/axe coverage in its own PR, and keep #78 plus retention/KMS/email/live-verification gates open. Do not infer a production release from merged code or green CI.
 
 ## Module status index
 
-| Module | State | Branch | Approved commit | Blocker |
+| Module | State | Branch | Recorded implementation head | Blocker |
 |---|---|---|---|---|
 | M00 - Repository Governance & Shared Contracts | INTEGRATED | `main` (PR #2) | `626187aae7ffb6f8eba0bdbcff237f191ad0b904` | none |
 | M01 - Identity & Workspace | INTEGRATED | `main` (PR #4) | `519b3ab2bd6a81a516c66d21036051edb9c54894` | none |
@@ -60,10 +55,34 @@ Next exact action:
 | M17 - Notifications & Reporting | INTEGRATED | `main` (PR #32) | `9e8b9d6fb02bef5fa280f7ae001f21f3e19f7a29` | residual notes below; no product blocker |
 | M18 - Usage, Budget & Billing Foundation | INTEGRATED | `main` (PR #31) | `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` | residual notes below; no product blocker |
 | M19 - Admin, Security, Audit & Observability | INTEGRATED | `main` (PR #34) | `e5938e1484972afaf4125f6396646b9fb4483b20` | T07 open pending retention ADR; residual notes below |
-| M20 - Core Integration & Release Gate | NOT_STARTED | none | none | next after this closeout |
+| M20 - Core Integration & Release Gate | INTEGRATED | main (#40) | f13df9e | Live verification/release acceptance separate |
+| M21 - Frontend Foundation, Brand Identity & Design System | INTEGRATED | main (#41) | `a8eeb37` | Brand foundation also landed in #38/#39. Broader accessibility/E2E evidence remains open in #79. |
+| M22 - Authentication, Workspace & Onboarding UI | INTEGRATED | main (#44) | `4786bd5` | C5 #99 adds profile/password settings; password reset remains deferred without an email delivery port. |
+| M23 - Channel, Brand & Content Configuration UI | INTEGRATED | main (#49) | `cc44921` | Verified workspace-role contract landed in #51. Browser accessibility acceptance remains tracked in #79. |
+| M24 - Ideas, Scripts & Storyboard Workspace | INTEGRATED | main (#55) | `2ec7d43` | Core planning prerequisites #53/#57 are merged; C2 #95 enables script generation from approved ideas. Unconfigured real providers still fail closed. |
+| M25 - Generation Studio & Video Production UI | INTEGRATED | main (#66) | `d5c6cb6` | Core media/discovery prerequisites #62/#63, C3 #97 asset assignment and C4 #96 render start are merged. Offline fixtures do not establish live provider readiness. |
+| M26 - Quality Review, Approval & Regeneration | INTEGRATED | main (#68) | `bc2e94a` | Quality review, approval and regeneration UI is merged. Missing/unconfigured AI quality adapters remain explicit; #79 adds cross-flow browser/axe coverage. |
+| M27 - Social Accounts, Publishing & Content Calendar | INTEGRATED | main (#93) | `263c518` | D1–D4 and publishing/calendar/account recovery are merged. Instagram remains unavailable; unconfigured schedule/budget/provider ports remain fail-closed. |
+| M28 - Analytics, Insights & Recommendations | NOT_STARTED | none | none | Separate implementation assignment required |
+| M29 - Workflow Monitoring, Notifications & Usage Dashboard | INTEGRATED | main (#46) | `b9e0c19` | C1 #94 consumes the verified Workspace.role contract from #51; the obsolete UNKNOWN-role implementation blocker is resolved. #78 budget accounting and #79 E2E remain open. |
 
-M07/M08 integrated at PR #16. M09 is integrated at PR #17. M10 is integrated at PR #18 and its docs-only closeout is PR #19. M12 is integrated at PR #22. M13 is integrated at PR #24, M14 at PR #25, M15 at PR #27, M16 at PR #29, M17 at PR #32, M18 at PR #31, and M19 at PR #34 (T07 open). M20 remains `NOT_STARTED`.
+Merge/head identifiers above describe repository history, not new technical approval by this documentation session. See module STATUS closeout sections and linked PR review records for the original acceptance evidence.
 
+## Issue #69 C and integration/tooling closeout
+
+| Work | PR | Main merge | Result |
+| --- | --- | --- | --- |
+| C1 verified roles in Operations | [#94](https://github.com/imTusharsingh/reelforge/pull/94) | `b89bfca` | M29 role controls consume authenticated Workspace.role |
+| C2 create script from approved idea | [#95](https://github.com/imTusharsingh/reelforge/pull/95) | `b412755` | M24 generation action; configured provider still required |
+| C3 assign existing scene asset | [#97](https://github.com/imTusharsingh/reelforge/pull/97) | `3b39302` | Non-paid ASSIGNED output, reuse, export/composition and reconciliation |
+| C4 render start | [#96](https://github.com/imTusharsingh/reelforge/pull/96) | `1409ae0` | Render from pinned successful production package |
+| C5 account settings | [#99](https://github.com/imTusharsingh/reelforge/pull/99) | `b64993e` | Guarded profile/password routes and UI; reset deferred |
+| M26 quality UI | [#68](https://github.com/imTusharsingh/reelforge/pull/68) | `351a101` | Review/approval/regeneration UI |
+| M27 publishing/calendar | [#93](https://github.com/imTusharsingh/reelforge/pull/93) | `94f0f53` | D1–D4, composer, calendar, account and interrupted-action recovery |
+| Process/CI gates | [#72](https://github.com/imTusharsingh/reelforge/pull/72) | `f98e224` | Required secret scan, read-only Process Policy, report-only audit |
+| Pre-commit hook | [#98](https://github.com/imTusharsingh/reelforge/pull/98) | `1cc16db` | Staged Prettier/ESLint via Husky; install after merging main |
+
+Core prerequisites #51, #53, #57, #62 and #63, accepted architecture documentation #71, reliability fixes #70/#73 and CI hardening #43 are also integrated. The audit's paid-operation implementation (#78), browser/axe E2E (#79), M28 and production authorization gates remain open. #80 is this pending documentation closeout, not a completed implementation gate.
 
 ## Open decisions
 
@@ -95,7 +114,10 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-10: M17+M18 closeout documentation merged via PR #33 at `54db53f130fbde381a98db2c6836bc93487f030b`.
 - 2026-11-10: M19 integrated via PR #34. Minu approved head `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`, no blockers); `minu-the-reviewer` squash-merged at `3da846e10bc8b682639a32c46bcefc9f529f6e0b`. M19-T07 (retention/deletion/export) remains open pending the retention ADR.
 
-## Open engineering follow-ups
+## Open engineering follow-ups and historical residual inventory
+
+The following older residual notes are retained as historical review evidence; consult current code/linked follow-ups before treating each as active. In particular #36 fixed M19 R1/R2/R5 redaction/metrics issues, #73 corrected render retry deadlines, C1–C5 and M27 resolve the UI gaps listed above, and #78/#79 remain explicitly open. This closeout does not claim that every historical residual has been resolved.
+
 
 - **M11 residual notes (not product blockers):** No real AI quality adapter is configured; unconfigured evaluations enter manual review with an SQL `NULL` scorecard and cannot auto-approve. Disclosure flags are an ownership-derived stub and are not legally sufficient for M13. An `APPROVED` quality status can become stale after rights change; M13 must re-check gates at publish time. The regeneration cap holds only when script regeneration uses M07 `revise()` on the same script ID.
 

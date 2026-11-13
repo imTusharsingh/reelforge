@@ -56,3 +56,7 @@ This is a planning baseline, not evidence of implementation or completion.
 ## Reviewer decision
 
 - Pending.
+
+## Main closeout — 2026-11-13 (#80)
+
+M28 remains NOT_STARTED: no merged M28 implementation exists on main. Backend M14/M15 integration does not imply that the analytics/insights UI is implemented. Implement only under a separate assignment; no new verification is claimed by this closeout.

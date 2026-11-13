@@ -1,9 +1,9 @@
 # M29 Status - Workflow Monitoring, Notifications & Usage Dashboard
 
-- **State:** IMPLEMENTED_PENDING_REVIEW (normal Operations screen integrated; role-aware writes pending Core contract)
+- **State:** INTEGRATED (existing main merge via PR #46; documentation reconciliation only)
 - **Assigned session/editor:** Codex
 - **Branch/worktree:** work/m29-workflow-notifications-usage-dashboard
-- **Last updated:** 2026-11-11
+- **Last updated:** 2026-11-13
 - **Reviewer:** minu-the-reviewer (request attempted; GitHub rejected it because the PR author is minu-the-reviewer)
 - **Approved commit:** none
 
@@ -74,7 +74,7 @@ Build M16 workflow/job status and details; actionable redacted failures; retry/r
 
 
 
-## Next exact action
+## Historical next action (superseded by the 2026-11-13 closeout below)
 
 Obtain Core approval for a trusted membership-role API seam, then enable OWNER/EDITOR actions from that verified role; run authenticated browser/accessibility/API smoke checks. M23 should consume the shared workspace context and AppShell rather than modifying M29 authentication logic.
 
@@ -85,3 +85,10 @@ M29 is user-integrated at `/operations` with read-only safety when role metadata
 ## Reviewer decision
 
 - Pending.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #46](https://github.com/imTusharsingh/reelforge/pull/46), head `b9e0c19fec836c4d7fcc0ac8db29f2b160799f4f`, merge `d406b88b3705820617231cb2cd80d6c41e688448`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: C1 #94 consumes the verified Workspace.role contract from #51; the obsolete UNKNOWN-role implementation blocker is resolved. #78 budget accounting and #79 E2E remain open.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

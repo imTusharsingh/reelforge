@@ -1,9 +1,9 @@
 # M22 Status - Authentication, Workspace & Onboarding UI
 
-- **State:** INTEGRATED (PR #44 merged; unsupported backend capabilities and production gates remain open)
+- **State:** INTEGRATED (existing main merge via PR #44; documentation reconciliation only)
 - **Assigned session/editor:** Codex implementation session
 - **Branch/worktree:** `work/m22-auth-workspace-onboarding` / `/workspace/reelforge`
-- **Last updated:** 2026-11-11
+- **Last updated:** 2026-11-13
 - **Reviewer:** Core Architect/Reviewer
 - **Approved commit:** `4786bd5a71e411c4e806725130e8cc8646faffd7`
 - **Merge commit:** `3782c2e74f2ff59d4453db2d218b38b6e97eac26`
@@ -70,7 +70,7 @@ Build sign-in/out and registration/recovery only where supported; workspace crea
 
 
 
-## Next exact action
+## Historical next action (superseded by the 2026-11-13 closeout below)
 
 Run the browser walkthrough at required viewports, obtain Core approval for the CSRF/origin strategy, and request independent review from an account distinct from the PR author; do not merge or mark approved.
 
@@ -97,3 +97,10 @@ State for this follow-up: IMPLEMENTED_PENDING_REVIEW. Core authorization: #77 co
 - Focused identity/contract/client/Postgres/HTTP tests passed (21 tests before the added missing-credential case); final service/contracts/client rerun: 16 passed. Mounted account browser: 12 scenarios passed at 390/1440, including profile save, password success/errors/validation and unavailable reset.
 - Full validation results are recorded in the PR handoff once complete. An initial typecheck exposed untyped checkpoint test doubles; fixed with explicit mock types. The initial full test run exposed the expected unscoped-route inventory update; fixed with the authorized routes plus authentication assertions.
 - Next action: verify all checks and hosted CI, then ask Minu to review. Password reset remains deferred to a real email-delivery follow-up; no new schema is needed.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #44](https://github.com/imTusharsingh/reelforge/pull/44), head `4786bd5a71e411c4e806725130e8cc8646faffd7`, merge `3782c2e74f2ff59d4453db2d218b38b6e97eac26`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: C5 #99 adds profile/password settings; password reset remains deferred without an email delivery port.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.

@@ -163,6 +163,19 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
   7. The CI dependency-audit step (`pnpm audit --prod --audit-level high`) is approved in principle, to land as a separate `ci.yml` chore PR.
 - **Consequence:** Adding an admin/operator role, setting the GLOBAL stop over HTTP, making audit rows mutable or deletable, adding an observability dependency, or adding readiness dependencies beyond Postgres requires a later ADR. M19-T07 retention/deletion/export, including audit retention, stays open until the retention ADR is decided.
 
+## ADR-020 — Issue #69 process cleanup and controlled integration
+
+- **Status:** Owner process decisions recorded by the explicit #80 closeout assignment (2026-11-13); this documentation PR still requires independent Minu review. This entry does not approve its own PR or authorize a merge.
+- **Basis:** Issue #69 process proposal [6822481475](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6822481475), Minu's independent gate decision [6831915757](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6831915757), scoped release [6832504863](https://github.com/imTusharsingh/reelforge/issues/69#issuecomment-6832504863), implemented gates [#72](https://github.com/imTusharsingh/reelforge/pull/72), and the owner's #80 assignment.
+- **Decisions:**
+  1. Independent Minu review of the exact current head is required before merge. Implementers do not self-review, approve or merge. Green CI does not substitute for acceptance evidence or review.
+  2. The separately authorized integrator uses squash-only merges after checking current head/base, review, required CI and unresolved blockers. Existing historical non-squash merges are not rewritten. Update branches by merging main; never force-push.
+  3. ci.yml and PROJECT_STATE changes belong in dedicated chore PRs. Keep one task/pack per PR and do not bundle those files into feature implementation.
+  4. Secret scanning is mandatory and participates in Required CI; failure, skip or cancellation cannot be treated as success. Process Policy remains a separate required procedural integration check. Dependency audit findings are report-only, while unavailable/error outcomes remain visible and require disposition.
+  5. Keep exact dependency pins, read-only CI credentials, no live provider calls in tests/startup/CI, and no committed .env/.local-*/.vscode. The staged pre-commit hook from #98 supplements CI; run pnpm install after merging main.
+- **Enforcement limits:** The repository is now public. This session verified that GitHub metadata still permits merge commits and rebase merges as well as squash; it did not change settings or establish branch-protection enforcement. Squash-only and independent review therefore remain mandatory process requirements even where repository settings permit bypass. #72 documents the trusted-base policy check and residual integration obligations.
+- **Consequence:** ci.yml/PROJECT_STATE work and E2E CI wiring require a separate reviewed chore PR; live-provider/release approvals, #78's paid-operation work and #79's browser evidence remain distinct gates.
+
 ## Pending decisions before affected implementation
 
 These are implementation-specific choices, not permission to invent behavior:

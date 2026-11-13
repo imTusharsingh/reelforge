@@ -1,10 +1,10 @@
 # M23 Status - Channel, Brand & Content Configuration UI
 
-- **State:** INTEGRATED
+- **State:** INTEGRATED (existing main merge via PR #49; documentation reconciliation only)
 - **Assigned session/editor:** Codex M23 implementation session
 - **Branch:** `work/m23-47-channel-brand-content-ui`
 - **Issue:** #47
-- **Last updated:** 2026-11-11
+- **Last updated:** 2026-11-13
 - **Independent reviewer:** `minu-the-reviewer`
 - **Integrated merge commit:** `f657f4c993337c750b6e2aab4fab43652bb07fb6`
 - **Formal independent GitHub approval:** Not recorded; merged under explicit owner request
@@ -95,3 +95,10 @@ The milestone remains `IMPLEMENTED_PENDING_REVIEW` until final code review/merge
 - Post-contract authenticated OWNER/EDITOR/VIEWER browser CRUD, permission revocation, full screen-reader/WCAG and broader production security smoke were **not executed** in the connector integration. Record as remaining release QA, not as verified PASS.
 - M29 privileged role-aware operations remain deferred to [Issue #52](https://github.com/imTusharsingh/reelforge/issues/52) until budget/mutation tests; overall mobile shared UI remains [Issue #48](https://github.com/imTusharsingh/reelforge/issues/48).
 - Formal independent GitHub PR approval was unavailable under the authenticated Developer account, which authored PR #49. The owner explicitly authorized merging after code/CI review; this is not independent reviewer approval.
+
+## Main closeout — 2026-11-13 (#80)
+
+- Existing integration: [PR #49](https://github.com/imTusharsingh/reelforge/pull/49), head `cc449218770427b6cf21723257c5ad724e857654`, merge `f657f4c993337c750b6e2aab4fab43652bb07fb6`. This records an existing merge; it grants no new review, approval, live-call or release authorization.
+- Current scope/gaps: Verified workspace-role contract landed in #51. Browser accessibility acceptance remains tracked in #79.
+- Earlier pending-review/next-action text above is historical evidence, superseded for merge state by this closeout. Earlier verification commands remain the original session's results; this documentation task does not rerun or upgrade them.
+- Next action: keep release risks explicit, complete #78/#79 in their own assigned PRs, and submit this docs-only closeout for Minu review.
