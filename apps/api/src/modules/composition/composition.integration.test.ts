@@ -407,6 +407,31 @@ suite("CompositionService persisted lifecycle", () => {
     await rm(storageRoot, { recursive: true, force: true });
   });
 
+  it("composes a package whose visual was manually ASSIGNED", async () => {
+    if (!db || !service) return;
+    const previousFail = fail;
+    fail = false;
+    await db.sceneGenerationOutput.updateMany({
+      where: { workspaceId, sceneGenerationId },
+      data: { status: "ASSIGNED", providerAssetId: null, providerJobId: null },
+    });
+    try {
+      expect(await service.create(context, body("assigned-visual"))).toMatchObject({
+        status: "SUCCEEDED",
+      });
+    } finally {
+      fail = previousFail;
+      await db.sceneGenerationOutput.updateMany({
+        where: { workspaceId, sceneGenerationId },
+        data: {
+          status: "SUCCEEDED",
+          providerAssetId: "m10-fixture-asset",
+          providerJobId: "m10-fixture-job",
+        },
+      });
+    }
+  });
+
   it("lists workspace-scoped render jobs with filters, pagination, and viewer reads", async () => {
     if (!db || !service) return;
     fail = false;

@@ -115,6 +115,19 @@ export class SceneMediaController {
     );
   }
 
+  @Post("jobs/:jobId/scenes/:sceneId/assign-asset")
+  public assignAsset(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("jobId") jobId: string,
+    @Param("sceneId") sceneId: string,
+    @Body() body: unknown,
+  ): Promise<unknown> {
+    return this.context(request, workspaceId).then((context) =>
+      this.media.assignAsset(context, jobId, sceneId, body),
+    );
+  }
+
   private context(request: AuthenticatedRequest, workspaceId: string): Promise<WorkspaceContext> {
     return this.workspaces.context(request.principal.userId, workspaceId);
   }

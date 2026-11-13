@@ -1206,3 +1206,6 @@ Do not rewrite or delete past entries. Add one entry for each meaningful impleme
 ## 2026-11-13 — C5 account follow-up (#77)
 
 Continued work/issue-69-c-m22-account from 7c07a58, merged origin/main and installed pinned dependencies. Finished strict profile validation, account responsive layout and browser evidence at 390/1440 (12 scenarios), guarded account HTTP routes, client unit coverage and missing-credential safety. Updated the release-gate inventory for Core-authorized GET/PATCH /auth/me and POST /auth/me/password. Existing hashing, sessions and auth events are reused; password reset stays deferred. No migration, dependency change or live provider call. Independent Minu review remains pending.
+## 2026-11-13 — C3 PR #97 review follow-up
+
+On work/issue-69-c-scene-assets, merged origin/main and installed the exact pinned toolchain/dependencies. Addressed Minu B1–B5: formatting, ASSIGNED composition compatibility, consistent scene_generation_output usage, stable assign reconciliation keys, and service/Postgres/web/browser regression coverage. Focused suite: 128 passed; mounted production browser: 28 passed at 390/1440. No live provider calls. Pending independent Minu review and hosted CI.

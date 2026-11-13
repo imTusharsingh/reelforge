@@ -91,6 +91,58 @@ async function test(name, run, query = "", viewport = { width: 1440, height: 100
 }
 try {
   for (const width of [390, 1440]) {
+    for (const role of ["OWNER", "EDITOR", "VIEWER"]) {
+      await test(
+        `assign permission ${role} at ${width}px`,
+        async (page) => {
+          const picker = page.getByLabel("Assign existing asset").first();
+          await picker.waitFor();
+          if (role === "VIEWER") {
+            assert.equal(await picker.isDisabled(), true);
+            return;
+          }
+          page.on("dialog", (dialog) => dialog.accept());
+          await picker.selectOption({ index: 1 });
+          await page.getByRole("button", { name: "Assign asset", exact: true }).first().click();
+          await page.getByText(/Request accepted/).waitFor();
+        },
+        `mode=assign&role=${role}`,
+        { width, height: 1000 },
+      );
+    }
+    for (const status of [403, 404, 409, 422]) {
+      await test(
+        `assign error ${status} at ${width}px`,
+        async (page) => {
+          page.on("dialog", (dialog) => dialog.accept());
+          const picker = page.getByLabel("Assign existing asset").first();
+          await picker.selectOption({ index: 1 });
+          await page.getByRole("button", { name: "Assign asset", exact: true }).first().click();
+          await page.getByText(new RegExp(`Assignment rejected ${status}`)).waitFor();
+        },
+        `mode=assign&error=${status}`,
+        { width, height: 1000 },
+      );
+    }
+    await test(
+      `assign interrupted request reuses key at ${width}px`,
+      async (page) => {
+        page.on("dialog", (dialog) => dialog.accept());
+        await page.getByLabel("Assign existing asset").first().selectOption({ index: 1 });
+        await page.getByRole("button", { name: "Assign asset", exact: true }).first().click();
+        await page.getByRole("button", { name: "Reconcile" }).click();
+        await page.getByText(/Request accepted/).waitFor();
+        const bodies = await page.evaluate(() =>
+          window.m25Fixture.calls
+            .filter((call) => call.path.endsWith("/assign-asset"))
+            .map((call) => call.body),
+        );
+        assert.equal(bodies.length, 2);
+        assert.deepEqual(bodies[0], bodies[1]);
+      },
+      "mode=assign-reconcile",
+      { width, height: 1000 },
+    );
     await test(
       `start render from pinned production at ${width}px`,
       async (page) => {
@@ -186,7 +238,7 @@ try {
       await page.getByRole("button", { name: "Regenerate entire scene" }).isDisabled(),
       true,
     );
-    assert.equal(await page.getByRole("button", { name: "Select for scene" }).isDisabled(), true);
+    assert.equal(await page.getByLabel("Assign existing asset").first().isDisabled(), false);
     await page.locator('button[aria-pressed="false"]').first().click();
     await page.getByText("One breath. One decision.", { exact: true }).waitFor();
     assert.equal(

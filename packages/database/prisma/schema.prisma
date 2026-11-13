@@ -1515,6 +1515,7 @@ enum SceneOutputStatus {
   QUEUED
   SUCCEEDED
   REUSED
+  ASSIGNED
   FAILED_RETRYABLE
   FAILED_FINAL
 }
@@ -1560,6 +1561,7 @@ enum SceneMediaMutationOperation {
   RETRY
   REGENERATE
   REPLACE
+  ASSIGN_ASSET
 }
 
 enum SceneMediaMutationStatus {

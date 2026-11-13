@@ -70,3 +70,17 @@ Create a job from an approved script revision that already points at an owned co
 
 ## Reviewer decision
 - **INTEGRATED:** Minu, PR #17 squash merge `589d28c86feaede46f516bf27555f02802882610`, with technical approval at `99b1972191038f5e4f839892bbbb196e554d6215`. (The official self-approval restriction was documented on the PR.)
+
+## C3 follow-up — PR #97, 2026-11-13
+
+State: IMPLEMENTED_PENDING_REVIEW for this follow-up only. Refs #75.
+
+- Fixed B1 formatting, B3 API/web composition acceptance of ASSIGNED, B4 usage vocabulary, and B5 saved assign requests through pendingMutation/Reconcile (one key per action).
+- Added B2 service, PostgreSQL, web client, and mounted-browser coverage for assignment, permissions, invalid assets, concurrency/replay, usage, zero paid dispatch, export and composition.
+- Changed files: scene-media service and service/integration tests; composition service and integration test; production studio, composition helper/test, API test and mounted browser/fixture.
+- Exact toolchain: Node 24.22.2, pnpm 12.16.1. Merged origin/main, then `pnpm install --frozen-lockfile` passed. No new dependencies, migration changes, provider calls, ci.yml or PROJECT_STATE edits.
+- `pnpm vitest run apps/api/src/modules/scene-media/scene-media.service.test.ts apps/api/src/modules/scene-media/scene-media.integration.test.ts apps/api/src/modules/composition/composition.integration.test.ts apps/web/features/production/api.test.ts apps/web/features/production/composition.test.ts`: 128 passed.
+- `PLAYWRIGHT_MODULE=/workspace/work/browser/node_modules/playwright-core ESBUILD_MODULE=/workspace/work/browser/node_modules/esbuild node apps/web/features/production/verification/mounted-browser.mjs`: 28 scenarios passed, including 390/1440 assignment role/error/reconciliation cases.
+- `pnpm lint`, `pnpm format:check`, `pnpm security:secrets`, `pnpm db:check-migrations`, `pnpm db:migrate:deploy`: passed against disposable PostgreSQL 18.6 on 55437.
+- Full typecheck/test/build results will be recorded below after completion. Next action: verify hosted CI on the pushed head and request Minu review; never merge.
+- Full `pnpm typecheck`: passed. Full `DATABASE_URL=postgresql://postgres:postgres@localhost:55437/reelforge pnpm test`: 98 files passed, 2 skipped; 779 tests passed, 8 skipped. `NEXT_TELEMETRY_DISABLED=1 pnpm build`: passed. Hosted CI on 01ce9bd passed all checks. Final follow-up strengthens PostgreSQL coverage to prove VIDEO reuse alongside IMAGE assignment; verify hosted CI on the new head.
