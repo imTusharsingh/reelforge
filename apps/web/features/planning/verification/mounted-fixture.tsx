@@ -17,6 +17,7 @@ const role = new URLSearchParams(location.search).get("role") === "VIEWER" ? "VI
 let saved = structuredClone(script);
 const persistedHistory = structuredClone(script.revisions);
 let savedIdea = structuredClone(idea);
+if (mode === "generation") savedIdea = { ...savedIdea, status: "APPROVED" };
 const calls: { path: string; method: string; body: unknown }[] = [];
 let fail = 0;
 let failReads = false;
@@ -49,7 +50,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
     status?: Idea["status"];
   };
 
-  if (path === "scripts/script-one") result = saved;
+  if (path === "scripts" && method === "POST") result = saved;
+  else if (path === "config/generation-snapshots")
+    result = [{ id: "config-one", workspaceId: idea.workspaceId }];
+  else if (path === "prompts/bundle-snapshots")
+    result = [{ id: "bundle-one", workspaceId: idea.workspaceId, configSnapshotId: "config-one" }];
+  else if (path === "scripts/script-one") result = saved;
   else if (path === "scripts/script-one/revisions" && method === "POST") {
     if (posted.expectedRevision !== saved.currentRevision) return conflict();
     saved = {
@@ -194,7 +200,7 @@ function Fixture(): JSX.Element {
         )}
         {mode === "idea" || mode === "recovery" ? (
           <IdeaForm idea={savedIdea} onSaved={() => setRevision((v) => v + 1)} />
-        ) : mode === "idea-route" ? (
+        ) : mode === "idea-route" || mode === "generation" ? (
           <IdeaWorkspace ideaId={savedIdea.id} />
         ) : mode === "library" ? (
           <PlanningLibrary />

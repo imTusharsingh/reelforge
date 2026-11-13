@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { ProductionApiError } from "./api";
+import { makeRenderInput } from "./composition";
 import { LoadResult } from "./common";
 import {
   canWrite,
@@ -71,13 +72,23 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
     setError("");
     setNotice("");
     try {
-      const updated = await client.mutate(
-        attempt.job,
-        attempt.operation,
-        attempt.key,
-        attempt.sceneId,
-        attempt.kind,
-      );
+      const updated =
+        attempt.operation === "assign"
+          ? await client.assignAsset(
+              attempt.job,
+              attempt.sceneId,
+              attempt.kind,
+              attempt.assetId,
+              attempt.assetVersion,
+              attempt.key,
+            )
+          : await client.mutate(
+              attempt.job,
+              attempt.operation,
+              attempt.key,
+              attempt.sceneId,
+              attempt.kind,
+            );
       pendingMutation.current = null;
       setUncertain(false);
       setNotice(
@@ -93,6 +104,10 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       } else {
         pendingMutation.current = null;
         setUncertain(false);
+        if (cause instanceof ProductionApiError && cause.status === 409) {
+          setNotice("Production state changed. Reloading the job before another action.");
+          refresh();
+        }
       }
     } finally {
       setBusy("");
@@ -112,6 +127,33 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
       label: `${operation}:${target?.sceneId ?? "job"}:${kind ?? "all"}`,
       ...(target ? { sceneId: target.sceneId } : {}),
       ...(kind ? { kind } : {}),
+    };
+    pendingMutation.current = attempt;
+    await dispatchMutation(attempt);
+  };
+
+  const assignAsset = async (
+    target: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+  ): Promise<void> => {
+    if (!job || uncertain || !canWrite(client.role)) return;
+    if (
+      !window.confirm(
+        `Assign this asset (v${assetVersion}) to scene ${target.ordinal + 1} ${kind}?`,
+      )
+    )
+      return;
+    const attempt: PendingSceneMutation = {
+      job,
+      operation: "assign",
+      key: crypto.randomUUID(),
+      label: `assign:${target.sceneId}:${kind}`,
+      sceneId: target.sceneId,
+      kind,
+      assetId,
+      assetVersion,
     };
     pendingMutation.current = attempt;
     await dispatchMutation(attempt);
@@ -190,7 +232,9 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
                     uncertain={uncertain}
                     capability={capability}
                     allAvailable={allAvailable}
+                    assets={state.data!.assets}
                     mutate={mutate}
+                    assign={assignAsset}
                   />
                 )}
               </main>
@@ -229,10 +273,11 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
             <AssetGallery assets={state.data!.assets} workspaceId={client.workspaceId} />
             <Panel>
               <h2>Render & export history</h2>
+              <RenderStart job={job} revision={scriptRevision} />
               {state.data!.renders.items.length === 0 ? (
                 <StateMessage
                   kind="empty"
-                  description="No persisted render exists for this script. Render creation is not exposed here because the current server requires a complete validated composition request."
+                  description="No persisted render exists for this script."
                 />
               ) : (
                 <ul className={styles.list}>
@@ -259,6 +304,116 @@ export function ProductionStudio({ jobId }: { jobId: string }): JSX.Element {
         )}
       </LoadResult>
     </section>
+  );
+}
+
+function RenderStart({
+  job,
+  revision,
+}: {
+  job: SceneMediaPackage;
+  revision: import("./model").ScriptRevision;
+}): JSX.Element {
+  const { client } = useProduction();
+  const marker = `reelforge.render.pending:${client.workspaceId}:${job.jobId}`;
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState("");
+  useEffect(() => {
+    try {
+      setPending(sessionStorage.getItem(marker) !== null);
+    } catch {
+      setPending(true);
+      setError("Storage is unavailable; render creation is disabled.");
+    }
+  }, [marker]);
+  let reason = "";
+  try {
+    makeRenderInput(job, revision, "validation-seed");
+  } catch (cause) {
+    reason = cause instanceof Error ? cause.message : "Production is not ready to render.";
+  }
+  const start = async (): Promise<void> => {
+    if (!canWrite(client.role) || pending !== false || busy || reason || created) return;
+    if (
+      !window.confirm("Start a render using the pinned scene images and available voice outputs?")
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      const key = crypto.randomUUID();
+      const input = makeRenderInput(job, revision, crypto.randomUUID());
+      sessionStorage.setItem(marker, key);
+      setPending(true);
+      const result = await client.startRender(input, key);
+      sessionStorage.removeItem(marker);
+      setPending(false);
+      setCreated(result.id);
+    } catch (cause) {
+      const uncertain = !(cause instanceof ProductionApiError) || cause.uncertain;
+      if (!uncertain) {
+        sessionStorage.removeItem(marker);
+        setPending(false);
+      }
+      setError(cause instanceof Error ? cause.message : "Render could not be started.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={styles.workspace}>
+      <p>
+        Creates a vertical render using each scene’s image (or video if no image exists), one voice
+        output, cuts, and the first scene as its cover. Captions and music are not included.
+      </p>
+      {reason && <p className={styles.notice}>{reason}</p>}
+      {error && (
+        <Alert tone="danger" title="Render could not be started">
+          {error}
+        </Alert>
+      )}
+      {pending && (
+        <Alert tone="warning" title="Render request needs review">
+          The previous request may have succeeded. Refresh and inspect render history before
+          starting another render; no request is retried automatically.{" "}
+          <Button
+            tone="secondary"
+            onClick={() => {
+              if (window.confirm("Have you checked the render history for the earlier request?")) {
+                try {
+                  sessionStorage.removeItem(marker);
+                  setPending(false);
+                  setError("");
+                } catch {
+                  setError("Storage is unavailable; render creation is disabled.");
+                }
+              }
+            }}
+          >
+            I checked render history
+          </Button>
+        </Alert>
+      )}
+      <Button
+        loading={busy}
+        disabled={
+          !canWrite(client.role) || pending !== false || busy || Boolean(reason) || Boolean(created)
+        }
+        onClick={() => void start()}
+      >
+        Start render
+      </Button>
+      {created && (
+        <p role="status">
+          Render started.{" "}
+          <StudioLink href={`/production/renders/${encodeURIComponent(created)}`}>
+            Open render
+          </StudioLink>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -310,7 +465,9 @@ function SceneWorkspace({
   uncertain,
   capability,
   allAvailable,
+  assets,
   mutate,
+  assign,
 }: {
   scene: ProductionScene;
   scriptScene: import("./model").ScriptScene;
@@ -320,10 +477,17 @@ function SceneWorkspace({
   uncertain: boolean;
   capability: Map<OutputKind, import("./model").Capability>;
   allAvailable: boolean;
+  assets: import("./model").Asset[];
   mutate: (
     operation: "retry" | "regenerate" | "replace",
     scene?: ProductionScene,
     kind?: OutputKind,
+  ) => Promise<void>;
+  assign: (
+    scene: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
   ) => Promise<void>;
 }): JSX.Element {
   return (
@@ -377,6 +541,15 @@ function SceneWorkspace({
             >
               Regenerate {output.kind.toLowerCase()}
             </Button>
+            <AssignAssetAction
+              scene={scene}
+              kind={output.kind}
+              assets={assets}
+              writable={writable}
+              busy={busy}
+              uncertain={uncertain}
+              onAssign={assign}
+            />
           </div>
         ))}
       </div>
@@ -389,8 +562,8 @@ function SceneWorkspace({
         Regenerate entire scene
       </Button>
       <p className={styles.notice}>
-        “Replace” regenerates the selected output through its configured provider. Assigning an
-        existing library asset is not supported by the current server contract.
+        “Replace” regenerates the selected output through its configured provider. “Assign existing
+        asset” uses a published workspace asset without a provider call.
       </p>
     </article>
   );
@@ -446,12 +619,96 @@ export function MediaPreview({
 
 type PendingSceneMutation = {
   job: SceneMediaPackage;
-  operation: "retry" | "regenerate" | "replace";
   key: string;
   label: string;
-  sceneId?: string;
-  kind?: OutputKind;
+} & (
+  | {
+      operation: "assign";
+      sceneId: string;
+      kind: OutputKind;
+      assetId: string;
+      assetVersion: number;
+    }
+  | {
+      operation: "retry" | "regenerate" | "replace";
+      sceneId?: string;
+      kind?: OutputKind;
+    }
+);
+
+const KIND_MEDIA_TYPES: Record<OutputKind, readonly string[]> = {
+  IMAGE: ["image/png", "image/jpeg", "image/webp"],
+  VIDEO: ["video/mp4"],
+  NARRATION: ["audio/mpeg", "audio/wav"],
+  DIALOGUE: ["audio/mpeg", "audio/wav"],
 };
+
+function AssignAssetAction({
+  scene,
+  kind,
+  assets,
+  writable,
+  busy,
+  uncertain,
+  onAssign,
+}: {
+  scene: ProductionScene;
+  kind: OutputKind;
+  assets: import("./model").Asset[];
+  writable: boolean;
+  busy: string;
+  uncertain: boolean;
+  onAssign: (
+    scene: ProductionScene,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+  ) => Promise<void>;
+}): JSX.Element {
+  const options = assets.filter(
+    (asset) => asset.status === "PUBLISHED" && KIND_MEDIA_TYPES[kind].includes(asset.mediaType),
+  );
+  const [selected, setSelected] = useState("");
+  const label = `assign:${scene.sceneId}:${kind}`;
+  const disabled = !writable || uncertain || busy !== "";
+  return (
+    <div className={styles.workspace}>
+      <label className={styles.meta} htmlFor={`${scene.sceneId}-${kind}-assign`}>
+        Assign existing asset
+      </label>
+      <select
+        id={`${scene.sceneId}-${kind}-assign`}
+        value={selected}
+        disabled={disabled}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">Select a published asset</option>
+        {options.map((asset) => (
+          <option key={`${asset.id}:${asset.version}`} value={`${asset.id}:${asset.version}`}>
+            {(asset.filename ?? asset.id.slice(0, 8)) + ` (v${asset.version})`}
+          </option>
+        ))}
+      </select>
+      <Button
+        tone="secondary"
+        loading={busy === label}
+        disabled={disabled || selected === ""}
+        onClick={() => {
+          const [id, ver] = selected.split(":");
+          if (!id || !ver) return;
+          void onAssign(scene, kind, id, Number(ver));
+        }}
+      >
+        Assign asset
+      </Button>
+      {options.length === 0 && (
+        <p className={styles.meta}>
+          No published {kind.toLowerCase()}-compatible assets available.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function AssetGallery({
   assets,
@@ -465,8 +722,8 @@ function AssetGallery({
     <Panel>
       <h2>Workspace asset gallery</h2>
       <p>
-        Published immutable versions are available for inspection. Scene assignment is unavailable
-        until the server exposes a rights-checked assignment operation.
+        Published immutable versions are available for inspection and can be assigned to scene
+        outputs in the scene panel (owner/editor).
       </p>
       {published.length === 0 ? (
         <StateMessage kind="empty" description="No published assets exist in this workspace." />
@@ -483,7 +740,7 @@ function AssetGallery({
               <span className={styles.meta}>
                 Version {asset.version} · {asset.mediaType}
               </span>
-              <Button disabled>Select for scene</Button>
+              <span className={styles.meta}>Use “Assign existing asset” in the scene panel.</span>
             </article>
           ))}
         </div>

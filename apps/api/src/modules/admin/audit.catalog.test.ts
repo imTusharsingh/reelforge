@@ -38,6 +38,10 @@ describe("M19 audit catalog", () => {
       ["/workspaces/:workspaceId/admin/emergency-stop", "ADMIN"],
       ["/workspaces/:workspaceId/orchestration/runs", "OPERATION"],
       ["/workspaces/:workspaceId/scene-media/jobs", "OPERATION"],
+      [
+        "/workspaces/:workspaceId/scene-media/jobs/:jobId/scenes/:sceneId/assign-asset",
+        "OPERATION",
+      ],
     ];
     for (const [route, category] of cases)
       expect([route, classifyRoute(route)]).toEqual([route, category]);

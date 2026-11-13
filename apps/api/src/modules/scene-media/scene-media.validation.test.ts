@@ -116,6 +116,51 @@ describe("scene media validation", () => {
     expect(isCompletePackage(pkg)).toBe(false);
   });
 
+  it("accepts an assigned output without provider asset id when asset fields are complete", () => {
+    const pkg: SceneMediaPackage = {
+      schemaVersion: SCENE_MEDIA_SCHEMA_VERSION,
+      jobId: "job",
+      workspaceId: "workspace",
+      scriptId: "script",
+      scriptRevision: 1,
+      channelId: null,
+      status: "SUCCEEDED",
+      version: 1,
+      idempotencyKey: "key",
+      configSnapshotId: "config",
+      promptSnapshotId: "prompt",
+      requestedOutputs: { image: true, video: false, narration: false, dialogue: false },
+      scenes: [
+        {
+          sceneId: "one",
+          ordinal: 0,
+          sceneVersion: 1,
+          status: "SUCCEEDED",
+          idempotencyKey: "scene",
+          sourceRefs: {},
+          outputs: [
+            {
+              kind: "IMAGE",
+              status: "ASSIGNED",
+              assetId: "a0000000-0000-4000-8000-000000000001",
+              assetVersion: 2,
+              mediaType: "image/png",
+              byteSize: 12,
+              checksumSha256: "a".repeat(64),
+              providerJobId: null,
+              providerAssetId: null,
+              correlationId: null,
+              reusedFromOutputId: null,
+              errorCode: null,
+              errorMessage: null,
+            },
+          ],
+        },
+      ],
+    };
+    expect(isCompletePackage(pkg)).toBe(true);
+  });
+
   it.each(["missing", "null", "non-object"] as const)(
     "normalizes %s metadata without throwing",
     (kind) => {

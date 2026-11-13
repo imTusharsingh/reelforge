@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import {
   ProviderError,
@@ -232,12 +232,14 @@ function memoryDatabase(state: MemoryState): {
   assets: Array<Record<string, unknown>>;
   jobs: Array<Record<string, unknown>>;
   mutations: Array<Record<string, unknown>>;
+  usages: Array<Record<string, unknown>>;
 } {
   const jobs: Array<Record<string, unknown>> = [];
   const generations: Array<Record<string, unknown>> = [];
   const outputs: Array<Record<string, unknown>> = [];
   const assets: Array<Record<string, unknown>> = [];
   const mutations: Array<Record<string, unknown>> = [];
+  const usages: Array<Record<string, unknown>> = [];
   const rank: Record<string, number> = { IMAGE: 0, VIDEO: 1, NARRATION: 2, DIALOGUE: 3 };
   const db = {
     script: {
@@ -559,6 +561,16 @@ function memoryDatabase(state: MemoryState): {
       },
     },
     sceneGeneration: {
+      findUnique: async ({
+        where,
+      }: {
+        where: { workspaceId_id: { workspaceId: string; id: string } };
+      }): Promise<unknown> =>
+        generations.find(
+          (row) =>
+            row.workspaceId === where.workspaceId_id.workspaceId &&
+            row.id === where.workspaceId_id.id,
+        ) ?? null,
       findFirst: async ({
         where,
       }: {
@@ -654,18 +666,40 @@ function memoryDatabase(state: MemoryState): {
       },
     },
     asset: {
+      findFirst: async ({
+        where,
+      }: {
+        where: {
+          workspaceId: string;
+          version: number;
+          OR: Array<{ id?: string; rootAssetId?: string }>;
+        };
+      }): Promise<unknown> =>
+        assets.find(
+          (asset) =>
+            asset.workspaceId === where.workspaceId &&
+            asset.version === where.version &&
+            where.OR.some(
+              (clause) =>
+                clause.id === asset.id ||
+                (clause.rootAssetId !== undefined && clause.rootAssetId === asset.rootAssetId),
+            ),
+        ) ?? null,
       create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
         assets.push(data);
         return data;
       },
     },
     assetUsageReference: {
-      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => data,
+      create: async ({ data }: { data: Record<string, unknown> }): Promise<unknown> => {
+        usages.push(data);
+        return data;
+      },
     },
     $transaction: async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> =>
       callback(db),
   };
-  return { db: db as unknown as Database, assets, jobs, mutations };
+  return { db: db as unknown as Database, assets, jobs, mutations, usages };
 }
 
 function harness(options?: {
@@ -694,6 +728,7 @@ function harness(options?: {
   assets: Array<Record<string, unknown>>;
   jobs: Array<Record<string, unknown>>;
   mutations: Array<Record<string, unknown>>;
+  usages: Array<Record<string, unknown>>;
   state: MemoryState;
   imageCalls: Array<{ prompt: string; referenceImageIds?: readonly string[] }>;
   videoCalls: number;
@@ -839,6 +874,7 @@ function harness(options?: {
     assets: memory.assets,
     jobs: memory.jobs,
     mutations: memory.mutations,
+    usages: memory.usages,
     state,
     imageCalls,
     get videoCalls(): number {
@@ -1737,5 +1773,136 @@ describe("scene media generation", () => {
       /checksum/i,
     );
     expect(env.imageCalls).toHaveLength(0);
+  });
+});
+
+describe("manual scene asset assignment", () => {
+  async function setup(): Promise<{
+    env: ReturnType<typeof harness>;
+    job: SceneMediaPackage;
+    request: {
+      expectedJobVersion: number;
+      idempotencyKey: string;
+      kind: string;
+      assetId: string;
+      assetVersion: number;
+    };
+  }> {
+    const env = harness({ ...withVoice(["one"]), video: {} });
+    const job = await env.service.create(
+      env.context,
+      createBody(env.scriptId, {
+        outputs: { image: true, video: false, narration: true, dialogue: true },
+      }),
+    );
+    const assetId = randomUUID();
+    env.assets.push({
+      id: assetId,
+      rootAssetId: assetId,
+      workspaceId: env.context.workspaceId,
+      version: 1,
+      status: "PUBLISHED",
+      mediaType: "image/png",
+      byteSize: 8,
+      checksumSha256: "a".repeat(64),
+    });
+    const request = {
+      expectedJobVersion: job.version,
+      idempotencyKey: randomUUID(),
+      kind: "IMAGE",
+      assetId,
+      assetVersion: 1,
+    };
+    return { env, job, request };
+  }
+  it.each(["OWNER", "EDITOR"] as const)(
+    "assigns for %s, reuses other outputs, exports, records usage and never dispatches",
+    async (role) => {
+      const { env, job, request } = await setup();
+      const before = [
+        env.imageCalls.length,
+        env.videoCalls,
+        env.ttsCalls.length,
+        env.ledger.reservations.length,
+      ];
+      const reserve = vi.fn();
+      Object.assign(env.service, { usage: { reservePaidCall: reserve } });
+      const result = await env.service.assignAsset(
+        { ...env.context, role },
+        job.jobId,
+        "one",
+        request,
+      );
+      expect(result.scenes[0]?.outputs.find((output) => output.kind === "IMAGE")).toMatchObject({
+        status: "ASSIGNED",
+        assetId: request.assetId,
+      });
+      expect(
+        result.scenes[0]?.outputs
+          .filter((output) => output.kind !== "IMAGE")
+          .every((output) => output.status === "REUSED"),
+      ).toBe(true);
+      expect(env.usages).toContainEqual(
+        expect.objectContaining({
+          usedByType: "scene_generation_output",
+          assetId: request.assetId,
+        }),
+      );
+      expect([
+        env.imageCalls.length,
+        env.videoCalls,
+        env.ttsCalls.length,
+        env.ledger.reservations.length,
+      ]).toEqual(before);
+      expect(reserve).not.toHaveBeenCalled();
+      expect(await env.service.exportPackage(env.context, job.jobId)).toMatchObject({
+        status: "SUCCEEDED",
+      });
+      expect(await env.service.assignAsset(env.context, job.jobId, "one", request)).toEqual(result);
+      await expect(
+        env.service.assignAsset(env.context, job.jobId, "one", {
+          ...request,
+          assetId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        env.service.assignAsset(env.context, job.jobId, "one", {
+          ...request,
+          idempotencyKey: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    },
+  );
+  it.each([
+    ["VIEWER", 403],
+    ["FOREIGN", 404],
+    ["PENDING", 409],
+    ["KIND", 422],
+  ])("rejects %s without dispatch", async (scenario, status) => {
+    const { env, job, request } = await setup();
+    const asset = env.assets.find((row) => row.id === request.assetId)!;
+    if (scenario === "FOREIGN") asset.workspaceId = randomUUID();
+    if (scenario === "PENDING") asset.status = "PENDING";
+    if (scenario === "KIND") asset.mediaType = "audio/wav";
+    const before = [
+      env.imageCalls.length,
+      env.videoCalls,
+      env.ttsCalls.length,
+      env.ledger.reservations.length,
+    ];
+    await expect(
+      env.service.assignAsset(
+        { ...env.context, role: scenario === "VIEWER" ? "VIEWER" : "OWNER" },
+        job.jobId,
+        "one",
+        request,
+      ),
+    ).rejects.toMatchObject({ status });
+    expect([
+      env.imageCalls.length,
+      env.videoCalls,
+      env.ttsCalls.length,
+      env.ledger.reservations.length,
+    ]).toEqual(before);
   });
 });

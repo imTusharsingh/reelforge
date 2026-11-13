@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProductionApiError, ProductionClient } from "./api";
+import { makeRenderInput } from "./composition";
+import { assetId, pinnedRevision, production, render } from "./verification/fixtures";
 import type { SceneMediaPackage, Script, ScriptRevision } from "./model";
 
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -9,6 +11,50 @@ const jobId = "30000000-0000-4000-8000-000000000003";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ProductionClient", () => {
+  it("posts pinned composition input once and refuses Viewer writes", async () => {
+    const complete = {
+      ...production,
+      status: "SUCCEEDED" as const,
+      scenes: production.scenes.map((scene) => ({
+        ...scene,
+        status: "SUCCEEDED" as const,
+        outputs: [
+          {
+            kind: "IMAGE" as const,
+            status: "SUCCEEDED" as const,
+            assetId,
+            assetVersion: 1,
+            mediaType: "image/png",
+            byteSize: 68,
+            errorCode: null,
+            errorMessage: null,
+          },
+        ],
+      })),
+    };
+    const input = makeRenderInput(complete, pinnedRevision, "12345678");
+    const request = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(render), { status: 200 }));
+    vi.stubGlobal("fetch", request);
+    await expect(
+      new ProductionClient(workspaceId, "VIEWER", new AbortController().signal).startRender(
+        input,
+        "key",
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(request).not.toHaveBeenCalled();
+    await new ProductionClient(workspaceId, "EDITOR", new AbortController().signal).startRender(
+      input,
+      "key",
+    );
+    expect(request).toHaveBeenCalledOnce();
+    expect(JSON.parse(String((request.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      idempotencyKey: "key",
+      retentionDays: 90,
+      input,
+    });
+  });
   it("loads the exact pinned revision after the script advances and scenes are reordered", async () => {
     const revision = (number: number, title: string, sceneIds: string[]): ScriptRevision => ({
       revision: number,
@@ -82,6 +128,94 @@ describe("ProductionClient", () => {
       ),
     ).rejects.toMatchObject({ status: 403 });
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each(["OWNER", "EDITOR"] as const)(
+    "allows %s assignment and preserves the supplied replay key",
+    async (role) => {
+      const request = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(new Response(JSON.stringify(production))));
+      vi.stubGlobal("fetch", request);
+      const client = new ProductionClient(
+        production.workspaceId,
+        role,
+        new AbortController().signal,
+      );
+      await client.assignAsset(production, "scene-one", "IMAGE", assetId, 1, "stable-action-key");
+      await client.assignAsset(production, "scene-one", "IMAGE", assetId, 1, "stable-action-key");
+      expect(request.mock.calls[0]?.[1].body).toBe(request.mock.calls[1]?.[1].body);
+    },
+  );
+  it("denies viewer assignment without a request", async () => {
+    const request = vi.fn();
+    vi.stubGlobal("fetch", request);
+    await expect(
+      new ProductionClient(workspaceId, "VIEWER", new AbortController().signal).assignAsset(
+        production,
+        "scene-one",
+        "IMAGE",
+        assetId,
+        1,
+        "key",
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(request).not.toHaveBeenCalled();
+  });
+  it.each([403, 404, 409, 422])("preserves assignment HTTP %s failures", async (status) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ message: "Assignment rejected" }), { status }),
+        ),
+    );
+    await expect(
+      new ProductionClient(workspaceId, "EDITOR", new AbortController().signal).assignAsset(
+        production,
+        "scene-one",
+        "IMAGE",
+        assetId,
+        1,
+        "key",
+      ),
+    ).rejects.toMatchObject({ status });
+  });
+  it("sends the observed version and payload for an asset assignment", async () => {
+    const job: SceneMediaPackage = {
+      schemaVersion: "1.0",
+      jobId,
+      workspaceId,
+      scriptId,
+      scriptRevision: 1,
+      channelId: null,
+      status: "FAILED",
+      version: 4,
+      requestedOutputs: { image: true, video: false, narration: false, dialogue: false },
+      scenes: [],
+    };
+    const response = { ...job, status: "RUNNING", version: 5 };
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new ProductionClient(workspaceId, "EDITOR", new AbortController().signal);
+    await client.assignAsset(job, "scene-1", "IMAGE", assetId, 2, "assign-key");
+    const [url, init] = request.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      `/api/v1/workspaces/${workspaceId}/scene-media/jobs/${jobId}/scenes/scene-1/assign-asset`,
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      idempotencyKey: "assign-key",
+      expectedJobVersion: 4,
+      kind: "IMAGE",
+      assetId,
+      assetVersion: 2,
+    });
   });
 
   it("sends the observed version and operation key for a scene mutation", async () => {

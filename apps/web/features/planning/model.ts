@@ -361,7 +361,12 @@ export class PlanningClient {
       clearPendingSave(this.workspaceId);
       return value;
     } catch (error) {
-      if (error instanceof PlanningApiError && error.status >= 400 && error.status < 500)
+      if (
+        path !== "scripts" &&
+        error instanceof PlanningApiError &&
+        error.status >= 400 &&
+        error.status < 500
+      )
         clearPendingSave(this.workspaceId);
       throw error;
     } finally {

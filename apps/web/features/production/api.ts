@@ -1,4 +1,5 @@
 import type { WorkspaceRole } from "../../lib/api";
+import type { RenderInput } from "./composition";
 import {
   canWrite,
   parseAssets,
@@ -101,7 +102,11 @@ export class ProductionClient {
     }
     this.signal.throwIfAborted();
     if (!response.ok)
-      throw new ProductionApiError(response.status, message(response.status, payload));
+      throw new ProductionApiError(
+        response.status,
+        message(response.status, payload),
+        mutation && response.status >= 500,
+      );
     return payload;
   }
 
@@ -233,6 +238,27 @@ export class ProductionClient {
     );
   }
 
+  public async assignAsset(
+    job: SceneMediaPackage,
+    sceneId: string,
+    kind: OutputKind,
+    assetId: string,
+    assetVersion: number,
+    idempotencyKey: string,
+  ): Promise<SceneMediaPackage> {
+    return this.mutation(
+      `scene-media/jobs/${encodeURIComponent(job.jobId)}/scenes/${encodeURIComponent(sceneId)}/assign-asset`,
+      {
+        idempotencyKey,
+        expectedJobVersion: job.version,
+        kind,
+        assetId,
+        assetVersion,
+      },
+      (value) => parsePackage(value, this.workspaceId),
+    );
+  }
+
   public async assets(): Promise<Asset[]> {
     return parseAssets(await this.request("assets"), this.workspaceId);
   }
@@ -247,6 +273,14 @@ export class ProductionClient {
     return parseRender(
       await this.request(`composition/jobs/${encodeURIComponent(jobId)}`),
       this.workspaceId,
+    );
+  }
+
+  public async startRender(input: RenderInput, idempotencyKey: string): Promise<RenderJob> {
+    return this.mutation(
+      "composition/jobs",
+      { idempotencyKey, input, retentionDays: 90 },
+      (value) => parseRender(value, this.workspaceId),
     );
   }
 

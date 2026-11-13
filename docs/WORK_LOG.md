@@ -1210,3 +1210,6 @@ M27 developer created the isolated `work/m27-publishing-and-calendar-ui` worktre
 ### 2026-11-13 — M27 Core decision follow-up
 
 Minu approved the three backend proposals in PR #93. Initial D1–D3 code was started; further tests and UI remain. Inspection found that approved quality runs cannot be discovered with their IDs through the existing read interfaces, although post creation requires the ID. M27 status and the PR record the proposed read interface for Core decision.
+## 2026-11-13 — C3 PR #97 review follow-up
+
+On work/issue-69-c-scene-assets, merged origin/main and installed the exact pinned toolchain/dependencies. Addressed Minu B1–B5: formatting, ASSIGNED composition compatibility, consistent scene_generation_output usage, stable assign reconciliation keys, and service/Postgres/web/browser regression coverage. Focused suite: 128 passed; mounted production browser: 28 passed at 390/1440. No live provider calls. Pending independent Minu review and hosted CI.
