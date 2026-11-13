@@ -467,7 +467,11 @@ describe("IdeaService", () => {
       configuredIdeaLlm({ proposeIdea }),
       usage as never,
     );
-    const request = { prompt: "same request", channelId: "00000000-0000-4000-8000-000000000001" };
+    const request = {
+      prompt: "same request",
+      channelId: "00000000-0000-4000-8000-000000000001",
+      correlationId: "00000000-0000-4000-8000-000000000002",
+    };
     await service.propose(context, request);
     await expect(service.propose(context, request)).rejects.toThrow("PAID_CALL_REPLAYED");
     expect(proposeIdea).toHaveBeenCalledOnce();

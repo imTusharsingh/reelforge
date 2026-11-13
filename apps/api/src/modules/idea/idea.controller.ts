@@ -68,6 +68,9 @@ export class IdeaController {
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     const proposalRequest = {
       prompt: parsed.data.prompt,
+      ...(parsed.data.correlationId === undefined
+        ? {}
+        : { correlationId: parsed.data.correlationId }),
       ...(parsed.data.context === undefined ? {} : { contextText: parsed.data.context }),
       ...(parsed.data.channelId === undefined ? {} : { channelId: parsed.data.channelId }),
       ...(parsed.data.seriesId === undefined ? {} : { seriesId: parsed.data.seriesId }),

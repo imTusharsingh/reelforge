@@ -1,5 +1,5 @@
+import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
-import { createHash } from "node:crypto";
 import type { CapabilityMetadata } from "@reelforge/ai-providers";
 import type { Database } from "../identity/identity.types.js";
 
@@ -20,12 +20,15 @@ export function paidCapability(port: unknown): CapabilityMetadata | null {
     : null;
 }
 
-export function stablePaidCorrelation(seed: string): string {
-  const hex = createHash("sha256").update(seed).digest("hex").slice(0, 32);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${(
-    8 +
-    (Number.parseInt(hex[16] ?? "0", 16) % 4)
-  ).toString(16)}${hex.slice(17, 20)}-${hex.slice(20)}`;
+export function isPaidCallReplay(error: unknown): boolean {
+  if (!(error instanceof ConflictException)) return false;
+  const response = error.getResponse();
+  return (
+    typeof response === "object" &&
+    response !== null &&
+    "code" in response &&
+    response.code === "PAID_CALL_REPLAYED"
+  );
 }
 
 export async function createPendingPaidLedger(

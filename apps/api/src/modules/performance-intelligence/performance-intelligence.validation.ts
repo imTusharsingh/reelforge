@@ -8,15 +8,19 @@ import {
   RecordExperimentOutcomeRequestSchema,
   type CreateExperimentRequest,
   type ExportStrategyChangeRequest,
-  type GenerateInsightReportRequest,
   type GenerateRecommendationsRequest,
   type PerformanceChannelQuery,
   type RecordExperimentOutcomeRequest,
 } from "@reelforge/contracts";
 import { z } from "zod";
 
-export function parseGenerateInsightReportRequest(value: unknown): GenerateInsightReportRequest {
-  const parsed = GenerateInsightReportRequestSchema.safeParse(value);
+const generateInsightReportRequestSchema = GenerateInsightReportRequestSchema.extend({
+  correlationId: z.uuid().optional(),
+});
+export type GenerateInsightReportInput = z.infer<typeof generateInsightReportRequestSchema>;
+
+export function parseGenerateInsightReportRequest(value: unknown): GenerateInsightReportInput {
+  const parsed = generateInsightReportRequestSchema.safeParse(value);
   if (!parsed.success) throw new BadRequestException(parsed.error.issues);
   return parsed.data;
 }

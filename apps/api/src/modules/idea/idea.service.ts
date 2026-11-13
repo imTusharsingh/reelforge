@@ -18,7 +18,6 @@ import {
   createPendingPaidLedger,
   finishPaidLedger,
   paidCapability,
-  stablePaidCorrelation,
 } from "../usage-budget/paid-call.js";
 
 const transitions: Record<string, ReadonlySet<string>> = {
@@ -162,13 +161,12 @@ export class IdeaService {
       contextText?: string | undefined;
       channelId?: string | undefined;
       seriesId?: string | undefined;
+      correlationId?: string | undefined;
     },
   ): Promise<unknown> {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
     const capability = paidCapability(this.llm);
-    const correlationId = stablePaidCorrelation(
-      `${context.workspaceId}:idea:${request.channelId ?? ""}:${request.seriesId ?? ""}:${request.prompt}:${request.contextText ?? ""}`,
-    );
+    const correlationId = request.correlationId ?? randomUUID();
     const estimate = capability?.costModel.amount;
     if (
       capability === null ||
