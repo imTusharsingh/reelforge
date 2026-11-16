@@ -302,7 +302,7 @@
       "functionLines": 142
     },
     "apps/api/src/modules/script/script.service.ts": {
-      "lines": 697,
+      "lines": 205,
       "functionLines": 189
     },
     "apps/api/src/modules/social-accounts/social-accounts.postgres.integration.test.ts": {
