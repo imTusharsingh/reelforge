@@ -1,0 +1,266 @@
+"use client";
+import { useEffect, useState, type FormEvent, type JSX } from "react";
+import {
+  BriefInputSchema,
+  defaultBrief,
+  type BriefInput,
+} from "../../../../packages/contracts/src/channel-brief";
+import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { StudioLink } from "../../components/studio-link";
+import { useActiveWorkspace } from "../../components/studio-workspace-context";
+import { BriefClient } from "./client";
+import { IdentityFields, JsonField, ScheduleBudget, StyleFields } from "./fields";
+
+const seed = (): BriefInput =>
+  defaultBrief({
+    niche: "My channel",
+    audience: "General audience",
+    language: "English",
+    voiceId: "Kore",
+    cadence: { shortsPerDay: 1, localTime: "18:00", timezone: "UTC" },
+  });
+export function BriefEditor({ channelId }: { channelId: string }): JSX.Element {
+  const workspace = useActiveWorkspace();
+  return (
+    <Editor
+      key={`${workspace.id}:${workspace.role}:${channelId}`}
+      workspaceId={workspace.id}
+      channelId={channelId}
+      editable={workspace.role !== "VIEWER"}
+    />
+  );
+}
+function Editor({
+  workspaceId,
+  channelId,
+  editable,
+}: {
+  workspaceId: string;
+  channelId: string;
+  editable: boolean;
+}): JSX.Element {
+  const state = useEditorState({ workspaceId, channelId, editable });
+  return <EditorView {...state} />;
+}
+type EditorState = {
+  channelId: string;
+  editable: boolean;
+  value: BriefInput;
+  setValue: (value: BriefInput) => void;
+  version: number;
+  offerL3: boolean;
+  loaded: boolean;
+  message: string;
+  error: string;
+  busy: boolean;
+  submit: (event: FormEvent) => Promise<void>;
+};
+function useEditorState({
+  workspaceId,
+  channelId,
+  editable,
+}: {
+  workspaceId: string;
+  channelId: string;
+  editable: boolean;
+}): EditorState {
+  const [value, setValue] = useState<BriefInput>(seed);
+  const [version, setVersion] = useState(0);
+  const [offerL3, setOfferL3] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEditorLoad(workspaceId, channelId, setValue, setVersion, setOfferL3, setLoaded, setError);
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const saved = await new BriefClient(workspaceId).save(
+        channelId,
+        BriefInputSchema.parse(value),
+      );
+      setVersion(saved.version);
+      setMessage(`Saved immutable Brief version ${saved.version}.`);
+    } catch {
+      setError(
+        "Brief was not saved. Check the fields and reload if another editor saved a version.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return {
+    channelId,
+    editable,
+    value,
+    setValue,
+    version,
+    offerL3,
+    loaded,
+    message,
+    error,
+    busy,
+    submit,
+  };
+}
+function EditorView({
+  channelId,
+  editable,
+  value,
+  setValue,
+  version,
+  offerL3,
+  loaded,
+  message,
+  error,
+  busy,
+  submit,
+}: ReturnType<typeof useEditorState>): JSX.Element {
+  return (
+    <Panel>
+      <h1>Channel Brief</h1>
+      <p>Version {version}. Edits create a new immutable version.</p>
+      {error && (
+        <Alert tone="danger" title="Brief needs attention">
+          {error}
+        </Alert>
+      )}
+      {message && <StateMessage kind="success" description={message} />}
+      {!loaded ? (
+        <StateMessage kind="loading" description="Loading Brief…" />
+      ) : (
+        <form onSubmit={submit} className="rf-form">
+          <fieldset disabled={!editable || busy}>
+            <legend>{editable ? "Edit your Brief" : "Read-only Brief"}</legend>
+            <IdentityFields value={value} onChange={setValue} offerL3={offerL3} />
+            <ScheduleBudget value={value} onChange={setValue} />
+            <StyleFields value={value} onChange={setValue} />
+            <DetailedFields value={value} onChange={setValue} channelId={channelId} />
+            <Button type="submit" loading={busy}>
+              Save new version
+            </Button>
+          </fieldset>
+        </form>
+      )}
+    </Panel>
+  );
+}
+function DetailedFields({
+  value,
+  onChange,
+  channelId,
+}: {
+  value: BriefInput;
+  onChange: (value: BriefInput) => void;
+  channelId: string;
+}): JSX.Element {
+  const fields = [
+    "narratorVoice",
+    "onCameraVoice",
+    "formatMix",
+    "tuningBounds",
+    "renderProfile",
+    "references",
+    "referenceDefaults",
+  ] as const;
+  return (
+    <>
+      <h2>Voice, formats and references</h2>
+      <p>
+        Reference pins use an asset ID and immutable version. No recurring characters is the
+        default. Null tuning bounds keep learning recommendations only.
+      </p>
+      {fields.map((key) => (
+        <JsonField
+          key={key}
+          label={key}
+          value={value[key]}
+          onChange={(next) => onChange({ ...value, [key]: next } as BriefInput)}
+        />
+      ))}
+      <JsonField
+        label="recurringCharacters"
+        value={value.styleBible.recurringCharacters}
+        onChange={(next) =>
+          onChange({
+            ...value,
+            styleBible: {
+              ...value.styleBible,
+              recurringCharacters: next as BriefInput["styleBible"]["recurringCharacters"],
+            },
+          })
+        }
+      />
+      <Advanced value={value} onChange={onChange} channelId={channelId} />
+    </>
+  );
+}
+
+function Advanced({
+  value,
+  onChange,
+  channelId,
+}: {
+  value: BriefInput;
+  onChange: (value: BriefInput) => void;
+  channelId: string;
+}): JSX.Element {
+  return (
+    <details>
+      <summary>Advanced</summary>
+      <p>
+        Genre is optional. Series and prompt internals use the legacy Advanced screens until their
+        T2 removal.
+      </p>
+      <StudioLink href={`/channels/${encodeURIComponent(channelId)}/advanced`}>
+        Open legacy channel settings
+      </StudioLink>
+      <JsonField
+        label="constraints"
+        value={value.constraints}
+        onChange={(next) => onChange({ ...value, constraints: next as BriefInput["constraints"] })}
+      />
+    </details>
+  );
+}
+
+function useEditorLoad(
+  workspaceId: string,
+  channelId: string,
+  setValue: (v: BriefInput) => void,
+  setVersion: (v: number) => void,
+  setOfferL3: (v: boolean) => void,
+  setLoaded: (v: boolean) => void,
+  setError: (v: string) => void,
+): void {
+  useEffect(() => {
+    let active = true;
+    const client = new BriefClient(workspaceId);
+    void Promise.all([client.briefs(channelId), client.eligibility(channelId)])
+      .then(([briefs, eligible]) => {
+        if (!active) return;
+        const latest = briefs[0];
+        if (latest) {
+          const input = Object.fromEntries(
+            Object.entries(latest).filter(
+              ([key]) =>
+                !["id", "workspaceId", "channelId", "version", "schemaVersion"].includes(key),
+            ),
+          );
+          setValue(BriefInputSchema.parse(input));
+          setVersion(latest.version);
+        }
+        setOfferL3(eligible);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (active) setError("Unable to load this channel Brief.");
+      });
+    return (): void => {
+      active = false;
+    };
+  }, [workspaceId, channelId]);
+}

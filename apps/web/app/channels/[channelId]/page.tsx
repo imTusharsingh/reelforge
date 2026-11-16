@@ -1,15 +1,15 @@
 import type { JSX } from "react";
 import { AuthWorkspace } from "../../../components/auth-workspace";
-import { ChannelDetail } from "../../../features/channels/channel-detail";
-
-export default async function ChannelDetailPage({
+import { BriefEditor } from "../../../features/brief/editor";
+export default async function Page({
   params,
 }: {
   params: Promise<{ channelId: string }>;
 }): Promise<JSX.Element> {
+  const { channelId } = await params;
   return (
     <AuthWorkspace>
-      <ChannelDetail channelId={(await params).channelId} />
+      <BriefEditor channelId={channelId} />
     </AuthWorkspace>
   );
 }
