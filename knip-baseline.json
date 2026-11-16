@@ -1,5 +1,5 @@
 {
-  "description": "Existing findings from main bb39fc3 with the committed Knip configuration; no new unused code is allowed. Resolved entries may be pruned.",
+  "description": "Existing debt only; review any additions. Remove resolved entries, never silently expand.",
   "findings": [
     "dependencies:apps/worker/package.json:@prisma/client",
     "dependencies:apps/worker/package.json:@reelforge/media",
@@ -34,11 +34,6 @@
     "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_IMAGE_ESTIMATE_USD",
     "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_TEXT_ESTIMATE_USD",
     "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_TTS_ESTIMATE_USD",
-    "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_VIDEO_CONTENT_TIMEOUT_MS",
-    "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_VIDEO_ESTIMATE_USD",
-    "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_VIDEO_POLL_TIMEOUT_MS",
-    "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_VIDEO_SECONDS",
-    "exports:apps/api/src/modules/openai/openai.adapters.ts:OPENAI_VIDEO_SUBMIT_TIMEOUT_MS",
     "exports:apps/api/src/modules/openai/openai.adapters.ts:openAiKey",
     "exports:apps/api/src/modules/orchestration/orchestration.definitions.ts:nextStep",
     "exports:apps/api/src/modules/orchestration/orchestration.dispatcher.ts:mergeStepOutput",
@@ -67,7 +62,6 @@
     "exports:apps/web/features/channels/dto.ts:string",
     "exports:apps/web/features/channels/model.ts:parseObject",
     "exports:apps/web/features/channels/ui.tsx:RequestFailure",
-    "exports:apps/web/features/planning/model.ts:parseScene",
     "exports:apps/web/features/production/model.ts:parseAsset",
     "exports:apps/web/features/publishing/model.ts:platformValues",
     "exports:apps/web/features/publishing/model.ts:privacyValues",

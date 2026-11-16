@@ -1237,3 +1237,8 @@ Reconciled PROJECT_STATE and M20–M29 STATUS (M28 remains not started), plus C3
 ## 2026-11-16 — M00 Wave 0 foundations pack (PR B)
 
 Owner-assigned LOCKED v2.0 foundations on `work/m00-wave0-foundations`, from main bb39fc3; decision pack is PR #110. Added contracts, tenant-guarded persistence, one offline seed/migration, fresh-install fixes 1–5, retired OpenAI video removal, strangler flag, deprecation inventory and local tooling. Exact verification and changed files: WAVE0_FOUNDATIONS_STATUS.md. IMPLEMENTED_PENDING_REVIEW; no self-approval, live-provider calls, ci.yml/PROJECT_STATE edits or merge.
+
+
+## 2026-11-16 — PR #111 issue #112 review corrections
+
+Source: issue #112 in full and official Minu review 5916107268. Addressed B1–B8: exact states/map, Director/provider/Brief/envelope fields, approved-Short autonomy, seven role prompts, default genre fallback and Page-aligned deprecations. Script retry identity survives background acknowledgement and reload, preventing a second paid dispatch; regression tests cover client and real API/M18. Split the touched planning model/test assemblies into files under 400 lines; no baseline expansion. Edited the one unmerged migration in place. Non-blocking follow-ups are documented with their owning requirement. Until V2, local OpenAI text fallback needs OPENAI_TEXT_FALLBACK_ENABLED=true plus its key. Branch updated by merging main; docs #110 fixed/pushed first and re-requested for Minu review. Exact evidence and changed paths: WAVE0_FOUNDATIONS_STATUS.md. No CI/PROJECT_STATE changes, live calls, self-approval or merge.

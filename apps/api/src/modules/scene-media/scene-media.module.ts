@@ -25,7 +25,7 @@ import {
   openAiRuntimeConfig,
 } from "../openai/openai.adapters.js";
 
-/** @deprecated M09 synchronous image-first pipeline: V2/V3/V4 replace; remove in T2. See DEPRECATIONS.md. */
+/** @deprecated M09 synchronous/still-image path replaced by V3 jobs + V5 image-to-video; deleted and service split in V5. See DEPRECATIONS.md. */
 @Module({
   imports: [IdentityModule, WorkspaceModule, AssetModule, UsageBudgetModule],
   controllers: [SceneMediaController],

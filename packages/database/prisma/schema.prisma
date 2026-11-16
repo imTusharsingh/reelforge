@@ -580,7 +580,7 @@ model ContentSeries {
   @@map("content_series")
 }
 
-/// @deprecated Legacy genre templates; format_templates replace them, T2 removes after migration.
+/// @deprecated V1 formats remove required choice; optional legacy genre tables removed only by T2 ADR/migration.
 model GenreTemplate {
   id                 String   @id @default(uuid()) @db.Uuid
   key                String   @unique
@@ -599,7 +599,7 @@ model GenreTemplate {
   @@map("genre_templates")
 }
 
-/// @deprecated Legacy required-genre workflow; ChannelBrief replaces it, T2 removes after migration.
+/// @deprecated V1 removes required choice; V7 Brief replaces config; optional table removal in T2 with ADR/migration.
 model Genre {
   id                 String          @id @default(uuid()) @db.Uuid
   workspaceId        String          @map("workspace_id") @db.Uuid
@@ -2507,16 +2507,20 @@ model EmergencyStop {
 }
 
 enum VideoRunState {
-  CREATED
-  QUEUED
-  RUNNING
-  WAITING_APPROVAL
-  PAUSED
+  PLANNING
+  SCRIPTING
+  SHOT_PLANNING
+  GENERATING
+  ASSEMBLING
+  CRITIC
+  AWAITING_APPROVAL
+  SCHEDULED
+  PUBLISHED
+  LEARNING
   PAUSED_BUDGET
   NEEDS_HUMAN
-  SUCCEEDED
   FAILED
-  CANCELLED
+  CANCELED
 }
 
 enum VideoRunStepState {
@@ -2553,13 +2557,14 @@ enum ReferenceSource {
 }
 
 model WorkspaceFoundationDefaults {
-  id          String    @id @default(uuid()) @db.Uuid
-  workspaceId String    @map("workspace_id") @db.Uuid
-  version     Int       @default(1)
-  settings    Json
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schemaVersion String    @default("1.0") @map("schema_version")
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  version       Int       @default(1)
+  settings      Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId])
   @@unique([workspaceId, id])
@@ -2567,15 +2572,16 @@ model WorkspaceFoundationDefaults {
 }
 
 model FormatTemplate {
-  id          String    @id @default(uuid()) @db.Uuid
-  workspaceId String    @map("workspace_id") @db.Uuid
-  key         String
-  name        String
-  version     Int       @default(1)
-  structure   Json
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schemaVersion String    @default("1.0") @map("schema_version")
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  key           String
+  name          String
+  version       Int       @default(1)
+  structure     Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, key, version])
   @@unique([workspaceId, id])
@@ -2597,33 +2603,36 @@ model ChannelBrief {
 
   @@unique([workspaceId, channelId, version])
   @@unique([workspaceId, id])
+  @@unique([workspaceId, id, version])
   @@map("channel_briefs")
 }
 
 model VideoRun {
-  id                     String          @id @default(uuid()) @db.Uuid
-  workspaceId            String          @map("workspace_id") @db.Uuid
-  channelId              String          @map("channel_id") @db.Uuid
-  channelBriefId         String          @map("channel_brief_id") @db.Uuid
-  state                  VideoRunState   @default(CREATED)
-  requestedAutonomy      AutonomyLevel   @default(L2) @map("requested_autonomy")
-  effectiveAutonomy      AutonomyLevel   @default(L2) @map("effective_autonomy")
-  idempotencyKey         String          @map("idempotency_key")
-  correlationId          String          @map("correlation_id") @db.Uuid
-  revision               Int             @default(0)
-  inputSnapshot          Json            @map("input_snapshot")
-  publishedShortsAtStart Int             @default(0) @map("published_shorts_at_start")
-  criticAgreementScore   Float?          @map("critic_agreement_score")
-  pauseReason            String?         @map("pause_reason")
-  channel                Channel         @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  brief                  ChannelBrief    @relation(fields: [workspaceId, channelBriefId], references: [workspaceId, id], onDelete: Restrict)
-  steps                  VideoRunStep[]
-  shots                  ShotSpec[]
-  events                 RunEvent[]
-  budget                 BudgetEnvelope?
-  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace              Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channelBriefVersion   Int             @default(1) @map("channel_brief_version")
+  schemaVersion         String          @default("1.0") @map("schema_version")
+  id                    String          @id @default(uuid()) @db.Uuid
+  workspaceId           String          @map("workspace_id") @db.Uuid
+  channelId             String          @map("channel_id") @db.Uuid
+  channelBriefId        String          @map("channel_brief_id") @db.Uuid
+  state                 VideoRunState   @default(PLANNING)
+  requestedAutonomy     AutonomyLevel   @default(L2) @map("requested_autonomy")
+  effectiveAutonomy     AutonomyLevel   @default(L2) @map("effective_autonomy")
+  idempotencyKey        String          @map("idempotency_key")
+  correlationId         String          @map("correlation_id") @db.Uuid
+  revision              Int             @default(0)
+  inputSnapshot         Json            @map("input_snapshot")
+  approvedShortsAtStart Int             @default(0) @map("approved_shorts_at_start")
+  criticAgreementScore  Float?          @map("critic_agreement_score")
+  pauseReason           String?         @map("pause_reason")
+  channel               Channel         @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+  brief                 ChannelBrief    @relation(fields: [workspaceId, channelBriefId, channelBriefVersion], references: [workspaceId, id, version], onDelete: Restrict)
+  steps                 VideoRunStep[]
+  shots                 ShotSpec[]
+  events                RunEvent[]
+  budget                BudgetEnvelope?
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace             Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, idempotencyKey])
   @@unique([workspaceId, id])
@@ -2632,6 +2641,9 @@ model VideoRun {
 }
 
 model VideoRunStep {
+  costMinor      Int?              @map("cost_minor")
+  artifacts      Json              @default("[]")
+  schemaVersion  String            @default("1.0") @map("schema_version")
   id             String            @id @default(uuid()) @db.Uuid
   workspaceId    String            @map("workspace_id") @db.Uuid
   runId          String            @map("run_id") @db.Uuid
@@ -2696,6 +2708,7 @@ model ProviderCapability {
 }
 
 model RunEvent {
+  schemaVersion String        @default("1.0") @map("schema_version")
   id            String        @id @default(uuid()) @db.Uuid
   workspaceId   String        @map("workspace_id") @db.Uuid
   runId         String        @map("run_id") @db.Uuid
@@ -2717,19 +2730,23 @@ model RunEvent {
 }
 
 model BudgetEnvelope {
-  id            String    @id @default(uuid()) @db.Uuid
-  workspaceId   String    @map("workspace_id") @db.Uuid
-  runId         String    @map("run_id") @db.Uuid
-  currency      String    @default("USD")
-  targetMinor   Int       @default(600) @map("target_minor")
-  hardCapMinor  Int       @default(800) @map("hard_cap_minor")
-  reservedMinor Int       @default(0) @map("reserved_minor")
-  spentMinor    Int       @default(0) @map("spent_minor")
-  revision      Int       @default(0)
-  run           VideoRun  @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  baseEstimateMinor   Int         @default(0) @map("base_estimate_minor")
+  reshootReserveMinor Int         @default(0) @map("reshoot_reserve_minor")
+  route               BudgetRoute @default(PRIMARY)
+  schemaVersion       String      @default("1.0") @map("schema_version")
+  id                  String      @id @default(uuid()) @db.Uuid
+  workspaceId         String      @map("workspace_id") @db.Uuid
+  runId               String      @map("run_id") @db.Uuid
+  currency            String      @default("USD")
+  targetMinor         Int         @default(600) @map("target_minor")
+  hardCapMinor        Int         @default(800) @map("hard_cap_minor")
+  reservedMinor       Int         @default(0) @map("reserved_minor")
+  spentMinor          Int         @default(0) @map("spent_minor")
+  revision            Int         @default(0)
+  run                 VideoRun    @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace           Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, runId])
   @@unique([workspaceId, id])
@@ -2775,4 +2792,9 @@ model ChannelReferenceDefaults {
   @@unique([workspaceId, channelId])
   @@unique([workspaceId, id])
   @@map("channel_reference_defaults")
+}
+
+enum BudgetRoute {
+  PRIMARY
+  FALLBACK
 }

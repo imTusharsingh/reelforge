@@ -12,17 +12,39 @@ const owned = z.object({
 export const AutonomyLevelSchema = z.enum(["L1", "L2", "L3"]);
 export type AutonomyLevel = z.infer<typeof AutonomyLevelSchema>;
 export const VideoRunStateSchema = z.enum([
-  "CREATED",
-  "QUEUED",
-  "RUNNING",
-  "WAITING_APPROVAL",
-  "PAUSED",
+  "PLANNING",
+  "SCRIPTING",
+  "SHOT_PLANNING",
+  "GENERATING",
+  "ASSEMBLING",
+  "CRITIC",
+  "AWAITING_APPROVAL",
+  "SCHEDULED",
+  "PUBLISHED",
+  "LEARNING",
   "PAUSED_BUDGET",
   "NEEDS_HUMAN",
-  "SUCCEEDED",
   "FAILED",
-  "CANCELLED",
+  "CANCELED",
 ]);
+export type VideoRunState = z.infer<typeof VideoRunStateSchema>;
+/** Exact locked Page state diagram. V3 applies these edges with server-side guards. */
+export const VIDEO_RUN_TRANSITIONS: Readonly<Record<VideoRunState, readonly VideoRunState[]>> = {
+  PLANNING: ["SCRIPTING", "CANCELED"],
+  SCRIPTING: ["SHOT_PLANNING"],
+  SHOT_PLANNING: ["GENERATING"],
+  GENERATING: ["ASSEMBLING", "PAUSED_BUDGET", "FAILED"],
+  ASSEMBLING: ["CRITIC"],
+  CRITIC: ["AWAITING_APPROVAL", "GENERATING", "NEEDS_HUMAN"],
+  AWAITING_APPROVAL: ["SCHEDULED"],
+  SCHEDULED: ["PUBLISHED"],
+  PUBLISHED: ["LEARNING"],
+  LEARNING: [],
+  PAUSED_BUDGET: ["GENERATING"],
+  NEEDS_HUMAN: ["GENERATING"],
+  FAILED: [],
+  CANCELED: [],
+};
 export const VideoRunStepStateSchema = z.enum([
   "PENDING",
   "QUEUED",
@@ -46,6 +68,7 @@ export const NarratorVoiceSchema = z
     providerId: text,
     voiceId: text,
     language: text.default("English"),
+    pace: z.number().positive().default(1),
   })
   .strict();
 export const CadenceSchema = z
@@ -81,22 +104,77 @@ export const BudgetPolicySchema = z
   })
   .strict()
   .refine((value) => value.targetMinor <= value.hardCapMinor, "target exceeds hard cap");
+const WeightBoundsSchema = z
+  .object({ min: z.number().min(0).max(1), max: z.number().min(0).max(1) })
+  .strict()
+  .refine((value) => value.min <= value.max, "Minimum weight exceeds maximum");
+export const StyleBibleSchema = z
+  .object({
+    visualStyle: text,
+    palette: z.array(text),
+    recurringCharacters: z.array(ReferencePinSchema),
+    bannedVisuals: z.array(text),
+  })
+  .strict();
+export const GuardrailsSchema = z
+  .object({
+    bannedTopics: z.array(text),
+    topicsToAvoid: z.array(text),
+    blockedPersonaAdvice: z.array(z.enum(["health", "legal", "finance", "political"])),
+    allowRealPeople: z.literal(false).default(false),
+    allowBrands: z.literal(false).default(false),
+    factCheckStrictness: z.enum(["STANDARD", "STRICT"]),
+    aiDisclosure: z.literal(true),
+  })
+  .strict();
+export const FormatMixSchema = z
+  .array(z.object({ formatKey: text, weight: z.number().min(0).max(1) }).strict())
+  .min(1)
+  .refine(
+    (mix) =>
+      new Set(mix.map((item) => item.formatKey)).size === mix.length &&
+      Math.abs(mix.reduce((sum, item) => sum + item.weight, 0) - 1) < 0.000001,
+    "Format weights must be unique and sum to one",
+  );
+/** Null means recommendations only. V10 must audit and enforce configured bounds. */
+export const TuningBoundsSchema = z
+  .object({
+    formatMix: z.record(text, WeightBoundsSchema),
+    scoringWeights: z.record(text, WeightBoundsSchema),
+  })
+  .strict();
 export const ChannelBriefSchema = owned
   .extend({
     channelId: uuid,
     version: z.int().positive(),
     topic: text,
+    niche: text,
     audience: text,
+    styleBible: StyleBibleSchema,
+    guardrails: GuardrailsSchema,
+    formatMix: FormatMixSchema,
+    tuningBounds: TuningBoundsSchema.nullable(),
+    languages: z.object({ script: text, narration: text, captions: text }).strict(),
+    onCameraVoice: NarratorVoiceSchema.nullable(),
     formatKey: text,
     targetDurationSeconds: z.number().positive().max(180),
     narrationLanguage: text,
     narratorVoice: NarratorVoiceSchema.nullable(),
     requestedAutonomy: AutonomyLevelSchema,
     cadence: CadenceSchema,
-    aiDisclosure: z.boolean(),
+    aiDisclosure: z.literal(true),
     renderProfile: RenderProfileSchema,
     budgetPolicy: BudgetPolicySchema,
     references: z.array(ReferencePinSchema),
+    referenceDefaults: z
+      .object({
+        character: z.array(ReferencePinSchema),
+        style: z.array(ReferencePinSchema),
+        scenery: z.array(ReferencePinSchema),
+        prop: z.array(ReferencePinSchema),
+      })
+      .strict()
+      .nullable(),
     constraints: z.record(z.string(), z.json()),
   })
   .strict();
@@ -113,7 +191,7 @@ export const VideoRunSchema = owned
     correlationId: uuid,
     revision: z.int().nonnegative(),
     inputSnapshot: z.record(z.string(), z.json()),
-    publishedShortsAtStart: z.int().nonnegative(),
+    approvedShortsAtStart: z.int().nonnegative(),
     criticAgreementScore: z.number().min(0).max(1).nullable(),
     pauseReason: text.nullable(),
     createdAt: timestamp,
@@ -130,6 +208,17 @@ export const VideoRunStepSchema = owned
     idempotencyKey: text,
     providerId: text.nullable(),
     providerJobId: text.nullable(),
+    costMinor: z.int().nonnegative().nullable(),
+    artifacts: z.array(
+      z
+        .object({
+          kind: text,
+          assetId: uuid,
+          assetVersion: z.int().positive(),
+          checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict(),
+    ),
     input: z.json(),
     output: z.json(),
     error: z.json(),
@@ -143,37 +232,70 @@ export const ShotSpecSchema = owned
     runId: uuid,
     ordinal: z.int().nonnegative(),
     version: z.int().positive(),
-    prompt: text,
+    keyframePrompt: text,
+    motionPrompt: text,
+    onScreenText: z.string(),
+    continuityNotes: z.array(text),
+    firstFrameFrom: z
+      .union([
+        z.object({ previousShotOrdinal: z.int().nonnegative() }).strict(),
+        ReferencePinSchema,
+      ])
+      .nullable(),
     negativePrompt: z.string(),
-    durationSeconds: z.number().positive().max(180),
-    narration: z.string(),
+    durationSeconds: z.number().min(3).max(10),
+    voLine: z.string(),
     dialogue: z.string(),
     camera: text,
     transition: text,
-    references: z.array(ReferencePinSchema),
+    references: z.array(ReferencePinSchema).max(6),
     width: z.int().positive(),
     height: z.int().positive(),
     fps: z.int().positive(),
     seed: z.int().nonnegative().nullable(),
   })
-  .strict();
+  .strict()
+  .refine((shot) => shot.width * 16 === shot.height * 9, "Shot dimensions must be 9:16")
+  .refine(
+    (shot) =>
+      !shot.firstFrameFrom ||
+      !("previousShotOrdinal" in shot.firstFrameFrom) ||
+      shot.firstFrameFrom.previousShotOrdinal < shot.ordinal,
+    "First frame must come from an earlier shot",
+  );
 export type ShotSpec = z.infer<typeof ShotSpecSchema>;
 export const ProviderCapabilitySchema = owned
   .extend({
     providerId: text,
     modelId: text,
-    kind: z.enum(["TEXT", "IMAGE", "VIDEO", "TTS", "CRITIC"]),
+    kind: z.enum(["TEXT", "IMAGE", "VIDEO", "TTS", "MUSIC"]),
+    aspects: z.array(text),
+    maxReferenceImages: z.int().nonnegative(),
+    firstLastFrame: z.boolean(),
+    minExtensionSeconds: z.number().nonnegative(),
+    maxExtensionPerTurnSeconds: z.number().nonnegative(),
+    maxExtensionSeconds: z.number().nonnegative(),
+    nativeAudio: z.boolean(),
+    health: z.enum(["HEALTHY", "DEGRADED", "UNAVAILABLE", "NOT_CONFIGURED"]),
+    // Integer micro-USD per second: $0.069504 = 69504, never rounded to cents.
+    pricePerSecond: z
+      .object({
+        "360p": z.int().nonnegative().nullable(),
+        "720p": z.int().nonnegative().nullable(),
+        "1080p": z.int().nonnegative().nullable(),
+      })
+      .strict(),
     enabled: z.boolean(),
     supportsReferenceImages: z.boolean(),
     supportsAudio: z.boolean(),
     asynchronous: z.boolean(),
     polling: z.boolean(),
     minDurationSeconds: z.number().nonnegative(),
-    maxDurationSeconds: z.number().positive(),
-    resolutions: z
-      .array(z.object({ width: z.int().positive(), height: z.int().positive() }).strict())
-      .min(1),
-    frameRates: z.array(z.int().positive()).min(1),
+    maxDurationSeconds: z.number().nonnegative(),
+    resolutions: z.array(
+      z.object({ width: z.int().positive(), height: z.int().positive() }).strict(),
+    ),
+    frameRates: z.array(z.int().positive()),
     regions: z.array(text),
     cost: z
       .object({
@@ -207,6 +329,9 @@ export const BudgetEnvelopeSchema = owned
     currency: z.literal("USD"),
     targetMinor: z.int().nonnegative(),
     hardCapMinor: z.int().positive(),
+    baseEstimateMinor: z.int().nonnegative(),
+    reshootReserveMinor: z.int().nonnegative(),
+    route: z.enum(["PRIMARY", "FALLBACK"]),
     reservedMinor: z.int().nonnegative(),
     spentMinor: z.int().nonnegative(),
     revision: z.int().nonnegative(),
@@ -214,6 +339,7 @@ export const BudgetEnvelopeSchema = owned
   .strict()
   .superRefine((value, context) => {
     if (
+      value.baseEstimateMinor + value.reshootReserveMinor > value.hardCapMinor ||
       value.targetMinor > value.hardCapMinor ||
       value.reservedMinor + value.spentMinor > value.hardCapMinor
     )
@@ -257,15 +383,15 @@ export type ChannelReferenceDefaults = z.infer<typeof ChannelReferenceDefaultsSc
 /** First-ten enforcement and L3 eligibility; publishing still checks ADR-005/019 gates. */
 export function autonomyPolicy(
   requested: AutonomyLevel,
-  publishedShorts: number,
+  approvedShorts: number,
 ): {
   effective: AutonomyLevel;
   offerL3: boolean;
 } {
-  if (!Number.isSafeInteger(publishedShorts) || publishedShorts < 0)
-    throw new Error("Invalid published count");
+  if (!Number.isSafeInteger(approvedShorts) || approvedShorts < 0)
+    throw new Error("Invalid approved count");
   return {
-    effective: publishedShorts < 10 ? "L2" : requested,
-    offerL3: publishedShorts >= 10 && requested !== "L3",
+    effective: requested === "L3" && approvedShorts < 10 ? "L2" : requested,
+    offerL3: approvedShorts >= 10 && requested !== "L3",
   };
 }

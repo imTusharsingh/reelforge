@@ -74,7 +74,7 @@ export type ResolvedCharacterRef = Readonly<{
   characterVersionId: string;
   version: number;
   checksumSha256: string;
-  /** @deprecated Per-scene voice dependency: use the channel narrator; remove legacy requirement in T2. */
+  /** @deprecated Per-scene voice dependency: use the channel narrator; remove legacy code in V4, obsolete columns via T2 ADR/migration. */
   voicePreference: unknown;
   referenceAssetIds: readonly string[];
 }>;

@@ -18,6 +18,7 @@ import {
   PRE_DISPATCH_ERROR_CODES,
   type PaidCallReservation,
 } from "../usage-budget/usage-budget.types.js";
+import { resolveScriptGenre } from "./script-genre.js";
 import type { ScriptLlmPort } from "./script.types.js";
 import { parseScriptDocument, validateGenrePolicy, validateScript } from "./script.validation.js";
 
@@ -191,11 +192,7 @@ export class ScriptService {
       if (!provenance.success) throw new ConflictException("Provider returned invalid provenance");
       const document = parseScriptDocument(result.output);
       validateScript(document);
-      const genre = await this.db.genre.findFirst({
-        where: { workspaceId: context.workspaceId, name: document.metadata.genre },
-        select: { id: true, safetyProfile: true },
-      });
-      if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
+      const genre = await resolveScriptGenre(this.db, context.workspaceId, document.metadata.genre);
       validateGenrePolicy(document, genre, snapshot.references);
       await this.validateCharacters(context, document);
       const created = await this.db.$transaction(async (tx) => {
@@ -354,16 +351,12 @@ export class ScriptService {
     const document = parseScriptDocument(body);
     validateScript(document);
     const [genre, row] = await Promise.all([
-      this.db.genre.findFirst({
-        where: { workspaceId: context.workspaceId, name: document.metadata.genre },
-        select: { id: true, safetyProfile: true },
-      }),
+      resolveScriptGenre(this.db, context.workspaceId, document.metadata.genre),
       this.db.script.findUnique({
         where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
         select: { currentRevision: true, status: true, snapshot: { select: { references: true } } },
       }),
     ]);
-    if (!genre) throw new ConflictException("Script genre is not configured for this workspace");
     if (!row) throw new NotFoundException("Script not found");
     validateGenrePolicy(document, genre, row.snapshot.references);
     await this.validateCharacters(context, document);

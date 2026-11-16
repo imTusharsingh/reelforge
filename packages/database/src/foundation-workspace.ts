@@ -48,6 +48,7 @@ function scopeData(value: unknown, create: boolean, workspaceId: string): unknow
         "output",
         "error",
         "inputSnapshot",
+        "artifacts",
         "payload",
       ].includes(key)
     )

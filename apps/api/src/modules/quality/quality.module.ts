@@ -24,7 +24,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
   }
 }
 
-/** @deprecated M11 single-pass review: V7 critic loop replaces; remove legacy module in T2. See DEPRECATIONS.md. */
+/** @deprecated M11 single-pass review replaced and deleted in V6; obsolete DB data removal waits for T2 ADR/migration. See DEPRECATIONS.md. */
 @Module({
   imports: [IdentityModule, WorkspaceModule, CompositionModule, UsageBudgetModule],
   controllers: [QualityController],

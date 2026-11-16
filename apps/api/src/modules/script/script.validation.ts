@@ -26,7 +26,11 @@ export const scriptDocumentSchema = z
     narration: z.string().optional(),
     cta: CtaSchema,
     metadata: z.object({
-      genre: z.string().min(1),
+      genre: z
+        .string()
+        .trim()
+        .transform((value) => value || "Explainer")
+        .default("Explainer"),
       targetDurationSeconds: z.number().finite().positive(),
       factual: z.boolean(),
     }),

@@ -3,7 +3,7 @@ import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js"
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { ConfigService } from "./config.service.js";
 
-/** @deprecated Manual snapshot workflow: V3 automatic inputs / V8 UI; remove obsolete endpoints in T2. See DEPRECATIONS.md. */
+/** @deprecated V1 seed removes manual snapshot setup; legacy manual endpoints are removed in T2. See DEPRECATIONS.md. */
 @Controller("workspaces/:workspaceId/config")
 @UseGuards(AuthGuard)
 export class ConfigController {

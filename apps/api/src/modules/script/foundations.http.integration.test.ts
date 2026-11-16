@@ -25,7 +25,11 @@ const document = {
   dialogue: "",
   narration: "Leaves reveal other pigments when chlorophyll fades.",
   cta: "Follow for more science.",
-  metadata: { genre: "Explainer", targetDurationSeconds: 30, factual: false },
+  metadata: {
+    genre: "unknown-format-without-user-setup",
+    targetDurationSeconds: 30,
+    factual: false,
+  },
   scenes: [
     {
       id: "one",
@@ -165,19 +169,33 @@ describe.skipIf(!url)("Wave 0 fresh installation HTTP E2E (offline providers)", 
       .set("Cookie", cookie)
       .expect(200);
     expect(configs.body).toHaveLength(1);
-    expect(bundles.body).toHaveLength(9);
+    expect(bundles.body).toHaveLength(7);
+    const scriptwriter = (
+      bundles.body as Array<{ id: string; bundle: { template: { templateKey: string } } }>
+    ).find((row) => row.bundle.template.templateKey === "v1.scriptwriter");
+    expect(scriptwriter).toBeDefined();
     input = {
       approvedIdeaSnapshotId: approved.body.id,
       approvedIdeaChecksum: approved.body.checksumSha256,
       channelId,
+      correlationId: randomUUID(),
       configSnapshotId: configs.body[0].id,
-      promptSnapshotId: bundles.body[0].id,
+      promptSnapshotId: scriptwriter!.id,
       prompt: "Generate a 30 second explainer",
     };
     const script = await request(http).post(`${base}/scripts`).set("Cookie", cookie).send(input);
     expect(script.status, JSON.stringify(script.body)).toBe(201);
     expect(script.body.revisions[0].document).toEqual(document);
     expect(complete).toHaveBeenCalledOnce();
+  });
+  it("reuses one paid-call identity on a retry after a lost acknowledgement", async () => {
+    const before = complete.mock.calls.length;
+    await request(app.getHttpServer() as never)
+      .post(`/workspaces/${workspaceId}/scripts`)
+      .set("Cookie", cookie)
+      .send(input)
+      .expect(409);
+    expect(complete).toHaveBeenCalledTimes(before);
   });
   it.each([
     { hook: "" },

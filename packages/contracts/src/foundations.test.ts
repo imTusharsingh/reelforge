@@ -27,7 +27,10 @@ describe("Wave 0 contracts", () => {
     for (const state of ["PAUSED_BUDGET", "NEEDS_HUMAN"])
       expect(VideoRunStateSchema.parse(state)).toBe(state);
     for (const requested of ["L1", "L2", "L3"] as const) {
-      expect(autonomyPolicy(requested, 9)).toEqual({ effective: "L2", offerL3: false });
+      expect(autonomyPolicy(requested, 9)).toEqual({
+        effective: requested === "L3" ? "L2" : requested,
+        offerL3: false,
+      });
       expect(autonomyPolicy(requested, 10)).toEqual({
         effective: requested,
         offerL3: requested !== "L3",
@@ -45,6 +48,9 @@ describe("Wave 0 contracts", () => {
       currency: "USD",
       targetMinor: 600,
       hardCapMinor: 800,
+      baseEstimateMinor: 500,
+      reshootReserveMinor: 250,
+      route: "PRIMARY",
       reservedMinor: 200,
       spentMinor: 600,
       revision: 0,
@@ -87,6 +93,26 @@ describe("Wave 0 contracts", () => {
       channelId: randomUUID(),
       version: 1,
       topic: "Trees",
+      niche: "science",
+      styleBible: {
+        visualStyle: "Watercolor",
+        palette: ["green"],
+        recurringCharacters: [],
+        bannedVisuals: [],
+      },
+      guardrails: {
+        bannedTopics: [],
+        topicsToAvoid: [],
+        blockedPersonaAdvice: ["health", "legal", "finance", "political"],
+        allowRealPeople: false,
+        allowBrands: false,
+        factCheckStrictness: "STRICT",
+        aiDisclosure: true,
+      },
+      languages: { script: "English", narration: "English", captions: "English" },
+      onCameraVoice: null,
+      formatMix: [{ formatKey: "explainer", weight: 1 }],
+      tuningBounds: null,
       audience: "Everyone",
       formatKey: "explainer",
       targetDurationSeconds: 30,
@@ -98,6 +124,7 @@ describe("Wave 0 contracts", () => {
       renderProfile: { id: "vertical", width: 1080, height: 1920, fps: 24, videoCodec: "h264" },
       budgetPolicy: budget,
       references: [],
+      referenceDefaults: null,
       constraints: {},
     };
     expect(ChannelBriefSchema.safeParse(brief).success).toBe(true);
@@ -115,6 +142,15 @@ describe("Wave 0 contracts", () => {
       providerId: "fixture",
       modelId: "v1",
       kind: "VIDEO",
+      aspects: ["9:16"],
+      maxReferenceImages: 6,
+      firstLastFrame: true,
+      minExtensionSeconds: 3,
+      maxExtensionPerTurnSeconds: 10,
+      maxExtensionSeconds: 30,
+      nativeAudio: true,
+      health: "HEALTHY",
+      pricePerSecond: { "360p": 23000, "720p": 69504, "1080p": 104000 },
       enabled: false,
       supportsReferenceImages: true,
       supportsAudio: true,

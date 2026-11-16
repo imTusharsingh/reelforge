@@ -3,7 +3,7 @@ import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js"
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { PromptService } from "./prompt.service.js";
 
-/** @deprecated Manual compile/snapshot workflow: V3 automatic inputs; T2 obsolete endpoints. Prompt packs remain. See DEPRECATIONS.md. */
+/** @deprecated V1 prompt pack removes manual setup; legacy compile/snapshot endpoints removed in T2; reusable packs remain. See DEPRECATIONS.md. */
 @Controller("workspaces/:workspaceId/prompts")
 @UseGuards(AuthGuard)
 export class PromptController {

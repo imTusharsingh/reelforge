@@ -67,6 +67,31 @@ describe.skipIf(!process.env.DATABASE_URL)("Wave 0 workspace boundary 3", () => 
       db.budgetEnvelope.update({ where: { id: ids.budgetEnvelope! }, data: { spentMinor: 801 } }),
     ).rejects.toThrow();
   });
+  it("persists run/step versions and checks the primary/fallback envelope", async () => {
+    expect(await db.videoRun.findUnique({ where: { id: runId } })).toMatchObject({
+      state: "PLANNING",
+      schemaVersion: "1.0",
+      approvedShortsAtStart: 0,
+      channelBriefVersion: 1,
+    });
+    expect(await db.videoRunStep.findUnique({ where: { id: ids.videoRunStep! } })).toMatchObject({
+      schemaVersion: "1.0",
+      costMinor: null,
+      artifacts: [],
+    });
+    await expect(
+      db.budgetEnvelope.update({
+        where: { id: ids.budgetEnvelope! },
+        data: { baseEstimateMinor: 600, reshootReserveMinor: 250 },
+      }),
+    ).rejects.toThrow();
+    expect(
+      await db.budgetEnvelope.update({
+        where: { id: ids.budgetEnvelope! },
+        data: { baseEstimateMinor: 745, reshootReserveMinor: 0, route: "FALLBACK" },
+      }),
+    ).toMatchObject({ route: "FALLBACK", baseEstimateMinor: 745 });
+  });
   it("seeds exact defaults and performs no changes on repeat", async () => {
     await seedWorkspaceFoundations(db, own);
     const before = await snapshot();
@@ -76,6 +101,15 @@ describe.skipIf(!process.env.DATABASE_URL)("Wave 0 workspace boundary 3", () => 
       where: { workspaceId: own },
     });
     expect(defaults.settings).toMatchObject({
+      agents: [
+        "trend-scout",
+        "idea-scorer",
+        "scriptwriter",
+        "director",
+        "art-director",
+        "critic",
+        "packager",
+      ],
       autonomy: "L2",
       narrationLanguage: "English",
       aiDisclosure: true,
@@ -103,9 +137,52 @@ describe.skipIf(!process.env.DATABASE_URL)("Wave 0 workspace boundary 3", () => 
       "top-3",
       "what-if",
     ]);
-    expect(await db.promptTemplate.count({ where: { workspaceId: own } })).toBe(9);
+    expect(
+      (
+        await db.promptTemplate.findMany({ where: { workspaceId: own }, orderBy: { key: "asc" } })
+      ).map((row) => row.key),
+    ).toEqual([
+      "v1.art-director",
+      "v1.critic",
+      "v1.director",
+      "v1.idea-scorer",
+      "v1.packager",
+      "v1.scriptwriter",
+      "v1.trend-scout",
+    ]);
     const budget = await db.usageBudget.findFirstOrThrow({ where: { workspaceId: own } });
     expect([budget.dailyLimitMinor, budget.monthlyLimitMinor]).toEqual([2000n, 18000n]);
+  });
+  it("accepts cost and artifact JSON through the workspace guard", async () => {
+    const channel = await db.channel.create({ data: { workspaceId: own, name: "Owned" } });
+    const brief = await scoped.channelBrief.create({
+      data: { workspaceId: own, channelId: channel.id, version: 1, document: {} },
+    });
+    const run = await scoped.videoRun.create({
+      data: {
+        workspaceId: own,
+        channelId: channel.id,
+        channelBriefId: brief.id,
+        correlationId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        inputSnapshot: {},
+      },
+    });
+    const artifacts = [
+      { kind: "CLIP", assetId: randomUUID(), assetVersion: 1, checksumSha256: "a".repeat(64) },
+    ];
+    const step = await scoped.videoRunStep.create({
+      data: {
+        workspaceId: own,
+        runId: run.id,
+        key: "clip",
+        idempotencyKey: randomUUID(),
+        input: {},
+        costMinor: 55,
+        artifacts,
+      },
+    });
+    expect(step).toMatchObject({ costMinor: 55, artifacts });
   });
   it("allows owned CRUD and bulk calls while denying viewers and nested writes", async () => {
     const capability = {

@@ -1,34 +1,43 @@
-# M00 Wave 0 foundations / PR B handoff
+# M00 / V1 foundations — PR #111 review handoff
 
-State: IMPLEMENTED_PENDING_REVIEW. Owner assignment: the pasted LOCKED v2.0 Wave 0 plan, 2026-11-16, explicitly includes shared contracts, one migration and root tooling. This record does not claim approval or integration. Depends on decision PR #110 (ADR-026–028); both branches start from main bb39fc3.
+State: IMPLEMENTED_PENDING_REVIEW. Source of truth: [issue #112](https://github.com/imTusharsingh/reelforge/issues/112), body and both comments, including the Page v2.0 export and final fix prompt. Read and verified against that source. This follow-up addresses official Minu review 5916107268. Depends on docs PR #110 (corrected head ef34d69); the docs PR must be integrated before this code PR. No approval, integration or merge claimed.
 
-Implemented: versioned contracts and additive persistence; ADR-003 guarded delegates for all eleven new tables; immutable reference/brief/shot/event versions; one offline, transaction-locked idempotent seed used by migration, API boot and workspace creation; compatibility script prompt/config/genre/budget defaults; channel narrator; 24 fps normalization; informational background recovery; script copy limits; retired OpenAI video removal; explicit configurable text fallback; off-by-default pipeline.v2; deprecation inventory and markers; local quality scripts and baselines. No V2–V10 adapter, agent, orchestrator or replacement UI implementation, no bug-6 change, and no ci.yml or PROJECT_STATE edits.
+## Review disposition
 
-The seed registers nine prompt roles: planner, researcher, scriptwriter, storyboard, director, narrator, critic, publisher and analyst. The Cursor canvas returned a browser challenge; this role inventory and the inferred requirement allocations in DEPRECATIONS.md need comparison with the canvas during Minu review. All deprecation concerns explicitly enumerated in the owner assignment are covered. No external capability or live-provider verification is claimed.
+- B1: exact fourteen run states and exported VIDEO_RUN_TRANSITIONS with exact-edge/terminal tests; step attempt states unchanged. All new persisted entities now carry schemaVersion; run brief version and step cost/artifacts are persisted as specified in A1.
+- B2: ShotSpec keyframe/motion prompts, VO line, on-screen text, continuity notes, pinned first-frame source (earlier ordinal or reference pin), 3–10-second shot duration, 9:16 dimensions and up to six planned references.
+- B3: MUSIC; aspects/ref count/first-last-frame/extension/native audio/health; nullable prices by 360p/720p/1080p in integer micro-USD per second (69504 represents $0.069504/s, 140000 represents $0.14/s). Model IDs remain supplied by config; no adapter built.
+- B4: niche/topic, style bible, language triplet, narrator pace and optional on-camera voice, guardrails, format mix and explicit nullable tuning bounds for mix/scoring weights, reference defaults and extension constraints. Missing tuning bounds mean recommendations only.
+- B5: baseEstimateMinor, reshootReserveMinor and PRIMARY/FALLBACK route in contracts/Prisma/SQL; the database rejects base + reserve above the hard cap. Tests include primary reserve overflow and fallback without reserve.
+- B6: count approved Shorts per channel, preserve L1/L2, downgrade only requested L3 before ten approvals; rename approvedShortsAtStart in contract/Prisma/SQL.
+- B7: seven exact role keys: v1.trend-scout, v1.idea-scorer, v1.scriptwriter, v1.director, v1.art-director, v1.critic, v1.packager. Defaults and repeat-seed tests assert the exact inventory; HTTP E2E selects the scriptwriter bundle by template key.
+- B8: DEPRECATIONS.md and markers match the Page list. M03 required-choice guard is removed: owned genre lookup is case-insensitive, with the seeded Explainer as fallback. Missing/blank document genre defaults to Explainer. M05 setup is removed by V1 seed; M07 code V4/columns T2; M09 sync/stills V5; M11 V6; old config V7; manual ideas and pipeline.v2 rows included with T2 removal.
 
-Friday bugs:
+## Friday bugs 1–5
 
-1. Fresh workspace: real HTTP registration/workspace/channel/idea/approval/script generation with a stub provider, no manual database setup; the seeded snapshots and fallback workspace budget make M07 usable.
-2. MISSING_VOICE: channel-level provider/voice/language, optional characters; narrator-only voice regression passes.
-3. M10: 1024×1536, 720×1280 and 1080×1920 PNGs render via real FFmpeg to 1080×1920 H.264 at 24 fps. Final media remains validated. Fade durations may round by up to one output frame.
-4. Interrupted save: automatic background reconciliation and informational banner, explicit retry works without dismissal; concurrent active writes remain blocked.
-5. Hook 1–20 words, CTA 1–15 words, total spoken text bounded at 210 words/minute; malformed supplied copy is rejected before text dispatch and invalid persisted/provider-generated script copy is rejected before any media dispatch. Text generation necessarily precedes validation of its generated response; no claim that an unknown generated result can be validated before it exists.
+1. Fresh install: real registration → workspace → channel → idea/approval → script HTTP E2E with PostgreSQL and a stub provider, no manual DB setup. Unknown genre is accepted through the default fallback.
+2. Narrator-only voice: channel provider/voice/language; characters optional. Existing voice regression retained.
+3. Render input sizes: 1024×1536, 720×1280 and 1080×1920 normalize to 1080×1920 at 24 fps/H.264 with real FFmpeg. Final output validation remains strict; fade duration allows at most one frame of rounding.
+4. Background reconciliation stays informational. Script requests journal only a content fingerprint and correlation ID, retained across acknowledgement and page reload until a valid success response. Explicit retry reuses that ID; real API replay returns a non-dispatch conflict at M18, and the stub provider is not called a second time. No prompt bodies or keys are stored. Planning types/parsers/edit helpers/pending state were split into modules under 400 lines; existing tests were preserved in smaller suites.
+5. Hook 1–20 words, CTA 1–15 words and duration word budget: supplied invalid copy is rejected before text dispatch; invalid generated/persisted script copy is rejected before media dispatch. A text response can only be validated after generation. No live provider calls.
 
-Contracts/schema: ChannelBrief, VideoRun, VideoRunStep, ShotSpec, ProviderCapability, RunEvent, BudgetEnvelope, ReferenceAsset, ChannelReferenceDefaults; WorkspaceFoundationDefaults and FormatTemplate hold offline defaults. Every new table includes workspace_id and a workspace FK; child relations use compound tenant keys. Consumers use foundationWorkspaceGuard with verified WorkspaceService context, never raw client access. ReferenceAsset uses immutable version rows over M04 assets/character versions. Legacy data is not dropped.
+## Scope and notes
 
-Validation before final full suite:
+Exactly one unmerged migration, 20261123010000_wave0_foundations, edited in place as directed. No existing main migration, table or column removed. Local developers who applied the previous unmerged draft must recreate their disposable development database; no production application of that draft is assumed.
 
-- Pinned Node 24.22.2 / pnpm 12.16.1; frozen dependency install passed.
-- Strict lint passed with zero warnings; workspace typecheck passed.
-- Focused source coverage: 56 files / 458 tests passed; changed code preview 89.73% lines, 85.81% branches.
-- Acceptance focus: 5 files / 27 tests passed including PostgreSQL and real FFmpeg; recovery DOM: 3 tests passed; legacy regression focus: 106 tests passed.
-- Fresh PostgreSQL 18 migration chain applied. Populated main-to-Wave-0 upgrade applied, with 8 formats / 9 prompt templates and an existing $99/day budget preserved. Repeat seed passed unchanged-record checks, and seeded bundle fingerprints match M05 compilation.
-- Knip: clean against baseline (122 existing findings, 5 resolved).
-- Production build / final full suite / final coverage: results appended below after execution. Redis integration may be skipped if REDIS_URL is unavailable; no paid/provider tests are run live.
+No V2–V10 adapters, orchestrator, agents or replacement UI. No bug-6 change, ci.yml or PROJECT_STATE edits, forbidden local files, secrets, force-push or rebase.
 
-Next: official Minu review of the exact PR heads, including SQL/contract ownership and canvas comparison. Squash merge only after that review; implementer does not merge. V3 owns asynchronous HTTP/orchestration work; V8 owns UI cutover; T2 owns old-flow retirement with ADRs/migrations for data removal.
+Non-blocking follow-ups are explicit in DEPRECATIONS.md: split the legacy scene-media service with V5 deletion; V4 templates the legacy Explainer/30-second prompt example from format/Brief; V7 resolves the workspace CHANNEL timezone sentinel to an IANA channel timezone before CadenceSchema validation; U1 decides shared preset catalog versus per-workspace copies in its ADR. Dedicated bootstrap-provider separation is a considered later refactor; current boot seeding remains offline, locked and idempotent. OpenAI text fallback requires both a key and OPENAI_TEXT_FALLBACK_ENABLED=true until V2 supplies the primary text adapter; a key alone does not enable it.
 
-Changed files (plus this handoff and appended status/work-log records):
+The Knip baseline is pruned only after the existing check passes; no added findings are accepted. Strict size/lint/typecheck gates apply, with the pre-existing size baseline retained for untouched legacy assemblies and the explicitly deferred scene-media split.
+
+## Verification
+
+Focused contracts/retry/genre/DB checks passed before final validation. A focused changed-code preview cleared the floors at 89.05% lines / 81.86% branches. Exact final commands/counts and migration/upgrade evidence are recorded below after execution; unrun checks are not claimed.
+
+Next: official Minu review of the exact head and the edited SQL; integrate #110 first, then squash-only integration of #111 after approval. Implementer does not merge.
+
+## Changed files
 
 - `.env.example`
 - `.gitignore`
@@ -43,6 +52,7 @@ Changed files (plus this handoff and appended status/work-log records):
 - `apps/api/src/modules/config/config.controller.ts`
 - `apps/api/src/modules/config/prompt.controller.ts`
 - `apps/api/src/modules/genre/genre.module.ts`
+- `apps/api/src/modules/idea/idea.controller.ts`
 - `apps/api/src/modules/idea/idea.module.ts`
 - `apps/api/src/modules/identity/identity.module.ts`
 - `apps/api/src/modules/openai/openai.adapters.test.ts`
@@ -56,8 +66,11 @@ Changed files (plus this handoff and appended status/work-log records):
 - `apps/api/src/modules/scene-media/scene-media.service.ts`
 - `apps/api/src/modules/scene-media/scene-media.types.ts`
 - `apps/api/src/modules/script/foundations.http.integration.test.ts`
+- `apps/api/src/modules/script/script-genre.test.ts`
+- `apps/api/src/modules/script/script-genre.ts`
 - `apps/api/src/modules/script/script.module.ts`
 - `apps/api/src/modules/script/script.service.ts`
+- `apps/api/src/modules/script/script.types.ts`
 - `apps/api/src/modules/script/script.validation.ts`
 - `apps/api/src/modules/workspace/workspace.service.test.ts`
 - `apps/api/src/modules/workspace/workspace.service.ts`
@@ -65,13 +78,23 @@ Changed files (plus this handoff and appended status/work-log records):
 - `apps/web/app/production/page.tsx`
 - `apps/web/app/review/page.tsx`
 - `apps/web/features/channels/configuration-panel.tsx`
+- `apps/web/features/planning/model-edit.ts`
+- `apps/web/features/planning/model-parse.ts`
+- `apps/web/features/planning/model-pending.ts`
+- `apps/web/features/planning/model-types.ts`
 - `apps/web/features/planning/model.test.ts`
 - `apps/web/features/planning/model.ts`
+- `apps/web/features/planning/pending-save.test.ts`
 - `apps/web/features/planning/recovery.test.ts`
+- `apps/web/features/planning/script-request.test.ts`
+- `apps/web/features/planning/script-request.ts`
+- `apps/web/features/planning/script-retry.test.ts`
 - `apps/web/features/planning/session.tsx`
 - `apps/web/features/production/api.ts`
 - `apps/web/features/production/composition.ts`
 - `docs/QUALITY_GATES.md`
+- `docs/WAVE0_FOUNDATIONS_STATUS.md`
+- `docs/WORK_LOG.md`
 - `eslint-size-baseline.json`
 - `eslint.config.js`
 - `knip-baseline.json`
@@ -81,6 +104,7 @@ Changed files (plus this handoff and appended status/work-log records):
 - `packages/config-engine/src/feature-flags.test.ts`
 - `packages/config-engine/src/feature-flags.ts`
 - `packages/config-engine/src/index.ts`
+- `packages/contracts/src/foundations-review.test.ts`
 - `packages/contracts/src/foundations.test.ts`
 - `packages/contracts/src/foundations.ts`
 - `packages/contracts/src/index.ts`
@@ -101,15 +125,4 @@ Changed files (plus this handoff and appended status/work-log records):
 - `scripts/check-changed-coverage.mjs`
 - `scripts/check-knip.mjs`
 - `vitest.config.ts`
-
-
-Final verification (2026-11-16):
-
-- `pnpm test:coverage:changed` after the final seed provenance correction: PASS, 127 files / 952 tests; 1 file / 3 Redis tests skipped because REDIS_URL is unset. v8 changed-code coverage: 93.15% lines (136/146), 89.26% branches (133/149), above 80%/70%. Whole included-file coverage: 82.22% lines, 73.93% branches. The earlier full run also passed; final review then corrected the seeded M05 resolution hash and lock ordering, added an exact resolver comparison and repeated final validation. No application changes followed the final run.
-- `pnpm build` with `NEXT_TELEMETRY_DISABLED=1`: PASS. `pnpm typecheck`: PASS. `pnpm lint` with `--max-warnings=0`: PASS. `pnpm exec prettier --check .`: PASS.
-- `pnpm knip`: PASS, 122 existing baseline findings / 5 resolved; no new unused-code findings.
-- `pnpm db:validate`: PASS. `pnpm db:check-migrations`: PASS, 34 ordered migrations; original migrations unchanged. `pnpm security:secrets`: PASS. `git diff --check origin/main`: PASS.
-- Final SQL applied to a new PostgreSQL 18 database. The final populated-upgrade test applied main's chain, inserted an existing workspace with a custom $99/day budget, then applied Wave 0: 8 formats and 9 prompt templates seeded, $99/day preserved, repeat seed unchanged. The HTTP test verifies seeded prompt fingerprints and config resolution hashes against the M05 compiler/resolver.
-- No live AI/social calls. Existing negative-path tests emit expected service-error diagnostics; pg also emits an inherited concurrent-query deprecation warning. Strict lint/typecheck produce zero warnings. No Redis server or Playwright browser E2E was run; the fresh-install E2E is a real Nest/PostgreSQL HTTP test with an injected stub provider.
-
-The final branch was checked against origin/main bb39fc3 by fetch and merge (already up to date). Commits and PR are authored as imTusharsingh. Both PRs remain unmerged pending official Minu review.
+- `work-packages/M00-repository-governance-and-shared-contracts/STATUS.md`
