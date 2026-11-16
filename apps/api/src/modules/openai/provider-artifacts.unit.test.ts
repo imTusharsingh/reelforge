@@ -16,13 +16,11 @@ function fixture(): {
   const run = vi
     .fn<ProcessRunner["run"]>()
     .mockResolvedValue({ stdout: JSON.stringify(video), stderr: "", exitCode: 0 });
-  const putObject = vi
-    .fn<StoragePort["putObject"]>()
-    .mockImplementation(async (input) => ({
-      objectKey: input.objectKey,
-      byteSize: input.body.length,
-      checksumSha256: createHash("sha256").update(input.body).digest("hex"),
-    }));
+  const putObject = vi.fn<StoragePort["putObject"]>().mockImplementation(async (input) => ({
+    objectKey: input.objectKey,
+    byteSize: input.body.length,
+    checksumSha256: createHash("sha256").update(input.body).digest("hex"),
+  }));
   const storage: StoragePort = { putObject, getObject: vi.fn(), deleteObject: vi.fn() };
   return { store: new ProviderArtifacts(storage, "workspace", { run }), run, putObject };
 }
