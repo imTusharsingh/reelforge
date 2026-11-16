@@ -7,9 +7,8 @@ const scene = z.object({
   id: z.string().min(1),
   startSeconds: z.number().finite().nonnegative(),
   durationSeconds: z.number().finite().positive(),
-  characterRefs: z.array(
-    z.object({ characterId: z.string().uuid(), versionId: z.string().uuid() }),
-  ),
+  // Read compatibility for immutable pre-V4 history; M07 writes reject these assignments below.
+  characterRefs: z.array(z.object({ characterId: z.uuid(), versionId: z.uuid() })).default([]),
   dialogue: z.string(),
   narration: z.string().optional(),
   visualDescription: z.string().min(1),
@@ -42,6 +41,15 @@ export function parseScriptDocument(value: unknown): ScriptDocument {
   const result = scriptDocumentSchema.safeParse(value);
   if (!result.success) throw new BadRequestException(result.error.issues);
   return result.data as ScriptDocument;
+}
+/** V4 stops writing per-scene character assignments while V5 can still read old history. */
+export function parseScriptWriteDocument(value: unknown): ScriptDocument {
+  const document = parseScriptDocument(value);
+  if (document.scenes.some((item) => item.characterRefs.length > 0))
+    throw new BadRequestException(
+      "Per-scene character assignment was removed; use channel references",
+    );
+  return document;
 }
 export function validateScript(document: ScriptDocument, toleranceSeconds = 1): void {
   const total = document.scenes.reduce((sum, item) => sum + item.durationSeconds, 0);
