@@ -13,6 +13,11 @@ export function OverviewScreen(): JSX.Element {
         <h1>{workspace.name}</h1>
         <p>Your production space is ready for its next deliberate step.</p>
       </header>
+      <nav aria-label="Channel setup and settings">
+        <a href="/onboarding">Set up a channel</a>
+        {" · "}
+        <a href="/settings">Provider settings</a>
+      </nav>
       <div className="rf-studio-grid">
         <Panel>
           <p className="rf-eyebrow">Workspace</p>

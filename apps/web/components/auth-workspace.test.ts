@@ -4,7 +4,9 @@ import { ApiError } from "../lib/api";
 import { isAlreadyInvalidSession, sessionFailureMessage } from "../lib/session-policy";
 import { readFileSync } from "node:fs";
 
-const workspaceSource = readFileSync(new URL("./auth-workspace.tsx", import.meta.url), "utf8");
+const workspaceSource = ["auth-workspace.tsx", "auth-form.tsx", "auth-studio.tsx"]
+  .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), "utf8"))
+  .join("\n");
 
 describe("authentication form validation", () => {
   it("requires a valid email and the backend password minimum", () => {

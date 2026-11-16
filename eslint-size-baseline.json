@@ -341,10 +341,6 @@
       "lines": 400,
       "functionLines": 107
     },
-    "apps/web/components/auth-workspace.tsx": {
-      "lines": 478,
-      "functionLines": 166
-    },
     "apps/web/components/operations-dashboard.tsx": {
       "lines": 599,
       "functionLines": 289
