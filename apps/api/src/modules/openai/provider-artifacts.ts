@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { z } from "zod";
 import type { ArtifactStore, ClipArtifact } from "@reelforge/ai-providers";
 import type { StoragePort } from "../asset/storage/storage.port.js";
-const execute = promisify(execFile);
+import type { ProcessRunner } from "@reelforge/media";
+import { SpawnProcessRunner } from "../composition/composition.engine.js";
 const probeSchema = z.object({
   streams: z.array(
     z.object({
@@ -23,6 +22,7 @@ export class ProviderArtifacts implements ArtifactStore {
   public constructor(
     private readonly storage: StoragePort,
     private readonly workspaceId: string,
+    private readonly runner: ProcessRunner = new SpawnProcessRunner(),
   ) {}
   public async save(
     input: Uint8Array,
@@ -45,23 +45,19 @@ export class ProviderArtifacts implements ArtifactStore {
         )
           throw new Error("Invalid music trim");
         path = join(directory, "trimmed.mp3");
-        await execute(
-          "ffmpeg",
-          [
-            "-nostdin",
-            "-v",
-            "error",
-            "-i",
-            source,
-            "-t",
-            String(trimSeconds),
-            "-vn",
-            "-c:a",
-            "libmp3lame",
-            path,
-          ],
-          { timeout: 30000 },
-        );
+        await this.execute("ffmpeg", [
+          "-nostdin",
+          "-v",
+          "error",
+          "-i",
+          source,
+          "-t",
+          String(trimSeconds),
+          "-vn",
+          "-c:a",
+          "libmp3lame",
+          path,
+        ]);
         body = await readFile(path);
         mimeType = "audio/mpeg";
       }
@@ -81,15 +77,27 @@ export class ProviderArtifacts implements ArtifactStore {
       await rm(directory, { recursive: true, force: true });
     }
   }
+  private async execute(
+    executable: "ffmpeg" | "ffprobe",
+    argv: readonly string[],
+  ): Promise<{ stdout: string }> {
+    const result = await this.runner.run({ executable, argv, signal: AbortSignal.timeout(30000) });
+    if (result.exitCode !== 0) throw new Error("Provider media process failed");
+    return result;
+  }
   private async probe(
     path: string,
     mimeType: string,
   ): Promise<{ durationSeconds: number; width: number; height: number; fps: number }> {
-    const { stdout } = await execute(
-      "ffprobe",
-      ["-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-      { timeout: 30000, maxBuffer: 1024 * 1024 },
-    );
+    const { stdout } = await this.execute("ffprobe", [
+      "-v",
+      "error",
+      "-show_streams",
+      "-show_format",
+      "-of",
+      "json",
+      path,
+    ]);
     const probe = probeSchema.parse(JSON.parse(stdout) as unknown);
     const video = probe.streams.find((stream) => stream.codec_type === "video");
     const audio = probe.streams.some((stream) => stream.codec_type === "audio");
