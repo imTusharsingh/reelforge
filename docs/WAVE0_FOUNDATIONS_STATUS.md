@@ -1,6 +1,6 @@
 # M00 / V1 foundations — PR #111 review handoff
 
-State: IMPLEMENTED_PENDING_REVIEW. Source of truth: [issue #112](https://github.com/imTusharsingh/reelforge/issues/112), body and both comments, including the Page v2.0 export and final fix prompt. Read and verified against that source. This follow-up addresses official Minu review 5916107268. Depends on docs PR #110 (corrected head ef34d69); the docs PR must be integrated before this code PR. No approval, integration or merge claimed.
+State: IMPLEMENTED_PENDING_REVIEW. Source of truth: [issue #112](https://github.com/imTusharsingh/reelforge/issues/112), body and both comments, including the Page v2.0 export and final fix prompt. Read and verified against that source. This follow-up addresses official Minu review 5916107268. Docs PR #110 (corrected head ef34d69) received official Minu approval and was squash-merged externally as cd39f30. This branch now includes it through a merge of origin/main, resolving the documentation prerequisite. No approval, integration or merge claimed.
 
 ## Review disposition
 
@@ -35,7 +35,7 @@ The Knip baseline is pruned only after the existing check passes; no added findi
 
 Focused contracts/retry/genre/DB checks passed before final validation. A focused changed-code preview cleared the floors at 89.05% lines / 81.86% branches. Exact final commands/counts and migration/upgrade evidence are recorded below after execution; unrun checks are not claimed.
 
-Next: official Minu review of the exact head and the edited SQL; integrate #110 first, then squash-only integration of #111 after approval. Implementer does not merge.
+Next: official Minu review of the exact head and the edited SQL; the #110 prerequisite is integrated; #111 remains eligible only for squash integration after its own official approval. Implementer does not merge.
 
 ## Changed files
 
@@ -126,3 +126,16 @@ Next: official Minu review of the exact head and the edited SQL; integrate #110 
 - `scripts/check-knip.mjs`
 - `vitest.config.ts`
 - `work-packages/M00-repository-governance-and-shared-contracts/STATUS.md`
+
+
+## Final verification after merging main
+
+- `pnpm test:coverage:changed` with disposable PostgreSQL and real FFmpeg: PASS, 132 files / 966 tests passed; one Redis file / three tests skipped (REDIS_URL unavailable). v8 changed-code coverage: **90.53% lines (306/338), 83.02% branches (357/430)**, above 80%/70%. Whole included-file coverage: 83.03% lines / 74.40% branches. Full suite run once after all review fixes and the main merge, immediately before final documentation recording and push; no application changes afterward.
+- `pnpm lint` (`--max-warnings=0`), `pnpm typecheck`, `pnpm build` with NEXT_TELEMETRY_DISABLED=1, `pnpm exec prettier --check .`: PASS.
+- `pnpm knip`: PASS; baseline only shrank from 127 to 121 existing findings, no additions. Removed an unused parseScene export while splitting the planning module.
+- `pnpm db:validate`, `pnpm db:check-migrations` (34 ordered migrations), `pnpm security:secrets`, `git diff --check origin/main`: PASS. No original main migration changed.
+- Final migration applied to a new PostgreSQL database. Populated main-to-final-draft upgrade: PASS, eight formats / seven exact prompt roles, an existing $99/day provider budget preserved, repeated seed unchanged. HTTP E2E checks M05 compiler/resolver fingerprints and scriptwriter selection by key; database tests check exact roles, state/version/cost/artifact columns, overflow/fallback envelope constraints and every new table's tenant guard.
+- Paid retry regressions: client identity survives background acknowledgement and reload, only one paid identity; real API/M18 rejects repeat correlation without a second provider invocation.
+- Expected negative-path service diagnostics and an inherited pg concurrent-query deprecation appear during tests; strict lint/typecheck have zero warnings. No live AI/social calls or provider acceptance claimed.
+
+Branch includes official Minu-approved decision PR #110 through merge commit 2ad330f (main cd39f30). PR #111 remains IMPLEMENTED_PENDING_REVIEW; no implementer merge or approval.

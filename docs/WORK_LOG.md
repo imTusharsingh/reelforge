@@ -1250,3 +1250,8 @@ Owner-assigned LOCKED v2.0 foundations: recorded ADR-026–028, amended ADR-009/
 ## 2026-11-16 — PR #110 official-review corrections
 
 Issue #112 and final fix comment supersede the earlier assumptions. Addressed review 5916101792 B1/B2 and notes 1–3: exact run state/edge list, approved-Short first-ten policy preserving L1, amendment pointers, ADR-011 clarification, outage-only fallback and refusal/429/cost rules. Merged origin/main (already current). Documentation only; full-suite evidence in WAVE0_DECISIONS_STATUS.md. Remains IMPLEMENTED_PENDING_REVIEW; no merge or self-approval.
+
+
+## 2026-11-16 — Merge approved decision prerequisite into PR #111
+
+Official Minu re-review approved #110 head ef34d69 and Minu squash-merged it as cd39f30. The implementer merged origin/main into the existing foundations branch, preserving both append-only work-log histories. No force-push/rebase or implementer PR merge. Final code checks and full suite follow on that merged head.
