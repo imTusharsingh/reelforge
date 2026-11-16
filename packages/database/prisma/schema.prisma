@@ -246,6 +246,7 @@ model Workspace {
   referenceAssetRows              ReferenceAsset[]
   budgetEnvelopeRows              BudgetEnvelope[]
   runEventRows                    RunEvent[]
+  providerKeyRows                 ProviderKey[]
   providerCapabilityRows          ProviderCapability[]
   shotSpecRows                    ShotSpec[]
   videoRunStepRows                VideoRunStep[]
@@ -2797,4 +2798,21 @@ model ChannelReferenceDefaults {
 enum BudgetRoute {
   PRIMARY
   FALLBACK
+}
+
+model ProviderKey {
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  schemaVersion String    @default("1.0") @map("schema_version")
+  providerId    String    @map("provider_id")
+  ciphertext    String
+  nonce         String
+  tag           String
+  keyVersion    String    @map("key_version")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, providerId])
+  @@map("provider_keys")
 }

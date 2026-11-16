@@ -169,14 +169,6 @@
       "lines": 746,
       "functionLines": 118
     },
-    "apps/api/src/modules/openai/openai.adapters.test.ts": {
-      "lines": 435,
-      "functionLines": 394
-    },
-    "apps/api/src/modules/openai/openai.adapters.ts": {
-      "lines": 802,
-      "functionLines": 114
-    },
     "apps/api/src/modules/orchestration/orchestration.bullmq.redis.integration.test.ts": {
       "lines": 400,
       "functionLines": 148
