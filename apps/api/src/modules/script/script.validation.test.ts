@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseScriptDocument, validateScript } from "./script.validation.js";
+import {
+  parseScriptDocument,
+  parseScriptWriteDocument,
+  validateScript,
+} from "./script.validation.js";
 
 const document = {
   schemaVersion: "1.0" as const,
@@ -59,4 +63,23 @@ describe("genre-driven factuality", () => {
       ),
     ).toThrow("Genre factuality");
   });
+});
+
+it("rejects removed per-scene character assignments and keeps an empty compatibility slot", () => {
+  const scenes = document.scenes.map(({ characterRefs: removed, ...scene }) => {
+    expect(removed).toEqual([]);
+    return scene;
+  });
+  expect(parseScriptWriteDocument({ ...document, scenes }).scenes[0]?.characterRefs).toEqual([]);
+  expect(() =>
+    parseScriptWriteDocument({
+      ...document,
+      scenes: [
+        {
+          ...document.scenes[0],
+          characterRefs: [{ characterId: "removed", versionId: "removed" }],
+        },
+      ],
+    }),
+  ).toThrow();
 });

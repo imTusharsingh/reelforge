@@ -1,3 +1,4 @@
+import { PlanningModule } from "./planning.module.js";
 import { Module } from "@nestjs/common";
 import { SCRIPT_LLM, type CapabilityMetadata } from "@reelforge/ai-providers";
 import { ScriptService } from "./script.service.js";
@@ -27,7 +28,7 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
   }
 }
 @Module({
-  imports: [IdentityModule, WorkspaceModule, UsageBudgetModule],
+  imports: [IdentityModule, WorkspaceModule, UsageBudgetModule, PlanningModule],
   controllers: [ScriptController],
   providers: [
     ScriptService,
@@ -60,6 +61,6 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
       },
     },
   ],
-  exports: [ScriptService],
+  exports: [ScriptService, PlanningModule],
 })
 export class ScriptModule {}
