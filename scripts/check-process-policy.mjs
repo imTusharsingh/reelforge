@@ -138,12 +138,7 @@ function inspectCiTopology(flow, policy) {
     const job = flow.jobs[name];
     if (!object(job) || Object.hasOwn(job, "if") || Object.hasOwn(job, "needs"))
       fail(`CI job must run unconditionally: ${name}`);
-    const env =
-      name === "database"
-        ? {
-            MIGRATION_BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before }}",
-          }
-        : undefined;
+    const env = name === "database" ? { MIGRATION_BASE_REF: "origin/main" } : undefined;
     if (!isDeepStrictEqual(job.env, env)) fail(`CI job environment override: ${name}`);
   }
   const checkout = policy.actions.find((action) => action.startsWith("actions/checkout@"));
@@ -187,7 +182,7 @@ function inspectCiTopology(flow, policy) {
       "pnpm lint",
       "pnpm format:check",
       "pnpm typecheck",
-      "node --test scripts/check-process-policy.test.mjs",
+      "node --test scripts/check-process-policy.test.mjs scripts/check-migrations.test.mjs",
     ],
     database: [
       "pnpm install --frozen-lockfile",
