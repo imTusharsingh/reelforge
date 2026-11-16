@@ -45,6 +45,7 @@ import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
     NotificationsModule,
     UsageBudgetModule,
     AdminModule,
+    RunsModule,
   ],
   controllers: [HealthController],
 })
@@ -54,3 +55,5 @@ export class AppModule {
     consumer.apply(csrfMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
   }
 }
+
+import { RunsModule } from "./modules/runs/runs.module.js";

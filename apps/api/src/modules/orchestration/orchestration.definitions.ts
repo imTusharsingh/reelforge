@@ -1,3 +1,5 @@
+import { GoneException } from "@nestjs/common";
+import { pipelineV2Enabled } from "@reelforge/config-engine";
 import type { WorkflowDefinition, WorkflowStepKey } from "./orchestration.types.js";
 
 export type WorkflowStepDefinition = Readonly<{
@@ -13,6 +15,7 @@ export type WorkflowStepDefinition = Readonly<{
 }>;
 
 const definitions: Readonly<Record<WorkflowDefinition, readonly WorkflowStepDefinition[]>> = {
+  /** @deprecated V3 VideoRun replaces this workflow and its 72h wait; remove T2 after V8. */
   GENERATION: [
     { key: "VERIFY_CONTEXT", sequence: 1, sideEffect: false, maxAttempts: 3, provider: "internal" },
     { key: "SELECT_IDEA", sequence: 2, sideEffect: false, maxAttempts: 3, provider: "idea" },
@@ -24,6 +27,7 @@ const definitions: Readonly<Record<WorkflowDefinition, readonly WorkflowStepDefi
       provider: "llm",
       // Waits (polling, no attempts) for the M07 human script approval.
       pollMs: 60_000,
+      /** @deprecated V3 waits only at L1; legacy 72h deadline removed in T2 after V8. */
       externalTimeoutMs: 72 * 60 * 60 * 1000,
     },
     {
@@ -78,10 +82,12 @@ const definitions: Readonly<Record<WorkflowDefinition, readonly WorkflowStepDefi
 };
 
 export function workflowDefinition(key: WorkflowDefinition): readonly WorkflowStepDefinition[] {
+  requireLegacy(key);
   return definitions[key];
 }
 
 export function firstStep(key: WorkflowDefinition): WorkflowStepDefinition {
+  requireLegacy(key);
   const step = definitions[key][0];
   if (!step) throw new Error(`Workflow definition ${key} has no steps`);
   return step;
@@ -91,6 +97,7 @@ export function stepDefinition(
   key: WorkflowDefinition,
   stepKey: WorkflowStepKey,
 ): WorkflowStepDefinition | undefined {
+  requireLegacy(key);
   return definitions[key].find((step) => step.key === stepKey);
 }
 
@@ -98,8 +105,10 @@ export function nextStep(
   key: WorkflowDefinition,
   currentStepKey: string,
 ): WorkflowStepDefinition | undefined {
+  requireLegacy(key);
   const current = definitions[key].find((step) => step.key === currentStepKey);
   if (!current) return undefined;
+  requireLegacy(key);
   return definitions[key].find((step) => step.sequence === current.sequence + 1);
 }
 
@@ -109,4 +118,9 @@ export function stepIdempotencyKey(
   stepKey: WorkflowStepKey,
 ): string {
   return `${definitionKey}:${runId}:${stepKey}`;
+}
+
+function requireLegacy(key: WorkflowDefinition): void {
+  if (key === "GENERATION" && pipelineV2Enabled())
+    throw new GoneException("Use the V3 VideoRun engine");
 }
