@@ -2,17 +2,17 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-13
+**Last updated:** 2026-11-16
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Snapshot:** 2026-11-13, main `94f0f5325ce5835ef3281e75a278238dad5cf07b` after M27 #93.
-- **Phase:** M00–M27 implementation code and M29 are merged; M28 remains NOT_STARTED. Code integration does not establish production release or live-provider acceptance.
+- **Snapshot:** 2026-11-16, main `eb33136464c0f2e011d6d8b47976b9ba30d3d34b` after V1 foundations #111.
+- **Phase:** v1 product code through M29 remains on main (M28 remains NOT_STARTED). The ReelForge v2 plan is locked in [#112](https://github.com/imTusharsingh/reelforge/issues/112) (versioned copy: `docs/REELFORGE_V2_SPEC.md`). Wave 0 / V1 foundations are integrated via #110 and #111. Wave 1 (#113 V2, #114 V3, #115 V4, #116 V7) is in progress. Code integration does not establish production release or live-provider acceptance.
 - **Repository:** PUBLIC (verified via GitHub repository metadata). Public visibility does not prove branch protection or squash-only settings are enabled.
-- **Current assigned follow-ups:** #80 docs closeout; #79 Playwright/axe E2E and API-origin spelling correction. #79 is OPEN at this snapshot and is not satisfied by earlier mounted fixture harnesses.
+- **Current assigned follow-ups:** Wave 1 implementation issues #113–#116. #79 Playwright/axe E2E remains a residual v1 follow-up if still open; it is not part of Wave 1.
 - **Open budget gap:** [#78](https://github.com/imTusharsingh/reelforge/issues/78) remains OPEN: M06/M11/M15 paid paths require the M08/M18 boundary; exact SQL/implementation approval remains outstanding. ADR-021–024 architecture acceptance is not application authorization.
 - **Review/integration policy:** independent Minu review before merge; authorized integrator uses squash only. ci.yml and PROJECT_STATE changes use dedicated chore PRs. Required secret scan is enforced by #72; see ADR-020 and PROCESS_ENFORCEMENT.md for limits of technical enforcement.
 
@@ -29,7 +29,7 @@
 
 ## Current milestone
 
-The creator, quality, publishing/calendar, account and operations UI implementations listed below are on main. Next: close this docs-only #80 PR after Minu review, complete #79 browser/axe coverage in its own PR, and keep #78 plus retention/KMS/email/live-verification gates open. Do not infer a production release from merged code or green CI.
+V1 Wave 0 foundations are on main (#110 decision record, #111 contracts and offline defaults). The v2 plan is locked in #112. Next: Wave 1 implementation in #113–#116 (V2 provider layer, V3 VideoRun orchestrator, V4 planning agents, V7 Channel Brief). Do not infer a production release from merged code or green CI.
 
 ## Module status index
 
@@ -86,7 +86,7 @@ Core prerequisites #51, #53, #57, #62 and #63, accepted architecture documentati
 
 ## Open decisions
 
-See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS, and data-retention choices must be resolved before their affected production blocks are approved.
+See `DECISION_LOG.md`. The v2 provider, VideoRun and autonomy plan is locked in #112 and ADR-026–028. Pending email sender, hosting/KMS, and data-retention choices must be resolved before their affected production blocks are approved.
 
 ## Last integrated changes
 
@@ -113,6 +113,8 @@ See `DECISION_LOG.md`. Pending provider vendor/model, email sender, hosting/KMS,
 - 2026-11-10: M18 integrated via PR #31. Minu requested changes at `e8533ac3209b6e16e3122fa8ff77ab37c6a7fcec` (review `5839788708`, B1–B2 plus the scheduler policy-error fix), the fixes and a merge of `origin/main` (M17) landed ending at `6c49a4b`, and Minu approved head `6c49a4b878126e3d1a3639d1db4ab0db8944c79c` (review `5842769674`); `minu-the-reviewer` squash-merged at `7e862fec80e5f7524ecc6cfdc0ef62165a410e5e`.
 - 2026-11-10: M17+M18 closeout documentation merged via PR #33 at `54db53f130fbde381a98db2c6836bc93487f030b`.
 - 2026-11-10: M19 integrated via PR #34. Minu approved head `e5938e1484972afaf4125f6396646b9fb4483b20` (review `5843747594`, no blockers); `minu-the-reviewer` squash-merged at `3da846e10bc8b682639a32c46bcefc9f529f6e0b`. M19-T07 (retention/deletion/export) remains open pending the retention ADR.
+- 2026-11-16: Wave 0 / V1 decision record integrated via PR #110. Minu approved (review `5916251496`); squash-merged at `cd39f301c985ec28bdd206a4fdf47dcc22bc83f7`.
+- 2026-11-16: Wave 0 / V1 foundations (contracts, offline defaults, fresh-install fixes) integrated via PR #111. Minu approved (review `5916864290`); owner squash-merged at `eb33136464c0f2e011d6d8b47976b9ba30d3d34b`.
 
 ## Open engineering follow-ups and historical residual inventory
 
