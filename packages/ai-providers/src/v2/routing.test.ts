@@ -8,6 +8,8 @@ import { secondsCost, reservationCents, ledgerUsd } from "./money.js";
 import { artifact, catalog, models, shot, json } from "./provider.fixture.js";
 import type { VideoGenPort } from "./ports.js";
 
+const omniRate = catalog[0]!.pricePerSecond["720p"]!;
+
 function setup(): {
   router: VideoRouter;
   primary: VideoGenPort;
@@ -18,7 +20,7 @@ function setup(): {
 } {
   const primary: VideoGenPort = {
     capabilities: () => catalog[0]!,
-    estimate: () => secondsCost(8, 69500),
+    estimate: () => secondsCost(8, omniRate),
     submit: vi.fn().mockResolvedValue({ providerJobId: "omni" }),
     poll: vi.fn().mockResolvedValue("refused"),
     fetch: vi.fn().mockResolvedValue(artifact),
@@ -26,6 +28,7 @@ function setup(): {
   const fallback: VideoGenPort = {
     ...primary,
     capabilities: () => catalog[5]!,
+    estimate: () => secondsCost(shot.durationSeconds, catalog[5]!.pricePerSecond["720p"]!),
     submit: vi.fn().mockResolvedValue({ providerJobId: "xai" }),
   };
   const submit = vi.fn(async (port: VideoGenPort, spec: typeof shot, key: string) =>
@@ -108,28 +111,28 @@ describe("provider limiter", () => {
     const limiter = new ProviderLimiter(1, () => now);
     let release!: () => void;
     const active = limiter.run(
-      secondsCost(8, 69500),
+      secondsCost(8, omniRate),
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
         }),
     );
-    await expect(limiter.run(secondsCost(8, 69500), async () => 1)).rejects.toMatchObject({
+    await expect(limiter.run(secondsCost(8, omniRate), async () => 1)).rejects.toMatchObject({
       kind: "RATE_LIMIT",
       dispatched: false,
     });
     release();
     await active;
     await expect(
-      limiter.run(secondsCost(8, 69500), async () => {
+      limiter.run(secondsCost(8, omniRate), async () => {
         throw new ProviderFailure("RATE_LIMIT", true, 5000);
       }),
     ).rejects.toMatchObject({ kind: "RATE_LIMIT" });
-    await expect(limiter.run(secondsCost(8, 69500), async () => 1)).rejects.toMatchObject({
+    await expect(limiter.run(secondsCost(8, omniRate), async () => 1)).rejects.toMatchObject({
       retryAfterMs: 5000,
     });
     now = 6000;
-    expect(await limiter.run(secondsCost(8, 69500), async () => 1)).toBe(1);
+    expect(await limiter.run(secondsCost(8, omniRate), async () => 1)).toBe(1);
   });
   it("enforces RPM, daily and spend caps and forgets non-dispatched calls", async () => {
     let now = 0;
@@ -160,11 +163,12 @@ describe("provider limiter", () => {
 });
 describe("exact catalog and money", () => {
   it("keeps sub-cent rates exact until reservation rounding", () => {
-    expect(secondsCost(8, 69500)).toEqual({ currency: "USD", microUsd: 556000 });
-    expect(ledgerUsd(secondsCost(8, 69500))).toBe("0.556000");
-    expect(reservationCents(secondsCost(8, 69500))).toBe(56);
-    expect(ledgerUsd(secondsCost(0.001, 69500))).toBe("0.000070");
-    for (const bad of [-1, NaN, Infinity, 0.0001]) expect(() => secondsCost(bad, 69500)).toThrow();
+    expect(secondsCost(8, omniRate)).toEqual({ currency: "USD", microUsd: 556032 });
+    expect(ledgerUsd(secondsCost(8, omniRate))).toBe("0.556032");
+    expect(reservationCents(secondsCost(8, omniRate))).toBe(56);
+    expect(ledgerUsd(secondsCost(0.001, omniRate))).toBe("0.000070");
+    for (const bad of [-1, NaN, Infinity, 0.0001])
+      expect(() => secondsCost(bad, omniRate)).toThrow();
     expect(() => secondsCost(1, -1)).toThrow();
     expect(() => secondsCost(Number.MAX_SAFE_INTEGER, 1000000)).toThrow();
     expect(() => ledgerUsd({ currency: "USD", microUsd: 0.5 })).toThrow();
@@ -172,7 +176,7 @@ describe("exact catalog and money", () => {
     expect(catalog[0]).toMatchObject({
       maxReferenceImages: 6,
       maxExtensionSeconds: 30,
-      pricePerSecond: { "720p": 69500 },
+      pricePerSecond: { "720p": 69504 },
     });
     expect(catalog[5]).toMatchObject({
       maxReferenceImages: 14,

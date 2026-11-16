@@ -105,7 +105,7 @@ describe("Gemini media fake-fetch contracts", () => {
     const { client, fetcher } = fixture();
     const omni = new OmniVideo(client, catalog[0]!, { resolve: async (): Promise<[]> => [] });
     expect(omni.capabilities()).toEqual(catalog[0]);
-    expect(omni.estimate(shot)).toEqual({ currency: "USD", microUsd: 556000 });
+    expect(omni.estimate(shot)).toEqual({ currency: "USD", microUsd: 556032 });
     await expect(omni.submit({ ...shot, fps: 30 }, "key")).rejects.toMatchObject({
       dispatched: false,
     });

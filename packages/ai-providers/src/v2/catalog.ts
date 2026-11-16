@@ -49,7 +49,7 @@ function capability(
     pricePerSecond: video
       ? {
           "360p": gemini ? 23000 : null,
-          "720p": gemini ? 69500 : 140000,
+          "720p": gemini ? 69504 : 140000,
           "1080p": gemini ? 104000 : 250000,
         }
       : { "360p": null, "720p": null, "1080p": null },
