@@ -371,10 +371,9 @@ function validateSourceVisual(
   if (stream.type !== "video") invalid("Scene visual must be a video stream");
   if (stream.codec !== profile.videoCodec)
     invalid("Video source codec must match the output profile");
-  if (stream.width !== profile.width || stream.height !== profile.height)
-    invalid("Video source dimensions must match the output profile");
-  if ((stream.fps ?? 0) < profile.fps)
-    invalid("Video source frame rate must provide the requested output cadence");
+  if (!stream.width || !stream.height || stream.width <= 0 || stream.height <= 0)
+    invalid("Video source dimensions must be positive");
+  if ((stream.fps ?? 0) <= 0) invalid("Video source frame rate must be positive");
   if (stream.durationSeconds === undefined || stream.durationSeconds + 0.001 < durationMs / 1000)
     invalid("Video source duration must cover the entire scene");
 }

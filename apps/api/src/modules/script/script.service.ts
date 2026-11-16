@@ -10,6 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@reelforge/database";
 import { z } from "zod";
+import { HookSchema, CtaSchema } from "@reelforge/contracts";
 import { PROVIDER_REGISTRY, SCRIPT_LLM, type ProviderRegistry } from "@reelforge/ai-providers";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
@@ -28,6 +29,8 @@ const generateSchema = z.object({
   correlationId: z.uuid().optional(),
   configSnapshotId: z.uuid(),
   promptSnapshotId: z.uuid(),
+  hook: HookSchema.optional(),
+  cta: CtaSchema.optional(),
 });
 const providerEnvelopeSchema = z.looseObject({
   output: z.unknown(),
@@ -91,6 +94,8 @@ export class ScriptService {
         "Approved idea snapshot is missing, foreign, stale, or not approved",
       );
     }
+    if (!HookSchema.safeParse(snapshot.hook).success)
+      throw new BadRequestException("Approved idea hook must contain 1–20 words");
     const [config, prompt] = await Promise.all([
       this.db.configSnapshot.findUnique({
         where: { workspaceId_id: { workspaceId: context.workspaceId, id: input.configSnapshotId } },
@@ -584,7 +589,8 @@ export class ScriptService {
     dispatchedPrompt: string,
   ): Promise<Reservation> {
     const budget = await this.db.providerBudget.findFirst({
-      where: { workspaceId, channelId: channelId ?? null },
+      where: { workspaceId, OR: [{ channelId: channelId ?? null }, { channelId: null }] },
+      orderBy: { channelId: "asc" },
       select: { id: true },
     });
     if (!budget) throw new ConflictException("No workspace provider budget is configured");

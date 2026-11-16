@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     // Tests run before workspace builds in CI; resolve the workspace package to
     // its TypeScript source instead of requiring generated dist artifacts.
@@ -18,6 +19,15 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     environment: "node",
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "json"],
+      reportsDirectory: "work/coverage",
+      include: process.env.COVERAGE_CHANGED_FILES
+        ? (JSON.parse(process.env.COVERAGE_CHANGED_FILES) as string[])
+        : ["apps/**/src/**/*.ts", "packages/**/src/**/*.ts"],
+      exclude: ["**/*.test.ts", "**/*.fixture.ts", "**/generated/**", "**/*.d.ts"],
+    },
     // Keep database/HTTP suites from exhausting shared local resources under load.
     maxWorkers: 2,
   },

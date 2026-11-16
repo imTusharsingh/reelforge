@@ -13,6 +13,7 @@ import {
   SavedData,
   useResource,
 } from "./ui";
+/** @deprecated V8 replaces this legacy screen; T2 removes unused code. See DEPRECATIONS.md. */
 export function ConfigurationPanel({ channelId }: { channelId: string }): JSX.Element {
   const config = useResource("config", false, "record");
   const [snapshot, setSnapshot] = useState("");

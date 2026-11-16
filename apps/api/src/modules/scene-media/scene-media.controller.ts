@@ -11,6 +11,7 @@ import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { SceneMediaService } from "./scene-media.service.js";
 
+/** @deprecated M09/C3 manual sync generation/assignment: V3/V4 replace; remove legacy endpoints in T2. See DEPRECATIONS.md. */
 @Controller("workspaces/:workspaceId/scene-media")
 @UseGuards(AuthGuard)
 export class SceneMediaController {

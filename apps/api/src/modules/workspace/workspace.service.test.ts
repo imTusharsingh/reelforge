@@ -13,7 +13,9 @@ function fakeDatabase(): Database {
     ["u1:w1", { role: "OWNER" as const, workspace: workspaces.get("w1")! }],
     ["u2:w2", { role: "OWNER" as const, workspace: workspaces.get("w2")! }],
   ]);
-  return {
+  const db: Database = {
+    $executeRaw: async () => 1,
+    $transaction: async (fn: (tx: Database) => Promise<unknown>) => fn(db as unknown as Database),
     workspaceMembership: {
       findUnique: async ({
         where,
@@ -43,6 +45,7 @@ function fakeDatabase(): Database {
     },
     user: { update: async () => ({}) },
   } as unknown as Database;
+  return db;
 }
 
 describe("WorkspaceService tenant boundary", () => {

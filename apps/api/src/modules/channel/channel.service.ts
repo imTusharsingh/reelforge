@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { NarratorVoiceSchema } from "@reelforge/contracts";
 import { Prisma } from "@reelforge/database";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { ChannelRepository } from "./channel.repository.js";
@@ -44,6 +45,11 @@ function validateInput(body: unknown, partial: boolean): ChannelInput | ChannelP
     if (value !== undefined) result[field] = value;
   }
   if (!partial && !result.name) throw new BadRequestException("name must be provided");
+  if (input.narratorVoice !== undefined) {
+    const parsed = NarratorVoiceSchema.safeParse(input.narratorVoice);
+    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
+    result.narratorVoice = parsed.data;
+  }
   for (const key of jsonKeys) {
     if (input[key] !== undefined && input[key] !== null) result[key] = input[key] as JsonValue;
   }
@@ -60,6 +66,7 @@ function updateData(input: ChannelPatch): Record<string, string | JsonValue> {
     "language",
     "audience",
     "timezone",
+    "narratorVoice",
     "goals",
     "schedule",
     "automationDefaults",
@@ -82,6 +89,7 @@ export function configurationFromRow(row: Record<string, unknown>): ChannelInput
       language: row.language,
       audience: row.audience,
       timezone: row.timezone,
+      narratorVoice: row.narratorVoice,
       goals: row.goals,
       schedule: row.schedule,
       automationDefaults: row.automationDefaults,
@@ -110,7 +118,13 @@ export class ChannelService {
 
   public async create(context: WorkspaceContext, body: unknown): Promise<unknown> {
     this.assertCanMutate(context);
-    const input = validateInput(body, false) as ChannelInput;
+    const input: ChannelInput = {
+      language: "en",
+      schedule: { shortsPerDay: 1, localTime: "18:00" },
+      automationDefaults: { autonomy: "L2", narrationLanguage: "English", aiDisclosure: true },
+      approvalPolicy: { approveBeforePublish: true, firstShorts: 10 },
+      ...(validateInput(body, false) as ChannelInput),
+    };
     return this.db.$transaction(async (tx) => {
       const channel = await tx.channel.create({
         data: { workspaceId: context.workspaceId, ...input },

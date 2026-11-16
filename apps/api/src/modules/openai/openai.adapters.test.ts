@@ -4,20 +4,16 @@ import {
   OPENAI_IMAGE_TIMEOUT_MS,
   OPENAI_TEXT_TIMEOUT_MS,
   OPENAI_TTS_TIMEOUT_MS,
-  OPENAI_VIDEO_OVERALL_TIMEOUT_MS,
-  OPENAI_VIDEO_POLL_INTERVAL_MS,
   OpenAiIdeaProposalLlm,
   OpenAiImageProvider,
   OpenAiInsightReportLlm,
   OpenAiQualityReviewPort,
   OpenAiScriptLlm,
   OpenAiTtsProvider,
-  OpenAiVideoProvider,
   openAiImageModel,
   openAiRuntimeConfig,
   openAiTextModel,
   openAiTtsModel,
-  openAiVideoModel,
 } from "./openai.adapters.js";
 
 const CORRELATION = "00000000-0000-4000-8000-000000000001";
@@ -291,115 +287,6 @@ describe("OpenAI adapters", () => {
     }
   });
 
-  it("does not call the network for an unsupported video duration", async () => {
-    const fetcher = vi.fn<typeof fetch>();
-    await expect(
-      new OpenAiVideoProvider(KEY, "video-model", fetcher).generate({
-        prompt: "p",
-        durationSeconds: 5,
-        correlationId: CORRELATION,
-      }),
-    ).rejects.toMatchObject({ code: "INVALID_REQUEST", providerCalled: false });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("submits a video job, stores the id before polling, and downloads the mp4", async () => {
-    vi.useFakeTimers();
-    try {
-      const seen: string[] = [];
-      const fetcher = vi.fn<typeof fetch>(async (input) => {
-        const url = String(input);
-        seen.push(url);
-        if (url.endsWith("/videos")) {
-          return jsonResponse({ id: "job_1", status: "queued" });
-        }
-        if (url.endsWith("/videos/job_1"))
-          return jsonResponse({ id: "job_1", status: "completed" });
-        return new Response(Uint8Array.from([0, 0, 0, 1]), { status: 200 });
-      });
-      let acceptedBeforePoll = false;
-      const pending = new OpenAiVideoProvider(KEY, "video-model", fetcher).generate({
-        prompt: "a clip",
-        durationSeconds: 8,
-        correlationId: CORRELATION,
-        onProviderJobAccepted: async (providerJobId) => {
-          acceptedBeforePoll = seen.length === 1 && providerJobId === "job_1";
-        },
-      });
-      const assertion = pending.then((result) => {
-        expect(acceptedBeforePoll).toBe(true);
-        expect(seen.map((url) => url.replace("https://api.openai.com/v1", ""))).toEqual([
-          "/videos",
-          "/videos/job_1",
-          "/videos/job_1/content",
-        ]);
-        expect(result.providerJobId).toBe("job_1");
-        expect(result.metadata.modelVersion).toBe("video-model");
-        expect(result.media.body.byteLength).toBe(4);
-      });
-      await vi.advanceTimersByTimeAsync(OPENAI_VIDEO_POLL_INTERVAL_MS);
-      await assertion;
-      const body = requestBody(fetcher) as { seconds?: string; size?: string; model?: string };
-      expect(body).toMatchObject({ model: "video-model", seconds: "8", size: "720x1280" });
-      const init = fetcher.mock.calls[0]?.[1] as RequestInit;
-      expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(CORRELATION);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("resumes video polling from a stored provider job without submitting again", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetcher = vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(jsonResponse({ id: "job_1", status: "completed" }))
-        .mockResolvedValueOnce(new Response(Uint8Array.from([1, 2]), { status: 200 }));
-      const pending = new OpenAiVideoProvider(KEY, "video-model", fetcher).generate({
-        prompt: "p",
-        durationSeconds: 4,
-        correlationId: CORRELATION,
-        providerJobId: "job_1",
-      });
-      await vi.advanceTimersByTimeAsync(OPENAI_VIDEO_POLL_INTERVAL_MS);
-      const result = await pending;
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(String(fetcher.mock.calls[0]?.[0])).toContain("/videos/job_1");
-      expect(String(fetcher.mock.calls[0]?.[0])).not.toContain("/content");
-      expect(fetcher.mock.calls.some((call) => String(call[1]?.method) === "POST")).toBe(false);
-      expect(result.providerJobId).toBe("job_1");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("times out an in-progress video without submitting a second job", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetcher = vi.fn<typeof fetch>(async (input) => {
-        const url = String(input);
-        if (url.endsWith("/videos")) return jsonResponse({ id: "job_9", status: "queued" });
-        return jsonResponse({ id: "job_9", status: "in_progress" });
-      });
-      const pending = new OpenAiVideoProvider(KEY, "sora-2", fetcher).generate({
-        prompt: "p",
-        durationSeconds: 4,
-        correlationId: CORRELATION,
-      });
-      const assertion = expect(pending).rejects.toMatchObject({
-        code: "PROVIDER_UNAVAILABLE",
-        providerCalled: true,
-        providerJobId: "job_9",
-      });
-      await vi.advanceTimersByTimeAsync(OPENAI_VIDEO_OVERALL_TIMEOUT_MS);
-      await assertion;
-      const posts = fetcher.mock.calls.filter((call) => call[1]?.method === "POST");
-      expect(posts).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("keeps OpenAI unbound without a key and does not advertise a video model by default", () => {
     expect(
       openAiRuntimeConfig({ OPENAI_API_KEY: "", NODE_ENV: "development" }).key,
@@ -413,17 +300,24 @@ describe("OpenAI adapters", () => {
       NODE_ENV: "development",
     });
     expect(configured.key).toBe(KEY);
-    expect(configured.videoModel).toBeUndefined();
+    expect(configured.textFallbackEnabled).toBe(false);
+    expect(
+      openAiRuntimeConfig({
+        OPENAI_API_KEY: KEY,
+        OPENAI_TEXT_FALLBACK_ENABLED: "true",
+        NODE_ENV: "development",
+      }).textFallbackEnabled,
+    ).toBe(true);
+    expect(
+      openAiRuntimeConfig({ OPENAI_TEXT_FALLBACK_ENABLED: "true", NODE_ENV: "test" })
+        .textFallbackEnabled,
+    ).toBe(false);
     expect(configured.textModel).toBe("gpt-4.1-mini");
     expect(configured.imageModel).toBe("gpt-image-2.6-sunburst");
     expect(configured.ttsModel).toBe("gpt-4o-mini-tts");
     expect(openAiTextModel({ OPENAI_TEXT_MODEL: " custom " })).toBe("custom");
     expect(openAiImageModel({})).toBe("gpt-image-2.6-sunburst");
     expect(openAiTtsModel({})).toBe("gpt-4o-mini-tts");
-    expect(openAiVideoModel({ OPENAI_VIDEO_MODEL: " sora-2 ", NODE_ENV: "production" })).toBe(
-      "sora-2",
-    );
-    expect(openAiVideoModel({ OPENAI_VIDEO_MODEL: "sora-2", NODE_ENV: "test" })).toBeUndefined();
     const registry = new ProviderRegistry();
     const image = new OpenAiImageProvider(KEY, configured.imageModel);
     registry.register({

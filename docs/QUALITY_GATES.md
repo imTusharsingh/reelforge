@@ -68,3 +68,13 @@ After execution, store sanitized evidence (never tokens) and actual result. A li
 - [ ] Operational dashboard/logs show job and failure state.
 - [ ] Backup/retention/deletion behavior is documented.
 - [ ] All release notes and project history are updated.
+
+
+## Wave 0 local quality tooling
+
+Owner-assigned foundations add exact dev pins: Knip 6.22.0, @vitest/coverage-v8 5.1.0 and jsdom 27.3.0 (offline React recovery tests), following ADR-012. CI wiring remains a separate chore; ci.yml is unchanged.
+
+- `pnpm knip`: compares stable file/export/dependency findings against `knip-baseline.json`, captured from main bb39fc3 using the committed configuration. New findings fail. `pnpm knip:baseline` is an explicit maintainer operation; review any added debt, never regenerate merely to pass a gate.
+- `pnpm lint` / `pnpm lint:size`: ESLint with zero warnings. New source uses 400 nonblank/noncomment lines per file and 60 per function. `eslint-size-baseline.json` grandfathers main's larger files/functions; test suite assembly is exempt from function length. This makes the guideline enforceable without unrelated refactors.
+- `pnpm test:coverage:changed`: runs the full Vitest suite with v8, then requires at least 80% lines and 70% branches on changed executable code in apps/packages against `origin/main` (override with COVERAGE_BASE). Stage new files first; the gate refuses untracked deliverables. `--check-report` on the underlying script checks an already generated report. Tests, fixture assembly, generated code and declarations are excluded. Reports go to ignored `work/coverage/`.
+- `pnpm quality`: strict lint, typecheck and the Knip baseline check. The final full suite remains separate so it can be run once after implementation and immediately before opening the PR.

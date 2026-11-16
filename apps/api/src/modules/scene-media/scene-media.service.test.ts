@@ -84,7 +84,7 @@ function scene(id: string, patch: Record<string, unknown> = {}): Record<string, 
   return {
     id,
     startSeconds: 0,
-    durationSeconds: 1,
+    durationSeconds: 2,
     characterRefs: [],
     dialogue: "Hello",
     narration: "Welcome",
@@ -102,12 +102,13 @@ function document(scenes: Record<string, unknown>[]): Record<string, unknown> {
     hook: "Hook",
     dialogue: "Dialogue",
     cta: "CTA",
-    metadata: { genre: "comedy", targetDurationSeconds: scenes.length, factual: false },
+    metadata: { genre: "comedy", targetDurationSeconds: scenes.length * 2, factual: false },
     scenes,
   };
 }
 
 type MemoryState = {
+  narratorVoice?: { providerId: string; voiceId: string; language: string };
   script: {
     id: string;
     workspaceId: string;
@@ -248,6 +249,9 @@ function memoryDatabase(state: MemoryState): {
   const usages: Array<Record<string, unknown>> = [];
   const rank: Record<string, number> = { IMAGE: 0, VIDEO: 1, NARRATION: 2, DIALOGUE: 3 };
   const db = {
+    channel: {
+      findFirst: async (): Promise<unknown> => ({ narratorVoice: state.narratorVoice ?? null }),
+    },
     script: {
       findUnique: async ({
         where,
@@ -286,10 +290,19 @@ function memoryDatabase(state: MemoryState): {
       findFirst: async ({
         where,
       }: {
-        where: { workspaceId: string; channelId: string | null };
+        where: {
+          workspaceId: string;
+          channelId?: string | null;
+          OR?: Array<{ channelId: string | null }>;
+        };
       }): Promise<unknown> => {
         if (!state.budget || state.budget.workspaceId !== where.workspaceId) return null;
-        if ((state.budget.channelId ?? null) !== (where.channelId ?? null)) return null;
+        if (
+          !(where.OR ?? [{ channelId: where.channelId ?? null }]).some(
+            (item) => (state.budget?.channelId ?? null) === item.channelId,
+          )
+        )
+          return null;
         return { id: state.budget.id };
       },
     },
@@ -1218,6 +1231,44 @@ describe("scene media generation", () => {
     expect(sceneTwo?.outputs.find((output) => output.kind === "NARRATION")?.status).toBe("REUSED");
     expect(env.ttsCalls).toHaveLength(ttsAfterRegenerate);
     expect(env.imageCalls.filter((call) => call.prompt.includes("Scene: one"))).toHaveLength(2);
+  });
+
+  it("uses the channel narrator without requiring a character", async () => {
+    const env = harness({
+      channelId: randomUUID(),
+      scenes: [scene("one", { characterRefs: [], dialogue: "" })],
+    });
+    env.state.narratorVoice = {
+      providerId: "fixture",
+      voiceId: "channel-narrator",
+      language: "English",
+    };
+    const result = await env.service.create(env.context, {
+      ...createBody(env.scriptId),
+      outputs: { image: true, video: false, narration: true, dialogue: false },
+    });
+    expect(result.scenes[0]?.outputs.find((output) => output.kind === "NARRATION")?.status).toBe(
+      "SUCCEEDED",
+    );
+    expect(env.ttsCalls).toHaveLength(1);
+  });
+  it.each([
+    { hook: " " },
+    { hook: Array(21).fill("word").join(" ") },
+    { cta: "" },
+    { cta: Array(16).fill("word").join(" ") },
+    { narration: Array(500).fill("word").join(" ") },
+  ])("rejects invalid copy before any media provider call: %j", async (patch) => {
+    const env = harness();
+    Object.assign(env.state.script!.revisions[0]!.document as Record<string, unknown>, patch);
+    if ("narration" in patch) {
+      const doc = env.state.script!.revisions[0]!.document as Record<string, unknown>;
+      doc.scenes = [scene("one", { narration: patch.narration })];
+    }
+    await expect(env.service.create(env.context, createBody(env.scriptId))).rejects.toThrow();
+    expect(env.imageCalls).toHaveLength(0);
+    expect(env.ttsCalls).toHaveLength(0);
+    expect(env.videoCalls).toBe(0);
   });
 
   it("fails closed when narration has no approved voice and does not call TTS", async () => {

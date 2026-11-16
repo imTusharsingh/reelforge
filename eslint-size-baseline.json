@@ -1,0 +1,601 @@
+{
+  "description": "Grandfathered main sizes; new code uses 400 lines/file and 60 lines/function. Test suite assembly is exempt from function size.",
+  "files": {
+    "apps/api/e2e/server.fixture.ts": {
+      "lines": 400,
+      "functionLines": 306
+    },
+    "apps/api/src/modules/admin/admin.http.integration.test.ts": {
+      "lines": 501,
+      "functionLines": 410
+    },
+    "apps/api/src/modules/admin/admin.service.ts": {
+      "lines": 472,
+      "functionLines": 191
+    },
+    "apps/api/src/modules/admin/audit.catalog.test.ts": {
+      "lines": 400,
+      "functionLines": 67
+    },
+    "apps/api/src/modules/admin/audit.interceptor.ts": {
+      "lines": 400,
+      "functionLines": 64
+    },
+    "apps/api/src/modules/admin/emergency-stop.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 310
+    },
+    "apps/api/src/modules/admin/emergency-stop.service.ts": {
+      "lines": 400,
+      "functionLines": 85
+    },
+    "apps/api/src/modules/analytics/analytics.collection.test.ts": {
+      "lines": 400,
+      "functionLines": 201
+    },
+    "apps/api/src/modules/analytics/analytics.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 372
+    },
+    "apps/api/src/modules/analytics/analytics.service.test.ts": {
+      "lines": 400,
+      "functionLines": 203
+    },
+    "apps/api/src/modules/analytics/analytics.service.ts": {
+      "lines": 858,
+      "functionLines": 218
+    },
+    "apps/api/src/modules/asset/asset.service.test.ts": {
+      "lines": 400,
+      "functionLines": 172
+    },
+    "apps/api/src/modules/asset/asset.service.ts": {
+      "lines": 444,
+      "functionLines": 75
+    },
+    "apps/api/src/modules/asset/content-delivery.test.ts": {
+      "lines": 400,
+      "functionLines": 131
+    },
+    "apps/api/src/modules/asset/media-delivery.http.integration.test.ts": {
+      "lines": 977,
+      "functionLines": 846
+    },
+    "apps/api/src/modules/character/character.service.test.ts": {
+      "lines": 471,
+      "functionLines": 190
+    },
+    "apps/api/src/modules/character/character.service.ts": {
+      "lines": 588,
+      "functionLines": 65
+    },
+    "apps/api/src/modules/composition/composition.content.unit.test.ts": {
+      "lines": 400,
+      "functionLines": 154
+    },
+    "apps/api/src/modules/composition/composition.engine.integration.test.ts": {
+      "lines": 430,
+      "functionLines": 413
+    },
+    "apps/api/src/modules/composition/composition.engine.ts": {
+      "lines": 400,
+      "functionLines": 199
+    },
+    "apps/api/src/modules/composition/composition.http.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 74
+    },
+    "apps/api/src/modules/composition/composition.integration.test.ts": {
+      "lines": 2274,
+      "functionLines": 2132
+    },
+    "apps/api/src/modules/composition/composition.manifest.ts": {
+      "lines": 400,
+      "functionLines": 96
+    },
+    "apps/api/src/modules/composition/composition.service.ts": {
+      "lines": 1805,
+      "functionLines": 329
+    },
+    "apps/api/src/modules/config/config.service.test.ts": {
+      "lines": 400,
+      "functionLines": 83
+    },
+    "apps/api/src/modules/config/config.service.ts": {
+      "lines": 400,
+      "functionLines": 109
+    },
+    "apps/api/src/modules/config/prompt.service.test.ts": {
+      "lines": 400,
+      "functionLines": 199
+    },
+    "apps/api/src/modules/config/prompt.service.ts": {
+      "lines": 674,
+      "functionLines": 71
+    },
+    "apps/api/src/modules/genre/genre.service.test.ts": {
+      "lines": 400,
+      "functionLines": 77
+    },
+    "apps/api/src/modules/idea/idea.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 285
+    },
+    "apps/api/src/modules/idea/idea.planning-contract.test.ts": {
+      "lines": 400,
+      "functionLines": 77
+    },
+    "apps/api/src/modules/idea/idea.service.test.ts": {
+      "lines": 479,
+      "functionLines": 396
+    },
+    "apps/api/src/modules/idea/idea.service.ts": {
+      "lines": 560,
+      "functionLines": 102
+    },
+    "apps/api/src/modules/identity/csrf.middleware.test.ts": {
+      "lines": 400,
+      "functionLines": 128
+    },
+    "apps/api/src/modules/identity/identity.http.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 82
+    },
+    "apps/api/src/modules/identity/identity.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 139
+    },
+    "apps/api/src/modules/identity/identity.service.test.ts": {
+      "lines": 400,
+      "functionLines": 134
+    },
+    "apps/api/src/modules/identity/identity.service.ts": {
+      "lines": 400,
+      "functionLines": 85
+    },
+    "apps/api/src/modules/notifications/notifications.postgres.integration.test.ts": {
+      "lines": 631,
+      "functionLines": 566
+    },
+    "apps/api/src/modules/notifications/notifications.service.ts": {
+      "lines": 694,
+      "functionLines": 111
+    },
+    "apps/api/src/modules/notifications/reports.service.test.ts": {
+      "lines": 400,
+      "functionLines": 111
+    },
+    "apps/api/src/modules/notifications/reports.service.ts": {
+      "lines": 746,
+      "functionLines": 118
+    },
+    "apps/api/src/modules/openai/openai.adapters.test.ts": {
+      "lines": 435,
+      "functionLines": 394
+    },
+    "apps/api/src/modules/openai/openai.adapters.ts": {
+      "lines": 802,
+      "functionLines": 114
+    },
+    "apps/api/src/modules/orchestration/orchestration.bullmq.redis.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 148
+    },
+    "apps/api/src/modules/orchestration/orchestration.dispatcher.postgres.integration.test.ts": {
+      "lines": 584,
+      "functionLines": 401
+    },
+    "apps/api/src/modules/orchestration/orchestration.dispatcher.ts": {
+      "lines": 529,
+      "functionLines": 67
+    },
+    "apps/api/src/modules/orchestration/orchestration.postgres.integration.test.ts": {
+      "lines": 985,
+      "functionLines": 915
+    },
+    "apps/api/src/modules/orchestration/orchestration.schedule.test.ts": {
+      "lines": 400,
+      "functionLines": 177
+    },
+    "apps/api/src/modules/orchestration/orchestration.schedule.ts": {
+      "lines": 400,
+      "functionLines": 70
+    },
+    "apps/api/src/modules/orchestration/orchestration.service.test.ts": {
+      "lines": 400,
+      "functionLines": 64
+    },
+    "apps/api/src/modules/orchestration/orchestration.service.ts": {
+      "lines": 2228,
+      "functionLines": 167
+    },
+    "apps/api/src/modules/performance-intelligence/performance-intelligence.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 259
+    },
+    "apps/api/src/modules/performance-intelligence/performance-intelligence.service.test.ts": {
+      "lines": 1076,
+      "functionLines": 683
+    },
+    "apps/api/src/modules/performance-intelligence/performance-intelligence.service.ts": {
+      "lines": 1269,
+      "functionLines": 229
+    },
+    "apps/api/src/modules/publishing/publishing.behavior.postgres.integration.test.ts": {
+      "lines": 444,
+      "functionLines": 203
+    },
+    "apps/api/src/modules/publishing/publishing.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 70
+    },
+    "apps/api/src/modules/publishing/publishing.service.test.ts": {
+      "lines": 1042,
+      "functionLines": 158
+    },
+    "apps/api/src/modules/publishing/publishing.service.ts": {
+      "lines": 2019,
+      "functionLines": 190
+    },
+    "apps/api/src/modules/publishing/publishing.validation.test.ts": {
+      "lines": 400,
+      "functionLines": 70
+    },
+    "apps/api/src/modules/quality/quality.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 248
+    },
+    "apps/api/src/modules/quality/quality.service.test.ts": {
+      "lines": 845,
+      "functionLines": 372
+    },
+    "apps/api/src/modules/quality/quality.service.ts": {
+      "lines": 1377,
+      "functionLines": 552
+    },
+    "apps/api/src/modules/release-gate/release-gate.http.integration.test.ts": {
+      "lines": 408,
+      "functionLines": 275
+    },
+    "apps/api/src/modules/release-gate/release-gate.provider-boundary.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 134
+    },
+    "apps/api/src/modules/scene-media/scene-media.http.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 154
+    },
+    "apps/api/src/modules/scene-media/scene-media.integration.test.ts": {
+      "lines": 1041,
+      "functionLines": 938
+    },
+    "apps/api/src/modules/scene-media/scene-media.service.test.ts": {
+      "lines": 2074,
+      "functionLines": 982
+    },
+    "apps/api/src/modules/scene-media/scene-media.service.ts": {
+      "lines": 2257,
+      "functionLines": 271
+    },
+    "apps/api/src/modules/scene-media/scene-media.validation.test.ts": {
+      "lines": 400,
+      "functionLines": 184
+    },
+    "apps/api/src/modules/scene-media/scene-media.validation.ts": {
+      "lines": 415,
+      "functionLines": 60
+    },
+    "apps/api/src/modules/script/script.http.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 152
+    },
+    "apps/api/src/modules/script/script.integration.test.ts": {
+      "lines": 798,
+      "functionLines": 733
+    },
+    "apps/api/src/modules/script/script.security-and-provenance.test.ts": {
+      "lines": 400,
+      "functionLines": 175
+    },
+    "apps/api/src/modules/script/script.service.test.ts": {
+      "lines": 400,
+      "functionLines": 142
+    },
+    "apps/api/src/modules/script/script.service.ts": {
+      "lines": 697,
+      "functionLines": 189
+    },
+    "apps/api/src/modules/social-accounts/social-accounts.postgres.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 126
+    },
+    "apps/api/src/modules/social-accounts/social-accounts.service.test.ts": {
+      "lines": 827,
+      "functionLines": 462
+    },
+    "apps/api/src/modules/social-accounts/social-accounts.service.ts": {
+      "lines": 824,
+      "functionLines": 147
+    },
+    "apps/api/src/modules/usage-budget/usage-budget.ledger.ts": {
+      "lines": 400,
+      "functionLines": 90
+    },
+    "apps/api/src/modules/usage-budget/usage-budget.m08.integration.test.ts": {
+      "lines": 400,
+      "functionLines": 305
+    },
+    "apps/api/src/modules/usage-budget/usage-budget.postgres.integration.test.ts": {
+      "lines": 1004,
+      "functionLines": 975
+    },
+    "apps/api/src/modules/usage-budget/usage-budget.service.test.ts": {
+      "lines": 400,
+      "functionLines": 85
+    },
+    "apps/api/src/modules/usage-budget/usage-budget.service.ts": {
+      "lines": 1181,
+      "functionLines": 83
+    },
+    "apps/api/src/modules/workspace/workspace.membership-role.test.ts": {
+      "lines": 400,
+      "functionLines": 89
+    },
+    "apps/web/components/account-screen.tsx": {
+      "lines": 400,
+      "functionLines": 105
+    },
+    "apps/web/components/app-shell.tsx": {
+      "lines": 400,
+      "functionLines": 107
+    },
+    "apps/web/components/auth-workspace.tsx": {
+      "lines": 478,
+      "functionLines": 166
+    },
+    "apps/web/components/operations-dashboard.tsx": {
+      "lines": 599,
+      "functionLines": 289
+    },
+    "apps/web/components/studio-navigation.ts": {
+      "lines": 400,
+      "functionLines": 100
+    },
+    "apps/web/features/channels/api.ts": {
+      "lines": 400,
+      "functionLines": 111
+    },
+    "apps/web/features/channels/asset-panel.tsx": {
+      "lines": 400,
+      "functionLines": 194
+    },
+    "apps/web/features/channels/channel-detail.tsx": {
+      "lines": 400,
+      "functionLines": 123
+    },
+    "apps/web/features/channels/channels-workspace.tsx": {
+      "lines": 400,
+      "functionLines": 103
+    },
+    "apps/web/features/channels/channels.test.ts": {
+      "lines": 400,
+      "functionLines": 111
+    },
+    "apps/web/features/channels/character-panel.tsx": {
+      "lines": 400,
+      "functionLines": 108
+    },
+    "apps/web/features/channels/configuration-panel.tsx": {
+      "lines": 400,
+      "functionLines": 73
+    },
+    "apps/web/features/channels/content-panels.tsx": {
+      "lines": 400,
+      "functionLines": 71
+    },
+    "apps/web/features/channels/dto.test.ts": {
+      "lines": 400,
+      "functionLines": 135
+    },
+    "apps/web/features/channels/dto.ts": {
+      "lines": 500,
+      "functionLines": 60
+    },
+    "apps/web/features/channels/mutation-recovery.test.ts": {
+      "lines": 400,
+      "functionLines": 63
+    },
+    "apps/web/features/channels/structured-field.tsx": {
+      "lines": 400,
+      "functionLines": 83
+    },
+    "apps/web/features/channels/ui.tsx": {
+      "lines": 452,
+      "functionLines": 157
+    },
+    "apps/web/features/channels/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 84
+    },
+    "apps/web/features/insights/insights-screen.test.ts": {
+      "lines": 400,
+      "functionLines": 77
+    },
+    "apps/web/features/insights/insights-screen.tsx": {
+      "lines": 484,
+      "functionLines": 451
+    },
+    "apps/web/features/insights/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 74
+    },
+    "apps/web/features/operations/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 72
+    },
+    "apps/web/features/planning/idea-form.tsx": {
+      "lines": 400,
+      "functionLines": 201
+    },
+    "apps/web/features/planning/idea-workspace.tsx": {
+      "lines": 400,
+      "functionLines": 256
+    },
+    "apps/web/features/planning/library.tsx": {
+      "lines": 400,
+      "functionLines": 95
+    },
+    "apps/web/features/planning/model.test.ts": {
+      "lines": 488,
+      "functionLines": 213
+    },
+    "apps/web/features/planning/model.ts": {
+      "lines": 790,
+      "functionLines": 60
+    },
+    "apps/web/features/planning/script-workspace.tsx": {
+      "lines": 668,
+      "functionLines": 486
+    },
+    "apps/web/features/planning/session.tsx": {
+      "lines": 400,
+      "functionLines": 85
+    },
+    "apps/web/features/planning/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 109
+    },
+    "apps/web/features/production/api.test.ts": {
+      "lines": 400,
+      "functionLines": 284
+    },
+    "apps/web/features/production/composition.ts": {
+      "lines": 400,
+      "functionLines": 92
+    },
+    "apps/web/features/production/model.test.ts": {
+      "lines": 400,
+      "functionLines": 128
+    },
+    "apps/web/features/production/model.ts": {
+      "lines": 579,
+      "functionLines": 60
+    },
+    "apps/web/features/production/render.tsx": {
+      "lines": 400,
+      "functionLines": 180
+    },
+    "apps/web/features/production/start.tsx": {
+      "lines": 400,
+      "functionLines": 183
+    },
+    "apps/web/features/production/studio.tsx": {
+      "lines": 750,
+      "functionLines": 291
+    },
+    "apps/web/features/production/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 101
+    },
+    "apps/web/features/publishing/accounts.tsx": {
+      "lines": 400,
+      "functionLines": 297
+    },
+    "apps/web/features/publishing/api.test.ts": {
+      "lines": 400,
+      "functionLines": 166
+    },
+    "apps/web/features/publishing/api.ts": {
+      "lines": 517,
+      "functionLines": 60
+    },
+    "apps/web/features/publishing/calendar.tsx": {
+      "lines": 400,
+      "functionLines": 157
+    },
+    "apps/web/features/publishing/composer.tsx": {
+      "lines": 829,
+      "functionLines": 764
+    },
+    "apps/web/features/publishing/history.tsx": {
+      "lines": 400,
+      "functionLines": 70
+    },
+    "apps/web/features/publishing/model.test.ts": {
+      "lines": 400,
+      "functionLines": 109
+    },
+    "apps/web/features/publishing/model.ts": {
+      "lines": 439,
+      "functionLines": 75
+    },
+    "apps/web/features/publishing/post.tsx": {
+      "lines": 400,
+      "functionLines": 283
+    },
+    "apps/web/features/publishing/verification/mounted-fixture.tsx": {
+      "lines": 400,
+      "functionLines": 115
+    },
+    "apps/web/features/review/api.test.ts": {
+      "lines": 400,
+      "functionLines": 122
+    },
+    "apps/web/features/review/model.test.ts": {
+      "lines": 400,
+      "functionLines": 170
+    },
+    "apps/web/features/review/workspace.tsx": {
+      "lines": 645,
+      "functionLines": 233
+    },
+    "apps/web/lib/account-api.test.ts": {
+      "lines": 400,
+      "functionLines": 65
+    },
+    "e2e/journey.spec.ts": {
+      "lines": 400,
+      "functionLines": 149
+    },
+    "packages/config-engine/src/config.resolver.test.ts": {
+      "lines": 400,
+      "functionLines": 161
+    },
+    "packages/config-engine/src/config.resolver.ts": {
+      "lines": 400,
+      "functionLines": 108
+    },
+    "packages/config-engine/src/prompt.test.ts": {
+      "lines": 400,
+      "functionLines": 169
+    },
+    "packages/config-engine/src/prompt.ts": {
+      "lines": 472,
+      "functionLines": 176
+    },
+    "packages/contracts/src/production.test.ts": {
+      "lines": 400,
+      "functionLines": 104
+    },
+    "packages/media/src/index.ts": {
+      "lines": 401,
+      "functionLines": 143
+    },
+    "packages/media/src/media.test.ts": {
+      "lines": 400,
+      "functionLines": 145
+    },
+    "packages/observability/src/observability.test.ts": {
+      "lines": 400,
+      "functionLines": 87
+    },
+    "packages/social-providers/src/youtube.connector.test.ts": {
+      "lines": 417,
+      "functionLines": 395
+    },
+    "packages/social-providers/src/youtube.connector.ts": {
+      "lines": 604,
+      "functionLines": 71
+    }
+  }
+}

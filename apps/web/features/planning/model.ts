@@ -240,6 +240,7 @@ export function validateDocument(document: ScriptDocument): string | null {
     return "Scene duration and target duration must match within one second.";
   return null;
 }
+/** @deprecated Manual /planning edit lifecycle: V8 VideoRun UI replaces; remove unused helpers in T2. See DEPRECATIONS.md. */
 export class PlanningApiError extends Error {
   constructor(
     readonly status: number,
@@ -355,8 +356,8 @@ export class PlanningClient {
   ): Promise<T> {
     if (!canWrite(this.role)) throw new PlanningApiError(403, "Owner or Editor role required.");
     this.signal.throwIfAborted();
-    if (pendingSave(this.workspaceId))
-      throw new PlanningApiError(409, "Reconcile the earlier save before sending another change.");
+    if (activeWrites.has(this.workspaceId))
+      throw new PlanningApiError(409, "Wait for the active save to finish.");
     markPendingSave(this.workspaceId, path);
     activeWrites.add(this.workspaceId);
     try {
@@ -364,12 +365,7 @@ export class PlanningClient {
       clearPendingSave(this.workspaceId);
       return value;
     } catch (error) {
-      if (
-        path !== "scripts" &&
-        error instanceof PlanningApiError &&
-        error.status >= 400 &&
-        error.status < 500
-      )
+      if (error instanceof PlanningApiError && error.status >= 400 && error.status < 500)
         clearPendingSave(this.workspaceId);
       throw error;
     } finally {

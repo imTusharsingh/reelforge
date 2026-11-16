@@ -11,7 +11,7 @@ import {
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { draftEdited, registerDraft } from "../../components/studio-navigation";
 import { Alert, Button, StateMessage } from "../../components/ui/primitives";
-import { PlanningClient, pendingSave, type SaveReconciliation } from "./model";
+import { PlanningClient, pendingSave } from "./model";
 export const PlanningContext = createContext<{
   client: PlanningClient;
   revision: number;
@@ -101,80 +101,46 @@ export function PendingSaveRecovery({
   revision: number;
   onReconciled: () => void;
 }): JSX.Element {
-  const [result, setResult] = useState<SaveReconciliation | null>(null);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [loading, setLoading] = useState(false);
-  const generation = useRef(0);
+  const onFinished = useRef(onReconciled);
+  onFinished.current = onReconciled;
   useEffect(() => {
-    generation.current += 1;
-    setResult(null);
-    setError("");
-    setLoading(false);
-    return (): void => {
-      generation.current += 1;
-    };
-  }, [client, revision]);
-  const fetchAffected = async (): Promise<void> => {
-    const operation = ++generation.current;
-    setResult(null);
-    setError("");
+    let current = true;
     setLoading(true);
-    try {
-      const next = await client.reconcilePendingSave();
-      if (operation === generation.current && !client.signal.aborted) setResult(next);
-    } catch (cause) {
-      if (operation === generation.current && !client.signal.aborted) setError(message(cause));
-    } finally {
-      if (operation === generation.current && !client.signal.aborted) setLoading(false);
-    }
-  };
+    setError("");
+    void client
+      .reconcilePendingSave()
+      .then((result) => {
+        if (!current || client.signal.aborted) return;
+        client.acknowledgePendingSave(result);
+        onFinished.current();
+      })
+      .catch((cause: unknown) => {
+        if (current && !client.signal.aborted) setError(message(cause));
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return (): void => {
+      current = false;
+    };
+  }, [client, revision, attempt]);
   return (
-    <Alert tone="warning" title="Reconcile an interrupted save">
+    <Alert tone="info" title="Checking an interrupted save">
       <p>
-        The server may have committed the earlier request. Fetch the affected resource and compare
-        the saved values below with your draft. No request will be retried automatically.
+        Saved state is being checked in the background. You can retry your action; no paid request
+        is retried automatically.
       </p>
-      <Button onClick={() => void fetchAffected()} loading={loading} disabled={loading}>
-        Fetch affected saved resource
-      </Button>
-      {error && (
-        <p role="alert">Reconciliation failed: {error}. The pending save remains blocked.</p>
-      )}
-      {result && (
-        <details open>
-          <summary>Fetched saved state: {result.resource}</summary>
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              maxHeight: "24rem",
-              overflow: "auto",
-            }}
-          >
-            {JSON.stringify(result.snapshot, null, 2)}
-          </pre>
-        </details>
-      )}
-      <Button
-        tone="secondary"
-        disabled={loading || !result}
-        onClick={() => {
-          if (!result) return;
-          try {
-            client.acknowledgePendingSave(result);
-            setResult(null);
-            onReconciled();
-          } catch (cause) {
-            setResult(null);
-            setError(message(cause));
-          }
-        }}
-      >
-        I have compared the fetched saved state
+      {error && <p>Saved state could not be refreshed: {error}</p>}
+      <Button tone="secondary" loading={loading} onClick={() => setAttempt((value) => value + 1)}>
+        Refresh saved state
       </Button>
     </Alert>
   );
 }
+
 export function usePlanning(): {
   client: PlanningClient;
   revision: number;

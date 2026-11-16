@@ -26,6 +26,7 @@ import {
   type ScriptRevision,
 } from "./model";
 
+/** @deprecated Manual /production C3/C4 lifecycle: V8 VideoRun UI replaces; remove in T2. See DEPRECATIONS.md. */
 export class ProductionApiError extends Error {
   public constructor(
     public readonly status: number,

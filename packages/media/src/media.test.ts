@@ -10,7 +10,7 @@ import {
 
 const valid = {
   streams: [
-    { type: "video", codec: "h264", width: 1080, height: 1920, fps: 30, durationSeconds: 2 },
+    { type: "video", codec: "h264", width: 1080, height: 1920, fps: 24, durationSeconds: 2 },
     { type: "audio", codec: "aac", sampleRate: 48000, channels: 2, durationSeconds: 2 },
   ],
 } as const;
@@ -31,16 +31,18 @@ describe("B3/B5 media policy regressions", () => {
     expect(filters).not.toContain("anullsrc");
   });
 
-  it("enforces PNG source dimensions and compatible aspect ratio", () => {
+  it("accepts positive PNG dimensions for scale/crop normalization", () => {
     const invalid: [number, number][] = [
-      [1, 1],
-      [1079, 1920],
-      [1080, 1919],
-      [1920, 1080],
+      [0, 1920],
+      [1080, -1],
+      [NaN, 1920],
     ];
     const valid: [number, number][] = [
       [1080, 1920],
       [2160, 3840],
+      [1024, 1536],
+      [720, 1280],
+      [1920, 1080],
     ];
     for (const [width, height] of invalid) {
       expect(() =>
@@ -48,7 +50,7 @@ describe("B3/B5 media policy regressions", () => {
           { type: "video", codec: "png", width, height },
           DEFAULT_RENDER_PROFILE,
         ),
-      ).toThrow(/PNG/);
+      ).toThrow(/dimensions/);
     }
     for (const [width, height] of valid) {
       expect(() =>

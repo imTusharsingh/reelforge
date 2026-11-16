@@ -29,6 +29,7 @@ import {
   type WorkflowQueuePort,
 } from "./orchestration.types.js";
 
+/** @deprecated M16 GENERATION and 72-hour script wait: V3 VideoRun replaces; remove in T2. See DEPRECATIONS.md. */
 @Module({
   imports: [
     IdentityModule,

@@ -282,7 +282,7 @@ describe("M24 HTTP integration adapter", () => {
     await client().generateScript(input);
     expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual(input);
   });
-  it("keeps failed generation pending until it is reconciled", async () => {
+  it("clears known rejected generation and allows an explicit retry", async () => {
     const storage = new Map<string, string>();
     vi.stubGlobal("window", {});
     vi.stubGlobal("sessionStorage", {
@@ -300,9 +300,9 @@ describe("M24 HTTP integration adapter", () => {
       prompt: "Generate",
     };
     await expect(client().generateScript(input)).rejects.toThrow();
-    expect(pendingSave(idea.workspaceId)).toBe("scripts");
+    expect(pendingSave(idea.workspaceId)).toBeNull();
     await expect(client().generateScript(input)).rejects.toMatchObject({ status: 409 });
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledTimes(2);
     clearPendingSave(idea.workspaceId);
   });
   it("keeps uncertain writes pending and never automatically retries them", async () => {
@@ -319,10 +319,11 @@ describe("M24 HTTP integration adapter", () => {
       uncertain: true,
     });
     expect(pendingSave(idea.workspaceId)).toBe("ideas");
-    await expect(client().createIdea(draftFromIdea(idea))).rejects.toMatchObject({ status: 409 });
-    expect(fetch).toHaveBeenCalledOnce();
+    await expect(client().createIdea(draftFromIdea(idea))).rejects.toMatchObject({
+      uncertain: true,
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
     clearPendingSave(idea.workspaceId);
-    expect(pendingSave(idea.workspaceId)).toBeNull();
   });
   it("cancels requests on workspace teardown", async () => {
     const controller = new AbortController();
@@ -365,7 +366,7 @@ describe("R1 resource-specific interrupted-save reconciliation", () => {
     expect(pendingSave(idea.workspaceId)).toBe("ideas/idea-one");
   });
   it.each([403, 404, 500])(
-    "keeps pending writes blocked after a failed affected-resource read (%s)",
+    "allows explicit retry after a failed background read (%s)",
     async (status) => {
       storage();
       vi.stubGlobal(
@@ -375,7 +376,7 @@ describe("R1 resource-specific interrupted-save reconciliation", () => {
       await expect(client().reconcilePendingSave()).rejects.toThrow();
       expect(pendingSave(idea.workspaceId)).toBe("ideas/idea-one");
       await expect(client().editIdea(idea, draftFromIdea(idea))).rejects.toMatchObject({
-        status: 409,
+        status,
       });
     },
   );

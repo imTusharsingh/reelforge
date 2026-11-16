@@ -34,7 +34,7 @@ const profile = z
     id: z.literal(DEFAULT_RENDER_PROFILE.id),
     width: z.literal(1080),
     height: z.literal(1920),
-    fps: z.literal(30),
+    fps: z.literal(24),
     videoCodec: z.literal("h264"),
     audioCodec: z.literal("aac"),
     audioSampleRate: z.literal(48000),

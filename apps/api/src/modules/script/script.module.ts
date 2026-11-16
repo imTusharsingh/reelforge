@@ -35,7 +35,7 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
       provide: SCRIPT_LLM,
       useFactory: (): ScriptLlmPort => {
         const config = openAiRuntimeConfig();
-        return config.key === undefined
+        return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredScriptLlm()
           : new OpenAiScriptLlm(config.key, config.textModel);
       },
@@ -45,7 +45,7 @@ class NotConfiguredScriptLlm implements ScriptLlmPort {
       useFactory: (): ProviderRegistry => {
         const registry = new ProviderRegistry();
         const config = openAiRuntimeConfig();
-        if (config.key !== undefined) {
+        if (config.key !== undefined && config.textFallbackEnabled) {
           const adapter = new OpenAiScriptLlm(config.key, config.textModel);
           registry.register({
             capability: adapter.capability,

@@ -24,6 +24,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
   }
 }
 
+/** @deprecated M11 single-pass review: V7 critic loop replaces; remove legacy module in T2. See DEPRECATIONS.md. */
 @Module({
   imports: [IdentityModule, WorkspaceModule, CompositionModule, UsageBudgetModule],
   controllers: [QualityController],
@@ -33,7 +34,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
       provide: QUALITY_REVIEW_PORT,
       useFactory: (): QualityReviewPort => {
         const config = openAiRuntimeConfig();
-        return config.key === undefined
+        return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredQualityReviewPort()
           : new OpenAiQualityReviewPort(config.key, config.textModel);
       },

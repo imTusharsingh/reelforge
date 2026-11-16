@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 
 export const RENDER_SCHEMA_VERSION = "1.0" as const;
 export const DEFAULT_RENDER_PROFILE: RenderProfile = Object.freeze({
-  id: "vertical-1080x1920-30-h264",
+  id: "vertical-1080x1920-24-h264",
   width: 1080,
   height: 1920,
-  fps: 30,
+  fps: 24,
   videoCodec: "h264",
   audioCodec: "aac",
   audioSampleRate: 48_000,
@@ -181,16 +181,13 @@ export function validateSourceImageDimensions(stream: MediaStream, profile: Rend
     throw new MediaValidationError("Still inputs must contain one PNG video stream");
   if (stream.width === undefined || stream.height === undefined)
     throw new MediaValidationError("PNG source dimensions are required");
-  if (stream.width < profile.width || stream.height < profile.height)
-    throw new MediaValidationError(
-      `PNG source must be at least ${profile.width}x${profile.height}; tiny images cannot be losslessly normalized`,
-    );
-  const targetRatio = profile.width / profile.height;
-  const sourceRatio = stream.width / stream.height;
-  if (Math.abs(sourceRatio - targetRatio) > 0.01)
-    throw new MediaValidationError(
-      `PNG source must be approximately ${profile.width}:${profile.height} aspect ratio before profile normalization`,
-    );
+  if (
+    !Number.isSafeInteger(stream.width) ||
+    !Number.isSafeInteger(stream.height) ||
+    stream.width <= 0 ||
+    stream.height <= 0
+  )
+    throw new MediaValidationError(`Source dimensions must be positive for ${profile.id}`);
 }
 
 export function buildCompositionArguments(

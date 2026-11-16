@@ -40,7 +40,8 @@ import {
   profileFromJson,
 } from "../character/character.validation.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
-import { parseScriptDocument } from "../script/script.validation.js";
+import { NarratorVoiceSchema } from "@reelforge/contracts";
+import { parseScriptDocument, validateScript } from "../script/script.validation.js";
 import type { ScriptScene } from "../script/script.types.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import {
@@ -759,6 +760,7 @@ export class SceneMediaService {
       );
     }
     const document = parseScriptDocument(revision.document);
+    validateScript(document);
     const [config, prompt] = await Promise.all([
       this.db.configSnapshot.findUnique({
         where: {
@@ -783,10 +785,26 @@ export class SceneMediaService {
       throw new ConflictException("Prompt snapshot fingerprint does not match its content");
     }
     const budget = await this.db.providerBudget.findFirst({
-      where: { workspaceId: context.workspaceId, channelId: script.channelId },
+      where: {
+        workspaceId: context.workspaceId,
+        OR: [{ channelId: script.channelId }, { channelId: null }],
+      },
+      orderBy: { channelId: "asc" },
       select: { id: true },
     });
     if (!budget) throw new ConflictException("No workspace provider budget is configured");
+    const voice =
+      script.channelId === null
+        ? undefined
+        : await this.db.channel.findFirst({
+            where: { workspaceId: context.workspaceId, id: script.channelId },
+            select: { narratorVoice: true },
+          });
+    const narrator = NarratorVoiceSchema.safeParse(voice?.narratorVoice);
+    const narratorVoice =
+      narrator.success && narrator.data.providerId === this.tts.capability.providerId
+        ? narrator.data.voiceId
+        : undefined;
     const scenes: PlannedScene[] = [];
     for (const [ordinal, scene] of document.scenes.entries()) {
       const characters = await this.resolveCharacters(context, scene);
@@ -800,6 +818,7 @@ export class SceneMediaService {
         scene,
         ordinal,
         characters,
+        ...(narratorVoice === undefined ? {} : { narratorVoice }),
         referenceImageIds: [
           ...new Set(characters.flatMap((character) => character.referenceAssetIds)),
         ],
@@ -815,6 +834,7 @@ export class SceneMediaService {
           promptSnapshotId: prompt.id,
           promptFingerprint: prompt.fingerprintSha256,
           sceneId: scene.id,
+          narratorVoice: narratorVoice ?? null,
           characters: summary,
         },
       });
@@ -1403,7 +1423,10 @@ export class SceneMediaService {
     }
     assertTtsCapability(capability, correlationId);
     const lane = kind === "NARRATION" ? "narration" : "dialogue";
-    if (!planned.characters.some((character) => readVoice(character.voicePreference, lane))) {
+    if (
+      !(kind === "NARRATION" && planned.narratorVoice) &&
+      !planned.characters.some((character) => readVoice(character.voicePreference, lane))
+    ) {
       throw new MissingVoiceError();
     }
   }
@@ -1442,9 +1465,11 @@ export class SceneMediaService {
       });
     }
     const lane = kind === "NARRATION" ? "narration" : "dialogue";
-    const voice = planned.characters
-      .map((character) => readVoice(character.voicePreference, lane))
-      .find((value): value is string => value !== undefined);
+    const voice =
+      (kind === "NARRATION" ? planned.narratorVoice : undefined) ??
+      planned.characters
+        .map((character) => readVoice(character.voicePreference, lane))
+        .find((value): value is string => value !== undefined);
     if (!voice) throw new MissingVoiceError();
     const text = kind === "NARRATION" ? (planned.scene.narration ?? "") : planned.scene.dialogue;
     return this.tts.synthesize({ text, voice, correlationId });

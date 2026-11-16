@@ -1232,3 +1232,8 @@ M27 hosted baseline evidence: PR CI run 43390832035 passed on b04cea0. Push run 
 ## 2026-11-13 — #80 documentation closeout
 
 Reconciled PROJECT_STATE and M20–M29 STATUS (M28 remains not started), plus C3/C4 M09/M10 records, against merged PR/head/merge metadata through main 94f0f53. Recorded C1–C5, M26/M27, #72/#98, public visibility and ADR-020 process decisions. #78 and #79 remain open; live verification and production release are not inferred from integration. Docs-only; no code, CI, schema, dependency, review, approval or merge action. Original session evidence is preserved rather than silently promoted to new test results.
+
+
+## 2026-11-16 — M00 Wave 0 foundations pack (PR B)
+
+Owner-assigned LOCKED v2.0 foundations on `work/m00-wave0-foundations`, from main bb39fc3; decision pack is PR #110. Added contracts, tenant-guarded persistence, one offline seed/migration, fresh-install fixes 1–5, retired OpenAI video removal, strangler flag, deprecation inventory and local tooling. Exact verification and changed files: WAVE0_FOUNDATIONS_STATUS.md. IMPLEMENTED_PENDING_REVIEW; no self-approval, live-provider calls, ci.yml/PROJECT_STATE edits or merge.

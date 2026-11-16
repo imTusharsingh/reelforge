@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 --if-present build",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "format": "prettier --write .",
@@ -21,7 +21,12 @@
     "db:migrate:dev": "pnpm --filter @reelforge/database db:migrate:dev",
     "db:migrate:deploy": "pnpm --filter @reelforge/database db:migrate:deploy",
     "prepare": "husky || true",
-    "test:e2e": "node scripts/run-e2e.mjs"
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "knip": "node scripts/check-knip.mjs",
+    "knip:baseline": "node scripts/check-knip.mjs --write-baseline",
+    "test:coverage:changed": "node scripts/check-changed-coverage.mjs",
+    "lint:size": "eslint . --max-warnings=0",
+    "quality": "pnpm lint && pnpm typecheck && pnpm knip"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
@@ -30,8 +35,11 @@
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@vitest/coverage-v8": "5.1.0",
     "eslint": "10.14.0",
     "husky": "9.1.7",
+    "jsdom": "27.3.0",
+    "knip": "6.22.0",
     "lint-staged": "17.6.0",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
