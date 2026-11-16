@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const migrationsDir = join("packages", "database", "prisma", "migrations");
 const mainRef = process.env.MIGRATION_BASE_REF ?? "origin/main";
+const directMainPush =
+  process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF === "refs/heads/main";
 const entries = (await readdir(migrationsDir, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
@@ -29,24 +31,61 @@ for (const name of migrationNames) {
   }
 }
 
-async function git(args) {
+function detail(error) {
+  return typeof error.stderr === "string" ? error.stderr.trim() : error.message;
+}
+
+async function git(args, failure) {
   try {
     const { stdout } = await execFileAsync("git", args);
     return stdout;
   } catch (error) {
-    const detail = typeof error.stderr === "string" ? error.stderr.trim() : error.message;
-    throw new Error(`Migration guard could not compare with ${mainRef}: ${detail}`);
+    throw new Error(`Migration guard could not ${failure}: ${detail(error)}`);
   }
 }
 
-// Compare against the merge base with main, never an event-specific parent SHA.
-// Migrations added on a branch remain additions even after later edits; only
-// files already reachable from main are immutable.
-const mergeBase = (await git(["merge-base", mainRef, "HEAD"])).trim();
-if (!mergeBase) {
+async function resolveMergeBase() {
+  try {
+    const { stdout } = await execFileAsync("git", ["merge-base", mainRef, "HEAD"]);
+    const mergeBase = stdout.trim();
+    if (mergeBase) return mergeBase;
+  } catch (error) {
+    throw new Error(
+      `Migration guard needs ${mainRef}; fetch it with "git fetch origin main:refs/remotes/origin/main" or set MIGRATION_BASE_REF. ${detail(error)}`,
+    );
+  }
   throw new Error(`Could not find a merge base between ${mainRef} and HEAD.`);
 }
-const diff = await git(["diff", "--name-status", mergeBase, "HEAD", "--", `${migrationsDir}/`]);
+
+async function resolvePushBefore() {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath) {
+    throw new Error(
+      "Migration guard cannot read github.event.before: GITHUB_EVENT_PATH is unavailable on this main push.",
+    );
+  }
+  let event;
+  try {
+    event = JSON.parse(await readFile(eventPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Migration guard could not read github.event.before: ${error.message}`);
+  }
+  const before = typeof event.before === "string" ? event.before.trim() : "";
+  if (!before || /^0+$/.test(before)) return "";
+  return (
+    await git(["rev-parse", "--verify", `${before}^{commit}`], `resolve push before ${before}`)
+  ).trim();
+}
+
+// Branch pushes and PRs compare against the merge base with main. A direct push
+// to main compares against github.event.before, because its merge base is HEAD.
+const mergeBase = await resolveMergeBase();
+const pushBefore = directMainPush ? await resolvePushBefore() : "";
+const base = pushBefore || mergeBase;
+const diff = await git(
+  ["diff", "--name-status", base, "HEAD", "--", `${migrationsDir}/`],
+  `compare migrations from ${base}`,
+);
 const changedExisting = diff
   .trim()
   .split("\n")
