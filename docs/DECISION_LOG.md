@@ -53,6 +53,8 @@ This log is append-only. An approved decision may be superseded by a later appro
 
 ## ADR-009 - Recommendations do not auto-mutate channel settings in v1
 
+- **Amended by:** ADR-026 (bounded scoring weights and format mix).
+
 - **Status:** APPROVED BASELINE
 - **Decision:** Learning engine produces evidence-linked recommendations. User approval is required before changing strategy/configuration.
 - **Consequence:** Learning is controlled and auditable; no reinforcement loop that silently changes behavior.
@@ -64,6 +66,8 @@ This log is append-only. An approved decision may be superseded by a later appro
 - **Consequence:** Test fixtures prove local logic, not external integration. Production readiness requires explicit live evidence when authorized.
 
 ## ADR-011 - v1 non-goals
+
+- **Amended by:** ADR-028 (official-data trend discovery clarification).
 
 - **Status:** APPROVED BASELINE
 - **Decision:** No competitor scraping, visual workflow builder, full video timeline editor, comments/DM automation, subscription billing, custom model training, TikTok, or Facebook Reels in v1.
@@ -133,10 +137,12 @@ CI pins verified on integrated `main` in `.github/workflows/ci.yml`: runner `ubu
 
 ## ADR-017 - M16 orchestration Core decisions and M17/M18 parallel plan
 
+- **Amended by:** ADR-027 item 2 (script wait only at L1).
+
 - **Status:** APPROVED (Core Reviewer Minu; recorded as part of the M16 integration closeout after PR #29 was approved at `1fbe818174ebdfd87218ca5d68e3ad5f6ff17e5c`, review `5839211545`, and squash-merged at `602183aeed1f2fe9fa086cf819f86fc7de07bb72`).
 - **Decision:**
   1. `ioredis` 5.11.1 is pinned in `apps/api` and `apps/worker` as the Redis client for BullMQ 6.6.0 (ADR-012). A set but unreachable `REDIS_URL` fails loudly; an unset `REDIS_URL` stays NOT_CONFIGURED.
-  2. A generated run's script step waits (polled, up to 72 h) for human M07 script approval before scene media, because M09 refuses unapproved scripts. This follows ADR-005 (human approval by default).
+  2. **Amended by ADR-027:** The historical decision below applies only at L1 after the amendment. A generated run's script step waits (polled, up to 72 h) for human M07 script approval before scene media, because M09 refuses unapproved scripts. This follows ADR-005 (human approval by default).
   3. M17 and M18 are implemented in parallel worktrees with fixed migration timestamps: M17 `20261116010000`, M18 `20261117010000`. M17 merges first; M18 then rebases onto it.
   4. M18 provides the real `BudgetPolicyPort` adapter. Until it is bound, scheduled runs stay blocked with `BUDGET_POLICY_UNAVAILABLE`; manual runs are allowed.
 - **Consequence:** Changing the Redis client, removing the script approval wait, or changing the M17/M18 migration order requires a later ADR.
@@ -244,16 +250,17 @@ Each pending decision must be resolved in an ADR before the affected production 
 
 - **Status:** Owner-directed LOCKED v2.0 plan, 2026-11-16; implementation PRs require independent official Minu review. Supersedes ADR-025's provider strategy.
 - **Decision:** Gemini Omni 1.2 Flash is the primary video model; xAI Grok Imagine 1.5 is the fallback. Plan video generation at 720p with a $6 target and $8 hard cap per Short. The final delivery profile is 1080×1920, 24 fps, H.264; normalization preserves Gemini's 24 fps cadence. Default workspace allowances are $20/day and $180/month.
-- **Dispatch:** Capability selection must be explicit and provider-neutral. Fallback never bypasses authorization, remaining budget, idempotency, rights or safety gates. These model choices are owner requirements, not claims of verified API compatibility or prices. V2 supplies adapters and independent capability evidence; Wave 0 makes no provider calls and adds no new adapters.
+- **Dispatch:** Route by tier, capability fit, price and health. Fall back to xAI only on provider outage (circuit breaker on 5xx/timeouts). A content refusal gets one prompt rewrite, then NEEDS_HUMAN; never switch vendor on refusal. A 429 or spend-rate limit uses backoff and the per-provider concurrency limiter, never a vendor switch. On fallback, re-estimate remaining shots at fallback rates and drop the reshoot reserve if needed to stay at or below $8. Capability selection must be explicit and provider-neutral. Fallback never bypasses authorization, remaining budget, idempotency, rights or safety gates. These model choices are owner requirements, not claims of verified API compatibility or prices. V2 supplies adapters and independent capability evidence; Wave 0 makes no provider calls and adds no new adapters.
 - **Transition:** Delete the dead OpenAiVideoProvider and all video binding/tests in Wave 0 (sora-2 shutdown: 2026-09-24). OpenAI text is a configurable fallback only. Existing OpenAI image/TTS remain until V2 replaces and removes them in the same PR. Empty GEMINI_API_KEY and XAI_API_KEY examples are configuration documentation, never credentials.
-- **Amends ADR-009:** Permit bounded automatic adjustment of scoring weights only within explicit channel-approved minimum/maximum bounds and a fixed normalization policy. Record old/new weights, evidence, critic agreement and rollback provenance. Strategy, spend caps, autonomy and hard gates are outside this exception and still require approval. Missing bounds mean recommendations only. No tuning engine is implemented in Wave 0.
+- **Amends ADR-009:** Permit bounded automatic adjustment of scoring weights and format mix only within explicit channel-approved minimum/maximum bounds and a fixed normalization policy. Record old/new weights, evidence, critic agreement and rollback provenance. Strategy, spend caps, autonomy and hard gates are outside this exception and still require approval. Missing bounds mean recommendations only. No tuning engine is implemented in Wave 0.
 - **Consequence:** Seed/startup/health/tests remain offline under ADR-010; paid dispatch retains M08/M18 reservation semantics. No fabricated capabilities, success or cost reconciliation.
 
 ## ADR-027 — VideoRun state and BullMQ flows
 
 - **Status:** Owner-directed LOCKED v2.0 plan, 2026-11-16; pending independent implementation review.
 - **Decision:** VideoRun is the durable Postgres state machine; BullMQ flows coordinate dependency jobs. Do not introduce Temporal. Persist workspace/channel ownership, versioned brief, immutable reference versions, shots, step attempts, idempotency/correlation, provider jobs, run events and budget envelopes before orchestration work begins.
-- **States:** CREATED, QUEUED, RUNNING, WAITING_APPROVAL, PAUSED, PAUSED_BUDGET, NEEDS_HUMAN, SUCCEEDED, FAILED and CANCELLED. PAUSED_BUDGET blocks further paid dispatch; NEEDS_HUMAN requires an explicit decision. Terminal results and immutable inputs survive retries and worker restarts. Persist step attempts and event sequence numbers so retries cannot erase prior work.
+- **States:** PLANNING, SCRIPTING, SHOT_PLANNING, GENERATING, ASSEMBLING, CRITIC, AWAITING_APPROVAL, SCHEDULED, PUBLISHED, LEARNING, PAUSED_BUDGET, NEEDS_HUMAN, FAILED and CANCELED. Run states are separate from step-level attempt states.
+- **Allowed transitions:** Initial → PLANNING → SCRIPTING → SHOT_PLANNING → GENERATING → ASSEMBLING → CRITIC → AWAITING_APPROVAL → SCHEDULED → PUBLISHED → LEARNING → terminal. Additional edges: CRITIC → GENERATING (reshoot); GENERATING → PAUSED_BUDGET → GENERATING; CRITIC → NEEDS_HUMAN → GENERATING; PLANNING → CANCELED; GENERATING → FAILED. Every transition is a server-side guarded update under ADR-006; LLMs never choose transitions. PAUSED_BUDGET blocks further paid dispatch; NEEDS_HUMAN requires an explicit decision. Persist attempts and event sequences across retries/restarts. The ADR-019 emergency stop blocks paid dispatch and step progression with a persisted pause reason; it does not add a run state or replace emergency-stop enforcement.
 - **Compatibility:** pipeline.v2 is off by default. Wave 0 adds contracts and persistence beside the old flow only. V3 builds the orchestrator; V8 switches UI; T2 deletes the old flow. No orchestrator, agents, provider adapters or new UI ships in this foundation pack.
 - **Amends ADR-017 item 2:** Script approval waits occur only at L1. L2/L3 progress without a separate script wait; L2 still requires final approval before publish. The historical GENERATION and 72-hour polling path is deprecated and removed by T2 after V3/V8 adoption.
 - **Consequence:** Every new table is workspace-owned under ADR-003. Run state never grants permission to bypass the ADR-019 emergency stop, including resumed/retried VideoRuns. Broker state is never the sole source of truth.
@@ -261,8 +268,8 @@ Each pending decision must be resolved in an ADR before the affected production 
 ## ADR-028 — Autonomy, first ten Shorts and publishing gates
 
 - **Status:** Owner-directed LOCKED v2.0 plan, 2026-11-16; pending independent implementation review.
-- **Decision:** L1 requires script approval and final publish approval. L2 generates through final review and requires approve-before-publish. L3 permits automatic publish only with configured thresholds and all hard gates passing. L2 is the default and is forced for a channel's first ten published Shorts; once ten are published, offer L3 with the critic-agreement score and require an explicit channel opt-in. Reaching ten never silently enables L3.
-- **Counting:** Count confirmed published Shorts per channel, not generation attempts, failed uploads, retries or workspace-wide totals. Store requested and effective autonomy separately so the first-ten restriction is auditable. The first-ten rule overrides a requested L1/L3 during that introductory period.
+- **Decision:** L1 approves each stage (idea choice, script/shot list, final cut and publish slot). L2 approves before publish and is the default. L3 permits automatic publish only with configured thresholds and all hard gates passing. During a channel's first ten approved Shorts, L3 is unavailable: a requested L3 runs as L2; L1 and L2 are honored. After ten approved Shorts, always offer L3 with the critic-agreement score shown (recommended at 8/10 or better), requiring explicit opt-in. An L3 gate failure falls back to L2 for that run and lands in the approval inbox. Reaching ten never silently enables L3.
+- **Counting:** Count approved Shorts per channel, not published uploads, generation attempts, retries or workspace totals. Store requested and effective autonomy separately and persist approvedShortsAtStart so the first-ten restriction is auditable.
 - **Gates:** ADR-005 continues to require every rights, safety, technical, permission and policy hard gate plus the score threshold for auto-publish. Critic agreement informs the L3 offer and never replaces those gates. ADR-019's emergency stop applies to every VideoRun at paid dispatch and step boundaries, at all autonomy levels.
-- **Amends ADR-011:** Autonomous progression through script/media/critic steps is in V1 scope under these bounded levels; script waits apply only to L1 after the introductory rule. Existing unrelated non-goals remain unchanged. ADR-009's bounded scoring-weight exception is defined in ADR-026.
+- **Amends ADR-011:** V10 discovery through official YouTube Data API data and Gemini Search grounding is not competitor scraping. The existing competitor-scraping exclusion and other product-v1 non-goals remain unchanged. V1 here is the foundations requirement, not a product-release scope expansion. Autonomy is governed by this ADR, with script waits only at L1; ADR-009's bounded scoring-weight/format-mix exception is defined in ADR-026.
 - **Consequence:** Wave 0 persists these contracts/defaults; later requirements implement the offer, critic scoring and UI. No automatic publishing behavior is enabled by this ADR or by seeding.
