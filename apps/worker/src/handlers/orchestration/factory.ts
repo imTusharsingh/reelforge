@@ -1,3 +1,4 @@
+import { createVideoRunsConsumer, type VideoRunsConsumer } from "./video-runs.js";
 import { NestFactory } from "@nestjs/core";
 import type { INestApplicationContext } from "@nestjs/common";
 import { AppModule } from "@reelforge/api/app-module";
@@ -7,6 +8,7 @@ import { createOrchestrationConsumer, type OrchestrationConsumer } from "./consu
 export type OrchestrationRuntime = Readonly<{
   service: OrchestrationService;
   consumer: OrchestrationConsumer | null;
+  videoRuns?: VideoRunsConsumer;
   close: () => Promise<void>;
 }>;
 
@@ -39,10 +41,16 @@ export async function createOrchestrationRuntime(
       options.onError ? { onError: options.onError } : {},
     );
   }
+  const videoRuns =
+    redisUrl && env.PIPELINE_V2 === "true"
+      ? await createVideoRunsConsumer(app, redisUrl)
+      : undefined;
   return {
+    ...(videoRuns ? { videoRuns } : {}),
     service,
     consumer,
     close: async (): Promise<void> => {
+      await videoRuns?.close();
       await consumer?.close();
       await service.close();
       await app.close();
