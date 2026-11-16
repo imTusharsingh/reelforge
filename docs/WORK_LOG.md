@@ -1232,3 +1232,8 @@ M27 hosted baseline evidence: PR CI run 43390832035 passed on b04cea0. Push run 
 ## 2026-11-13 — #80 documentation closeout
 
 Reconciled PROJECT_STATE and M20–M29 STATUS (M28 remains not started), plus C3/C4 M09/M10 records, against merged PR/head/merge metadata through main 94f0f53. Recorded C1–C5, M26/M27, #72/#98, public visibility and ADR-020 process decisions. #78 and #79 remain open; live verification and production release are not inferred from integration. Docs-only; no code, CI, schema, dependency, review, approval or merge action. Original session evidence is preserved rather than silently promoted to new test results.
+
+
+## 2026-11-16 — M00 Wave 0 decision pack (PR A)
+
+Owner-assigned LOCKED v2.0 foundations: recorded ADR-026–028, amended ADR-009/011/017 explicitly, and marked ADR-025 superseded. Branch: work/m00-wave0-decisions. IMPLEMENTED_PENDING_REVIEW; no provider calls, CI/PROJECT_STATE changes or merge. Validation evidence is in WAVE0_DECISIONS_STATUS.md.
