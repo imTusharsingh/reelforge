@@ -41,7 +41,10 @@ export async function createOrchestrationRuntime(
       options.onError ? { onError: options.onError } : {},
     );
   }
-  const videoRuns = redisUrl ? await createVideoRunsConsumer(app, redisUrl) : undefined;
+  const videoRuns =
+    redisUrl && env.PIPELINE_V2 === "true"
+      ? await createVideoRunsConsumer(app, redisUrl)
+      : undefined;
   return {
     ...(videoRuns ? { videoRuns } : {}),
     service,

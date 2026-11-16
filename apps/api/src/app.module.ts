@@ -45,7 +45,7 @@ import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
     NotificationsModule,
     UsageBudgetModule,
     AdminModule,
-    RunsModule,
+    ...(process.env.PIPELINE_V2 === "true" ? [RunsModule] : []),
   ],
   controllers: [HealthController],
 })
