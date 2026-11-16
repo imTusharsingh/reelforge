@@ -1,4 +1,5 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { seedWorkspaceFoundations } from "@reelforge/database";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceRepository } from "./workspace.repository.js";
 
@@ -55,15 +56,15 @@ export class WorkspaceService {
   }
 
   public async create(userId: string, name: string): Promise<{ id: string; name: string }> {
-    const workspace = await this.db.workspace.create({
-      data: { name: name.trim(), memberships: { create: { userId, role: "OWNER" } } },
-      select: { id: true, name: true },
+    return this.db.$transaction(async (tx) => {
+      const workspace = await tx.workspace.create({
+        data: { name: name.trim(), memberships: { create: { userId, role: "OWNER" } } },
+        select: { id: true, name: true },
+      });
+      await seedWorkspaceFoundations(tx, workspace.id);
+      await tx.user.update({ where: { id: userId }, data: { defaultWorkspaceId: workspace.id } });
+      return workspace;
     });
-    await this.db.user.update({
-      where: { id: userId },
-      data: { defaultWorkspaceId: workspace.id },
-    });
-    return workspace;
   }
 
   /**

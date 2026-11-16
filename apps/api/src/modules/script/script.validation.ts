@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { z } from "zod";
+import { HookSchema, CtaSchema, scriptWordBudget } from "@reelforge/contracts";
 import type { ScriptDocument } from "./script.types.js";
 
 const scene = z.object({
@@ -16,21 +17,27 @@ const scene = z.object({
   audioCues: z.array(z.string()),
   transition: z.string().optional(),
 });
-export const scriptDocumentSchema = z.object({
-  schemaVersion: z.literal("1.0"),
-  title: z.string().min(1),
-  hook: z.string().min(1),
-  dialogue: z.string(),
-  narration: z.string().optional(),
-  cta: z.string().min(1),
-  metadata: z.object({
-    genre: z.string().min(1),
-    targetDurationSeconds: z.number().finite().positive(),
-    factual: z.boolean(),
-  }),
-  scenes: z.array(scene).min(1),
-  claims: z.array(z.object({ text: z.string().min(1), sourceUrl: z.string().url() })).optional(),
-});
+export const scriptDocumentSchema = z
+  .object({
+    schemaVersion: z.literal("1.0"),
+    title: z.string().min(1),
+    hook: HookSchema,
+    dialogue: z.string(),
+    narration: z.string().optional(),
+    cta: CtaSchema,
+    metadata: z.object({
+      genre: z
+        .string()
+        .trim()
+        .transform((value) => value || "Explainer")
+        .default("Explainer"),
+      targetDurationSeconds: z.number().finite().positive(),
+      factual: z.boolean(),
+    }),
+    scenes: z.array(scene).min(1),
+    claims: z.array(z.object({ text: z.string().min(1), sourceUrl: z.string().url() })).optional(),
+  })
+  .refine(scriptWordBudget, "Script words exceed the duration budget (210 words/minute)");
 export function parseScriptDocument(value: unknown): ScriptDocument {
   const result = scriptDocumentSchema.safeParse(value);
   if (!result.success) throw new BadRequestException(result.error.issues);

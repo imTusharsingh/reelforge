@@ -22,7 +22,7 @@ import { OpenAiInsightReportLlm, openAiRuntimeConfig } from "../openai/openai.ad
       provide: INSIGHT_REPORT_LLM,
       useFactory: (): InsightReportLlmPort => {
         const config = openAiRuntimeConfig();
-        return config.key === undefined
+        return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredInsightReportLlm()
           : new OpenAiInsightReportLlm(config.key, config.textModel);
       },

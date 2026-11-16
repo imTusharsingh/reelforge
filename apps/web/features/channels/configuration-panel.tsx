@@ -13,6 +13,7 @@ import {
   SavedData,
   useResource,
 } from "./ui";
+/** @deprecated M23 old config screen replaced by V7 Brief editor, removed in T2. See DEPRECATIONS.md. */
 export function ConfigurationPanel({ channelId }: { channelId: string }): JSX.Element {
   const config = useResource("config", false, "record");
   const [snapshot, setSnapshot] = useState("");

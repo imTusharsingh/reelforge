@@ -14,10 +14,10 @@ export type RenderInput = {
   schemaVersion: "1.0";
   title: string;
   profile: {
-    id: "vertical-1080x1920-30-h264";
+    id: "vertical-1080x1920-24-h264";
     width: 1080;
     height: 1920;
-    fps: 30;
+    fps: 24;
     videoCodec: "h264";
     audioCodec: "aac";
     audioSampleRate: 48000;
@@ -104,10 +104,10 @@ export function makeRenderInput(
     schemaVersion: "1.0",
     title: revision.document.title,
     profile: {
-      id: "vertical-1080x1920-30-h264",
+      id: "vertical-1080x1920-24-h264",
       width: 1080,
       height: 1920,
-      fps: 30,
+      fps: 24,
       videoCodec: "h264",
       audioCodec: "aac",
       audioSampleRate: 48000,

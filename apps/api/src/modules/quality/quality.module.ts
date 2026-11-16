@@ -24,6 +24,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
   }
 }
 
+/** @deprecated M11 single-pass review replaced and deleted in V6; obsolete DB data removal waits for T2 ADR/migration. See DEPRECATIONS.md. */
 @Module({
   imports: [IdentityModule, WorkspaceModule, CompositionModule, UsageBudgetModule],
   controllers: [QualityController],
@@ -33,7 +34,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
       provide: QUALITY_REVIEW_PORT,
       useFactory: (): QualityReviewPort => {
         const config = openAiRuntimeConfig();
-        return config.key === undefined
+        return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredQualityReviewPort()
           : new OpenAiQualityReviewPort(config.key, config.textModel);
       },

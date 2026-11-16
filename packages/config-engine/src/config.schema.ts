@@ -322,7 +322,7 @@ export const platformDefaults: CreativeConfig = CreativeConfigSchema.parse({
   duration: { minSeconds: 15, maxSeconds: 60 },
   safetyProfile: { level: "standard", requiresHumanReview: true },
   characters: [],
-  video: { aspectRatio: "9:16", width: 1080, height: 1920, frameRate: 30 },
+  video: { aspectRatio: "9:16", width: 1080, height: 1920, frameRate: 24 },
   policies: {},
   prompt: { templateRefs: [] },
   platformPolicy: {

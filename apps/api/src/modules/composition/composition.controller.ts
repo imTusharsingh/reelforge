@@ -22,6 +22,7 @@ import {
 import { CompositionService } from "./composition.service.js";
 import type { RenderJobView } from "./composition.types.js";
 import type { RenderManifest } from "./composition.manifest.js";
+/** @deprecated C4 manual render-start wrapper replaced by V8 Run Timeline, removed in T2; renderer remains. See DEPRECATIONS.md. */
 @Controller("workspaces/:workspaceId/composition")
 @UseGuards(AuthGuard)
 export class CompositionController {

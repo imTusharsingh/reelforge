@@ -8,6 +8,7 @@ export type ChannelInput = Readonly<{
   language?: string;
   audience?: string;
   timezone?: string;
+  narratorVoice?: { providerId: string; voiceId: string; language: string };
   goals?: JsonValue;
   schedule?: JsonValue;
   automationDefaults?: JsonValue;

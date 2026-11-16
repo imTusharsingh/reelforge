@@ -20,3 +20,5 @@ packages/database/src/generated/prisma/
 playwright-report/
 test-results/
 .e2e/
+
+work/coverage/

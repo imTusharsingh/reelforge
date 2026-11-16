@@ -1234,6 +1234,14 @@ M27 hosted baseline evidence: PR CI run 43390832035 passed on b04cea0. Push run 
 Reconciled PROJECT_STATE and M20–M29 STATUS (M28 remains not started), plus C3/C4 M09/M10 records, against merged PR/head/merge metadata through main 94f0f53. Recorded C1–C5, M26/M27, #72/#98, public visibility and ADR-020 process decisions. #78 and #79 remain open; live verification and production release are not inferred from integration. Docs-only; no code, CI, schema, dependency, review, approval or merge action. Original session evidence is preserved rather than silently promoted to new test results.
 
 
+## 2026-11-16 — M00 Wave 0 foundations pack (PR B)
+
+Owner-assigned LOCKED v2.0 foundations on `work/m00-wave0-foundations`, from main bb39fc3; decision pack is PR #110. Added contracts, tenant-guarded persistence, one offline seed/migration, fresh-install fixes 1–5, retired OpenAI video removal, strangler flag, deprecation inventory and local tooling. Exact verification and changed files: WAVE0_FOUNDATIONS_STATUS.md. IMPLEMENTED_PENDING_REVIEW; no self-approval, live-provider calls, ci.yml/PROJECT_STATE edits or merge.
+
+
+## 2026-11-16 — PR #111 issue #112 review corrections
+
+Source: issue #112 in full and official Minu review 5916107268. Addressed B1–B8: exact states/map, Director/provider/Brief/envelope fields, approved-Short autonomy, seven role prompts, default genre fallback and Page-aligned deprecations. Script retry identity survives background acknowledgement and reload, preventing a second paid dispatch; regression tests cover client and real API/M18. Split the touched planning model/test assemblies into files under 400 lines; no baseline expansion. Edited the one unmerged migration in place. Non-blocking follow-ups are documented with their owning requirement. Until V2, local OpenAI text fallback needs OPENAI_TEXT_FALLBACK_ENABLED=true plus its key. Branch updated by merging main; docs #110 fixed/pushed first and re-requested for Minu review. Exact evidence and changed paths: WAVE0_FOUNDATIONS_STATUS.md. No CI/PROJECT_STATE changes, live calls, self-approval or merge.
 ## 2026-11-16 — M00 Wave 0 decision pack (PR A)
 
 Owner-assigned LOCKED v2.0 foundations: recorded ADR-026–028, amended ADR-009/011/017 explicitly, and marked ADR-025 superseded. Branch: work/m00-wave0-decisions. IMPLEMENTED_PENDING_REVIEW; no provider calls, CI/PROJECT_STATE changes or merge. Validation evidence is in WAVE0_DECISIONS_STATUS.md.
@@ -1242,3 +1250,8 @@ Owner-assigned LOCKED v2.0 foundations: recorded ADR-026–028, amended ADR-009/
 ## 2026-11-16 — PR #110 official-review corrections
 
 Issue #112 and final fix comment supersede the earlier assumptions. Addressed review 5916101792 B1/B2 and notes 1–3: exact run state/edge list, approved-Short first-ten policy preserving L1, amendment pointers, ADR-011 clarification, outage-only fallback and refusal/429/cost rules. Merged origin/main (already current). Documentation only; full-suite evidence in WAVE0_DECISIONS_STATUS.md. Remains IMPLEMENTED_PENDING_REVIEW; no merge or self-approval.
+
+
+## 2026-11-16 — Merge approved decision prerequisite into PR #111
+
+Official Minu re-review approved #110 head ef34d69 and Minu squash-merged it as cd39f30. The implementer merged origin/main into the existing foundations branch, preserving both append-only work-log histories. No force-push/rebase or implementer PR merge. Final code checks and full suite follow on that merged head.

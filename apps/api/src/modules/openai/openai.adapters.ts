@@ -16,8 +16,6 @@ import {
   type QualityReviewResult,
   type TtsProviderPort,
   type TtsRequest,
-  type VideoProviderPort,
-  type VideoRequest,
 } from "@reelforge/ai-providers";
 import type {
   InsightNarrativeInput,
@@ -37,19 +35,9 @@ const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts";
 export const OPENAI_TEXT_TIMEOUT_MS = 60_000;
 export const OPENAI_IMAGE_TIMEOUT_MS = 120_000;
 export const OPENAI_TTS_TIMEOUT_MS = 60_000;
-export const OPENAI_VIDEO_SUBMIT_TIMEOUT_MS = 30_000;
-export const OPENAI_VIDEO_POLL_INTERVAL_MS = 5_000;
-export const OPENAI_VIDEO_POLL_TIMEOUT_MS = 30_000;
-export const OPENAI_VIDEO_CONTENT_TIMEOUT_MS = 30_000;
-export const OPENAI_VIDEO_OVERALL_TIMEOUT_MS = 15 * 60_000;
 export const OPENAI_TEXT_ESTIMATE_USD = 2;
 export const OPENAI_IMAGE_ESTIMATE_USD = 10;
 export const OPENAI_TTS_ESTIMATE_USD = 1;
-export const OPENAI_VIDEO_ESTIMATE_USD = 100;
-/** Durations accepted by the documented OpenAI Videos API create body. */
-export const OPENAI_VIDEO_SECONDS = [4, 8, 12] as const;
-const VIDEO_SIZE = "720x1280";
-const JOB_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const ideaProposalSchema = z
   .object({
@@ -102,7 +90,7 @@ function textCapability(capabilityId: string, amount: number): CapabilityMetadat
 
 function mediaCapability(
   capabilityId: string,
-  kind: "image" | "video" | "tts",
+  kind: "image" | "tts",
   amount: number,
   asynchronous = false,
 ): CapabilityMetadata {
@@ -110,15 +98,13 @@ function mediaCapability(
     providerId: "openai",
     capabilityId,
     kind,
-    input: kind === "tts" ? ["text"] : ["text"],
-    output: [kind === "tts" ? "audio/mpeg" : kind === "image" ? "image/png" : "video/mp4"],
+    input: ["text"],
+    output: [kind === "tts" ? "audio/mpeg" : "image/png"],
     supportsReferenceImages: false,
     asynchronous,
     polling: asynchronous,
     regions: ["global"],
-    ...(kind === "video" ? { durationSeconds: { min: 4, max: 12 } } : {}),
     ...(kind === "image" ? { resolution: { maxWidth: 1536, maxHeight: 1536 } } : {}),
-    ...(kind === "video" ? { resolution: { maxWidth: 1280, maxHeight: 1280 } } : {}),
     costModel: { currency: "USD", unit: "request", amount },
   };
 }
@@ -132,19 +118,13 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-function providerError(
-  status: number,
-  message: string,
-  correlationId: string,
-  providerJobId?: string,
-): ProviderError {
+function providerError(status: number, message: string, correlationId: string): ProviderError {
   const code =
     status === 408 || status === 429 || status >= 500
       ? "PROVIDER_UNAVAILABLE"
       : "PROVIDER_REJECTED";
   return new ProviderError(code, message, correlationId, {
     providerCalled: true,
-    ...(providerJobId === undefined ? {} : { providerJobId }),
   });
 }
 
@@ -163,7 +143,6 @@ async function requestJson(
   init: RequestInit,
   timeoutMs: number,
   correlationId: string,
-  providerJobId?: string,
 ): Promise<OpenAiHttpResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -179,12 +158,11 @@ async function requestJson(
     });
     const body: unknown = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw providerError(response.status, "OpenAI request failed", correlationId, providerJobId);
+      throw providerError(response.status, "OpenAI request failed", correlationId);
     }
     if (typeof body !== "object" || body === null) {
       throw new ProviderError("UNKNOWN", "OpenAI returned an invalid response", correlationId, {
         providerCalled: true,
-        ...(providerJobId === undefined ? {} : { providerJobId }),
       });
     }
     return { body: body as JsonRecord, requestId: headerValue(response, "x-request-id") };
@@ -197,7 +175,6 @@ async function requestJson(
       correlationId,
       {
         providerCalled: true,
-        ...(providerJobId === undefined ? {} : { providerJobId }),
       },
     );
   } finally {
@@ -212,7 +189,6 @@ async function requestBytes(
   init: RequestInit,
   timeoutMs: number,
   correlationId: string,
-  providerJobId?: string,
 ): Promise<Readonly<{ body: Uint8Array; requestId: string | null }>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -227,13 +203,12 @@ async function requestBytes(
       },
     });
     if (!response.ok) {
-      throw providerError(response.status, "OpenAI request failed", correlationId, providerJobId);
+      throw providerError(response.status, "OpenAI request failed", correlationId);
     }
     const body = new Uint8Array(await response.arrayBuffer());
     if (body.byteLength === 0) {
       throw new ProviderError("UNKNOWN", "OpenAI returned empty media", correlationId, {
         providerCalled: true,
-        ...(providerJobId === undefined ? {} : { providerJobId }),
       });
     }
     return { body, requestId: headerValue(response, "x-request-id") };
@@ -246,7 +221,6 @@ async function requestBytes(
       correlationId,
       {
         providerCalled: true,
-        ...(providerJobId === undefined ? {} : { providerJobId }),
       },
     );
   } finally {
@@ -334,20 +308,6 @@ function decodeBase64(encoded: string, correlationId: string): Uint8Array {
     });
   }
   return body;
-}
-
-function assertJobId(jobId: string, correlationId: string, providerCalled: boolean): void {
-  if (!JOB_ID_PATTERN.test(jobId)) {
-    throw new ProviderError("UNKNOWN", "OpenAI video job id is invalid", correlationId, {
-      providerCalled,
-    });
-  }
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
 }
 
 class OpenAiTextClient {
@@ -513,6 +473,7 @@ export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightR
   }
 }
 
+/** @deprecated V2 replaces this image adapter; delete with its wiring/tests in that PR. */
 export class OpenAiImageProvider implements ImageProviderPort {
   public readonly capability: CapabilityMetadata;
 
@@ -580,6 +541,7 @@ export class OpenAiImageProvider implements ImageProviderPort {
   }
 }
 
+/** @deprecated V2 replaces this TTS adapter; delete with its wiring/tests in that PR. */
 export class OpenAiTtsProvider implements TtsProviderPort {
   public readonly capability: CapabilityMetadata;
 
@@ -630,150 +592,25 @@ export class OpenAiTtsProvider implements TtsProviderPort {
   }
 }
 
-export class OpenAiVideoProvider implements VideoProviderPort {
-  public readonly capability: CapabilityMetadata;
-
-  public constructor(
-    private readonly apiKey: string,
-    private readonly modelId: string,
-    private readonly fetcher: FetchImplementation = fetch,
-  ) {
-    this.capability = mediaCapability("video", "video", OPENAI_VIDEO_ESTIMATE_USD, true);
-  }
-
-  public async generate(request: VideoRequest): Promise<MediaGenerationResponse> {
-    const allowed = (OPENAI_VIDEO_SECONDS as readonly number[]).includes(request.durationSeconds);
-    if (request.providerJobId === undefined && !allowed) {
-      throw notSent(
-        "INVALID_REQUEST",
-        "OpenAI video accepts only 4, 8, or 12 second clips",
-        request.correlationId,
-      );
-    }
-    if (request.providerJobId === undefined && request.prompt.trim().length === 0) {
-      throw notSent("INVALID_REQUEST", "Video prompt is empty", request.correlationId);
-    }
-    const submitted =
-      request.providerJobId === undefined
-        ? (
-            await requestJson(
-              this.fetcher,
-              this.apiKey,
-              "/videos",
-              {
-                method: "POST",
-                headers: {
-                  "Idempotency-Key": request.idempotencyKey ?? request.correlationId,
-                },
-                body: JSON.stringify({
-                  model: this.modelId,
-                  prompt: request.prompt,
-                  seconds: String(request.durationSeconds),
-                  size: VIDEO_SIZE,
-                }),
-              },
-              OPENAI_VIDEO_SUBMIT_TIMEOUT_MS,
-              request.correlationId,
-            )
-          ).body
-        : { id: request.providerJobId, status: "queued" };
-    const jobId = stringValue(submitted.id, "video job id", request.correlationId);
-    assertJobId(jobId, request.correlationId, request.providerJobId === undefined);
-    if (request.onProviderJobAccepted !== undefined) {
-      try {
-        await request.onProviderJobAccepted(jobId);
-      } catch (error) {
-        if (error instanceof ProviderError) throw error;
-        throw new ProviderError(
-          "PROVIDER_UNAVAILABLE",
-          "OpenAI video job id could not be stored",
-          request.correlationId,
-          { providerCalled: true, providerJobId: jobId },
-        );
-      }
-    }
-    const deadline = Date.now() + OPENAI_VIDEO_OVERALL_TIMEOUT_MS;
-    let job: JsonRecord = submitted;
-    while (true) {
-      const status = typeof job.status === "string" ? job.status : "queued";
-      if (status === "completed") break;
-      if (status === "failed" || status === "canceled" || status === "cancelled") {
-        throw new ProviderError(
-          "PROVIDER_REJECTED",
-          "OpenAI video job failed",
-          request.correlationId,
-          {
-            providerCalled: true,
-            providerJobId: jobId,
-          },
-        );
-      }
-      if (Date.now() + OPENAI_VIDEO_POLL_INTERVAL_MS > deadline) {
-        throw new ProviderError(
-          "PROVIDER_UNAVAILABLE",
-          "OpenAI video job timed out",
-          request.correlationId,
-          { providerCalled: true, providerJobId: jobId },
-        );
-      }
-      await sleep(OPENAI_VIDEO_POLL_INTERVAL_MS);
-      if (Date.now() >= deadline) {
-        throw new ProviderError(
-          "PROVIDER_UNAVAILABLE",
-          "OpenAI video job timed out",
-          request.correlationId,
-          { providerCalled: true, providerJobId: jobId },
-        );
-      }
-      const polled = await requestJson(
-        this.fetcher,
-        this.apiKey,
-        `/videos/${jobId}`,
-        { method: "GET" },
-        OPENAI_VIDEO_POLL_TIMEOUT_MS,
-        request.correlationId,
-        jobId,
-      );
-      job = polled.body;
-    }
-    const content = await requestBytes(
-      this.fetcher,
-      this.apiKey,
-      `/videos/${jobId}/content`,
-      { method: "GET" },
-      OPENAI_VIDEO_CONTENT_TIMEOUT_MS,
-      request.correlationId,
-      jobId,
-    );
-    return {
-      mediaId: jobId,
-      providerJobId: jobId,
-      providerRequestId: jobId,
-      metadata: { modelVersion: this.modelId, promptVersion: "openai-video-v1", cost: null },
-      media: { declaredMediaType: "video/mp4", body: content.body },
-    };
-  }
-}
-
 export type OpenAiRuntimeConfig = Readonly<{
   key: string | undefined;
   textModel: string;
+  textFallbackEnabled: boolean;
   imageModel: string;
   ttsModel: string;
-  videoModel: string | undefined;
 }>;
 
 /**
  * Reads the process environment. Test runs ignore a key so startup, unit tests, and CI cannot
- * bind a live adapter. Video stays unbound unless OPENAI_VIDEO_MODEL is explicitly set.
+ * bind a live adapter. Video has no OpenAI binding (ADR-026).
  */
 export function openAiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenAiRuntimeConfig {
   return {
     key: openAiKey(env),
     textModel: openAiTextModel(env),
+    textFallbackEnabled: env.NODE_ENV !== "test" && env.OPENAI_TEXT_FALLBACK_ENABLED === "true",
     imageModel: openAiImageModel(env),
     ttsModel: openAiTtsModel(env),
-    videoModel: openAiVideoModel(env),
   };
 }
 
@@ -793,10 +630,4 @@ export function openAiImageModel(env: NodeJS.ProcessEnv = process.env): string {
 
 export function openAiTtsModel(env: NodeJS.ProcessEnv = process.env): string {
   return model(env, "OPENAI_TTS_MODEL", DEFAULT_TTS_MODEL);
-}
-
-export function openAiVideoModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (env.NODE_ENV === "test") return undefined;
-  const value = env.OPENAI_VIDEO_MODEL?.trim();
-  return value === undefined || value.length === 0 ? undefined : value;
 }

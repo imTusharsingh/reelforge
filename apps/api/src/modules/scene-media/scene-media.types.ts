@@ -74,6 +74,7 @@ export type ResolvedCharacterRef = Readonly<{
   characterVersionId: string;
   version: number;
   checksumSha256: string;
+  /** @deprecated Per-scene voice dependency: use the channel narrator; remove legacy code in V4, obsolete columns via T2 ADR/migration. */
   voicePreference: unknown;
   referenceAssetIds: readonly string[];
 }>;
@@ -84,6 +85,7 @@ export type PlannedScene = Readonly<{
   prompt: string;
   sourceRefs: Readonly<Record<string, unknown>>;
   characters: readonly ResolvedCharacterRef[];
+  narratorVoice?: string;
   referenceImageIds: readonly string[];
   kinds: readonly SceneMediaKind[];
 }>;

@@ -22,7 +22,7 @@ class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
       provide: IDEA_PROPOSAL_LLM,
       useFactory: (): IdeaProposalLlmPort => {
         const config = openAiRuntimeConfig();
-        return config.key === undefined
+        return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredIdeaLlm()
           : new OpenAiIdeaProposalLlm(config.key, config.textModel);
       },

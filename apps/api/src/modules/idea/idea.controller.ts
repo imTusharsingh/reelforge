@@ -25,6 +25,7 @@ import {
   ideaListQuerySchema,
 } from "./idea.validation.js";
 
+/** @deprecated Manual approval path: V10 scoring / V8 detail replace it, T2 cleanup; L1 retains approvals. */
 @Controller("workspaces/:workspaceId/ideas")
 @UseGuards(AuthGuard)
 export class IdeaController {

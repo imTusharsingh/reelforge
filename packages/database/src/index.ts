@@ -25,3 +25,9 @@ export {
   WorkflowStepStatus,
   WorkflowTrigger,
 } from "./generated/prisma/client.js";
+export {
+  foundationWorkspaceGuard,
+  FOUNDATION_MODELS,
+  seedWorkspaceFoundations,
+  seedAllWorkspaceFoundations,
+} from "./foundation-workspace.js";

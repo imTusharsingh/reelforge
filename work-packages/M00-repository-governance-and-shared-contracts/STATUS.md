@@ -149,3 +149,13 @@ Product M00 is integrated by the owner through PR #2. This branch contains only 
 - Updated `.env.example` usage guidance and the project/M00 status wording. Product M00 remains `INTEGRATED`; closeout chore PR #3 remains `IMPLEMENTED_PENDING_REVIEW` pending Minu's re-review.
 - With Node 24.22.2, pnpm 12.16.1, and placeholder `DATABASE_URL`: frozen install, lint, typecheck, tests (3 files / 9 tests), build, and format check all passed. CI on the follow-up head remains pending.
 - Next exact action: push the review fixes to `chore/m00-closeout` and request Minu's re-review; only the owner merges after written approval.
+
+
+## 2026-11-16 — Owner-assigned Wave 0 foundations follow-up
+
+State: IMPLEMENTED_PENDING_REVIEW; this does not change prior integration history. Scope: the explicit owner Wave 0 assignment authorizes shared contracts, the additive migration, offline seed, fresh-install bugs 1–5 and local tooling. Decision PR #110 is separate. See [exact changed files, verification and handoff](../../docs/WAVE0_FOUNDATIONS_STATUS.md). No ci.yml or PROJECT_STATE edits; no approval, live-provider acceptance or merge is claimed. Next action: official Minu review of the exact heads and SQL, then owner-controlled squash integration.
+
+
+## 2026-11-16 — Issue #112 official review follow-up
+
+IMPLEMENTED_PENDING_REVIEW. Addressed #111 B1–B8 and paid-script retry note against issue #112 (all source comments); #110 corrected first at ef34d69. One draft migration edited in place, exact seven agent prompt roles and all downstream contract fields provided. Updated deprecation ownership and default genre fallback; split planning assemblies to respect size limits. Evidence/changed files: ../../docs/WAVE0_FOUNDATIONS_STATUS.md. Next: official Minu re-review; integrate #110 before #111, squash only after approval. No merge or approval claimed.

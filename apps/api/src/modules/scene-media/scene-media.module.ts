@@ -22,10 +22,10 @@ import { providerEnvironment } from "./scene-media.validation.js";
 import {
   OpenAiImageProvider,
   OpenAiTtsProvider,
-  OpenAiVideoProvider,
   openAiRuntimeConfig,
 } from "../openai/openai.adapters.js";
 
+/** @deprecated M09 synchronous/still-image path replaced by V3 jobs + V5 image-to-video; deleted and service split in V5. See DEPRECATIONS.md. */
 @Module({
   imports: [IdentityModule, WorkspaceModule, AssetModule, UsageBudgetModule],
   controllers: [SceneMediaController],
@@ -44,12 +44,7 @@ import {
     },
     {
       provide: VIDEO_PROVIDER,
-      useFactory: (): NotConfiguredVideoProvider | OpenAiVideoProvider => {
-        const config = openAiRuntimeConfig();
-        return config.key === undefined || config.videoModel === undefined
-          ? new NotConfiguredVideoProvider()
-          : new OpenAiVideoProvider(config.key, config.videoModel);
-      },
+      useFactory: (): NotConfiguredVideoProvider => new NotConfiguredVideoProvider(),
     },
     {
       provide: TTS_PROVIDER,
@@ -69,9 +64,6 @@ import {
         const adapters = [
           new OpenAiImageProvider(config.key, config.imageModel),
           new OpenAiTtsProvider(config.key, config.ttsModel),
-          ...(config.videoModel === undefined
-            ? []
-            : [new OpenAiVideoProvider(config.key, config.videoModel)]),
         ];
         for (const adapter of adapters) {
           registry.register({
