@@ -62,6 +62,8 @@ export class RunGeneration {
   }
   private async submit(context: Context, run: Run, step: Step): Promise<Step> {
     if (step.state === "RUNNING" || step.state === "WAITING_EXTERNAL") {
+      if (!(await this.hasPaidAttempt(context, step)))
+        throw new ConflictException("Paid reservation missing; no submission to reconcile");
       const recovered = await withSpan(
         "run.provider.reconcile",
         () => this.port(step).reconcile(step.idempotencyKey),
@@ -79,6 +81,34 @@ export class RunGeneration {
       shot,
       envelope.route === "FALLBACK",
     );
+    await this.claim(context, run, step, amount, envelope.route === "FALLBACK");
+    try {
+      await this.paid.reserve(context, run, step, amount);
+    } catch (error) {
+      // M18 refused before dispatch. Do not send this shot through provider reconciliation.
+      if (!(await this.hasPaidAttempt(context, step)))
+        await this.releaseClaim(context, run, step, amount);
+      throw error;
+    }
+    await this.boundary.check(context, await this.runs.store.get(context, run.id));
+    const result = await withSpan(
+      "run.provider.submit",
+      () =>
+        (envelope.route === "FALLBACK" ? this.fallbackProvider : this.provider).submit(
+          shot,
+          step.idempotencyKey,
+        ),
+      "CLIENT",
+    );
+    return this.saveJob(context, run, step, result.providerJobId);
+  }
+  private async claim(
+    context: Context,
+    run: Run,
+    step: Step,
+    amount: number,
+    fallback: boolean,
+  ): Promise<void> {
     const claim = await this.runs.store.mutate(
       context,
       run.id,
@@ -93,7 +123,7 @@ export class RunGeneration {
             state: "RUNNING",
             startedAt: new Date(),
             costMinor: amount,
-            providerId: envelope.route === "FALLBACK" ? "v3-stub-xai" : "v3-stub-gemini",
+            providerId: fallback ? "v3-stub-xai" : "v3-stub-gemini",
           },
         });
         if (!claimed.count) throw new ConflictException("Step already claimed");
@@ -105,18 +135,61 @@ export class RunGeneration {
       },
     );
     await this.runs.events?.publish(claim.event);
-    await this.paid.reserve(context, run, step, amount);
-    await this.boundary.check(context, await this.runs.store.get(context, run.id));
-    const result = await withSpan(
-      "run.provider.submit",
-      () =>
-        (envelope.route === "FALLBACK" ? this.fallbackProvider : this.provider).submit(
-          shot,
-          step.idempotencyKey,
-        ),
-      "CLIENT",
+  }
+  private async hasPaidAttempt(context: Context, step: Step): Promise<boolean> {
+    const [reservation, request] = await Promise.all([
+      this.runs.store.db.usageReservation.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          idempotencyKey: `m08:${step.idempotencyKey}`,
+        },
+        select: { id: true },
+      }),
+      this.runs.store.db.providerRequest.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          correlationId: step.id,
+        },
+        select: { id: true },
+      }),
+    ]);
+    return reservation !== null || request !== null;
+  }
+  private async releaseClaim(
+    context: Context,
+    run: Run,
+    step: Step,
+    amount: number,
+  ): Promise<void> {
+    const released = await this.runs.store.mutate(
+      context,
+      run.id,
+      "dispatch_released",
+      async (db) => {
+        const reset = await db.videoRunStep.updateMany({
+          where: {
+            id: step.id,
+            runId: run.id,
+            state: "RUNNING",
+            providerJobId: null,
+            costMinor: amount,
+          },
+          data: { state: "PENDING", costMinor: null, providerId: null, startedAt: null },
+        });
+        if (reset.count !== 1) throw new ConflictException("Dispatch claim changed");
+        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+        await db.budgetEnvelope.updateMany({
+          where: { id: budget.id, revision: budget.revision },
+          data: { reservedMinor: budget.reservedMinor - amount, revision: budget.revision + 1 },
+        });
+        return {
+          value: null,
+          payload: { amountMinor: amount, reason: "NOT_DISPATCHED" },
+          stepId: step.id,
+        };
+      },
     );
-    return this.saveJob(context, run, step, result.providerJobId);
+    await this.runs.events?.publish(released.event);
   }
   private async saveJob(
     context: Context,
