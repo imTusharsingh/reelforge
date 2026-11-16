@@ -21,6 +21,7 @@ export class OrchestrationWorkerHandler {
    * jobs, enqueue failures, crashes between completion and the next enqueue).
    */
   public async tick(): Promise<void> {
+    await this.runtime.videoRuns?.recover();
     const now = (this.options.now ?? ((): Date => new Date()))();
     await this.runtime.service.recoverStaleLeases(now);
     await this.runtime.service.runSchedulerTick(now);
