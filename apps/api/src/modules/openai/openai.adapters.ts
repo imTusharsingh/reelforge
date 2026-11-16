@@ -4,18 +4,12 @@ import {
   type CapabilityMetadata,
   type IdeaProposalLlmPort,
   type IdeaProposalResult,
-  type ImageProviderPort,
-  type ImageRequest,
   type LlmProviderPort,
   type LlmRequest,
   type LlmResponse,
-  type MediaGenerationResponse,
-  type ProviderProvenance,
   type QualityReviewPort,
   type QualityReviewRequest,
   type QualityReviewResult,
-  type TtsProviderPort,
-  type TtsRequest,
 } from "@reelforge/ai-providers";
 import type {
   InsightNarrativeInput,
@@ -23,21 +17,12 @@ import type {
   InsightReportLlmPort,
 } from "../performance-intelligence/performance-intelligence.ports.js";
 
-type JsonRecord = Record<string, unknown>;
+import { requestJson, notSent, jsonOutput, provenance, isRecord } from "./openai.http.js";
+import { geminiLegacyText } from "./gemini.legacy.js";
 type FetchImplementation = typeof fetch;
-type OpenAiHttpResult = Readonly<{ body: JsonRecord; requestId: string | null }>;
 
-const OPENAI_API = "https://api.openai.com/v1";
-const DEFAULT_TEXT_MODEL = "gpt-4.1-mini";
-const DEFAULT_IMAGE_MODEL = "gpt-image-2.6-sunburst";
-const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts";
-
-export const OPENAI_TEXT_TIMEOUT_MS = 60_000;
-export const OPENAI_IMAGE_TIMEOUT_MS = 120_000;
-export const OPENAI_TTS_TIMEOUT_MS = 60_000;
-export const OPENAI_TEXT_ESTIMATE_USD = 2;
-export const OPENAI_IMAGE_ESTIMATE_USD = 10;
-export const OPENAI_TTS_ESTIMATE_USD = 1;
+const OPENAI_TEXT_TIMEOUT_MS = 60_000;
+const OPENAI_TEXT_ESTIMATE_USD = 2;
 
 const ideaProposalSchema = z
   .object({
@@ -88,237 +73,22 @@ function textCapability(capabilityId: string, amount: number): CapabilityMetadat
   };
 }
 
-function mediaCapability(
-  capabilityId: string,
-  kind: "image" | "tts",
-  amount: number,
-  asynchronous = false,
-): CapabilityMetadata {
-  return {
-    providerId: "openai",
-    capabilityId,
-    kind,
-    input: ["text"],
-    output: [kind === "tts" ? "audio/mpeg" : "image/png"],
-    supportsReferenceImages: false,
-    asynchronous,
-    polling: asynchronous,
-    regions: ["global"],
-    ...(kind === "image" ? { resolution: { maxWidth: 1536, maxHeight: 1536 } } : {}),
-    costModel: { currency: "USD", unit: "request", amount },
-  };
-}
-
-function model(env: NodeJS.ProcessEnv, key: string, fallback: string): string {
-  const value = env[key]?.trim();
-  return value === undefined || value.length === 0 ? fallback : value;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-function providerError(status: number, message: string, correlationId: string): ProviderError {
-  const code =
-    status === 408 || status === 429 || status >= 500
-      ? "PROVIDER_UNAVAILABLE"
-      : "PROVIDER_REJECTED";
-  return new ProviderError(code, message, correlationId, {
-    providerCalled: true,
-  });
-}
-
-function notSent(
-  code: ProviderError["code"],
-  message: string,
-  correlationId: string,
-): ProviderError {
-  return new ProviderError(code, message, correlationId, { providerCalled: false });
-}
-
-async function requestJson(
-  fetcher: FetchImplementation,
-  apiKey: string,
-  path: string,
-  init: RequestInit,
-  timeoutMs: number,
-  correlationId: string,
-): Promise<OpenAiHttpResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetcher(`${OPENAI_API}${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...init.headers,
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-    const body: unknown = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw providerError(response.status, "OpenAI request failed", correlationId);
-    }
-    if (typeof body !== "object" || body === null) {
-      throw new ProviderError("UNKNOWN", "OpenAI returned an invalid response", correlationId, {
-        providerCalled: true,
-      });
-    }
-    return { body: body as JsonRecord, requestId: headerValue(response, "x-request-id") };
-  } catch (error) {
-    if (error instanceof ProviderError) throw error;
-    const timedOut = isAbortError(error);
-    throw new ProviderError(
-      "PROVIDER_UNAVAILABLE",
-      timedOut ? "OpenAI request timed out" : "OpenAI request failed",
-      correlationId,
-      {
-        providerCalled: true,
-      },
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function requestBytes(
-  fetcher: FetchImplementation,
-  apiKey: string,
-  path: string,
-  init: RequestInit,
-  timeoutMs: number,
-  correlationId: string,
-): Promise<Readonly<{ body: Uint8Array; requestId: string | null }>> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetcher(`${OPENAI_API}${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...init.headers,
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-    if (!response.ok) {
-      throw providerError(response.status, "OpenAI request failed", correlationId);
-    }
-    const body = new Uint8Array(await response.arrayBuffer());
-    if (body.byteLength === 0) {
-      throw new ProviderError("UNKNOWN", "OpenAI returned empty media", correlationId, {
-        providerCalled: true,
-      });
-    }
-    return { body, requestId: headerValue(response, "x-request-id") };
-  } catch (error) {
-    if (error instanceof ProviderError) throw error;
-    const timedOut = isAbortError(error);
-    throw new ProviderError(
-      "PROVIDER_UNAVAILABLE",
-      timedOut ? "OpenAI request timed out" : "OpenAI request failed",
-      correlationId,
-      {
-        providerCalled: true,
-      },
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function headerValue(response: Response, name: string): string | null {
-  const value = response.headers.get(name)?.trim();
-  return value === undefined || value.length === 0 ? null : value;
-}
-
-function stringValue(value: unknown, label: string, correlationId: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new ProviderError("UNKNOWN", `OpenAI response is missing ${label}`, correlationId, {
-      providerCalled: true,
-    });
-  }
-  return value;
-}
-
-function jsonOutput(body: JsonRecord, correlationId: string): unknown {
-  const choices = body.choices;
-  if (!Array.isArray(choices) || choices.length === 0 || !isRecord(choices[0])) {
-    throw new ProviderError("UNKNOWN", "OpenAI response has no choices", correlationId, {
-      providerCalled: true,
-    });
-  }
-  const message = choices[0].message;
-  if (!isRecord(message)) {
-    throw new ProviderError("UNKNOWN", "OpenAI response has no message", correlationId, {
-      providerCalled: true,
-    });
-  }
-  const content = stringValue(message.content, "content", correlationId);
-  try {
-    return JSON.parse(content) as unknown;
-  } catch {
-    throw new ProviderError("UNKNOWN", "OpenAI returned invalid JSON", correlationId, {
-      providerCalled: true,
-    });
-  }
-}
-
-function provenance(modelVersion: string, body: JsonRecord): ProviderProvenance {
-  const usage = isRecord(body.usage) ? body.usage : undefined;
-  const inputTokens = numberField(usage, "prompt_tokens") ?? numberField(usage, "input_tokens");
-  const outputTokens =
-    numberField(usage, "completion_tokens") ?? numberField(usage, "output_tokens");
-  return {
-    modelVersion,
-    promptVersion: "openai-chat-completions-v1",
-    cost: null,
-    ...(inputTokens === undefined && outputTokens === undefined
-      ? {}
-      : {
-          usage: {
-            ...(inputTokens === undefined ? {} : { inputTokens }),
-            ...(outputTokens === undefined ? {} : { outputTokens }),
-          },
-        }),
-  };
-}
-
-function numberField(record: JsonRecord | undefined, key: string): number | undefined {
-  if (record === undefined) return undefined;
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function decodeBase64(encoded: string, correlationId: string): Uint8Array {
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
-    throw new ProviderError("UNKNOWN", "OpenAI image response is not base64", correlationId, {
-      providerCalled: true,
-    });
-  }
-  const body = Uint8Array.from(Buffer.from(encoded, "base64"));
-  if (body.byteLength === 0) {
-    throw new ProviderError("UNKNOWN", "OpenAI image response has no bytes", correlationId, {
-      providerCalled: true,
-    });
-  }
-  return body;
-}
-
 class OpenAiTextClient {
   public constructor(
     protected readonly apiKey: string,
     protected readonly modelId: string,
     public readonly capability: CapabilityMetadata,
     protected readonly fetcher: FetchImplementation = fetch,
-  ) {}
+  ) {
+    if (apiKey === process.env.GEMINI_API_KEY && process.env.NODE_ENV !== "test")
+      this.capability = { ...capability, providerId: "gemini" };
+  }
 
   protected async completeJson(request: LlmRequest, systemPrompt: string): Promise<LlmResponse> {
+    if (!this.modelId.trim() || !this.apiKey.trim())
+      throw notSent("NOT_CONFIGURED", "Text model and key are required", request.correlationId);
+    if (this.apiKey === process.env.GEMINI_API_KEY && process.env.NODE_ENV !== "test")
+      return geminiLegacyText(this.apiKey, this.modelId, this.fetcher, request, systemPrompt);
     const result = await requestJson(
       this.fetcher,
       this.apiKey,
@@ -473,125 +243,6 @@ export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightR
   }
 }
 
-/** @deprecated V2 replaces this image adapter; delete with its wiring/tests in that PR. */
-export class OpenAiImageProvider implements ImageProviderPort {
-  public readonly capability: CapabilityMetadata;
-
-  public constructor(
-    private readonly apiKey: string,
-    private readonly modelId: string,
-    private readonly fetcher: FetchImplementation = fetch,
-  ) {
-    this.capability = mediaCapability("image-generation", "image", OPENAI_IMAGE_ESTIMATE_USD);
-  }
-
-  public async generate(request: ImageRequest): Promise<MediaGenerationResponse> {
-    if (request.prompt.trim().length === 0) {
-      throw notSent("INVALID_REQUEST", "Image prompt is empty", request.correlationId);
-    }
-    const result = await requestJson(
-      this.fetcher,
-      this.apiKey,
-      "/images/generations",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          model: this.modelId,
-          prompt: request.prompt,
-          n: 1,
-          size: "1024x1536",
-          output_format: "png",
-        }),
-      },
-      OPENAI_IMAGE_TIMEOUT_MS,
-      request.correlationId,
-    );
-    const first = Array.isArray(result.body.data) ? result.body.data[0] : undefined;
-    if (!isRecord(first) || typeof first.b64_json !== "string") {
-      throw new ProviderError(
-        "UNKNOWN",
-        "OpenAI image response is invalid",
-        request.correlationId,
-        {
-          providerCalled: true,
-        },
-      );
-    }
-    const providerRequestId =
-      result.requestId ?? (typeof result.body.id === "string" ? result.body.id : null);
-    if (providerRequestId === null) {
-      throw new ProviderError(
-        "UNKNOWN",
-        "OpenAI image response has no request id",
-        request.correlationId,
-        {
-          providerCalled: true,
-        },
-      );
-    }
-    return {
-      mediaId: providerRequestId,
-      providerRequestId,
-      metadata: { modelVersion: this.modelId, promptVersion: "openai-images-v1", cost: null },
-      media: {
-        declaredMediaType: "image/png",
-        body: decodeBase64(first.b64_json, request.correlationId),
-      },
-    };
-  }
-}
-
-/** @deprecated V2 replaces this TTS adapter; delete with its wiring/tests in that PR. */
-export class OpenAiTtsProvider implements TtsProviderPort {
-  public readonly capability: CapabilityMetadata;
-
-  public constructor(
-    private readonly apiKey: string,
-    private readonly modelId: string,
-    private readonly fetcher: FetchImplementation = fetch,
-  ) {
-    this.capability = mediaCapability("tts", "tts", OPENAI_TTS_ESTIMATE_USD);
-  }
-
-  public async synthesize(request: TtsRequest): Promise<MediaGenerationResponse> {
-    if (request.text.trim().length === 0 || request.voice.trim().length === 0) {
-      throw notSent("INVALID_REQUEST", "Speech text or voice is empty", request.correlationId);
-    }
-    const result = await requestBytes(
-      this.fetcher,
-      this.apiKey,
-      "/audio/speech",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          model: this.modelId,
-          input: request.text,
-          voice: request.voice,
-          response_format: "mp3",
-        }),
-      },
-      OPENAI_TTS_TIMEOUT_MS,
-      request.correlationId,
-    );
-    if (result.requestId === null) {
-      throw new ProviderError(
-        "UNKNOWN",
-        "OpenAI speech response has no request id",
-        request.correlationId,
-        {
-          providerCalled: true,
-        },
-      );
-    }
-    return {
-      mediaId: result.requestId,
-      providerRequestId: result.requestId,
-      metadata: { modelVersion: this.modelId, promptVersion: "openai-tts-v1", cost: null },
-      media: { declaredMediaType: "audio/mpeg", body: result.body },
-    };
-  }
-}
-
 export type OpenAiRuntimeConfig = Readonly<{
   key: string | undefined;
   textModel: string;
@@ -599,35 +250,25 @@ export type OpenAiRuntimeConfig = Readonly<{
   imageModel: string;
   ttsModel: string;
 }>;
-
-/**
- * Reads the process environment. Test runs ignore a key so startup, unit tests, and CI cannot
- * bind a live adapter. Video has no OpenAI binding (ADR-026).
- */
 export function openAiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenAiRuntimeConfig {
+  const gemini = env.NODE_ENV === "test" ? undefined : env.GEMINI_API_KEY?.trim() || undefined;
   return {
-    key: openAiKey(env),
-    textModel: openAiTextModel(env),
-    textFallbackEnabled: env.NODE_ENV !== "test" && env.OPENAI_TEXT_FALLBACK_ENABLED === "true",
-    imageModel: openAiImageModel(env),
-    ttsModel: openAiTtsModel(env),
+    key: gemini ?? (env.OPENAI_TEXT_FALLBACK_ENABLED === "true" ? openAiKey(env) : undefined),
+    textModel: gemini ? env.GEMINI_TEXT_MODEL?.trim() || "" : openAiTextModel(env),
+    textFallbackEnabled:
+      !!gemini || (env.NODE_ENV !== "test" && env.OPENAI_TEXT_FALLBACK_ENABLED === "true"),
+    imageModel: env.GEMINI_IMAGE_MODEL?.trim() || "",
+    ttsModel: env.GEMINI_TTS_MODEL?.trim() || "",
   };
 }
-
 export function openAiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (env.NODE_ENV === "test") return undefined;
-  const key = env.OPENAI_API_KEY?.trim();
-  return key === undefined || key.length === 0 ? undefined : key;
+  return env.NODE_ENV === "test" ? undefined : env.OPENAI_API_KEY?.trim() || undefined;
 }
-
 export function openAiTextModel(env: NodeJS.ProcessEnv = process.env): string {
-  return model(env, "OPENAI_TEXT_MODEL", DEFAULT_TEXT_MODEL);
+  return env.OPENAI_TEXT_MODEL?.trim() || "";
 }
-
-export function openAiImageModel(env: NodeJS.ProcessEnv = process.env): string {
-  return model(env, "OPENAI_IMAGE_MODEL", DEFAULT_IMAGE_MODEL);
-}
-
-export function openAiTtsModel(env: NodeJS.ProcessEnv = process.env): string {
-  return model(env, "OPENAI_TTS_MODEL", DEFAULT_TTS_MODEL);
-}
+// Compatibility names consumed by frozen Wave 1 callers; implementations are Gemini only.
+export {
+  GeminiLegacyImage as OpenAiImageProvider,
+  GeminiLegacyTts as OpenAiTtsProvider,
+} from "./gemini.legacy.js";

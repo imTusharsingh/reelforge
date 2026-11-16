@@ -1,3 +1,4 @@
+import { ProvidersModule } from "./modules/openai/providers.module.js";
 import { Module, RequestMethod } from "@nestjs/common";
 import type { MiddlewareConsumer } from "@nestjs/common";
 import { HealthController } from "./health.controller.js";
@@ -25,6 +26,7 @@ import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
 
 @Module({
   imports: [
+    ProvidersModule,
     IdentityModule,
     WorkspaceModule,
     ChannelModule,
