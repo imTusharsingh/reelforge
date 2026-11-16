@@ -1,0 +1,101 @@
+import { ProviderFailure, ProviderHttp, record, requiredString, type Json } from "./http.js";
+import type { ArtifactStore, ClipArtifact, JobStatus } from "./ports.js";
+
+/** REST Interactions boundary. Callers persist the returned id before scheduling polls. */
+export class Interactions {
+  public constructor(
+    private readonly http: ProviderHttp,
+    private readonly store: ArtifactStore,
+  ) {}
+
+  public result(body: Json, key: string): Promise<Json> {
+    return this.http.json("interactions", { ...body, background: false, store: false }, key);
+  }
+
+  public async submit(body: Json, idemKey: string): Promise<{ providerJobId: string }> {
+    if (!idemKey.trim()) throw new ProviderFailure("INVALID", false);
+    const response = await this.http.json(
+      "interactions",
+      { ...body, background: true, store: true },
+      idemKey,
+    );
+    if (this.status(response) === "refused") throw new ProviderFailure("REFUSAL", true);
+    return { providerJobId: requiredString(response.id) };
+  }
+
+  public async poll(id: string): Promise<JobStatus> {
+    return this.status(await this.get(id));
+  }
+
+  public async fetch(
+    id: string,
+    kind: "video" | "image" | "audio",
+    trimSeconds?: number,
+  ): Promise<ClipArtifact> {
+    const response = await this.get(id);
+    const status = this.status(response);
+    if (status === "refused") throw new ProviderFailure("REFUSAL", true);
+    if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
+    const content = this.outputs(response)
+      .filter((item) => item.type === kind)
+      .at(-1);
+    if (!content) throw new ProviderFailure("INVALID", true);
+    const bytes =
+      typeof content.uri === "string"
+        ? await this.http.bytes(content.uri)
+        : this.decode(requiredString(content.data));
+    const artifact = await this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
+    const usage = response.usage === undefined ? {} : record(response.usage);
+    const seconds = usage.billed_seconds;
+    return {
+      ...artifact,
+      billedSeconds:
+        typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
+    };
+  }
+
+  public async get(id: string): Promise<Json> {
+    if (!id.trim()) throw new ProviderFailure("INVALID", false);
+    return this.http.json(`interactions/${encodeURIComponent(id)}`);
+  }
+
+  public outputs(response: Json): Json[] {
+    if (!Array.isArray(response.steps)) throw new ProviderFailure("INVALID", true);
+    return response.steps
+      .map(record)
+      .filter((step) => step.type === "model_output")
+      .flatMap((step) => {
+        if (!Array.isArray(step.content)) throw new ProviderFailure("INVALID", true);
+        return step.content.map(record);
+      });
+  }
+
+  private status(response: Json): JobStatus {
+    switch (response.status) {
+      case "queued":
+        return "queued";
+      case "in_progress":
+        return "running";
+      case "completed":
+        return "succeeded";
+      case "refused":
+        return "refused";
+      case "failed": {
+        const error = response.error === undefined ? {} : record(response.error);
+        return error.code === "content_policy_violation" || error.code === "safety"
+          ? "refused"
+          : "failed";
+      }
+      case "cancelled":
+        return "failed";
+      default:
+        throw new ProviderFailure("INVALID", true);
+    }
+  }
+
+  private decode(encoded: string): Uint8Array {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0)
+      throw new ProviderFailure("INVALID", true);
+    return new Uint8Array(Buffer.from(encoded, "base64"));
+  }
+}
