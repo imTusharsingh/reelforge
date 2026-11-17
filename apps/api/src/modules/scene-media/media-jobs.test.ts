@@ -26,6 +26,7 @@ function harness(): {
     begin: ReturnType<typeof vi.fn>;
     reserve: ReturnType<typeof vi.fn>;
     complete: ReturnType<typeof vi.fn>;
+    cancelUndispatched: ReturnType<typeof vi.fn>;
   };
 } {
   const state: { step: Record<string, unknown> | null } = { step: null };
@@ -68,6 +69,10 @@ function harness(): {
       return state.step;
     }),
     reserve: vi.fn(),
+    cancelUndispatched: vi.fn(async () => {
+      state.step = { ...state.step, state: "CANCELLED", finishedAt: new Date() };
+      await paid.finish(context, state.step, false, 0);
+    }),
     complete: vi.fn(async (_context: unknown, _step: unknown, output: unknown) => {
       state.step = { ...state.step, state: "SUCCEEDED", output: { result: output } };
     }),
@@ -140,7 +145,13 @@ describe("V5 durable async media jobs", () => {
     await expect(
       h.jobs.tick(context, run, "keyframe:0", h.port, {}, 4, "configured-model", "v2"),
     ).rejects.toBeInstanceOf(ProviderFailure);
+    expect(h.account.cancelUndispatched).toHaveBeenCalledOnce();
     expect(h.paid.finish).toHaveBeenCalledWith(context, expect.anything(), false, 0);
+    expect(h.state.step?.state).toBe("CANCELLED");
+    await expect(
+      h.jobs.tick(context, run, "keyframe:0", h.port, {}, 4, "configured-model", "v2"),
+    ).rejects.toThrow("MEDIA_NOT_DISPATCHED");
+    expect(h.port.submit).toHaveBeenCalledOnce();
     await expect(
       h.jobs.bytes(context, { objectKey: "fixture", checksumSha256: "0".repeat(64) }),
     ).rejects.toThrow("checksum");

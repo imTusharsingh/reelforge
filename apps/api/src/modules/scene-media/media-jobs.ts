@@ -30,6 +30,8 @@ export class MediaJobs {
     const db = this.access.runs.store.scoped(context);
     let step = await db.videoRunStep.findFirst({ where: { runId: run.id, key: `media:${key}` } });
     if (step?.state === "SUCCEEDED") return this.completed(step.output);
+    if (step?.state === "CANCELLED")
+      throw new ConflictException("MEDIA_NOT_DISPATCHED: new attempt required");
     if (step && !step.providerJobId)
       throw new ConflictException("RECONCILE_REQUIRED: media dispatch outcome unknown");
     if (!step) {
@@ -45,7 +47,7 @@ export class MediaJobs {
         step = { ...step, providerJobId: job.providerJobId };
       } catch (error) {
         if (error instanceof ProviderFailure && !error.dispatched)
-          await this.access.paid.finish(context, step, false, 0);
+          await this.accounts.cancelUndispatched(context, step);
         throw error;
       }
     }

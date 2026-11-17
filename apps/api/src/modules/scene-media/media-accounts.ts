@@ -64,6 +64,37 @@ export class MediaAccounts {
       },
     });
   }
+  /** A confirmed non-dispatch refunds both ledgers and closes the attempt. */
+  public async cancelUndispatched(context: Context, step: Step): Promise<void> {
+    await this.access.paid.finish(context, step, false, 0);
+    const result = await this.access.runs.store.mutate(
+      context,
+      step.runId,
+      "media_not_dispatched",
+      async (db) => {
+        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+        if (current.state === "CANCELLED")
+          return { value: null, payload: { replay: true } };
+        if (current.providerJobId)
+          throw new ConflictException("Dispatched media cannot be cancelled as unsubmitted");
+        const budget = await db.budgetEnvelope.findFirst({ where: { runId: step.runId } });
+        if (budget)
+          await db.budgetEnvelope.updateMany({
+            where: { id: budget.id, revision: budget.revision },
+            data: {
+              reservedMinor: budget.reservedMinor - (step.costMinor ?? 0),
+              revision: budget.revision + 1,
+            },
+          });
+        await db.videoRunStep.updateMany({
+          where: { id: step.id, state: "RUNNING", providerJobId: null },
+          data: { state: "CANCELLED", finishedAt: new Date() },
+        });
+        return { value: null, payload: { refundedMinor: step.costMinor }, stepId: step.id };
+      },
+    );
+    await this.access.runs.events?.publish(result.event);
+  }
   public async complete(context: Context, step: Step, output: unknown): Promise<void> {
     await this.access.paid.finish(context, step, true, step.costMinor ?? 0);
     const result = await this.access.runs.store.mutate(
