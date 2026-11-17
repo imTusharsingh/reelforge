@@ -48,38 +48,34 @@ function fixture(): {
   const db = {
     analyticsMetricSnapshot: { findMany: vi.fn().mockResolvedValue(rows) },
     discoveryRecord: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            document: [
-              {
-                ...rankCandidates(
-                  [candidateFixture()],
-                  briefFixture(),
-                  [],
-                  initialLearning(briefFixture()),
-                  now,
-                )[0],
-                id,
-              },
-            ],
-          },
-        ]),
+      findMany: vi.fn().mockResolvedValue([
+        {
+          document: [
+            {
+              ...rankCandidates(
+                [candidateFixture()],
+                briefFixture(),
+                [],
+                initialLearning(briefFixture()),
+                now,
+              )[0],
+              id,
+            },
+          ],
+        },
+      ]),
     },
   };
   const publishing = {
-    listPublishedRecords: vi
-      .fn()
-      .mockResolvedValue([
-        {
-          channelId,
-          platform: "YOUTUBE",
-          accountId: "account",
-          scheduledPostId: id,
-          platformPostId: "video",
-        },
-      ]),
+    listPublishedRecords: vi.fn().mockResolvedValue([
+      {
+        channelId,
+        platform: "YOUTUBE",
+        accountId: "account",
+        scheduledPostId: id,
+        platformPostId: "video",
+      },
+    ]),
     listPublishedPostContexts: vi
       .fn()
       .mockResolvedValue([
