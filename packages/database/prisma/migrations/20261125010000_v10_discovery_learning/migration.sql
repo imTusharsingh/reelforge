@@ -11,3 +11,10 @@ CREATE TABLE discovery_quotas (
  schema_version TEXT NOT NULL DEFAULT '1.0', used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
  created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE discovery_records ADD CONSTRAINT discovery_records_workspace_id_fkey
+ FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE discovery_records ADD CONSTRAINT discovery_records_workspace_id_channel_id_fkey
+ FOREIGN KEY (workspace_id, channel_id) REFERENCES channels(workspace_id, id) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE discovery_quotas ADD CONSTRAINT discovery_quotas_workspace_id_fkey
+ FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE ON UPDATE CASCADE;
