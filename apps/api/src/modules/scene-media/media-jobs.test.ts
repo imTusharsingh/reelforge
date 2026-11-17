@@ -25,6 +25,8 @@ function harness(): {
   account: {
     begin: ReturnType<typeof vi.fn>;
     reserve: ReturnType<typeof vi.fn>;
+    prepare: ReturnType<typeof vi.fn>;
+    reconcilePending: ReturnType<typeof vi.fn>;
     complete: ReturnType<typeof vi.fn>;
     cancelUndispatched: ReturnType<typeof vi.fn>;
   };
@@ -69,6 +71,12 @@ function harness(): {
       return state.step;
     }),
     reserve: vi.fn(),
+    prepare: vi.fn(async () => {
+      await account.reserve();
+    }),
+    reconcilePending: vi.fn(async () => {
+      throw new Error("RECONCILE_REQUIRED");
+    }),
     cancelUndispatched: vi.fn(async () => {
       state.step = { ...state.step, state: "CANCELLED", finishedAt: new Date() };
       await paid.finish(context, state.step, false, 0);

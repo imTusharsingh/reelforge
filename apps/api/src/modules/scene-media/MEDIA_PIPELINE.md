@@ -61,3 +61,12 @@ T1 and requires Tushar's authorization.
 V6's critic is intentionally not fabricated: after V5 assembly V3 advances to
 CRITIC, where the V6 handler must be registered before automated review proceeds.
 The produced final and manifest are already on the persisted assembly step.
+
+Reservation preflight is part of the durable media attempt. A typed budget denial
+with no matching reservation/request closes the attempt and refunds its envelope
+in one transaction. After a confirmed fresh reservation, an emergency boundary
+failure settles known non-dispatch before closing/refunding the attempt. A
+timeout, partial ledger write, replay, or failed settlement retains held budget;
+retries inspect the M18 idempotency key and request correlation and require human
+reconciliation without resubmitting or assuming a refund. Replayed intent claims
+are rejected so concurrent workers cannot share preflight ownership.

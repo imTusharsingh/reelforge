@@ -31,15 +31,9 @@ describe.skipIf(!process.env.DATABASE_URL)("V5 persisted media reservations", ()
       (await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } }))
         .providerId,
     ).toBe("gemini");
-    const replay = await accounts.begin(
-      t.context,
-      t.run,
-      step.key,
-      {},
-      4,
-      "configured-image-model",
-    );
-    expect(replay.id).toBe(step.id);
+    await expect(
+      accounts.begin(t.context, t.run, step.key, {}, 4, "configured-image-model"),
+    ).rejects.toThrow("already claimed");
     await t.store.scoped(t.context).budgetEnvelope.create({
       data: {
         workspaceId: t.context.workspaceId,

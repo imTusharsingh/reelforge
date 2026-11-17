@@ -32,12 +32,10 @@ export class MediaJobs {
     if (step?.state === "SUCCEEDED") return this.completed(step.output);
     if (step?.state === "CANCELLED")
       throw new ConflictException("MEDIA_NOT_DISPATCHED: new attempt required");
-    if (step && !step.providerJobId)
-      throw new ConflictException("RECONCILE_REQUIRED: media dispatch outcome unknown");
+    if (step && !step.providerJobId) return this.accounts.reconcilePending(context, step);
     if (!step) {
       step = await this.accounts.begin(context, run, `media:${key}`, spec, cost, modelId);
-      await this.accounts.reserve(context, run, step, modelId);
-      await this.access.boundary.check(context, await this.access.runs.store.get(context, run.id));
+      await this.accounts.prepare(context, run, step, modelId);
       try {
         const job = await port.submit(spec, step.idempotencyKey);
         await db.videoRunStep.updateMany({

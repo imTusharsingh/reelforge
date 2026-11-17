@@ -159,8 +159,7 @@ export class MediaPlanning {
       cost,
       modelId,
     );
-    await this.accounts.reserve(context, run, step, modelId);
-    await this.access.boundary.check(context, await this.access.runs.store.get(context, run.id));
+    await this.accounts.prepare(context, run, step, modelId);
     const result = await native.text.complete(
       {
         prompt: input.prompt,
