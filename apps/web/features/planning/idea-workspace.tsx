@@ -1,3 +1,4 @@
+/** @deprecated V10: legacy idea workspace; L1 manual approval retained. Removed in T2. */
 "use client";
 import { useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
