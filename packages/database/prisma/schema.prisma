@@ -242,6 +242,8 @@ model User {
 }
 
 model Workspace {
+  discoveryRecords                DiscoveryRecord[]
+  discoveryQuotas                 DiscoveryQuota[]
   channelReferenceDefaultsRows    ChannelReferenceDefaults[]
   referenceAssetRows              ReferenceAsset[]
   budgetEnvelopeRows              BudgetEnvelope[]
@@ -384,6 +386,7 @@ model WorkspaceMembership {
 }
 
 model Channel {
+  discoveryRecords             DiscoveryRecord[]
   narratorVoice                Json?                       @map("narrator_voice")
   channelReferenceDefaultsRows ChannelReferenceDefaults[]
   videoRunRows                 VideoRun[]
@@ -2815,4 +2818,36 @@ model ProviderKey {
 
   @@unique([workspaceId, providerId])
   @@map("provider_keys")
+}
+
+// V10-owned append-only documents: tick claims/results, learning state and weekly audit.
+model DiscoveryRecord {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  channelId     String   @map("channel_id") @db.Uuid
+  schemaVersion String   @default("1.0") @map("schema_version")
+  kind          String
+  key           String
+  document      Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel       Channel   @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, channelId, kind, key])
+  @@index([workspaceId, channelId, kind, createdAt])
+  @@map("discovery_records")
+}
+
+// Project-wide counters shared by workspaces; never exposed by tenant read APIs.
+model DiscoveryQuota {
+  id            String   @id
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  schemaVersion String   @default("1.0") @map("schema_version")
+  used          Int      @default(0)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("discovery_quotas")
 }

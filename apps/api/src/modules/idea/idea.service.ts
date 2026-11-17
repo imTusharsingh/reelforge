@@ -7,6 +7,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
+import { ChannelBriefSchema } from "@reelforge/contracts";
+import { foundationWorkspaceGuard } from "@reelforge/database";
 import type { IdeaProposalLlmPort } from "@reelforge/ai-providers";
 import { IDEA_PROPOSAL_LLM } from "@reelforge/ai-providers";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
@@ -401,6 +403,14 @@ export class IdeaService {
       where: { workspaceId_id: { workspaceId: context.workspaceId, id } },
     });
     if (!idea) throw new NotFoundException("Idea not found");
+    if (process.env.PIPELINE_V2 === "true" && next === "APPROVED" && idea.channelId) {
+      const brief = await foundationWorkspaceGuard(this.db, context).channelBrief.findFirst({
+        where: { channelId: idea.channelId },
+        orderBy: { version: "desc" },
+      });
+      if (!brief || ChannelBriefSchema.parse(brief.document).requestedAutonomy !== "L1")
+        throw new ConflictException("Manual idea approval is available only at L1");
+    }
     if (idea.updatedAt.getTime() !== expectedUpdatedAt.getTime() || idea.status !== expectedStatus)
       throw new ConflictException("Idea changed; refresh before transitioning");
     if (idea.archivedAt)

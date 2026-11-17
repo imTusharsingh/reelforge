@@ -1,3 +1,4 @@
+/** @deprecated V10: legacy idea workspace; L1 manual approval retained. Removed in T2. */
 "use client";
 import { useEffect, useId, useState, type FormEvent, type JSX } from "react";
 import { Alert, Button, Panel, TextAreaField } from "../../components/ui/primitives";
