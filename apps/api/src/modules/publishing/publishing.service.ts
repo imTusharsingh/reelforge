@@ -1,3 +1,4 @@
+import { publishingClient, isScheduledAutomation, reconnectRequired } from "./automation-client.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   BadRequestException,
@@ -772,10 +773,7 @@ export class PublishingService {
     if (!job || !attempt) throw new ConflictException("No upload attempt exists to reconcile");
     const metadata = this.youtubeMetadata(destination);
     try {
-      const client = await this.socialAccounts.authenticatedClient(
-        context,
-        destination.socialAccountId,
-      );
+      const client = await publishingClient(this.db, this.socialAccounts, context, destination);
       if (attempt.remotePostId !== null) {
         const verified = await client.verifyUploadedVideo(attempt.remotePostId, metadata);
         await this.recordVerifiedVideo(
@@ -826,6 +824,11 @@ export class PublishingService {
         safeErrorCode(error),
         "The upload could not be reconciled; do not retry until its outcome is known.",
       );
+      if (
+        reconnectRequired(error) &&
+        (await isScheduledAutomation(this.db, context.workspaceId, destination.scheduledPostId))
+      )
+        throw error;
     }
     return this.getScheduledPost(context, destination.scheduledPostId);
   }
@@ -1064,10 +1067,7 @@ export class PublishingService {
     let sessionCreated = false;
     try {
       attempt = await this.claimAttempt(context, destination, job.id, BigInt(video.length), null);
-      const client = await this.socialAccounts.authenticatedClient(
-        context,
-        destination.socialAccountId,
-      );
+      const client = await publishingClient(this.db, this.socialAccounts, context, destination);
       const sessionUri = await client.startVideoUpload(
         metadata,
         video.length,
@@ -1152,10 +1152,7 @@ export class PublishingService {
         oldSession,
       );
       const sessionUri = oldSession;
-      const client = await this.socialAccounts.authenticatedClient(
-        context,
-        destination.socialAccountId,
-      );
+      const client = await publishingClient(this.db, this.socialAccounts, context, destination);
       await this.transferUpload(
         context,
         destination,
@@ -1351,8 +1348,14 @@ export class PublishingService {
       verified.uploadStatus === "deleted" ||
       verified.processingStatus === "failed" ||
       verified.processingStatus === "terminated";
+    const automated = await isScheduledAutomation(
+      this.db,
+      workspaceId,
+      destination.scheduledPostId,
+    );
     const published =
       !rejected &&
+      (!automated || verified.privacyStatus === "public") &&
       (verified.uploadStatus === "processed" || verified.processingStatus === "succeeded");
     const status = rejected ? "FAILED_FINAL" : published ? "PUBLISHED" : "REMOTE_PROCESSING";
     const now = new Date();
