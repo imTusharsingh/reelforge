@@ -6,6 +6,7 @@ import { ChannelReportsService, NotificationsService } from "@reelforge/api/noti
 export type NotificationsRuntime = Readonly<{
   notifications: Pick<NotificationsService, "runIntake" | "fanOutPending" | "processDueDeliveries">;
   reports: Pick<ChannelReportsService, "runScheduleTick">;
+  autonomy?: { tick: (now: Date) => Promise<void> };
   close: () => Promise<void>;
 }>;
 
@@ -17,6 +18,7 @@ export async function createNotificationsRuntime(
     logger: ["error", "warn"],
   });
   return {
+    autonomy: app.get("V8_RUNTIME"),
     notifications: app.get(NotificationsService),
     reports: app.get(ChannelReportsService),
     close: async (): Promise<void> => {

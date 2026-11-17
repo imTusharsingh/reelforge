@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 import type { ReactNode } from "react";
 import { AuthWorkspace } from "../../components/auth-workspace";
 import { ProductionScope } from "../../features/production/session";

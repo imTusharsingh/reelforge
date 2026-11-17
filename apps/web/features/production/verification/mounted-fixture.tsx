@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 import { useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { ProductionClient } from "../api";

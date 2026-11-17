@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 "use client";
 import { useEffect, useRef, useState, type JSX } from "react";
 import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";

@@ -4,6 +4,8 @@
  * contract; the web app does not implement them yet.
  */
 export const NOTIFICATION_LINK_ROUTES = {
+  videoRun: "/runs/:runId",
+  approvalInbox: "/approvals",
   /** M16 workflow run (failed job, reconciliation, waiting approval, succeeded). */
   workflowRun: "/workspaces/:workspaceId/orchestration/runs/:runId",
   /** M11 quality review item. */

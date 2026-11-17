@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 import { ReviewDetail } from "../../../../features/review/workspace";
 export default async function ReviewRunPage({
   params,

@@ -11,6 +11,8 @@ describe("M17 notification catalog", () => {
   it("covers the approved M11/M13/M14-M15/M16/M17 event types", () => {
     expect([...NOTIFICATION_EVENT_TYPES].sort()).toEqual(
       [
+        "VIDEO_RUN_APPROVAL_REQUESTED",
+        "VIDEO_RUN_DAILY_DIGEST",
         "REVIEW_NEEDED",
         "REVIEW_APPROVED",
         "REVIEW_REJECTED",
@@ -29,7 +31,9 @@ describe("M17 notification catalog", () => {
       const entry = NOTIFICATION_EVENT_CATALOG[type];
       expect(entry.title({}).length).toBeGreaterThan(0);
       expect(entry.body({}).length).toBeGreaterThan(0);
-      expect(NOTIFICATION_LINK_ROUTES[entry.linkKind]).toMatch(/^\/workspaces\/:workspaceId\//);
+      expect(NOTIFICATION_LINK_ROUTES[entry.linkKind]).toMatch(
+        /^\/(workspaces\/:workspaceId\/|runs\/:runId|approvals)/,
+      );
     }
   });
 
