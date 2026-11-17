@@ -12,8 +12,11 @@ export async function runRequest(
   body?: unknown,
 ): Promise<unknown> {
   if (body !== undefined) await ensureCsrfToken();
+  const scopedPath = path.startsWith("run-experience")
+    ? `workspaces/${encodeURIComponent(workspaceId)}/${path}`
+    : path;
   const response = await fetch(
-    `/api/v1/${path}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    `/api/v1/${scopedPath}?workspaceId=${encodeURIComponent(workspaceId)}`,
     withCsrf({
       credentials: "include",
       ...(body === undefined

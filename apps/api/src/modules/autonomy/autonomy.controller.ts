@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   Post,
-  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -16,7 +15,7 @@ import { WorkspaceService } from "../workspace/workspace.service.js";
 import { AutonomyService } from "./autonomy.service.js";
 import type { Context } from "../runs/runs.types.js";
 
-@Controller("run-experience")
+@Controller("workspaces/:workspaceId/run-experience")
 @UseGuards(AuthGuard)
 export class AutonomyController {
   public constructor(
@@ -34,7 +33,7 @@ export class AutonomyController {
   @Get()
   public async list(
     @Req() req: AuthenticatedRequest,
-    @Query("workspaceId") workspaceId: string,
+    @Param("workspaceId") workspaceId: string,
   ): Promise<unknown> {
     const context = await this.context(req, workspaceId);
     return this.autonomy.store
@@ -44,7 +43,7 @@ export class AutonomyController {
   @Get("usage")
   public async usage(
     @Req() req: AuthenticatedRequest,
-    @Query("workspaceId") workspaceId: string,
+    @Param("workspaceId") workspaceId: string,
   ): Promise<unknown> {
     const db = this.autonomy.store.scoped(await this.context(req, workspaceId));
     const [shorts, providers] = await Promise.all([
@@ -62,7 +61,7 @@ export class AutonomyController {
   @Get(":id/autonomy")
   public async status(
     @Req() req: AuthenticatedRequest,
-    @Query("workspaceId") workspaceId: string,
+    @Param("workspaceId") workspaceId: string,
     @Param("id") id: string,
   ): Promise<unknown> {
     const context = await this.context(req, workspaceId);
@@ -71,7 +70,7 @@ export class AutonomyController {
   @Post(":id/autonomy")
   public async select(
     @Req() req: AuthenticatedRequest,
-    @Query("workspaceId") workspaceId: string,
+    @Param("workspaceId") workspaceId: string,
     @Param("id") id: string,
     @Body() body: unknown,
   ): Promise<void> {
@@ -86,7 +85,7 @@ export class AutonomyController {
   @Post(":id/decision")
   public async decide(
     @Req() req: AuthenticatedRequest,
-    @Query("workspaceId") workspaceId: string,
+    @Param("workspaceId") workspaceId: string,
     @Param("id") id: string,
     @Body() body: unknown,
   ): Promise<void> {

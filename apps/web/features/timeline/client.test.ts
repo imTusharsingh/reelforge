@@ -59,6 +59,9 @@ describe("V8 V3 HTTP and SSE clients on fakes", () => {
     vi.stubGlobal("fetch", fetcher);
     await runRequest(`run-experience/${runId}/decision`, workspaceId, { decision: "APPROVE" });
     const init = fetcher.mock.calls[1]?.[1] as RequestInit;
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      `/api/v1/workspaces/${workspaceId}/run-experience/${runId}/decision?workspaceId=${workspaceId}`,
+    );
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("fake");
     expect(init.body).toBe('{"decision":"APPROVE"}');
