@@ -8,6 +8,7 @@ CREATE TABLE v9_publish_slots (
  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE ON UPDATE CASCADE,
  FOREIGN KEY(workspace_id,channel_id) REFERENCES channels(workspace_id,id) ON DELETE CASCADE ON UPDATE CASCADE,
  FOREIGN KEY(workspace_id,run_id) REFERENCES video_runs(workspace_id,id) ON DELETE CASCADE ON UPDATE CASCADE,
+ FOREIGN KEY(workspace_id,social_account_id) REFERENCES social_accounts(workspace_id,id) ON DELETE CASCADE ON UPDATE CASCADE,
  FOREIGN KEY(workspace_id,scheduled_post_id) REFERENCES scheduled_posts(workspace_id,id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE v9_insert_leases (

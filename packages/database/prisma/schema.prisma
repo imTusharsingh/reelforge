@@ -484,6 +484,7 @@ model SocialAccount {
   publishingDestinations PublishingDestination[]
   metricCollectionJobs   MetricCollectionJob[]
   metricSnapshots        AnalyticsMetricSnapshot[]
+  v9Slots                V9PublishSlot[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, channelId, platform, remoteAccountId])
@@ -2877,6 +2878,7 @@ model V9PublishSlot {
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   channel         Channel         @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Cascade)
   run             VideoRun        @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Cascade)
+  socialAccount   SocialAccount   @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Cascade)
   post            ScheduledPost?  @relation(fields: [workspaceId, scheduledPostId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Cascade)
   inserts         V9InsertLease[]
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
