@@ -33,6 +33,10 @@ await import("./handlers/discovery/handler.js").then(({ startDiscoveryWorker }) 
   startDiscoveryWorker(orchestrationRuntime),
 );
 
+await import("./handlers/publishing/handler.js").then(({ startPublishingWorker }) =>
+  startPublishingWorker(orchestrationRuntime),
+);
+
 let stopping = false;
 async function shutdown(): Promise<void> {
   if (stopping) return;
