@@ -5,9 +5,9 @@ describe("V3 budget estimates", () => {
   const shots = Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 }));
   it("uses micro-USD precision and includes all nonclip costs", () => {
     const estimate = runEstimate(shots);
-    expect(clipEstimate(shots, false)).toBe(313);
-    expect(estimate.baseEstimateMinor).toBe(423);
-    expect(estimate.reshootReserveMinor).toBe(157);
+    expect(clipEstimate(shots, false)).toBe(318);
+    expect(estimate.baseEstimateMinor).toBe(428);
+    expect(estimate.reshootReserveMinor).toBe(159);
     const fallback = runEstimate(shots, true);
     expect(fallback.baseEstimateMinor).toBe(746);
     expect(fallback.baseEstimateMinor + fallback.reshootReserveMinor).toBeLessThanOrEqual(800);

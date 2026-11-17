@@ -257,26 +257,6 @@
       "lines": 400,
       "functionLines": 154
     },
-    "apps/api/src/modules/scene-media/scene-media.integration.test.ts": {
-      "lines": 1041,
-      "functionLines": 938
-    },
-    "apps/api/src/modules/scene-media/scene-media.service.test.ts": {
-      "lines": 2074,
-      "functionLines": 982
-    },
-    "apps/api/src/modules/scene-media/scene-media.service.ts": {
-      "lines": 2257,
-      "functionLines": 271
-    },
-    "apps/api/src/modules/scene-media/scene-media.validation.test.ts": {
-      "lines": 400,
-      "functionLines": 184
-    },
-    "apps/api/src/modules/scene-media/scene-media.validation.ts": {
-      "lines": 415,
-      "functionLines": 60
-    },
     "apps/api/src/modules/script/script.http.integration.test.ts": {
       "lines": 400,
       "functionLines": 152

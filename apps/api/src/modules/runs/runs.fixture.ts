@@ -1,3 +1,8 @@
+import {
+  StubVideoGenPort,
+  fixtureShots,
+  fixtureStageHandlers,
+} from "../scene-media/media-provider.fixture.js";
 import "reflect-metadata";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -5,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
 import { createDatabaseClient, seedWorkspaceFoundations } from "@reelforge/database";
-import { ChannelBriefSchema, type AutonomyLevel } from "@reelforge/contracts";
+import { ChannelBriefSchema, type ChannelBrief, type AutonomyLevel } from "@reelforge/contracts";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { LocalFilesystemStorageAdapter } from "../asset/storage/local-storage.adapter.js";
@@ -24,7 +29,12 @@ import { VideoRunEngine } from "../orchestration/video-run.engine.js";
 import type { Context, Run } from "./runs.types.js";
 
 export function runsFixture(): {
-  tenant: (autonomy?: AutonomyLevel, seconds?: number) => Promise<Tenant>;
+  tenant: (
+    autonomy?: AutonomyLevel,
+    seconds?: number,
+    narrator?: ChannelBrief["narratorVoice"],
+    seedShots?: boolean,
+  ) => Promise<Tenant>;
 } {
   const db = createDatabaseClient(process.env.DATABASE_URL ?? "postgresql://unused");
   const ids: string[] = [],
@@ -39,7 +49,12 @@ export function runsFixture(): {
     await Promise.all(roots.map((path) => rm(path, { recursive: true, force: true })));
   });
   return {
-    tenant: async (autonomy = "L2", seconds = 45): Promise<Tenant> => {
+    tenant: async (
+      autonomy = "L2",
+      seconds = 45,
+      narrator: ChannelBrief["narratorVoice"] = null,
+      seedShots = true,
+    ): Promise<Tenant> => {
       const workspaceId = randomUUID(),
         userId = randomUUID(),
         channelId = randomUUID(),
@@ -82,7 +97,7 @@ export function runsFixture(): {
         formatKey: "explainer",
         targetDurationSeconds: seconds,
         narrationLanguage: "English",
-        narratorVoice: null,
+        narratorVoice: narrator,
         requestedAutonomy: autonomy,
         cadence: { shortsPerDay: 1, localTime: "18:00", timezone: "UTC" },
         aiDisclosure: true,
@@ -114,10 +129,25 @@ export function runsFixture(): {
       const paid = new RunPaidCalls(usage, store),
         fallback = new RunFallback(runs, paid);
       const generation = new RunGeneration(runs, boundary, paid, artifacts, fallback);
-      const planning = new RunPlanning(runs, new RunOutputs(artifacts, store));
+      generation.provider = new StubVideoGenPort();
+      generation.fallbackProvider = new StubVideoGenPort("xai");
+      const outputs = new RunOutputs(artifacts, store);
+      const planning = new RunPlanning(runs, outputs);
+      planning.handlers = fixtureStageHandlers;
       const engine = new VideoRunEngine(runs, boundary, generation, planning, artifacts);
       const control = new RunsControl(runs, boundary);
       const run = await runs.create(context, briefId, randomUUID());
+      if (seedShots)
+        await db.shotSpec.createMany({
+          data: fixtureShots(run, brief).map((shot) => ({
+            id: shot.id,
+            workspaceId,
+            runId: run.id,
+            ordinal: shot.ordinal,
+            version: shot.version,
+            document: shot,
+          })),
+        });
       return {
         db,
         context,
@@ -129,6 +159,7 @@ export function runsFixture(): {
         runs,
         generation,
         planning,
+        outputs,
         engine,
         control,
         stop,
@@ -155,6 +186,7 @@ export type Tenant = {
   runs: RunsService;
   generation: RunGeneration;
   planning: RunPlanning;
+  outputs: RunOutputs;
   engine: VideoRunEngine;
   control: RunsControl;
   stop: { stopped: boolean; scope: null; reason: null };

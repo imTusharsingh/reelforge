@@ -1,3 +1,4 @@
+import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
@@ -8,7 +9,11 @@ import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { RunFallback } from "./video-run.fallback.js";
-import { StubVideoGenPort, type VideoGenPort } from "./video-run.handlers.js";
+import {
+  UnconfiguredVideoPort,
+  type MediaPortResolver,
+  type VideoGenPort,
+} from "./video-run.handlers.js";
 
 export class ProviderOutage extends Error {
   public constructor(public readonly notDispatched: boolean) {
@@ -17,8 +22,9 @@ export class ProviderOutage extends Error {
 }
 @Injectable()
 export class RunGeneration {
-  public provider: VideoGenPort = new StubVideoGenPort();
-  public fallbackProvider: VideoGenPort = new StubVideoGenPort();
+  public provider: VideoGenPort = new UnconfiguredVideoPort();
+  public fallbackProvider: VideoGenPort = new UnconfiguredVideoPort();
+  public resolvePorts?: MediaPortResolver;
   public constructor(
     private readonly runs: RunsService,
     private readonly boundary: RunsBoundary,
@@ -33,11 +39,19 @@ export class RunGeneration {
     if (["SUCCEEDED", "SKIPPED", "CANCELLED"].includes(step.state)) return null;
     if (run.state !== "GENERATING") return 12000;
     await this.boundary.check(context, run);
+    const ports = this.resolvePorts
+      ? await this.resolvePorts(context, run, ShotSpecSchema.parse(step.input))
+      : { primary: this.provider, fallback: this.fallbackProvider };
+    if (!ports) return 12000;
     if (!step.providerJobId) {
       try {
-        step = await this.submit(context, run, step);
+        step = await this.submit(context, run, step, ports);
       } catch (error) {
-        if (!(error instanceof ProviderOutage) || !error.notDispatched) throw error;
+        if (!(
+          (error instanceof ProviderOutage && error.notDispatched) ||
+          (error instanceof ProviderFailure && error.kind === "OUTAGE" && !error.dispatched)
+        ))
+          throw error;
         const failed = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         await this.fallback.apply(context, run, failed);
         await this.runs.enqueue(context, await this.runs.store.get(context, run.id));
@@ -47,26 +61,33 @@ export class RunGeneration {
     }
     const status = await withSpan(
       "run.provider.poll",
-      () => this.port(step).poll(step.providerJobId!),
+      () => this.port(step, ports).poll(step.providerJobId!),
       "CLIENT",
     );
     if (status === "queued" || status === "running") return 12000;
     if (status !== "succeeded") {
       metrics
         .counter("run_provider_results", "Provider outcomes")
-        .inc({ provider: step.providerId ?? "stub", status });
-      throw new ConflictException("Provider result requires human reconciliation");
+        .inc({ provider: step.providerId ?? "unconfigured", status });
+      throw new ConflictException(
+        `PROVIDER_${status.toUpperCase()}: human reconciliation required`,
+      );
     }
-    await this.complete(context, step);
+    await this.complete(context, step, ports);
     return null;
   }
-  private async submit(context: Context, run: Run, step: Step): Promise<Step> {
+  private async submit(
+    context: Context,
+    run: Run,
+    step: Step,
+    ports: { primary: VideoGenPort; fallback: VideoGenPort },
+  ): Promise<Step> {
     if (step.state === "RUNNING" || step.state === "WAITING_EXTERNAL") {
       if (!(await this.hasPaidAttempt(context, step)))
         throw new ConflictException("Paid reservation missing; no submission to reconcile");
       const recovered = await withSpan(
         "run.provider.reconcile",
-        () => this.port(step).reconcile(step.idempotencyKey),
+        () => this.port(step, ports).reconcile(step.idempotencyKey),
         "CLIENT",
       );
       if (!recovered)
@@ -77,11 +98,9 @@ export class RunGeneration {
     const envelope = await this.runs.store
       .scoped(context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-    const amount = (envelope.route === "FALLBACK" ? this.fallbackProvider : this.provider).estimate(
-      shot,
-      envelope.route === "FALLBACK",
-    );
-    await this.claim(context, run, step, amount, envelope.route === "FALLBACK");
+    const selected = envelope.route === "FALLBACK" ? ports.fallback : ports.primary;
+    const amount = selected.estimate(shot, envelope.route === "FALLBACK");
+    await this.claim(context, run, step, amount, selected.providerId);
     try {
       await this.paid.reserve(context, run, step, amount);
     } catch (error) {
@@ -90,11 +109,20 @@ export class RunGeneration {
         await this.releaseClaim(context, run, step, amount);
       throw error;
     }
+    await this.runs.store.db.providerRequest.updateMany({
+      where: { workspaceId: context.workspaceId, correlationId: step.id },
+      data: {
+        providerId: (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).providerId,
+        capabilityId:
+          (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).modelId ?? "video",
+        dispatchedPrompt: "V5 immutable ShotSpec on VideoRunStep",
+      },
+    });
     await this.boundary.check(context, await this.runs.store.get(context, run.id));
     const result = await withSpan(
       "run.provider.submit",
       () =>
-        (envelope.route === "FALLBACK" ? this.fallbackProvider : this.provider).submit(
+        (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).submit(
           shot,
           step.idempotencyKey,
         ),
@@ -107,7 +135,7 @@ export class RunGeneration {
     run: Run,
     step: Step,
     amount: number,
-    fallback: boolean,
+    providerId: string,
   ): Promise<void> {
     const claim = await this.runs.store.mutate(
       context,
@@ -123,7 +151,7 @@ export class RunGeneration {
             state: "RUNNING",
             startedAt: new Date(),
             costMinor: amount,
-            providerId: fallback ? "v3-stub-xai" : "v3-stub-gemini",
+            providerId,
           },
         });
         if (!claimed.count) throw new ConflictException("Step already claimed");
@@ -216,18 +244,67 @@ export class RunGeneration {
     await this.runs.events?.publish(saved.event);
     return saved.value;
   }
-  private port(step: Step): VideoGenPort {
-    return step.providerId === "v3-stub-xai" ? this.fallbackProvider : this.provider;
+  private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
+    const registry = new Map(
+      [ports.primary, ports.fallback].map((port) => [port.providerId, port]),
+    );
+    const port = step.providerId ? registry.get(step.providerId) : undefined;
+    if (!port)
+      throw new ConflictException("Stored provider is unavailable; reconciliation required");
+    return port;
   }
-  private async complete(context: Context, step: Step): Promise<void> {
+  private completionOutput(
+    step: Step,
+    artifact: import("../runs/runs.types.js").Artifact,
+    meta: ReturnType<NonNullable<VideoGenPort["metadata"]>> | undefined,
+  ): ReturnType<typeof json> {
+    return json({
+      storageArtifacts: [artifact],
+      ...(meta
+        ? {
+            receipt: {
+              key: step.key,
+              providerId: step.providerId,
+              providerJobId: step.providerJobId,
+              ...meta,
+              objectKey: artifact.objectKey,
+              checksumSha256: artifact.checksumSha256,
+              mimeType: "video/mp4",
+            },
+          }
+        : {}),
+    });
+  }
+  private recordSuccess(step: Step, started: number): void {
+    metrics
+      .counter("run_provider_results", "Provider outcomes")
+      .inc({ provider: step.providerId ?? "unconfigured", status: "succeeded" });
+    metrics
+      .counter("run_provider_cost_minor", "Provider cost in cents")
+      .inc({ provider: step.providerId ?? "unconfigured" }, step.costMinor ?? 0);
+    metrics
+      .histogram("run_provider_latency_ms", "Provider latency")
+      .observe({ provider: step.providerId ?? "unconfigured" }, Date.now() - started);
+  }
+  private async complete(
+    context: Context,
+    step: Step,
+    ports: { primary: VideoGenPort; fallback: VideoGenPort },
+  ): Promise<void> {
     const started = step.startedAt?.getTime() ?? Date.now();
     const body = await withSpan(
       "run.provider.fetch",
-      () => this.port(step).fetch(step.providerJobId!),
+      () => this.port(step, ports).fetch(step.providerJobId!),
       "CLIENT",
     );
-    const artifact = await this.artifacts.put(context, "clips", body, "application/json");
-    await this.paid.finish(context, step, true, step.costMinor ?? 0);
+    const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");
+    const meta = this.port(step, ports).metadata?.(
+      step.providerJobId!,
+      ShotSpecSchema.parse(step.input),
+    );
+    if (meta && meta.costMinor > (step.costMinor ?? 0))
+      throw new ConflictException("RECONCILE_REQUIRED: provider billing exceeded reservation");
+    await this.paid.finish(context, step, true, meta?.costMinor ?? step.costMinor ?? 0);
     const result = await this.runs.store.mutate(
       context,
       step.runId,
@@ -236,19 +313,21 @@ export class RunGeneration {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "SUCCEEDED") return { value: false, payload: { replay: true } };
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: step.runId } });
-        const cost = step.costMinor ?? 0;
+        const reserved = step.costMinor ?? 0;
+        const cost = meta?.costMinor ?? reserved;
         await db.videoRunStep.updateMany({
           where: { id: step.id },
           data: {
             state: "SUCCEEDED",
+            costMinor: cost,
             finishedAt: new Date(),
-            output: json({ stub: true, storageArtifacts: [artifact] }),
+            output: this.completionOutput(step, artifact, meta),
           },
         });
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id },
           data: {
-            reservedMinor: budget.reservedMinor - cost,
+            reservedMinor: budget.reservedMinor - reserved,
             spentMinor: budget.spentMinor + cost,
             revision: budget.revision + 1,
           },
@@ -261,15 +340,7 @@ export class RunGeneration {
       },
     );
     if (result.value) {
-      metrics
-        .counter("run_provider_results", "Provider outcomes")
-        .inc({ provider: step.providerId ?? "stub", status: "succeeded" });
-      metrics
-        .counter("run_provider_cost_minor", "Provider cost in cents")
-        .inc({ provider: step.providerId ?? "stub" }, step.costMinor ?? 0);
-      metrics
-        .histogram("run_provider_latency_ms", "Provider latency")
-        .observe({ provider: step.providerId ?? "stub" }, Date.now() - started);
+      this.recordSuccess(step, started);
     }
     await this.runs.events?.publish(result.event);
   }

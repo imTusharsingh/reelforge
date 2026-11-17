@@ -1,12 +1,9 @@
-import type { ScriptScene } from "../script/script.types.js";
-
 export const SCENE_MEDIA_SCHEMA_VERSION = "1.0" as const;
 
-export const SCENE_MEDIA_KINDS = ["IMAGE", "VIDEO", "NARRATION", "DIALOGUE"] as const;
-export type SceneMediaKind = (typeof SCENE_MEDIA_KINDS)[number];
+export type SceneMediaKind = "IMAGE" | "VIDEO" | "NARRATION" | "DIALOGUE";
 
-export type SceneMediaJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED";
-export type SceneGenerationStatus =
+type SceneMediaJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED";
+type SceneGenerationStatus =
   | "QUEUED"
   | "SUBMITTED"
   | "PROVIDER_PROCESSING"
@@ -15,7 +12,7 @@ export type SceneGenerationStatus =
   | "FAILED_RETRYABLE"
   | "FAILED_FINAL"
   | "CANCELED";
-export type SceneOutputStatus =
+type SceneOutputStatus =
   "QUEUED" | "SUCCEEDED" | "REUSED" | "ASSIGNED" | "FAILED_RETRYABLE" | "FAILED_FINAL";
 
 export type RequestedOutputs = Readonly<{
@@ -25,7 +22,7 @@ export type RequestedOutputs = Readonly<{
   dialogue: boolean;
 }>;
 
-export type SceneMediaOutput = Readonly<{
+type SceneMediaOutput = Readonly<{
   kind: SceneMediaKind;
   status: SceneOutputStatus;
   assetId: string | null;
@@ -41,7 +38,7 @@ export type SceneMediaOutput = Readonly<{
   errorMessage: string | null;
 }>;
 
-export type SceneMediaScene = Readonly<{
+type SceneMediaScene = Readonly<{
   sceneId: string;
   ordinal: number;
   sceneVersion: number;
@@ -67,25 +64,4 @@ export type SceneMediaPackage = Readonly<{
   promptSnapshotId: string;
   requestedOutputs: RequestedOutputs;
   scenes: readonly SceneMediaScene[];
-}>;
-
-export type ResolvedCharacterRef = Readonly<{
-  characterId: string;
-  characterVersionId: string;
-  version: number;
-  checksumSha256: string;
-  /** @deprecated Per-scene voice dependency: use the channel narrator; remove legacy code in V4, obsolete columns via T2 ADR/migration. */
-  voicePreference: unknown;
-  referenceAssetIds: readonly string[];
-}>;
-
-export type PlannedScene = Readonly<{
-  scene: ScriptScene;
-  ordinal: number;
-  prompt: string;
-  sourceRefs: Readonly<Record<string, unknown>>;
-  characters: readonly ResolvedCharacterRef[];
-  narratorVoice?: string;
-  referenceImageIds: readonly string[];
-  kinds: readonly SceneMediaKind[];
 }>;
