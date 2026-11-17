@@ -267,8 +267,3 @@ export function openAiKey(env: NodeJS.ProcessEnv = process.env): string | undefi
 export function openAiTextModel(env: NodeJS.ProcessEnv = process.env): string {
   return env.OPENAI_TEXT_MODEL?.trim() || "";
 }
-// Compatibility names consumed by frozen Wave 1 callers; implementations are Gemini only.
-export {
-  GeminiLegacyImage as OpenAiImageProvider,
-  GeminiLegacyTts as OpenAiTtsProvider,
-} from "./gemini.legacy.js";

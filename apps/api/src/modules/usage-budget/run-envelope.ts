@@ -1,27 +1,23 @@
 import { ConflictException } from "@nestjs/common";
+import { reservationCents } from "@reelforge/ai-providers";
+import { clipMoney, overheadCents } from "../scene-media/media-prices.js";
 import type { BudgetEnvelope, ShotSpec } from "@reelforge/contracts";
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
 export function clipEstimate(
-  shots: readonly Pick<ShotSpec, "durationSeconds">[],
+  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
+    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
   fallback: boolean,
 ): number {
-  const micros = shots.reduce(
-    (sum, shot) =>
-      sum + shot.durationSeconds * (fallback ? 140000 : 69504) + (fallback ? 10000 : 0),
-    0,
-  );
-  return Math.ceil(micros / 10000);
+  return shots.reduce((sum, shot) => sum + reservationCents(clipMoney(shot, fallback)), 0);
 }
 export function runEstimate(
-  shots: readonly Pick<ShotSpec, "durationSeconds">[],
+  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
+    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
   fallback = false,
 ): Estimate {
-  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
   const clips = clipEstimate(shots, fallback);
-  const overhead = Math.ceil(
-    ((3 + 2 * shots.length) * 33600 + 500000 + (seconds / 10) * 2250 + 80000) / 10000,
-  );
+  const overhead = overheadCents(shots);
   const baseEstimateMinor = clips + overhead;
   if (baseEstimateMinor > 800) throw new ConflictException("Run estimate exceeds $8");
   return {
@@ -32,7 +28,8 @@ export function runEstimate(
 }
 export function fallbackEstimate(
   envelope: Pick<BudgetEnvelope, "spentMinor" | "reservedMinor" | "reshootReserveMinor">,
-  remaining: readonly Pick<ShotSpec, "durationSeconds">[],
+  remaining: readonly (Pick<ShotSpec, "durationSeconds"> &
+    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
   overheadRemaining = 0,
 ): Estimate {
   const baseEstimateMinor =

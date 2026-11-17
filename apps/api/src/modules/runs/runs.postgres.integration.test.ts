@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
-import { StubVideoGenPort } from "../orchestration/video-run.handlers.js";
+import { StubVideoGenPort } from "../scene-media/media-provider.fixture.js";
 import { ProviderOutage } from "../orchestration/video-run.generation.js";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 

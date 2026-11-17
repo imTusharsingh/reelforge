@@ -22,7 +22,14 @@ export class RunFallback {
       });
       const remaining = all.filter((s) => s.state === "PENDING" || s.id === failed.id);
       const initial = all.filter((s) => s.attempt === 1).map((s) => ShotSpecSchema.parse(s.input));
-      const overhead = runEstimate(initial).baseEstimateMinor - clipEstimate(initial, false);
+      const mediaSteps = await db.videoRunStep.findMany({
+        where: { runId: run.id, key: { startsWith: "media:" }, state: "SUCCEEDED" },
+      });
+      const overheadSpent = mediaSteps.reduce((sum, item) => sum + (item.costMinor ?? 0), 0);
+      const overhead = Math.max(
+        0,
+        runEstimate(initial).baseEstimateMinor - clipEstimate(initial, false) - overheadSpent,
+      );
       const estimate = fallbackEstimate(
         { ...budget, reservedMinor: budget.reservedMinor - (failed.costMinor ?? 0) },
         remaining.map((s) => ShotSpecSchema.parse(s.input)),

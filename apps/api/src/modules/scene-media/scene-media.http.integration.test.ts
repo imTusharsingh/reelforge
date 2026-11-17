@@ -113,7 +113,7 @@ suite("SceneMediaController authentication and workspace guards", () => {
       .expect(401);
     await request(app!.getHttpServer() as never)
       .post(`${base}/jobs`)
-      .expect(401);
+      .expect(404);
     await request(app!.getHttpServer() as never)
       .get(`${base}/jobs`)
       .expect(401);
@@ -144,16 +144,16 @@ suite("SceneMediaController authentication and workspace guards", () => {
         idempotencyKey: "viewer",
         outputs: { image: true },
       })
-      .expect(403);
+      .expect(404);
     await request(app!.getHttpServer() as never)
       .post(`${base}/jobs/${missing}/retry`)
       .set("Authorization", `Bearer ${viewerToken}`)
       .send({ idempotencyKey: "viewer-retry", expectedJobVersion: 1 })
-      .expect(403);
+      .expect(404);
     await request(app!.getHttpServer() as never)
       .get(`${base}/provider-health/provider/image`)
       .set("Authorization", `Bearer ${viewerToken}`)
-      .expect(403);
+      .expect(200);
     await request(app!.getHttpServer() as never)
       .get(`${base}/jobs/${missing}`)
       .set("Authorization", `Bearer ${ownerToken}`)
@@ -176,7 +176,7 @@ suite("SceneMediaController authentication and workspace guards", () => {
       .set("Authorization", `Bearer ${viewerToken}`)
       .expect(200);
     expect(capabilities.body).toMatchObject({ workspaceId });
-    expect(capabilities.body.capabilities).toHaveLength(4);
+    expect(capabilities.body.capabilities).toHaveLength(0);
     expect(
       capabilities.body.capabilities.every(
         (item: { available: boolean; reason: string | null }) =>

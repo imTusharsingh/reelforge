@@ -11,16 +11,8 @@ import {
   PROVIDER_REGISTRY,
   ProviderRegistry,
   SCRIPT_LLM,
-  TTS_PROVIDER,
-  VIDEO_PROVIDER,
 } from "@reelforge/ai-providers";
-import type {
-  CapabilityMetadata,
-  ImageProviderPort,
-  MediaGenerationResponse,
-  TtsProviderPort,
-  VideoProviderPort,
-} from "@reelforge/ai-providers";
+import type { CapabilityMetadata } from "@reelforge/ai-providers";
 import { compilePrompt, parsePromptTemplateBody, platformDefaults } from "@reelforge/config-engine";
 import { LocalFilesystemStorageAdapter } from "../asset/storage/local-storage.adapter.js";
 import { STORAGE_PORT } from "../asset/storage/storage.port.js";
@@ -31,6 +23,7 @@ import type { RenderCompositionInput } from "../composition/composition.types.js
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { PublishingService } from "../publishing/publishing.service.js";
 import { QualityService } from "../quality/quality.service.js";
+import { SceneMediaService } from "../scene-media/scene-media.service.js";
 import { providerEnvironment } from "../scene-media/scene-media.validation.js";
 import type { ScriptLlmPort } from "../script/script.types.js";
 import { ScriptService } from "../script/script.service.js";
@@ -102,33 +95,6 @@ const llm: ScriptLlmPort = {
   capability: capability("llm", "llm"),
   complete: async () => ({ output: document, metadata }),
 };
-let imageCalls = 0;
-const image: ImageProviderPort = {
-  capability: capability("image", "image"),
-  generate: async (request): Promise<MediaGenerationResponse> => {
-    imageCalls += 1;
-    return {
-      mediaId: `img-${request.correlationId}`,
-      providerJobId: `job-${request.correlationId}`,
-      providerRequestId: `req-${request.correlationId}`,
-      media: { declaredMediaType: "image/png", body: PNG },
-      metadata,
-    };
-  },
-};
-const video: VideoProviderPort = {
-  capability: capability("image", "video"),
-  generate: async () => {
-    throw new Error("video is not requested by this workflow");
-  },
-};
-const tts: TtsProviderPort = {
-  capability: capability("tts", "tts"),
-  synthesize: async () => {
-    throw new Error("tts is not requested by this workflow");
-  },
-};
-
 /** Fake FFmpeg engine: deterministic artifacts with a manifest pinned to the render input. */
 function validArtifacts(input: RenderCompositionInput, jobId: string): readonly RenderedArtifact[] {
   const videoBody = Buffer.from(`m16 fixture video ${jobId}`);
@@ -336,7 +302,7 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
       },
     });
     const registry = new ProviderRegistry();
-    for (const port of [llm, image, video, tts])
+    for (const port of [llm])
       registry.register({
         capability: port.capability,
         credential: {
@@ -354,12 +320,6 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
       .useValue(llm)
       .overrideProvider(PROVIDER_REGISTRY)
       .useValue(registry)
-      .overrideProvider(IMAGE_PROVIDER)
-      .useValue(image)
-      .overrideProvider(VIDEO_PROVIDER)
-      .useValue(video)
-      .overrideProvider(TTS_PROVIDER)
-      .useValue(tts)
       .overrideProvider(STORAGE_PORT)
       .useValue(new LocalFilesystemStorageAdapter(storageRoot))
       .overrideProvider(COMPOSITION_ENGINE)
@@ -406,7 +366,7 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     await rm(storageRoot, { recursive: true, force: true });
   });
 
-  it("runs idea -> script -> media -> render -> QA approval wait -> resume with the real dispatcher, and M13 refuses an unapproved publish", async () => {
+  it("rejects retired generation without spend; reads historical media through render, approval and unapproved-publish guards", async () => {
     if (!db || !module) return;
     const orchestration = module.get(OrchestrationService);
     const scripts = module.get(ScriptService);
@@ -414,6 +374,12 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     const quality = module.get(QualityService);
     const publishing = module.get(PublishingService);
 
+    const media = module.get(SceneMediaService);
+    await expect(media.create(context, {})).rejects.toMatchObject({ status: 410 });
+    expect(() => module!.get(IMAGE_PROVIDER)).toThrow();
+    expect(await db.providerRequest.count({ where: { workspaceId } })).toBe(0);
+    expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(0);
+    const historicalJobId = randomUUID();
     const started = await orchestration.startManualRun(context, {
       definitionKey: "GENERATION",
       channelId,
@@ -421,6 +387,7 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
       configSnapshotId,
       promptSnapshotId,
       outputs: { image: true },
+      sceneMediaJobId: historicalJobId,
     });
     expect(started.dispatchStatus).toBe("DISPATCHED");
 
@@ -440,15 +407,88 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     const observedScript = await db.script.findUniqueOrThrow({ where: { id: String(scriptId) } });
     await scripts.approve(context, String(scriptId), observedScript.currentRevision);
 
-    // Approved script -> real scene media (fixture image provider) -> render queued (external wait).
+    const requestsBeforeMedia = await db.providerRequest.count({ where: { workspaceId } });
+    const reservationsBeforeMedia = await db.usageReservation.count({ where: { workspaceId } });
+    // Only historical media remains readable; never revive the retired producer to reach QA/publish guards.
+    const assetId = randomUUID();
+    const stored = await module.get<LocalFilesystemStorageAdapter>(STORAGE_PORT).putObject({
+      workspaceId,
+      objectKey: `fixtures/${assetId}.png`,
+      body: Buffer.from(PNG),
+      contentType: "image/png",
+    });
+    await db.asset.create({
+      data: {
+        id: assetId,
+        workspaceId,
+        rootAssetId: assetId,
+        objectKey: stored.objectKey,
+        mediaType: "image/png",
+        byteSize: stored.byteSize,
+        checksumSha256: stored.checksumSha256,
+        status: "PUBLISHED",
+        ownership: "USER_UPLOADED",
+        licenseType: "CC0",
+        licenseTerms: "Public-domain fixture; unrestricted reuse",
+        rightsHolder: "M16 historical fixture",
+        rightsAttestedAt: new Date(),
+        createdByUserId: ownerId,
+      },
+    });
+    await db.sceneMediaJob.create({
+      data: {
+        id: historicalJobId,
+        workspaceId,
+        channelId,
+        scriptId: String(scriptId),
+        scriptRevision: observedScript.currentRevision,
+        idempotencyKey: `historical:${historicalJobId}`,
+        status: "SUCCEEDED",
+        requestedOutputs: { image: true },
+        configSnapshotId,
+        promptSnapshotId,
+        createdByUserId: ownerId,
+        scenes: {
+          create: {
+            sceneId: "one",
+            ordinal: 0,
+            sceneVersion: 1,
+            status: "SUCCEEDED",
+            activeSlot: 1,
+            idempotencyKey: `historical:${historicalJobId}:one`,
+            resolvedPrompt: "Historical test fixture",
+            sourceRefs: {},
+            outputs: {
+              create: {
+                kind: "IMAGE",
+                status: "ASSIGNED",
+                assetId,
+                assetVersion: 1,
+                mediaType: "image/png",
+                byteSize: stored.byteSize,
+                checksumSha256: stored.checksumSha256,
+              },
+            },
+          },
+        },
+      },
+    });
+    // Approved script -> existing package reader -> render queued (external wait).
     clockMs += 61_000;
     await drain(orchestration);
     run = await orchestration.getRun(context, started.id);
     const mediaStep = run.steps.find((step) => step.stepKey === "GENERATE_SCENE_MEDIA");
     const renderStep = run.steps.find((step) => step.stepKey === "COMPOSE_RENDER");
     expect(mediaStep).toMatchObject({ status: "SUCCEEDED", resultType: "SCENE_MEDIA_PACKAGE" });
-    expect(imageCalls).toBe(1);
-    expect(renderStep).toMatchObject({ status: "WAITING_EXTERNAL", attempts: 1 });
+    expect(() => module!.get(IMAGE_PROVIDER)).toThrow();
+    expect(await db.providerRequest.count({ where: { workspaceId } })).toBe(requestsBeforeMedia);
+    expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(
+      reservationsBeforeMedia,
+    );
+    expect(renderStep, run.lastErrorMessage ?? undefined).toMatchObject({
+      status: "WAITING_EXTERNAL",
+      attempts: 1,
+    });
     const renderJobId = String(run.input["renderJobId"]);
     // renderJobId and sceneMediaJobId are persisted on the run as soon as they exist.
     expect(run.input["sceneMediaJobId"]).toBe(mediaStep?.resultRef);
@@ -478,7 +518,7 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     expect(renderCalls).toBe(1);
 
     // M11 with no AI review provider -> human approval required -> WAITING_APPROVAL.
-    expect(run.state).toBe("WAITING_APPROVAL");
+    expect(run.state, run.lastErrorMessage ?? undefined).toBe("WAITING_APPROVAL");
     const reviewStep = run.steps.find((step) => step.stepKey === "QUALITY_REVIEW");
     expect(reviewStep?.status).toBe("WAITING_APPROVAL");
     const reviewId = String(reviewStep?.resultRef);
@@ -534,13 +574,7 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
           platform: "YOUTUBE",
           status: "DRAFT",
           idempotencyKey: destinationKey,
-          metadata: {
-            platform: "YOUTUBE",
-            title: "M16 fixture",
-            description: "Fixture",
-            privacyStatus: "private",
-            selfDeclaredMadeForKids: false,
-          },
+          metadata: unapprovedPostInput.destinations[0]!.metadata,
         },
       });
       await tx.publishJob.create({
