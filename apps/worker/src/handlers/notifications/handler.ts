@@ -29,6 +29,7 @@ export class NotificationsWorkerHandler {
 
   public async tick(): Promise<NotificationsTickResult> {
     const now = (this.options.now ?? ((): Date => new Date()))();
+    await this.runtime.autonomy?.tick(now);
     const intake = await this.runtime.notifications.runIntake(now);
     for (const source of intake)
       if (source.error !== null)

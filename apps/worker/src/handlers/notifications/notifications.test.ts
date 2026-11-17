@@ -66,3 +66,18 @@ describe("NotificationsWorkerHandler", () => {
     expect(calls).toHaveLength(count);
   });
 });
+it("runs V8 autonomy and notifications before M17 intake using the injected clock", async () => {
+  const calls: string[] = [];
+  const rt = runtime(calls);
+  const now = new Date("2026-11-16T12:00:00Z");
+  const tick = vi.fn(async () => {
+    calls.push("v8");
+  });
+  const handler = new NotificationsWorkerHandler(
+    { ...rt, autonomy: { tick } },
+    { now: (): Date => now },
+  );
+  await handler.tick();
+  expect(calls).toEqual(["v8", "intake", "reports", "fanout", "deliveries"]);
+  expect(tick).toHaveBeenCalledWith(now);
+});

@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 "use client";
 import type { JSX, ReactNode } from "react";
 import { Button, StateMessage } from "../../components/ui/primitives";
