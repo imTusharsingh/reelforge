@@ -7,17 +7,9 @@ import { BrandLogo } from "./brand-logo";
 import { IconButton } from "./ui/primitives";
 import { getBreadcrumb } from "./breadcrumb";
 
-const destinations = [
-  { name: "Overview", href: "/" },
-  { name: "Channels", href: "/channels" },
-  { name: "Planning", href: "/planning" },
-  { name: "Operations", href: "/operations" },
-  { name: "Production", href: "/production" },
-  { name: "Review queue", href: "/review" },
-  { name: "Publishing", href: "/publishing" },
-  { name: "Insights", href: "/insights" },
-  { name: "Account", href: "/account" },
-];
+import { studioDestinations } from "./pipeline-navigation";
+
+const destinations = studioDestinations();
 
 function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
   const pathname = usePathname();

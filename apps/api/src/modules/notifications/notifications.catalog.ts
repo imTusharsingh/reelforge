@@ -25,6 +25,26 @@ function text(payload: Readonly<Record<string, unknown>>, key: string, fallback:
  * is a breaking change for stored preferences.
  */
 export const NOTIFICATION_EVENT_CATALOG = {
+  VIDEO_RUN_APPROVAL_REQUESTED: {
+    sourceModule: "M17",
+    description: "A VideoRun needs a decision or pause resolution.",
+    audience: "EDITORS",
+    severity: "ACTION_REQUIRED",
+    linkKind: "videoRun",
+    defaults: { inApp: true, email: true },
+    title: () => "Short needs your approval",
+    body: (p) => `Open the approval inbox (${text(p, "pauseReason", "final approval")}).`,
+  },
+  VIDEO_RUN_DAILY_DIGEST: {
+    sourceModule: "M17",
+    description: "Daily VideoRun approval digest.",
+    audience: "EDITORS",
+    severity: "INFO",
+    linkKind: "approvalInbox",
+    defaults: { inApp: true, email: true },
+    title: () => "Daily Shorts digest",
+    body: (p) => `${typeof p.pending === "number" ? p.pending : 0} Shorts need attention.`,
+  },
   REVIEW_NEEDED: {
     sourceModule: "M11",
     description: "A rendered video needs a human quality review decision.",

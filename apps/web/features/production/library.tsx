@@ -1,3 +1,4 @@
+/** @deprecated V8 replaces this screen with /runs and /approvals; retained until T2. */
 "use client";
 import { useState, type JSX } from "react";
 import { StudioLink } from "../../components/studio-link";
