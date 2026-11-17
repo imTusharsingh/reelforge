@@ -15,6 +15,8 @@ import { createDatabaseClient } from "@reelforge/database";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../../app.module.js";
+import { ProvidersRuntime } from "../openai/providers.runtime.js";
+import { planningFixture, shotsFixture } from "../script/planning.fixture.js";
 import { AuditService } from "../admin/audit.service.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { NOTIFICATION_EMAIL_PORT } from "../notifications/notifications.ports.js";
@@ -95,6 +97,15 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
       },
     });
     vi.stubGlobal("fetch", fetchSpy);
+    for (const model of [
+      "GEMINI_VIDEO_MODEL",
+      "GEMINI_IMAGE_MODEL",
+      "GEMINI_TEXT_MODEL",
+      "GEMINI_TTS_MODEL",
+      "GEMINI_MUSIC_MODEL",
+      "XAI_VIDEO_MODEL",
+    ])
+      vi.stubEnv(model, "boundary-fixture-model");
     process.env["LOG_LEVEL"] = "fatal";
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider("DATABASE")
@@ -112,6 +123,7 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
   afterAll(async () => {
     await app?.close();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     if (previousLogLevel === undefined) delete process.env["LOG_LEVEL"];
     else process.env["LOG_LEVEL"] = previousLogLevel;
     if (!db) return;
@@ -120,14 +132,15 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
     await db.$disconnect();
   });
 
-  it("binds only NOT_CONFIGURED AI adapters, each failing with no cost model (M06–M09, M11, M15)", async () => {
+  it("rejects retired media tokens and unconfigured legacy/V2 AI dispatch without network or charge", async () => {
     if (!db) return;
     const registry = port<ProviderRegistry>(PROVIDER_REGISTRY);
     expect(registry).toBeInstanceOf(ProviderRegistry);
     expect(registry.list()).toEqual([]);
 
-    const media = [IMAGE_PROVIDER, VIDEO_PROVIDER, TTS_PROVIDER].map((key) => port(key));
-    for (const adapter of [port(SCRIPT_LLM), ...media, port(INSIGHT_REPORT_LLM)]) {
+    for (const retired of [IMAGE_PROVIDER, VIDEO_PROVIDER, TTS_PROVIDER])
+      expect(() => port(retired)).toThrow();
+    for (const adapter of [port(SCRIPT_LLM), port(INSIGHT_REPORT_LLM)]) {
       const capability = adapter["capability"] as {
         providerId: string;
         capabilityId: string;
@@ -142,16 +155,37 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
 
     const script = port(SCRIPT_LLM);
     expect(await rejects(() => (script["complete"] as () => unknown)())).toBeInstanceOf(Error);
-    for (const [adapter, method] of [
-      [media[0], "generate"],
-      [media[1], "generate"],
-      [media[2], "synthesize"],
-    ] as const) {
-      const error = (await rejects(() => (adapter![method] as () => unknown)())) as {
-        code?: string;
-      };
-      expect(error.code).toBe("NOT_CONFIGURED");
+    const context = { workspaceId, userId: ownerId, role: "OWNER" as const };
+    const runtime = port<ProvidersRuntime>(ProvidersRuntime);
+    const native = await runtime.ports(context, { resolve: async (): Promise<never[]> => [] });
+    const shot = { ...shotsFixture(planningFixture())[0]!, workspaceId, durationSeconds: 5 };
+    for (const video of [native.omni, native.grok]) {
+      expect(video.capabilities()).toMatchObject({ health: "NOT_CONFIGURED" });
+      expect(["gemini", "xai"]).toContain(video.capabilities().providerId);
+      await expect(video.submit(shot, randomUUID())).rejects.toMatchObject({
+        kind: "NOT_CONFIGURED",
+        dispatched: false,
+      });
     }
+    for (const call of [
+      (): ReturnType<typeof native.image.submit> =>
+        native.image.submit({ prompt: "Boundary fixture", references: [] }, randomUUID()),
+      (): ReturnType<typeof native.tts.submit> =>
+        native.tts.submit({ text: "Boundary fixture", voice: "fixture" }, randomUUID()),
+      (): ReturnType<typeof native.music.submit> =>
+        native.music.submit(
+          { prompt: "Boundary fixture", instrumentalOnly: true, durationSeconds: 30 },
+          randomUUID(),
+        ),
+      (): Promise<unknown> =>
+        native.text.complete(
+          { prompt: "Boundary fixture", jsonSchema: {}, parse: (value): unknown => value },
+          randomUUID(),
+        ),
+    ])
+      await expect(call()).rejects.toMatchObject({ kind: "NOT_CONFIGURED", dispatched: false });
+    expect(await db.providerRequest.count({ where: { workspaceId } })).toBe(0);
+    expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(0);
     const idea = port(IDEA_PROPOSAL_LLM);
     expect(await rejects(() => (idea["proposeIdea"] as () => unknown)())).toBeInstanceOf(Error);
     const quality = port(QUALITY_REVIEW_PORT);
