@@ -33,8 +33,8 @@ export class AutomationController {
     @Req() req: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
   ): Promise<unknown> {
-    if (!pipelineV2Enabled()) return [];
     const context = await this.workspaces.context(req.principal.userId, this.uuid(workspaceId));
+    if (!pipelineV2Enabled()) return [];
     return this.db.v9PublishSlot.findMany({
       where: { workspaceId: context.workspaceId },
       orderBy: { scheduledAt: "asc" },

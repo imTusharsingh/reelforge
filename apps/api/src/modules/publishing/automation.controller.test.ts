@@ -35,5 +35,9 @@ describe("V9 tenant-scoped automation HTTP", () => {
     await expect(controller.retry(req, context.workspaceId, f.run.id)).rejects.toThrow("Editor");
     vi.stubEnv("PIPELINE_V2", "false");
     expect(await controller.list(req, context.workspaceId)).toEqual([]);
+    verify.mockRejectedValueOnce(new Error("Workspace access denied"));
+    await expect(controller.list(req, context.workspaceId)).rejects.toThrow(
+      "Workspace access denied",
+    );
   });
 });
