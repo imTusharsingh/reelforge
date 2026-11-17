@@ -58,8 +58,7 @@ function assemblyFilters(
 ): string[] {
   const filters: string[] = [];
   clips.forEach((clip, index) => {
-    const pad =
-      clip.fade && index < clips.length - 1 ? ",tpad=stop_mode=clone:stop=6" : "";
+    const pad = clip.fade && index < clips.length - 1 ? ",tpad=stop_mode=clone:stop=6" : "";
     filters.push(
       `[${index}:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,setsar=1,fps=24,settb=AVTB,format=yuv420p,trim=duration=${clip.seconds},setpts=PTS-STARTPTS,fps=24,settb=AVTB${pad}[v${index}]`,
     );
