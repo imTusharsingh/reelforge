@@ -28,6 +28,7 @@ import {
 } from "@reelforge/social-providers";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
+import { ScheduledYouTube } from "./scheduled-youtube.js";
 import { TokenVault, type EncryptedSecret } from "./token-vault.js";
 import type { OAuthCallbackQuery, StartConnectionRequest } from "./social-accounts.validation.js";
 
@@ -482,6 +483,28 @@ export class SocialAccountsService {
         this.withYouTubeAnalytics(context, accountId, (connector, accessToken) =>
           connector.queryAnalytics(accessToken, account.remoteAccountId, request),
         ),
+    };
+  }
+
+  public async scheduledClient(
+    context: WorkspaceContext,
+    accountId: string,
+    publishAt: string,
+  ): Promise<AuthenticatedPlatformClient> {
+    const client = await this.authenticatedClient(context, accountId);
+    const scheduled = new ScheduledYouTube();
+    return {
+      ...client,
+      startVideoUpload: (metadata, bytes, contentType) =>
+        this.withYouTubeUpload(context, accountId, "RESUMABLE_UPLOAD", (connector, token) => {
+          void connector;
+          return scheduled.start(token, metadata, publishAt, bytes, contentType);
+        }),
+      verifyUploadedVideo: (id, metadata) =>
+        this.withYouTubeUpload(context, accountId, "VIDEO_UPLOAD", (connector, token) => {
+          void connector;
+          return scheduled.verify(token, id, client.account.remoteAccountId, metadata, publishAt);
+        }),
     };
   }
 
