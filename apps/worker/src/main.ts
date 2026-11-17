@@ -29,6 +29,10 @@ const orchestrationHandler = new OrchestrationWorkerHandler(orchestrationRuntime
 const notificationsRuntime = await createNotificationsRuntime(process.env);
 const notificationsHandler = new NotificationsWorkerHandler(notificationsRuntime);
 
+await import("./handlers/discovery/handler.js").then(({ startDiscoveryWorker }) =>
+  startDiscoveryWorker(orchestrationRuntime),
+);
+
 let stopping = false;
 async function shutdown(): Promise<void> {
   if (stopping) return;

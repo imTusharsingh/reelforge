@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { LearnedChanges } from "./learned-changes";
 import { rankVideos, type Item, type Snapshot } from "./insights-model";
 
 type Option = { id: string; name: string; channelId?: string; platform?: string };
@@ -281,6 +282,7 @@ export function InsightsScreen(): JSX.Element {
           )}
         </div>
       </Panel>
+      <LearnedChanges workspaceId={workspace.id} channelId={channelId} />
       {unverifiedAccounts.length > 0 && (
         <StateMessage
           kind="unavailable"

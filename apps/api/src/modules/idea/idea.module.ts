@@ -3,6 +3,7 @@ import { IDEA_PROPOSAL_LLM, type IdeaProposalLlmPort } from "@reelforge/ai-provi
 import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
+import { DiscoveryModule } from "./discovery/module.js";
 import { IdeaController } from "./idea.controller.js";
 import { IdeaService } from "./idea.service.js";
 import { OpenAiIdeaProposalLlm, openAiRuntimeConfig } from "../openai/openai.adapters.js";
@@ -14,7 +15,7 @@ class NotConfiguredIdeaLlm implements IdeaProposalLlmPort {
 }
 
 @Module({
-  imports: [IdentityModule, WorkspaceModule, UsageBudgetModule],
+  imports: [IdentityModule, WorkspaceModule, UsageBudgetModule, DiscoveryModule],
   controllers: [IdeaController],
   providers: [
     IdeaService,
