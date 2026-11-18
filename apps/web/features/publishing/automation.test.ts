@@ -23,12 +23,13 @@ const slot = {
   scheduledPostId: uuid,
   lastError: "RECONNECT_YOUTUBE",
   package: {
-    renderJobId: uuid,
-    qualityReviewRunId: uuid,
+    videoRunId: uuid,
+    criticStepId: uuid,
+    assemblyStepId: uuid,
     title: "Science",
     description: "Original story",
     tags: ["science"],
-    coverFrame: "cover.png",
+    coverFrameTimestampMs: 1000,
     containsSyntheticMedia: true,
   },
 };

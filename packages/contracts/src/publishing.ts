@@ -45,7 +45,7 @@ export const PublishedPostRecordSchema = z
     destinationId: z.uuid(),
     publishJobId: z.uuid(),
     renderJobId: z.uuid().nullable(),
-    videoRunId: z.uuid().nullable(),
+    videoRunId: z.uuid().nullable().optional(),
     accountId: z.uuid(),
     platform: SocialPlatformSchema,
     platformPostId: z.string().min(1).max(255),
@@ -53,7 +53,8 @@ export const PublishedPostRecordSchema = z
   })
   .strict()
   .refine(
-    (value) => value.renderJobId !== null || value.videoRunId !== null,
+    (value) =>
+      value.renderJobId !== null || (value.videoRunId !== undefined && value.videoRunId !== null),
     "A publishing source is required",
   );
 export type PublishedPostRecord = z.infer<typeof PublishedPostRecordSchema>;

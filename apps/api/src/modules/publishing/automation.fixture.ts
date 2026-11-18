@@ -24,19 +24,23 @@ export const criticStep = {
   state: "SUCCEEDED",
   output: {
     result: {
-      recommendation: "APPROVE",
-      summary: "Ready",
-      gates: {
-        policy: true,
-        rights: true,
-        technical: true,
-        budget: true,
-        permission: true,
-        score: true,
+      report: {
+        recommendation: "APPROVE",
+        summary: "Ready",
+        gates: {
+          policy: true,
+          rights: true,
+          technical: true,
+          budget: true,
+          permission: true,
+          score: true,
+        },
       },
+      packaging: packaged,
     },
   },
 };
+export const assemblyStep = { id: id(13), key: "ASSEMBLING", state: "SUCCEEDED", output: {} };
 export function automationFixture(): {
   service: PublishingAutomation;
   run: Run;
@@ -114,7 +118,9 @@ function scopedFake(run: Run): {
     runEvent: { findFirst: vi.fn(async () => ({ type: "approved", stepId: criticStep.id })) },
     videoRunStep: {
       findFirst: vi.fn(async ({ where }: { where: { key: string } }) =>
-        where.key === "CRITIC" ? criticStep : { output: { result: packaged } },
+        where.key === "CRITIC"
+          ? criticStep
+          : { ...assemblyStep, output: { result: { packaging: packaged } } },
       ),
     },
     videoRun: {
