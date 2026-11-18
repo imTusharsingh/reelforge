@@ -116,7 +116,11 @@ describe("V6 critic and packaging", () => {
       {
         clips: [good],
         brief: { requiredTerms: ["ocean"], bannedTerms: [] },
-        critic: { prompt: "review", media: [], correlationId: "run" },
+        critic: {
+          prompt: "review",
+          media: [{ type: "video", mime_type: "video/mp4", uri: "fixture://clip" }],
+          correlationId: "run",
+        },
         redo: { reshoot, reedit: vi.fn(async () => undefined), remainingCents: 800 },
         package: {
           title: "Ocean",
@@ -134,5 +138,29 @@ describe("V6 critic and packaging", () => {
       packaging: { containsSyntheticMedia: true },
     });
     expect(reshoot).not.toHaveBeenCalled();
+  });
+  it("rejects missing or invalid evidence before calling the provider", async () => {
+    vi.stubEnv("PIPELINE_V2", "true");
+    const complete = vi.fn();
+    const text = { complete } as TextPort;
+    const input = {
+      clips: [good],
+      brief: { requiredTerms: [], bannedTerms: [] },
+      critic: {
+        prompt: "review",
+        media: [{ type: "video" as const, mime_type: "video/mp4", uri: "fixture://clip" }],
+        correlationId: "run",
+      },
+      redo: { reshoot: vi.fn(), reedit: vi.fn(), remainingCents: 800 },
+      package: { title: "Ocean", description: "A short", tags: [], coverFrameTimestampMs: 0 },
+    };
+    const pipeline = new V6QualityPipeline();
+    for (const evidence of [
+      { ...input, clips: [] },
+      { ...input, critic: { ...input.critic, media: [] } },
+      { ...input, clips: [{ ...good, probe: { ...good.probe, durationSeconds: NaN } }] },
+    ])
+      await expect(pipeline.review(evidence, text)).rejects.toThrow("requires measured clips");
+    expect(complete).not.toHaveBeenCalled();
   });
 });
