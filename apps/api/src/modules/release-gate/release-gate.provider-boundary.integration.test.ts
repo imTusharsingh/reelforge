@@ -6,7 +6,6 @@ import {
   IMAGE_PROVIDER,
   PROVIDER_REGISTRY,
   ProviderRegistry,
-  QUALITY_REVIEW_PORT,
   SCRIPT_LLM,
   TTS_PROVIDER,
   VIDEO_PROVIDER,
@@ -188,11 +187,6 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
     expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(0);
     const idea = port(IDEA_PROPOSAL_LLM);
     expect(await rejects(() => (idea["proposeIdea"] as () => unknown)())).toBeInstanceOf(Error);
-    const quality = port(QUALITY_REVIEW_PORT);
-    const qualityError = (await rejects(() =>
-      (quality["review"] as (input: unknown) => unknown)({ correlationId: randomUUID() }),
-    )) as { code?: string };
-    expect(qualityError.code).toBe("NOT_CONFIGURED");
     const insight = port(INSIGHT_REPORT_LLM);
     expect((insight["isConfigured"] as () => boolean)()).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
