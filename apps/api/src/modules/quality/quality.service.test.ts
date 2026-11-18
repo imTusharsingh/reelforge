@@ -75,4 +75,37 @@ describe("legacy quality persistence compatibility", () => {
       InternalServerErrorException,
     );
   });
+  it("rejects approval of a stored blocked review without writing a decision", async () => {
+    const updateMany = vi.fn();
+    const create = vi.fn();
+    const transaction = {
+      qualityReviewRun: {
+        findUnique: vi.fn(async () => ({ ...stored, status: "BLOCKED" })),
+        updateMany,
+      },
+      qualityDecision: { create },
+    };
+    const db = {
+      $transaction: async (
+        callback: (tx: typeof transaction) => Promise<unknown>,
+      ): Promise<unknown> => callback(transaction),
+    };
+    const service = new QualityService(db as unknown as Database);
+    await expect(
+      service.decide(context, "review", { action: "APPROVE", reason: "Review" }),
+    ).rejects.toThrow("A blocked quality run cannot be approved");
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+  it("rejects decisions from viewers before opening a transaction", async () => {
+    const transaction = vi.fn();
+    const service = new QualityService({ $transaction: transaction } as unknown as Database);
+    await expect(
+      service.decide({ ...context, role: "VIEWER" }, "review", {
+        action: "REJECT",
+        reason: "Review",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(transaction).not.toHaveBeenCalled();
+  });
 });

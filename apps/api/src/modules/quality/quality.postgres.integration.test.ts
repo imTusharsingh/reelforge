@@ -268,4 +268,33 @@ suite("QualityService PostgreSQL persistence", () => {
     );
     expect(await db.qualityReviewRun.count({ where: { workspaceId } })).toBe(before);
   });
+
+  it("can reject an existing blocked review and persists the decision", async () => {
+    if (!db || !quality) throw new Error("DATABASE_URL is required for this integration suite");
+    const review = await db.qualityReviewRun.create({
+      data: {
+        workspaceId,
+        renderJobId: blockedRenderJobId,
+        renderFamilyId: blockedRenderJobId,
+        createdByUserId: userId,
+        status: "BLOCKED",
+        gateSummary: [{ id: "GENRE_POLICY", passed: false, evidence: ["Blocked topic"] }],
+        policySnapshot: { mode: "MANUAL" },
+        disclosures: [],
+        limitations: [],
+      },
+    });
+    await expect(
+      quality.decide(context, review.id, { action: "APPROVE", reason: "Approve" }),
+    ).rejects.toThrow("A blocked quality run cannot be approved");
+    const result = await quality.decide(context, review.id, {
+      action: "REJECT",
+      reason: "Blocked topic",
+    });
+    expect(result.status).toBe("REJECTED");
+    expect(result.decisions).toMatchObject([{ action: "REJECT", reason: "Blocked topic" }]);
+    expect(await db.qualityDecision.count({ where: { workspaceId, reviewRunId: review.id } })).toBe(
+      1,
+    );
+  });
 });
