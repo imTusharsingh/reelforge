@@ -393,15 +393,15 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
   private async qualityReview(
     input: WorkflowStepDispatchInput,
   ): Promise<WorkflowStepDispatchResult> {
-    // QualityService.create takes no idempotency key: reuse this step's earlier review run.
     const existingReviewId =
       input.previousResultRef ?? stringValue(input.input, "qualityReviewRunId");
-    const review =
-      existingReviewId !== null
-        ? await this.quality.get(input.context, existingReviewId)
-        : await this.quality.create(input.context, {
-            renderJobId: requiredString(input.input, "renderJobId"),
-          });
+    if (existingReviewId === null)
+      throw new WorkflowStepError(
+        "LEGACY_QUALITY_UNAVAILABLE",
+        "New quality reviews require the VideoRun critic",
+        false,
+      );
+    const review = await this.quality.get(input.context, existingReviewId);
     if (review.status === "APPROVED" || review.status === "AUTO_APPROVED")
       return {
         resultRef: review.id,

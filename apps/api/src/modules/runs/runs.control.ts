@@ -1,5 +1,5 @@
 import { ConflictException, Injectable } from "@nestjs/common";
-import { ShotSpecSchema } from "@reelforge/contracts";
+import { ShotSpecSchema, criticReport, humanGatesPass } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
 import type { Context } from "./runs.types.js";
@@ -19,6 +19,12 @@ export class RunsControl {
       // Scheduling/publishing is V9; record the approval and preserve the locked transition map.
       const result = await this.runs.store.mutate(context, id, "approved", async (db, current) => {
         if (current.state !== "AWAITING_APPROVAL") throw new ConflictException("Already approved");
+        const critic = await db.videoRunStep.findFirst({
+          where: { runId: id, key: "CRITIC", state: "SUCCEEDED" },
+          orderBy: { attempt: "desc" },
+        });
+        if (!humanGatesPass(criticReport(critic?.output)) || current.pauseReason !== null)
+          throw new ConflictException("Approval requires all hard gates and no unresolved pause");
         await db.videoRun.updateMany({
           where: { id },
           data: { state: "SCHEDULED", pauseReason: null },
@@ -78,23 +84,31 @@ export class RunsControl {
     await this.boundary.check(context, run);
     if (run.state !== "CRITIC")
       throw new ConflictException("Reshoots are selected at the critic boundary");
-    const db = this.runs.store.scoped(context);
-    const previous = await db.videoRunStep.findFirstOrThrow({
-      where: { runId: id, key: `shot-${ordinal}` },
-      orderBy: { attempt: "desc" },
-    });
-    const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: id } });
-    if (previous.attempt >= 3 || !envelopeRoom(budget, previous.costMinor ?? 0)) {
-      await this.runs.move(context, run, "NEEDS_HUMAN", "Reshoot cap or envelope exhausted");
-      return;
-    }
     const result = await this.runs.store.mutate(
       context,
       id,
       "reshoot_requested",
-      async (scoped) => {
+      async (db, current) => {
+        if (current.state !== "CRITIC")
+          throw new ConflictException("Reshoots are selected at the critic boundary");
+        const previous = await db.videoRunStep.findFirstOrThrow({
+          where: { runId: id, key: `shot-${ordinal}` },
+          orderBy: { attempt: "desc" },
+        });
+        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: id } });
+        if (previous.attempt >= 3 || !envelopeRoom(budget, previous.costMinor ?? 0)) {
+          await db.videoRun.updateMany({
+            where: { id },
+            data: {
+              state: "NEEDS_HUMAN",
+              pauseReason: "Reshoot cap or envelope exhausted",
+              ...(current.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+            },
+          });
+          return { value: false, payload: { from: "CRITIC", to: "NEEDS_HUMAN", ordinal } };
+        }
         const shot = ShotSpecSchema.parse(previous.input);
-        await scoped.videoRunStep.create({
+        await db.videoRunStep.create({
           data: {
             workspaceId: context.workspaceId,
             runId: id,
@@ -104,11 +118,17 @@ export class RunsControl {
             idempotencyKey: `${id}:${ordinal}:${previous.attempt + 1}`,
           },
         });
-        return { value: null, payload: { ordinal, attempt: previous.attempt + 1 } };
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { state: "GENERATING", pauseReason: null },
+        });
+        return {
+          value: true,
+          payload: { from: "CRITIC", to: "GENERATING", ordinal, attempt: previous.attempt + 1 },
+        };
       },
     );
     await this.runs.events?.publish(result.event);
-    await this.runs.move(context, await this.runs.store.get(context, id), "GENERATING");
-    await this.runs.enqueue(context, await this.runs.store.get(context, id));
+    if (result.value) await this.runs.enqueue(context, await this.runs.store.get(context, id));
   }
 }

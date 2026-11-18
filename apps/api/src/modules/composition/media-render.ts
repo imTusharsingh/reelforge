@@ -17,6 +17,13 @@ type RenderMediaInput = {
   language: string;
   pace: number;
 };
+type RenderMediaOutput = {
+  video: Buffer;
+  cover: Buffer;
+  words: AlignedWord[];
+  captionScript: Buffer;
+  duration: number;
+};
 @Injectable()
 export class MediaRenderer {
   public constructor(
@@ -24,9 +31,7 @@ export class MediaRenderer {
     private readonly runner: SpawnProcessRunner,
     @Inject(LocalWordAligner) private readonly aligner: WordAligner,
   ) {}
-  public async render(
-    input: RenderMediaInput,
-  ): Promise<{ video: Buffer; cover: Buffer; words: AlignedWord[]; duration: number }> {
+  public async render(input: RenderMediaInput): Promise<RenderMediaOutput> {
     const root = await mkdtemp(join(tmpdir(), "reelforge-v5-"));
     try {
       const seconds = input.clips.reduce((sum, clip) => sum + clip.seconds, 0);
@@ -74,7 +79,13 @@ export class MediaRenderer {
         coverBytes = await readFile(cover);
       if (!bytes.length || !coverBytes.subarray(0, 2).equals(Buffer.from([255, 216])))
         throw new Error("Assembly outputs missing or invalid");
-      return { video: bytes, cover: coverBytes, words, duration: seconds };
+      return {
+        video: bytes,
+        cover: coverBytes,
+        words,
+        captionScript: await readFile(captions),
+        duration: seconds,
+      };
     } finally {
       await rm(root, { recursive: true, force: true });
     }

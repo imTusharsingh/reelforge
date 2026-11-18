@@ -60,6 +60,18 @@ describe("V6 critic and packaging", () => {
     expect(result.hardGates[0]?.reasons).toContain("caption drift");
     expect(result.rubric.briefFit).toBe(0);
   });
+  it("routes caption drift to a re-edit instead of a shot reshoot", async () => {
+    const reshoot = vi.fn(async () => undefined);
+    const reedit = vi.fn(async () => undefined);
+    const result = critique(
+      [{ ...good, probe: { ...good.probe, captionDriftMs: 300 } }],
+      { requiredTerms: [], bannedTerms: [] },
+      rubric,
+    );
+    await boundedRedo(result, { reshoot, reedit, remainingCents: 800 });
+    expect(reedit).toHaveBeenCalledOnce();
+    expect(reshoot).not.toHaveBeenCalled();
+  });
   it("bounds redo calls and packaging fields", async () => {
     const reshoot = vi.fn(async () => undefined);
     const reedit = vi.fn(async () => undefined);

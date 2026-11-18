@@ -19,6 +19,9 @@ import { MediaAssembly } from "../composition/media-assembly.js";
 import { MediaRenderer } from "../composition/media-render.js";
 import { LocalWordAligner } from "../composition/media-alignment.js";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
+import { QualityModule } from "../quality/quality.module.js";
+import { V6Evidence } from "../quality/v6-evidence.js";
+import { V6RunCritic } from "../quality/v6-run-critic.js";
 /** Binding only: V3 retains every transition, SSE, queue and resume decision. */
 @Injectable()
 export class MediaBindings {
@@ -85,15 +88,27 @@ export class MediaBindings {
           storageArtifacts: await this.assembly.execute(await this.context(run), run, brief),
         }),
       ),
+      CRITIC: this.criticHandler(),
     };
-    // Preserve the V3 writer's public Artifact[] boundary while replacing its fixture implementation.
-    module.get(RunOutputs, { strict: false }).assembly = (
+    this.bindOutputs();
+  }
+  private bindOutputs(): void {
+    this.access.modules.get(RunOutputs, { strict: false }).assembly = (
       context,
       run,
     ): ReturnType<RunOutputs["assembly"]> => this.assembly.artifacts(context, run);
   }
   private handler(execute: StepHandler["execute"]): StepHandler {
     return { execute, reconcile: execute };
+  }
+  private criticHandler(): StepHandler {
+    return this.handler(async (run, brief, step) =>
+      json(
+        await this.access.modules
+          .get(V6RunCritic, { strict: false })
+          .execute(await this.context(run), run, brief, step),
+      ),
+    );
   }
   private async context(run: Run): Promise<Context> {
     const actor = await this.access.runs.store.db.workspaceMembership.findFirst({
@@ -109,7 +124,7 @@ export class MediaBindings {
 }
 @Global()
 @Module({
-  imports: [ProvidersModule, AssetModule, IdentityModule],
+  imports: [ProvidersModule, AssetModule, IdentityModule, QualityModule],
   providers: [
     MediaAccess,
     MediaAccounts,
@@ -121,6 +136,8 @@ export class MediaBindings {
     MediaRenderer,
     LocalWordAligner,
     SpawnProcessRunner,
+    V6Evidence,
+    V6RunCritic,
     MediaBindings,
   ],
 })

@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
@@ -34,19 +33,6 @@ function fixture(): {
   return { service: new QualityService(db as unknown as Database), findUnique, findMany };
 }
 describe("legacy quality persistence compatibility", () => {
-  it("rejects legacy creation without accessing persistence", async () => {
-    const { service, findUnique, findMany } = fixture();
-    await expect(service.create(context, { renderJobId: "render" })).rejects.toBeInstanceOf(
-      ConflictException,
-    );
-    expect(findUnique).not.toHaveBeenCalled();
-    expect(findMany).not.toHaveBeenCalled();
-  });
-  it("preserves role checks for the retired creation endpoint", async () => {
-    await expect(
-      fixture().service.create({ ...context, role: "VIEWER" }, {}),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
   it("reads persisted reviews within the workspace", async () => {
     const { service, findUnique } = fixture();
     expect(await service.get(context, "review")).toMatchObject({

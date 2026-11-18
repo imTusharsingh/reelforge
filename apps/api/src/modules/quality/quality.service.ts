@@ -38,13 +38,6 @@ const qualityInputSchema = createRenderSchema.shape.input;
 export class QualityService {
   public constructor(@Inject("DATABASE") private readonly db: Database) {}
 
-  /** The legacy API cannot create new reviews; existing reviews remain accessible below. */
-  public async create(context: WorkspaceContext, _body: unknown): Promise<QualityRunView> {
-    this.requireEditor(context);
-    void _body;
-    throw new ConflictException("Legacy quality review is unavailable; use the V6 VideoRun critic");
-  }
-
   public async queue(context: WorkspaceContext): Promise<QualityRunView[]> {
     const runs = await this.db.qualityReviewRun.findMany({
       where: {

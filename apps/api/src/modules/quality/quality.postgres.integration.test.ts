@@ -260,15 +260,6 @@ suite("QualityService PostgreSQL persistence", () => {
     await db.$disconnect();
   });
 
-  it("refuses legacy creation without writing a review", async () => {
-    if (!db || !quality) throw new Error("DATABASE_URL is required for this integration suite");
-    const before = await db.qualityReviewRun.count({ where: { workspaceId } });
-    await expect(quality.create(context, { renderJobId: blockedRenderJobId })).rejects.toThrow(
-      "Legacy quality review is unavailable",
-    );
-    expect(await db.qualityReviewRun.count({ where: { workspaceId } })).toBe(before);
-  });
-
   it("can reject an existing blocked review and persists the decision", async () => {
     if (!db || !quality) throw new Error("DATABASE_URL is required for this integration suite");
     const review = await db.qualityReviewRun.create({

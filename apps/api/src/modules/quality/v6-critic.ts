@@ -131,7 +131,9 @@ export async function boundedRedo(
   controller: ReshootController,
 ): Promise<void> {
   if (result.passed) return;
-  const failed = result.hardGates.filter((gate) => !gate.passed).slice(0, 2);
+  const failed = result.hardGates
+    .filter((gate) => gate.reasons.some((reason) => reason !== "caption drift"))
+    .slice(0, 2);
   for (const gate of failed) {
     if (controller.remainingCents <= 0) return;
     await controller.reshoot(gate.clipId);

@@ -25,6 +25,12 @@ describe("assembly retries", () => {
     await expect(
       service.artifacts({ workspaceId: "w" } as Context, { id: "r" } as Run),
     ).resolves.toEqual([]);
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        runId: "r",
+        OR: [{ key: { startsWith: "shot-" }, attempt: { gt: 1 } }, { key: "REEDIT" }],
+      },
+    });
     expect(findFirst).toHaveBeenCalledWith({
       where: { runId: "r", key: "local:assembly", state: "SUCCEEDED", attempt: 2 },
     });

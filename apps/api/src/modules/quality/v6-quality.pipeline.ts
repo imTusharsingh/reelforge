@@ -10,6 +10,7 @@ import {
   noveltyScore,
   type CriticBrief,
   type CriticClip,
+  type CriticResult,
   type NoveltyHistory,
   type ReshootController,
 } from "./v6-critic.js";
@@ -83,7 +84,14 @@ export class V6QualityPipeline {
       novelty?: Readonly<{ title: string; angle: string }>;
     }>,
     text: TextPort,
-  ): Promise<Readonly<{ criticPassed: boolean; noveltyScore: number; packaging: Packaging }>> {
+  ): Promise<
+    Readonly<{
+      criticPassed: boolean;
+      noveltyScore: number;
+      packaging: Packaging;
+      details: CriticResult;
+    }>
+  > {
     if (!pipelineV2Enabled()) throw new ConflictException("pipeline.v2 is disabled");
     if (!reviewEvidence.safeParse(input).success)
       throw new ConflictException("V6 review requires measured clips and video evidence");
@@ -95,6 +103,7 @@ export class V6QualityPipeline {
       criticPassed: result.passed && novelty >= 5,
       noveltyScore: novelty,
       packaging: packageShort(input.package),
+      details: result,
     };
   }
 }

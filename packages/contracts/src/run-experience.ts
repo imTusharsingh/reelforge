@@ -80,7 +80,9 @@ export type RunSummary = z.infer<typeof RunSummarySchema>;
 export type RunAutonomyStatus = z.infer<typeof RunAutonomyStatusSchema>;
 export function criticReport(output: unknown): RunCriticReport | null {
   const wrapper = z.object({ result: z.unknown() }).safeParse(output);
-  const parsed = RunCriticReportSchema.safeParse(wrapper.success ? wrapper.data.result : output);
+  const result = wrapper.success ? wrapper.data.result : output;
+  const nested = z.object({ report: z.unknown() }).safeParse(result);
+  const parsed = RunCriticReportSchema.safeParse(nested.success ? nested.data.report : result);
   return parsed.success ? parsed.data : null;
 }
 export function criticGatesPass(report: RunCriticReport | null): boolean {

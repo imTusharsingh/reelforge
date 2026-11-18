@@ -25,6 +25,8 @@ describe("V8 gate evidence", () => {
     expect(criticGatesPass(null)).toBe(false);
     expect(humanGatesPass(null)).toBe(false);
     expect(criticReport({ result: report })).toEqual(report);
+    expect(criticReport({ result: { report, criticPassed: true, packaging: {} } })).toEqual(report);
+    expect(criticReport({ result: { report: { ...report, extra: true } } })).toBeNull();
   });
   it("requires every hard gate for humans and the score threshold for auto", () => {
     expect(criticGatesPass(report)).toBe(true);

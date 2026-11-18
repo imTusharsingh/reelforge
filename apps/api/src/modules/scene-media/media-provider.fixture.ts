@@ -52,12 +52,29 @@ export function fixtureShots(run: Run, brief: ChannelBrief): ShotSpec[] {
     }),
   );
 }
+const fixtureCritic = {
+  criticPassed: true,
+  report: {
+    recommendation: "APPROVE",
+    summary: "Fixture critic result",
+    gates: {
+      policy: true,
+      rights: true,
+      technical: true,
+      budget: true,
+      permission: true,
+      score: true,
+    },
+  },
+};
 export const fixtureStageHandlers: Readonly<Record<string, StepHandler>> = Object.fromEntries(
   ["PLANNING", "SCRIPTING", "SHOT_PLANNING", "GENERATING", "ASSEMBLING", "CRITIC"].map((key) => [
     key,
     {
-      execute: async () => ({ fixture: true, step: key, verdict: "pass" }),
-      reconcile: async () => ({ fixture: true, step: key, verdict: "pass" }),
+      execute: async () =>
+        key === "CRITIC" ? fixtureCritic : { fixture: true, step: key, verdict: "pass" },
+      reconcile: async () =>
+        key === "CRITIC" ? fixtureCritic : { fixture: true, step: key, verdict: "pass" },
     },
   ]),
 );

@@ -27,7 +27,10 @@ export class RunPlanning {
     const attempt = ["ASSEMBLING", "CRITIC"].includes(run.state)
       ? 1 +
         (await db.videoRunStep.count({
-          where: { runId: run.id, key: { startsWith: "shot-" }, attempt: { gt: 1 } },
+          where: {
+            runId: run.id,
+            OR: [{ key: { startsWith: "shot-" }, attempt: { gt: 1 } }, { key: "REEDIT" }],
+          },
         }))
       : 1;
     const previous = await db.videoRunStep.findFirst({

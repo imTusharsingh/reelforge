@@ -52,7 +52,7 @@ export class V6MediaProbe {
         "-i",
         path,
         "-vf",
-        "blackdetect=d=0.1:pix_th=0.10,freezedetect=n=-60dB:d=0.5",
+        "blackdetect=d=0:pix_th=0.10,freezedetect=n=-60dB:d=0.5",
         "-an",
         "-f",
         "null",

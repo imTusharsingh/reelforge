@@ -8,6 +8,7 @@ import type { RunsBoundary } from "../runs/runs.boundary.js";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
 import type { RunGeneration } from "./video-run.generation.js";
 import { VideoRunEngine } from "./video-run.engine.js";
+import type { RunsControl } from "../runs/runs.control.js";
 
 const context = { workspaceId: "workspace", userId: "user", role: "OWNER" } as Context;
 
@@ -55,6 +56,79 @@ describe("run stage attempts", () => {
       vi.unstubAllEnvs();
     }
   });
+  it("moves unavailable critic evidence to human review", async () => {
+    vi.stubEnv("PIPELINE_V2", "true");
+    try {
+      const id = "11111111-1111-4111-8111-111111111111";
+      const run = { id, workspaceId: id, correlationId: id, state: "CRITIC" };
+      const move = vi.fn(async () => undefined);
+      const runs = {
+        store: {
+          db: { workspaceMembership: { findFirst: async () => ({ role: "OWNER" }) } },
+          get: async () => run,
+        },
+        move,
+      } as unknown as RunsService;
+      const planning = {
+        reedit: async () => undefined,
+        stage: async () => {
+          throw new Error("missing artifact");
+        },
+      } as unknown as RunPlanning;
+      const engine = new VideoRunEngine(
+        runs,
+        { check: async () => undefined } as unknown as RunsBoundary,
+        {} as RunGeneration,
+        planning,
+        {} as RunsArtifacts,
+      );
+      await engine.process({ workspaceId: id, userId: id, runId: id });
+      expect(move).toHaveBeenCalledWith(
+        expect.anything(),
+        run,
+        "NEEDS_HUMAN",
+        "Critic evidence or provider unavailable",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it("dispatches the selected reshoot through the run controller", async () => {
+    vi.stubEnv("PIPELINE_V2", "true");
+    try {
+      const id = "11111111-1111-4111-8111-111111111111";
+      const run = { id, workspaceId: id, correlationId: id, state: "CRITIC" };
+      const move = vi.fn();
+      const reshoot = vi.fn(async () => undefined);
+      const runs = {
+        store: {
+          db: { workspaceMembership: { findFirst: async () => ({ role: "OWNER" }) } },
+          get: async () => run,
+        },
+        move,
+      } as unknown as RunsService;
+      const planning = {
+        reedit: async () => undefined,
+        stage: async () => ({
+          state: "SUCCEEDED",
+          output: { result: { criticPassed: false, redo: { shots: ["2"], reedit: false } } },
+        }),
+      } as unknown as RunPlanning;
+      const engine = new VideoRunEngine(
+        runs,
+        { check: async () => undefined } as unknown as RunsBoundary,
+        {} as RunGeneration,
+        planning,
+        {} as RunsArtifacts,
+        { reshoot } as unknown as RunsControl,
+      );
+      await engine.process({ workspaceId: id, userId: id, runId: id });
+      expect(reshoot).toHaveBeenCalledWith(expect.anything(), id, 2);
+      expect(move).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it.each(["ASSEMBLING", "CRITIC"])("uses a fresh %s attempt for each reshoot", async (state) => {
     const findFirst = vi.fn(async () => ({ state: "SUCCEEDED" }));
     const count = vi.fn(async () => 2);
@@ -63,7 +137,10 @@ describe("run stage attempts", () => {
     const planning = new RunPlanning(runs, {} as RunOutputs);
     await planning.stage(context, { id: "run", state } as Run);
     expect(count).toHaveBeenCalledWith({
-      where: { runId: "run", key: { startsWith: "shot-" }, attempt: { gt: 1 } },
+      where: {
+        runId: "run",
+        OR: [{ key: { startsWith: "shot-" }, attempt: { gt: 1 } }, { key: "REEDIT" }],
+      },
     });
     expect(findFirst).toHaveBeenCalledWith({ where: { runId: "run", key: state, attempt: 3 } });
   });

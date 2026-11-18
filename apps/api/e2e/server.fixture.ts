@@ -23,7 +23,6 @@ import { hashPassword } from "../src/modules/identity/auth.crypto.js";
 import { LocalFilesystemStorageAdapter } from "../src/modules/asset/storage/local-storage.adapter.js";
 import { STORAGE_PORT } from "../src/modules/asset/storage/storage.port.js";
 import { CompositionService } from "../src/modules/composition/composition.service.js";
-import { QualityService } from "../src/modules/quality/quality.service.js";
 import type { ScriptLlmPort } from "../src/modules/script/script.types.js";
 import { providerEnvironment } from "../src/modules/scene-media/scene-media.validation.js";
 
@@ -341,8 +340,7 @@ test("isolated offline API fixture", async () => {
   app.use(json({ limit: "40mb" }));
   app.setGlobalPrefix("api/v1");
   await app.listen(3301, "127.0.0.1");
-  const composition = module.get(CompositionService),
-    quality = module.get(QualityService);
+  const composition = module.get(CompositionService);
   let draining = false;
   const worker = setInterval(() => {
     if (draining) return;
@@ -353,11 +351,35 @@ test("isolated offline API fixture", async () => {
       const unreviewed = await db.renderJob.findMany({
         where: { status: "SUCCEEDED", qualityReviewRuns: { none: {} } },
       });
-      for (const job of unreviewed)
-        await quality.create(
-          { workspaceId: job.workspaceId, userId: job.createdByUserId, role: "OWNER" },
-          { renderJobId: job.id },
-        );
+      for (const job of unreviewed) {
+        // Legacy UI tests exercise persisted-review compatibility, not V6 creation.
+        const gateIds = [
+          "ARTIFACT_INTEGRITY",
+          "ASPECT_RATIO",
+          "DURATION",
+          "VIDEO_CODEC",
+          "AUDIO",
+          "SUBTITLES",
+          "SCRIPT_PROVENANCE",
+          "GENRE_POLICY",
+          "APPROVAL_POLICY",
+          "ASSET_RIGHTS",
+          "DISCLOSURES",
+        ];
+        await db.qualityReviewRun.create({
+          data: {
+            workspaceId: job.workspaceId,
+            renderJobId: job.id,
+            renderFamilyId: job.id,
+            createdByUserId: job.createdByUserId,
+            status: "REVIEW_REQUIRED",
+            gateSummary: gateIds.map((id) => ({ id, passed: true, evidence: ["E2E fixture"] })),
+            policySnapshot: { mode: "MANUAL" },
+            disclosures: [],
+            limitations: ["E2E fixture"],
+          },
+        });
+      }
     })()
       .catch((error: unknown) => {
         console.error("E2E render worker failed", error);

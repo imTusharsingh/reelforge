@@ -1,14 +1,21 @@
 import { createHash } from "node:crypto";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, Optional } from "@nestjs/common";
 import { createContext, runWithContext, withSpan, metrics } from "@reelforge/observability";
 import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { z } from "zod";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
-import { RunJobSchema, type Context, type Run, type RunJob } from "../runs/runs.types.js";
+import {
+  RunJobSchema,
+  type Context,
+  type Run,
+  type RunJob,
+  type Step,
+} from "../runs/runs.types.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
+import { RunsControl } from "../runs/runs.control.js";
 
 export function criticPassed(output: unknown): boolean {
   const review = z.object({ result: z.object({ criticPassed: z.boolean() }) }).safeParse(output);
@@ -25,6 +32,7 @@ export class VideoRunEngine {
     private readonly generation: RunGeneration,
     private readonly planning: RunPlanning,
     private readonly artifacts: RunsArtifacts,
+    @Optional() private readonly control?: RunsControl,
   ) {}
   /** A return value delays this SAME BullMQ child; it must not release the assembly dependency. */
   public async process(payload: unknown): Promise<number | null> {
@@ -76,11 +84,13 @@ export class VideoRunEngine {
       await this.runs.move(context, await this.runs.store.get(context, run.id), "SCRIPTING");
     } else if (["SCRIPTING", "SHOT_PLANNING", "ASSEMBLING", "CRITIC"].includes(run.state)) {
       if (run.state === "CRITIC") await this.planning.reedit(context, run);
-      const step = await this.planning.stage(context, run);
+      const step = await this.stage(context, run);
+      if (!step) return null;
       if (step.state === "WAITING_APPROVAL") return null;
       const current = await this.runs.store.get(context, run.id);
       if (run.state === "CRITIC") {
         if (!criticPassed(step.output)) {
+          if (await this.requestRedo(context, run, step.output)) return null;
           await this.runs.move(context, current, "NEEDS_HUMAN", "Critic gate failed");
           return null;
         }
@@ -101,6 +111,51 @@ export class VideoRunEngine {
     else return null;
     await this.runs.enqueue(context, await this.runs.store.get(context, run.id));
     return null;
+  }
+  private async stage(context: Context, run: Run): Promise<Step | null> {
+    try {
+      return await this.planning.stage(context, run);
+    } catch (error) {
+      if (run.state !== "CRITIC") throw error;
+      const current = await this.runs.store.get(context, run.id);
+      if (current.state !== "CRITIC") throw error;
+      await this.runs.move(
+        context,
+        current,
+        "NEEDS_HUMAN",
+        "Critic evidence or provider unavailable",
+      );
+      return null;
+    }
+  }
+  private async requestRedo(context: Context, run: Run, output: unknown): Promise<boolean> {
+    const redo = z
+      .object({
+        result: z.object({
+          redo: z.object({ shots: z.array(z.string().regex(/^\d+$/)), reedit: z.boolean() }),
+        }),
+      })
+      .safeParse(output);
+    if (redo.success && this.control) {
+      const shot = redo.data.result.redo.shots[0];
+      if (shot !== undefined) {
+        await this.control.reshoot(context, run.id, Number(shot));
+        return true;
+      }
+      if (redo.data.result.redo.reedit) {
+        try {
+          await this.control.reedit(context, run.id);
+          return true;
+        } catch (error) {
+          if (
+            !(error instanceof ConflictException) ||
+            error.message !== "Only one full re-edit per run"
+          )
+            throw error;
+        }
+      }
+    }
+    return false;
   }
   private async generate(context: Context, run: Run): Promise<number | null> {
     const steps = await this.runs.store.scoped(context).videoRunStep.findMany({

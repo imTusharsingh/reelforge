@@ -95,6 +95,7 @@ export class MediaAssembly {
         Buffer.from(JSON.stringify(rendered.words)),
         "application/json",
       ),
+      this.access.artifacts.put(context, "captions", rendered.captionScript, "text/plain"),
       this.access.artifacts.put(
         context,
         "manifest",
@@ -181,7 +182,10 @@ export class MediaAssembly {
     return (
       1 +
       (await this.access.runs.store.scoped(context).videoRunStep.count({
-        where: { runId: run.id, key: { startsWith: "shot-" }, attempt: { gt: 1 } },
+        where: {
+          runId: run.id,
+          OR: [{ key: { startsWith: "shot-" }, attempt: { gt: 1 } }, { key: "REEDIT" }],
+        },
       }))
     );
   }
