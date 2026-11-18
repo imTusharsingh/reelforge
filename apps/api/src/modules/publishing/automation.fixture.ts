@@ -18,6 +18,23 @@ export const packaged = {
   coverFrame: "cover.png",
   containsSyntheticMedia: true as const,
 };
+export const criticStep = {
+  id: id(12),
+  output: {
+    result: {
+      recommendation: "APPROVE",
+      summary: "Ready",
+      gates: {
+        policy: true,
+        rights: true,
+        technical: true,
+        budget: true,
+        permission: true,
+        score: true,
+      },
+    },
+  },
+};
 export function automationFixture(): {
   service: PublishingAutomation;
   run: Run;
@@ -92,8 +109,12 @@ function scopedFake(run: Run): {
   videoRun: { updateMany: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
 } {
   return {
-    runEvent: { findFirst: vi.fn(async () => ({ type: "approved" })) },
-    videoRunStep: { findFirst: vi.fn(async () => ({ output: { result: packaged } })) },
+    runEvent: { findFirst: vi.fn(async () => ({ type: "approved", stepId: criticStep.id })) },
+    videoRunStep: {
+      findFirst: vi.fn(async ({ where }: { where: { key: string } }) =>
+        where.key === "CRITIC" ? criticStep : { output: { result: packaged } },
+      ),
+    },
     videoRun: {
       updateMany: vi.fn(async ({ data }: { data: Partial<Run> }) => {
         Object.assign(run, data);

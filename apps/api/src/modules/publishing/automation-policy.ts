@@ -8,6 +8,7 @@ import type {
   BudgetCheck,
 } from "./publishing.ports.js";
 import { pacificQuotaDay } from "./automation-cadence.js";
+import { approvalMatchesCritic } from "./approval-evidence.js";
 
 @Injectable()
 export class AutomationPolicy {
@@ -38,12 +39,16 @@ export class AutomationPolicy {
       userId: "v9-policy",
       role: "VIEWER",
     });
-    const [run, envelope, approval] = await Promise.all([
+    const [run, envelope, approval, critic] = await Promise.all([
       db.videoRun.findFirst({ where: { id: slot.runId, channelId: context.channelId } }),
       db.budgetEnvelope.findFirst({ where: { runId: slot.runId } }),
       db.runEvent.findFirst({
         where: { runId: slot.runId, type: { in: ["approved", "auto_approved"] } },
         orderBy: { sequence: "desc" },
+      }),
+      db.videoRunStep.findFirst({
+        where: { runId: slot.runId, key: "CRITIC", state: "SUCCEEDED" },
+        orderBy: { attempt: "desc" },
       }),
     ]);
     const auto = approval?.type === "auto_approved";
@@ -51,7 +56,7 @@ export class AutomationPolicy {
       !!run &&
       run.state === "SCHEDULED" &&
       run.pauseReason === null &&
-      !!approval &&
+      approvalMatchesCritic(approval, critic) &&
       (!auto || (run.effectiveAutonomy === "L3" && run.approvedShortsAtStart >= 10)) &&
       !!envelope &&
       envelope.spentMinor + envelope.reservedMinor <= envelope.hardCapMinor;

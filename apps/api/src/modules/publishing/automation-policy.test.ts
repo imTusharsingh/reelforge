@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { foundationWorkspaceGuard, type PrismaClient, type Prisma } from "@reelforge/database";
 import { AutomationPolicy } from "./automation-policy.js";
-import { context, id } from "./automation.fixture.js";
+import { context, criticStep, id } from "./automation.fixture.js";
 vi.mock("@reelforge/database", async (original) => ({
   ...(await original<typeof import("@reelforge/database")>()),
   foundationWorkspaceGuard: vi.fn((db: { foundation: unknown }) => db.foundation),
@@ -32,6 +32,7 @@ function fakeDb(): {
   foundation: {
     videoRun: { findFirst: ReturnType<typeof vi.fn> };
     runEvent: { findFirst: ReturnType<typeof vi.fn> };
+    videoRunStep: { findFirst: ReturnType<typeof vi.fn> };
     budgetEnvelope: { findFirst: ReturnType<typeof vi.fn> };
   };
   $queryRaw: ReturnType<typeof vi.fn>;
@@ -55,7 +56,8 @@ function fakeDb(): {
           approvedShortsAtStart: 0,
         })),
       },
-      runEvent: { findFirst: vi.fn(async () => ({ type: "approved" })) },
+      runEvent: { findFirst: vi.fn(async () => ({ type: "approved", stepId: criticStep.id })) },
+      videoRunStep: { findFirst: vi.fn(async () => criticStep) },
       budgetEnvelope: {
         findFirst: vi.fn(async () => ({ spentMinor: 579, reservedMinor: 0, hardCapMinor: 800 })),
       },
@@ -129,7 +131,10 @@ describe("V9 project-wide insert leases and hard policy", () => {
       f.db,
       expect.objectContaining({ workspaceId: context.workspaceId, role: "VIEWER" }),
     );
-    f.db.foundation.runEvent.findFirst.mockResolvedValue({ type: "auto_approved" });
+    f.db.foundation.runEvent.findFirst.mockResolvedValue({
+      type: "auto_approved",
+      stepId: criticStep.id,
+    });
     expect((await f.policy.check(policyContext)).allowed).toBe(false);
     f.db.foundation.videoRun.findFirst.mockResolvedValue({
       state: "SCHEDULED",

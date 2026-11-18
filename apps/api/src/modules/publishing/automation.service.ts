@@ -7,6 +7,7 @@ import type { Context, Run } from "../runs/runs.types.js";
 import { reconnectRequired } from "./automation-client.js";
 import { PublishingService } from "./publishing.service.js";
 import { AutomationSlots, type AutoSlot } from "./automation-slots.js";
+import { approvalMatchesCritic } from "./approval-evidence.js";
 
 @Injectable()
 export class PublishingAutomation {
@@ -81,6 +82,10 @@ export class PublishingAutomation {
       where: { runId: run.id, type: { in: ["approved", "auto_approved"] } },
       orderBy: { sequence: "desc" },
     });
+    const critic = await this.runs.scoped(context).videoRunStep.findFirst({
+      where: { runId: run.id, key: "CRITIC", state: "SUCCEEDED" },
+      orderBy: { attempt: "desc" },
+    });
     if (
       !evidence ||
       (evidence.type === "auto_approved" &&
@@ -89,6 +94,8 @@ export class PublishingAutomation {
       throw new ConflictException(
         "Publish requires V8 approval; first ten Shorts require a human tap",
       );
+    if (!approvalMatchesCritic(evidence, critic))
+      throw new ConflictException("Publish requires approval of the current critic evidence");
   }
   public async dispatch(context: Context, id: string): Promise<void> {
     this.enabled();

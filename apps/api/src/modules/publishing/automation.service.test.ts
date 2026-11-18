@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnauthorizedException } from "@nestjs/common";
-import { automationFixture, context } from "./automation.fixture.js";
+import { automationFixture, context, criticStep } from "./automation.fixture.js";
 beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("V9 approved-run publishing with fake M13/YouTube", () => {
@@ -31,7 +31,7 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     }
     const f = automationFixture();
     f.run.effectiveAutonomy = "L3";
-    f.scoped.runEvent.findFirst.mockResolvedValue({ type: "auto_approved" });
+    f.scoped.runEvent.findFirst.mockResolvedValue({ type: "auto_approved", stepId: criticStep.id });
     await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("first ten");
     f.run.approvedShortsAtStart = 10;
     await expect(f.service.prepare(context, f.run.id)).resolves.toMatchObject({
@@ -67,6 +67,7 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
   it("rejects missing or incompatible packaging before creating a post", async () => {
     const f = automationFixture();
     for (const step of [null, { output: { result: { title: "Critic package" } } }]) {
+      f.scoped.videoRunStep.findFirst.mockResolvedValueOnce(criticStep);
       f.scoped.videoRunStep.findFirst.mockResolvedValueOnce(step);
       await expect(f.service.prepare(context, f.run.id)).rejects.toThrow(
         "Publishing package is unavailable or incompatible",
@@ -74,6 +75,14 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     }
     expect(f.publishing.createScheduledPost).not.toHaveBeenCalled();
     expect(f.publishing.publishNow).not.toHaveBeenCalled();
+  });
+  it("rejects approval of an older or missing critic step", async () => {
+    const f = automationFixture();
+    for (const stepId of [null, "older-critic"]) {
+      f.scoped.runEvent.findFirst.mockResolvedValueOnce({ type: "approved", stepId });
+      await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("current critic evidence");
+    }
+    expect(f.publishing.createScheduledPost).not.toHaveBeenCalled();
   });
   it("reconciles a partial upload before resuming and records public publication", async () => {
     const f = automationFixture();
