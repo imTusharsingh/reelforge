@@ -937,8 +937,11 @@ model ScheduledPost {
   id                         String                       @id @default(uuid()) @db.Uuid
   workspaceId                String                       @map("workspace_id") @db.Uuid
   channelId                  String                       @map("channel_id") @db.Uuid
-  renderJobId                String                       @map("render_job_id") @db.Uuid
-  qualityReviewRunId         String                       @map("quality_review_run_id") @db.Uuid
+  renderJobId                String?                      @map("render_job_id") @db.Uuid
+  qualityReviewRunId         String?                      @map("quality_review_run_id") @db.Uuid
+  videoRunId                 String?                      @map("video_run_id") @db.Uuid
+  criticStepId               String?                      @map("critic_step_id") @db.Uuid
+  assemblyStepId             String?                      @map("assembly_step_id") @db.Uuid
   clientRequestId            String?                      @map("client_request_id") @db.Uuid
   clientRequestHash          String?                      @map("client_request_hash")
   revision                   Int                          @default(1)
@@ -954,8 +957,8 @@ model ScheduledPost {
   updatedAt                  DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
   workspace                  Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   channel                    Channel                      @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
-  renderJob                  RenderJob                    @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
-  qualityReviewRun           QualityReviewRun             @relation(fields: [workspaceId, qualityReviewRunId], references: [workspaceId, id], onDelete: Restrict)
+  renderJob                  RenderJob?                   @relation(fields: [workspaceId, renderJobId], references: [workspaceId, id], onDelete: Restrict)
+  qualityReviewRun           QualityReviewRun?            @relation(fields: [workspaceId, qualityReviewRunId], references: [workspaceId, id], onDelete: Restrict)
   createdBy                  User                         @relation("ScheduledPostCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
   manuallyAuthorizedBy       User?                        @relation("ScheduledPostPublisher", fields: [manuallyAuthorizedByUserId], references: [id], onDelete: Restrict)
   destinations               PublishingDestination[]
@@ -964,6 +967,7 @@ model ScheduledPost {
   @@unique([workspaceId, clientRequestId])
   @@index([workspaceId, channelId, scheduledAt, status])
   @@index([workspaceId, renderJobId, createdAt])
+  @@index([workspaceId, videoRunId, createdAt])
   @@map("scheduled_posts")
 }
 

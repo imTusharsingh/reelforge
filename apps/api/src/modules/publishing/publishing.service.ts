@@ -158,19 +158,71 @@ export class PublishingService {
       select: { id: true, status: true },
     });
     if (!channel || channel.status === "ARCHIVED") throw new NotFoundException("Channel not found");
+    const videoSource = request.videoRunId
+      ? {
+          videoRunId: request.videoRunId,
+          criticStepId: request.criticStepId!,
+          assemblyStepId: request.assemblyStepId!,
+        }
+      : null;
+    if (videoSource) {
+      const run = await this.db.videoRun.findUnique({
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: videoSource.videoRunId } },
+        select: { channelId: true, state: true },
+      });
+      const [critic, assembly] = await Promise.all([
+        this.db.videoRunStep.findUnique({
+          where: {
+            workspaceId_runId_id: {
+              workspaceId: context.workspaceId,
+              runId: videoSource.videoRunId,
+              id: videoSource.criticStepId,
+            },
+          },
+          select: { key: true, state: true },
+        }),
+        this.db.videoRunStep.findUnique({
+          where: {
+            workspaceId_runId_id: {
+              workspaceId: context.workspaceId,
+              runId: videoSource.videoRunId,
+              id: videoSource.assemblyStepId,
+            },
+          },
+          select: { key: true, state: true },
+        }),
+      ]);
+      if (
+        !run ||
+        run.channelId !== request.channelId ||
+        run.state !== "SCHEDULED" ||
+        critic?.key !== "CRITIC" ||
+        critic.state !== "SUCCEEDED" ||
+        assembly?.key !== "ASSEMBLING" ||
+        assembly.state !== "SUCCEEDED"
+      )
+        throw new ConflictException("VideoRun is not publishable");
+    }
     const render = await this.db.renderJob.findUnique({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: request.renderJobId } },
+      where: {
+        workspaceId_id: {
+          workspaceId: context.workspaceId,
+          id: request.renderJobId ?? "00000000-0000-4000-8000-000000000000",
+        },
+      },
       include: { sceneMediaJob: true, artifacts: true },
     });
-    if (!render || render.sceneMediaJob.channelId !== request.channelId)
+    if (!videoSource && (!render || render.sceneMediaJob.channelId !== request.channelId))
       throw new NotFoundException("Render job not found for this channel");
-    const review = await this.db.qualityReviewRun.findUnique({
-      where: {
-        workspaceId_id: { workspaceId: context.workspaceId, id: request.qualityReviewRunId },
-      },
-      select: { renderJobId: true },
-    });
-    if (!review || review.renderJobId !== request.renderJobId)
+    const review = request.qualityReviewRunId
+      ? await this.db.qualityReviewRun.findUnique({
+          where: {
+            workspaceId_id: { workspaceId: context.workspaceId, id: request.qualityReviewRunId },
+          },
+          select: { renderJobId: true },
+        })
+      : null;
+    if (!videoSource && (!review || review.renderJobId !== request.renderJobId))
       throw new NotFoundException("Quality review not found for this render");
     for (const destination of request.destinations) {
       const account = await this.db.socialAccount.findUnique({
@@ -204,7 +256,12 @@ export class PublishingService {
       }
     }
 
-    await this.quality.assertPublishable(context, request.renderJobId, request.qualityReviewRunId);
+    if (!videoSource)
+      await this.quality.assertPublishable(
+        context,
+        request.renderJobId!,
+        request.qualityReviewRunId!,
+      );
 
     const scheduledAt = request.scheduledAt === null ? null : new Date(request.scheduledAt);
     const disclosure = DisclosureDecisionSchema.parse(request.disclosure);
@@ -217,8 +274,11 @@ export class PublishingService {
             clientRequestId: clientRequestId ?? null,
             clientRequestHash: requestHash,
             channelId: request.channelId,
-            renderJobId: request.renderJobId,
-            qualityReviewRunId: request.qualityReviewRunId,
+            renderJobId: request.renderJobId ?? null,
+            qualityReviewRunId: request.qualityReviewRunId ?? null,
+            videoRunId: request.videoRunId ?? null,
+            criticStepId: request.criticStepId ?? null,
+            assemblyStepId: request.assemblyStepId ?? null,
             scheduledAt,
             status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
             disclosureDecision: disclosure.decision,
@@ -534,7 +594,7 @@ export class PublishingService {
     let approvalEvidence = "A current M11 approval is required.";
     let hardGateEvidence = "All current M11 hard gates must pass.";
     const review = await this.quality
-      .get(context, post.qualityReviewRunId)
+      .get(context, post.qualityReviewRunId!)
       .catch((error: unknown) => {
         if (isExpectedPreflightError(error)) return null;
         throw error;
@@ -553,8 +613,8 @@ export class PublishingService {
       try {
         hardGates = await this.quality.assertPublishable(
           context,
-          post.renderJobId,
-          post.qualityReviewRunId,
+          post.renderJobId!,
+          post.qualityReviewRunId!,
         );
         approvalPassed = true;
         hardGatePass = hardGates.length > 0 && hardGates.every((item) => item.passed);
@@ -582,7 +642,7 @@ export class PublishingService {
     let mediaEvidence = "A successful, retained render with a verified video artifact is required.";
     try {
       render = await this.db.renderJob.findUnique({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.renderJobId } },
+        where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.renderJobId! } },
         include: { sceneMediaJob: true, artifacts: true },
       });
       if (
@@ -594,7 +654,7 @@ export class PublishingService {
         throw new ConflictException(
           "The selected render is not a successful active channel render",
         );
-      manifest = await this.composition.getManifest(context, post.renderJobId);
+      manifest = await this.composition.getManifest(context, post.renderJobId!);
       artifact = render.artifacts.find((item) => item.kind === "VIDEO") ?? null;
       if (
         artifact === null ||
@@ -999,8 +1059,8 @@ export class PublishingService {
         posts
           .map(
             (post) =>
-              post.renderJob.sceneMediaJob.script?.snapshot?.seriesId ??
-              post.renderJob.sceneMediaJob.script?.seriesId ??
+              post.renderJob!.sceneMediaJob.script?.snapshot?.seriesId ??
+              post.renderJob!.sceneMediaJob.script?.seriesId ??
               null,
           )
           .filter((seriesId): seriesId is string => seriesId !== null),
@@ -1031,7 +1091,7 @@ export class PublishingService {
     }
 
     return posts.map((post) => {
-      const script = post.renderJob.sceneMediaJob.script;
+      const script = post.renderJob!.sceneMediaJob.script;
       const snapshot = script?.snapshot ?? null;
       const seriesId = snapshot?.seriesId ?? script?.seriesId ?? null;
       const seriesName = snapshot?.series?.name ?? null;
@@ -1045,7 +1105,7 @@ export class PublishingService {
         seriesName,
         characterNames:
           seriesId === null ? [] : [...(characterNamesBySeries.get(seriesId) ?? new Set<string>())],
-        durationSeconds: renderDurationSeconds(post.renderJob.input),
+        durationSeconds: renderDurationSeconds(post.renderJob!.input),
       });
     });
   }
@@ -1717,7 +1777,7 @@ export class PublishingService {
       where: {
         workspaceId_id: {
           workspaceId: context.workspaceId,
-          id: destination.scheduledPost.renderJobId,
+          id: destination.scheduledPost.renderJobId!,
         },
       },
       include: { sceneMediaJob: true, artifacts: true },
@@ -1853,8 +1913,8 @@ export class PublishingService {
     return {
       id: post.id,
       channelId: post.channelId,
-      renderJobId: post.renderJobId,
-      qualityReviewRunId: post.qualityReviewRunId,
+      renderJobId: post.renderJobId!,
+      qualityReviewRunId: post.qualityReviewRunId!,
       revision: post.revision,
       scheduledAt: post.scheduledAt?.toISOString() ?? null,
       status: post.status,

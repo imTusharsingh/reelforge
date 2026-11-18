@@ -4,15 +4,29 @@ import { z } from "zod";
  */
 export const PublishingPackageSchema = z
   .object({
-    renderJobId: z.uuid(),
-    qualityReviewRunId: z.uuid(),
+    videoRunId: z.uuid().optional(),
+    criticStepId: z.uuid().optional(),
+    assemblyStepId: z.uuid().optional(),
+    renderJobId: z.uuid().optional(),
+    qualityReviewRunId: z.uuid().optional(),
     title: z.string().trim().min(1).max(100),
     description: z.string().max(4800),
     tags: z.array(z.string().trim().min(1).max(100)).max(100),
-    coverFrame: z.string().min(1),
+    coverFrameTimestampMs: z.number().int().nonnegative().optional(),
+    coverFrame: z.string().min(1).optional(),
     containsSyntheticMedia: z.literal(true),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      (value.videoRunId && value.criticStepId && value.assemblyStepId) ||
+      (value.renderJobId && value.qualityReviewRunId),
+    "A complete publishing source is required",
+  )
+  .refine(
+    (value) => value.coverFrameTimestampMs !== undefined || value.coverFrame !== undefined,
+    "A cover frame is required",
+  );
 export type PublishingPackage = z.infer<typeof PublishingPackageSchema>;
 export const AutoSlotViewSchema = z.object({
   id: z.uuid(),

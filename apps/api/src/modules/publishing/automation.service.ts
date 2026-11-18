@@ -23,12 +23,22 @@ export class PublishingAutomation {
     const run = await this.runs.get(context, id);
     await this.approval(context, run);
     const step = await this.runs.scoped(context).videoRunStep.findFirst({
-      where: { runId: id, key: "PACKAGING", state: "SUCCEEDED" },
+      where: { runId: id, key: "CRITIC", state: "SUCCEEDED" },
+      orderBy: { attempt: "desc" },
+    });
+    const assembly = await this.runs.scoped(context).videoRunStep.findFirst({
+      where: { runId: id, key: "ASSEMBLING", state: "SUCCEEDED" },
       orderBy: { attempt: "desc" },
     });
     const output = step?.output;
+    const result =
+      output && typeof output === "object" && !Array.isArray(output)
+        ? (output as { result?: { packaging?: Record<string, unknown> } }).result?.packaging
+        : null;
     const packaged = PublishingPackageSchema.safeParse(
-      output && typeof output === "object" && !Array.isArray(output) ? output.result : null,
+      result
+        ? { ...result, videoRunId: run.id, criticStepId: step?.id, assemblyStepId: assembly?.id }
+        : null,
     );
     if (!packaged.success)
       throw new ConflictException(
@@ -51,8 +61,9 @@ export class PublishingAutomation {
     return {
       clientRequestId: run.id,
       channelId: run.channelId,
-      renderJobId: packaged.renderJobId,
-      qualityReviewRunId: packaged.qualityReviewRunId,
+      videoRunId: packaged.videoRunId,
+      criticStepId: packaged.criticStepId,
+      assemblyStepId: packaged.assemblyStepId,
       scheduledAt: slot.scheduledAt.toISOString(),
       disclosure: {
         decision: "DISCLOSE",

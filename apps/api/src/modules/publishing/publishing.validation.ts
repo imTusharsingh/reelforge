@@ -29,14 +29,28 @@ export const CreateScheduledPostSchema = z
   .object({
     clientRequestId: z.uuid().optional(),
     channelId: z.uuid(),
-    renderJobId: z.uuid(),
-    qualityReviewRunId: z.uuid(),
+    renderJobId: z.uuid().optional(),
+    qualityReviewRunId: z.uuid().optional(),
+    videoRunId: z.uuid().optional(),
+    criticStepId: z.uuid().optional(),
+    assemblyStepId: z.uuid().optional(),
     scheduledAt: z.iso.datetime({ offset: true }).nullable(),
     disclosure: DisclosureDecisionSchema,
     destinations: z.array(PublishingDestinationInputSchema).min(1).max(5),
   })
   .strict()
   .superRefine((request, context) => {
+    const legacy = request.renderJobId !== undefined && request.qualityReviewRunId !== undefined;
+    const video =
+      request.videoRunId !== undefined &&
+      request.criticStepId !== undefined &&
+      request.assemblyStepId !== undefined;
+    if (!legacy && !video)
+      context.addIssue({
+        code: "custom",
+        message: "A complete render or VideoRun source is required",
+        path: ["videoRunId"],
+      });
     const accountIds = request.destinations.map((destination) => destination.socialAccountId);
     if (new Set(accountIds).size !== accountIds.length) {
       context.addIssue({
