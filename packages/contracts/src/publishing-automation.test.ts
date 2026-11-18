@@ -20,5 +20,12 @@ describe("V9 temporary V6 packaging boundary", () => {
       { extra: true },
     ])
       expect(PublishingPackageSchema.safeParse({ ...pack, ...change }).success).toBe(false);
+    expect(
+      PublishingPackageSchema.safeParse({
+        ...pack,
+        renderJobId: "44444444-4444-4444-8444-444444444444",
+        qualityReviewRunId: "55555555-5555-4555-8555-555555555555",
+      }).success,
+    ).toBe(false);
   });
 });

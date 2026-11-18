@@ -40,6 +40,8 @@ export const CreateScheduledPostSchema = z
   })
   .strict()
   .superRefine((request, context) => {
+    // Legacy render/review input remains accepted only for historical/manual posts.
+    // VideoRun automation must use videoRunId + criticStepId + assemblyStepId.
     const legacy = request.renderJobId !== undefined && request.qualityReviewRunId !== undefined;
     const video =
       request.videoRunId !== undefined &&

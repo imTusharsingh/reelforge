@@ -9,8 +9,8 @@ inspection of the current V6 branch; it does not inventory any deployed database
 | --- | --- |
 | M16 workflow | The orchestration controller, scheduler, queue, worker, operations views, and historical workflow records still use its definitions, jobs, leases, and events. Generation is gated when `pipeline.v2` is enabled, but other workflow definitions remain active. Drain and migrate each definition before removing these paths. |
 | M11 review | The quality controller reads historical reviews and accepts decisions. The workflow dispatcher resumes an existing review. M13 checks the current review and revalidates rights and provenance before post creation and delivery. Retain these readers and decisions while historical posts depend on them. |
-| M13 publishing | Scheduled posts require a render job and quality review in both schema and service. Preflight reads the render, manifest and video artifact and verifies current M11 approval. Publish attempts, destinations and remote reconciliation are still needed for existing posts. |
-| VideoRun publishing | Automation requires a successful `PACKAGING` step with legacy IDs. The critic currently writes packaging in the `CRITIC` result, and the VideoRun engine has no `PACKAGING` stage. The schemas also differ: critic packaging has a cover timestamp; the temporary publishing package requires a cover reference and legacy IDs. Normal VideoRuns therefore cannot meet the current automation contract. |
+| M13 publishing | Historical scheduled posts retain render/review identifiers. New VideoRun posts use the run, exact critic step, assembly step, manifest and final artifact checksum. Preflight and delivery revalidate approval, policy, rights, provenance, technical and budget evidence. |
+| VideoRun publishing | Automation binds directly to successful `CRITIC` and `ASSEMBLING` steps. No synthetic `PACKAGING` step or legacy render/review identifiers are created. |
 
 Evidence: [automation service](../../apps/api/src/modules/publishing/automation.service.ts),
 [publishing preflight](../../apps/api/src/modules/publishing/publishing.service.ts),
@@ -21,18 +21,18 @@ Evidence: [automation service](../../apps/api/src/modules/publishing/automation.
 
 ## Proposed sequence
 
-1. Inventory deployed rows by workspace and status, including in-flight workflow jobs, reviews,
+1. **Deployment prerequisite:** inventory deployed rows by workspace and status, including in-flight workflow jobs, reviews,
    scheduled posts, destinations, attempts, upload receipts, and retention obligations. Record
    foreign keys and object-storage references; verify restorable backups and reconciliation state.
-2. Specify and review a versioned VideoRun publishing source containing the run, exact successful
+2. **Implemented locally:** specify and review a versioned VideoRun publishing source containing the run, exact successful
    critic attempt, immutable assembly manifest and media checksum, validated packaging and cover
    evidence. Specify publish-time revalidation of actor permission, emergency stop, current approval,
    policy, rights, provenance, technical and budget gates. Missing or stale evidence blocks publish.
-3. Design an additive persistence change that distinguishes historical render/review sources from
+3. **Implemented locally:** design an additive persistence change that distinguishes historical render/review sources from
    VideoRun sources with tenant-scoped constraints and unambiguous source selection. Preserve old
    identifiers and receipts; do not synthesize historical approvals or translate IDs. Review exact
    SQL, lock behavior, backfill rules and restore/rollback procedure before deploying a migration.
-4. Extend M13 preflight and delivery to consume the new source while retaining its upload
+4. **Implemented locally:** extend M13 preflight and delivery to consume the new source while retaining its upload
    idempotency, quota, lease, uncertain-outcome reconciliation, OAuth and disclosure checks. Bind
    automation to the actual critic result and assembly, not an invented packaging step or review.
 5. Add offline end-to-end tests for approval, scheduling, verified media, a fake upload, retries,

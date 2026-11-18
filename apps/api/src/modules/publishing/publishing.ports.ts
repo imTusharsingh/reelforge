@@ -27,6 +27,7 @@ export interface PublishingBudgetPort {
 }
 
 export class UnconfiguredPublishingSchedulePort implements PublishingSchedulePort {
+  /** Fail-closed development fallback; production must bind the scheduler/emergency-stop adapter. */
   public async check(): Promise<ScheduleCheck> {
     return {
       allowed: false,
@@ -36,6 +37,7 @@ export class UnconfiguredPublishingSchedulePort implements PublishingSchedulePor
 }
 
 export class UnconfiguredPublishingBudgetPort implements PublishingBudgetPort {
+  /** Fail-closed development fallback; production must bind the quota/budget adapter. */
   public async check(): Promise<BudgetCheck> {
     return {
       allowed: false,

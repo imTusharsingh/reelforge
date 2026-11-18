@@ -77,4 +77,32 @@ describe("publishing request schemas", () => {
     ).toBe(false);
     expect(UpdateScheduledPostSchema.safeParse({}).success).toBe(false);
   });
+
+  it("accepts only a complete VideoRun source for automated scheduling", () => {
+    const video = {
+      channelId,
+      videoRunId: "55555555-5555-4555-8555-555555555555",
+      criticStepId: "66666666-6666-4666-8666-666666666666",
+      assemblyStepId: "77777777-7777-4777-8777-777777777777",
+      scheduledAt: null,
+      disclosure: { decision: "NOT_REQUIRED", reason: "No paid promotion" },
+      destinations: [
+        {
+          platform: "YOUTUBE",
+          socialAccountId: accountId,
+          metadata: {
+            platform: "YOUTUBE",
+            title: "VideoRun post",
+            description: "",
+            privacyStatus: "private",
+            selfDeclaredMadeForKids: false,
+          },
+        },
+      ],
+    };
+    expect(CreateScheduledPostSchema.safeParse(video).success).toBe(true);
+    expect(
+      CreateScheduledPostSchema.safeParse({ ...video, assemblyStepId: undefined }).success,
+    ).toBe(false);
+  });
 });
