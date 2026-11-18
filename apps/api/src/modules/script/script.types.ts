@@ -1,7 +1,7 @@
 import type { LlmProviderPort } from "@reelforge/ai-providers";
 
 /** @deprecated V4 replaces scene planning with ShotSpec; obsolete columns removed via T2 ADR/migration. */
-export type ScriptScene = Readonly<{
+type ScriptScene = Readonly<{
   id: string;
   startSeconds: number;
   durationSeconds: number;

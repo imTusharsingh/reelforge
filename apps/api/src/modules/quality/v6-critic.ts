@@ -36,12 +36,6 @@ export type CriticResult = Readonly<{
 
 const axes = ["hook", "coherence", "artifacts", "captionSync", "briefFit", "policy"] as const;
 
-export function v6QualityEnabled(
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): boolean {
-  return environment.PIPELINE_V2 === "true";
-}
-
 export function critique(
   clips: ReadonlyArray<CriticClip>,
   brief: CriticBrief,
