@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Database } from "../identity/identity.types.js";
 import {
-  DEFAULT_WORKFLOW_LIMIT_CONFIG,
   WORKFLOW_LIMIT_CONFIG,
   type WorkflowLeaseScopeValue,
   type WorkflowLimitConfig,
@@ -105,8 +104,4 @@ export class WorkflowLimitsService {
     const count = rows[0]?.count;
     return count !== undefined && count <= input.limit;
   }
-}
-
-export function defaultWorkflowLimitConfig(): WorkflowLimitConfig {
-  return DEFAULT_WORKFLOW_LIMIT_CONFIG;
 }

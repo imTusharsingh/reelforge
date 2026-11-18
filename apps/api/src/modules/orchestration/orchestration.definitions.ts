@@ -101,17 +101,6 @@ export function stepDefinition(
   return definitions[key].find((step) => step.key === stepKey);
 }
 
-export function nextStep(
-  key: WorkflowDefinition,
-  currentStepKey: string,
-): WorkflowStepDefinition | undefined {
-  requireLegacy(key);
-  const current = definitions[key].find((step) => step.key === currentStepKey);
-  if (!current) return undefined;
-  requireLegacy(key);
-  return definitions[key].find((step) => step.sequence === current.sequence + 1);
-}
-
 export function stepIdempotencyKey(
   definitionKey: WorkflowDefinition,
   runId: string,

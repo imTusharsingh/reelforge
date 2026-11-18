@@ -4,7 +4,6 @@ import type {
   WorkflowDispatchStatus,
   WorkflowJobStatus,
   WorkflowLeaseScope,
-  WorkflowScheduleSlotStatus,
   WorkflowState,
   WorkflowStepStatus,
   WorkflowTrigger,
@@ -38,7 +37,6 @@ export type WorkflowJobState = WorkflowJobStatus;
 export type WorkflowBudgetDecisionValue = WorkflowBudgetDecision;
 export type WorkflowDispatchStatusValue = WorkflowDispatchStatus;
 export type WorkflowLeaseScopeValue = WorkflowLeaseScope;
-export type WorkflowScheduleSlotStatusValue = WorkflowScheduleSlotStatus;
 
 export type WorkflowRunInput = Readonly<Record<string, unknown>>;
 

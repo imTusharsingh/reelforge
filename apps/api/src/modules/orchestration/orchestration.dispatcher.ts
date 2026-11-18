@@ -44,14 +44,6 @@ function requiredString(input: WorkflowRunInput, key: string): string {
   return value;
 }
 
-function mergeOutput(
-  input: WorkflowRunInput,
-  output: Readonly<Record<string, unknown>> | undefined,
-): WorkflowRunInput {
-  if (output === undefined) return input;
-  return { ...input, ...output };
-}
-
 @Injectable()
 export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
   public constructor(
@@ -519,11 +511,4 @@ export class WorkflowDomainDispatcher implements WorkflowStepDispatcherPort {
 
 function assertNever(value: never): never {
   throw new BadRequestException(`Unsupported workflow step ${String(value)}`);
-}
-
-export function mergeStepOutput(
-  input: WorkflowRunInput,
-  output: Readonly<Record<string, unknown>> | undefined,
-): WorkflowRunInput {
-  return mergeOutput(input, output);
 }

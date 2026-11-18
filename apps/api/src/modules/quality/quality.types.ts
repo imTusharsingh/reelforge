@@ -46,11 +46,6 @@ export type ApprovalPolicy = Readonly<{
   criterionThresholds: Partial<Record<QualityReviewCriterion, number>>;
 }>;
 
-export type RegenerationTarget = Readonly<{
-  stage: "SCENE" | "SCRIPT" | "RENDER";
-  sceneId?: string;
-}>;
-
 export type QualityRunView = Readonly<{
   id: string;
   renderJobId: string;
