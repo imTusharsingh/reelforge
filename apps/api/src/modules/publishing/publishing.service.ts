@@ -16,6 +16,9 @@ import {
 import {
   DisclosureDecisionSchema,
   AssemblyManifestSchema,
+  criticGatesPass,
+  criticReport,
+  humanGatesPass,
   PostPublishedV1Schema,
   PublishFailedV1Schema,
   PublishedPostContextSchema,
@@ -37,6 +40,7 @@ import { CompositionService } from "../composition/composition.service.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
 import { QualityService } from "../quality/quality.service.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
+import { approvalMatchesCritic } from "./approval-evidence.js";
 import {
   currentQualityReviewFilter,
   currentQualityReviewOrder,
@@ -598,45 +602,64 @@ export class PublishingService {
     let hardGatePass = false;
     let approvalEvidence = "A current M11 approval is required.";
     let hardGateEvidence = "All current M11 hard gates must pass.";
-    const review = await this.quality
-      .get(context, post.qualityReviewRunId!)
-      .catch((error: unknown) => {
-        if (isExpectedPreflightError(error)) return null;
-        throw error;
-      });
-    if (review !== null) {
-      approvalPassed = review.status === "APPROVED" || review.status === "AUTO_APPROVED";
-      const selectedHardGates = review.gateSummary;
-      hardGates = selectedHardGates;
-      hardGatePass = selectedHardGates.length > 0 && selectedHardGates.every((item) => item.passed);
-      approvalEvidence = approvalPassed
-        ? `Selected M11 review status is ${review.status}.`
-        : `Selected M11 review status is ${review.status}; approval is required.`;
-      hardGateEvidence = hardGatePass
-        ? "The selected M11 review reports every hard gate passing."
-        : "The selected M11 review has missing or failed hard gates.";
+    if (post.videoRunId && post.criticStepId && post.assemblyStepId) {
       try {
-        hardGates = await this.quality.assertPublishable(
+        await this.assertVideoRunPublishable(
           context,
-          post.renderJobId!,
-          post.qualityReviewRunId!,
+          post.videoRunId,
+          post.criticStepId,
+          post.assemblyStepId,
         );
         approvalPassed = true;
-        hardGatePass = hardGates.length > 0 && hardGates.every((item) => item.passed);
-        approvalEvidence = "M11 approval is current and belongs to the latest review.";
-        hardGateEvidence = hardGatePass
-          ? "M11 revalidated current rights, provenance, policy, and hard gates."
-          : "M11 publish-time hard gates are incomplete or failed.";
+        hardGatePass = true;
+        approvalEvidence = "Current approval is bound to the successful critic attempt.";
+        hardGateEvidence = "Critic rights, provenance, policy, technical and budget gates passed.";
       } catch (error) {
-        if (!isExpectedPreflightError(error)) throw error;
-        approvalPassed = false;
-        hardGatePass = false;
         approvalEvidence = errorMessage(error);
-        hardGateEvidence = errorMessage(error);
+        hardGateEvidence = approvalEvidence;
       }
     } else {
-      approvalEvidence = "The selected M11 review is unavailable in this workspace.";
-      hardGateEvidence = approvalEvidence;
+      const review = await this.quality
+        .get(context, post.qualityReviewRunId!)
+        .catch((error: unknown) => {
+          if (isExpectedPreflightError(error)) return null;
+          throw error;
+        });
+      if (review !== null) {
+        approvalPassed = review.status === "APPROVED" || review.status === "AUTO_APPROVED";
+        const selectedHardGates = review.gateSummary;
+        hardGates = selectedHardGates;
+        hardGatePass =
+          selectedHardGates.length > 0 && selectedHardGates.every((item) => item.passed);
+        approvalEvidence = approvalPassed
+          ? `Selected M11 review status is ${review.status}.`
+          : `Selected M11 review status is ${review.status}; approval is required.`;
+        hardGateEvidence = hardGatePass
+          ? "The selected M11 review reports every hard gate passing."
+          : "The selected M11 review has missing or failed hard gates.";
+        try {
+          hardGates = await this.quality.assertPublishable(
+            context,
+            post.renderJobId!,
+            post.qualityReviewRunId!,
+          );
+          approvalPassed = true;
+          hardGatePass = hardGates.length > 0 && hardGates.every((item) => item.passed);
+          approvalEvidence = "M11 approval is current and belongs to the latest review.";
+          hardGateEvidence = hardGatePass
+            ? "M11 revalidated current rights, provenance, policy, and hard gates."
+            : "M11 publish-time hard gates are incomplete or failed.";
+        } catch (error) {
+          if (!isExpectedPreflightError(error)) throw error;
+          approvalPassed = false;
+          hardGatePass = false;
+          approvalEvidence = errorMessage(error);
+          hardGateEvidence = errorMessage(error);
+        }
+      } else {
+        approvalEvidence = "The selected M11 review is unavailable in this workspace.";
+        hardGateEvidence = approvalEvidence;
+      }
     }
     gates.push(gate("APPROVAL", approvalPassed, approvalEvidence));
     gates.push(gate("HARD_GATES", hardGatePass, hardGateEvidence));
@@ -1829,6 +1852,7 @@ export class PublishingService {
     stepId: string,
   ): Promise<{ render: RenderRecord | null; manifest: RenderManifest; video: Buffer }> {
     if (!this.runArtifacts) throw new ConflictException("VideoRun artifact service is unavailable");
+    await this.assertVideoRunPublishable(context, runId, undefined, stepId);
     const step = await this.db.videoRunStep.findUnique({
       where: { workspaceId_runId_id: { workspaceId: context.workspaceId, runId, id: stepId } },
       select: { key: true, state: true, output: true },
@@ -1886,6 +1910,80 @@ export class PublishingService {
       },
     } as unknown as RenderManifest;
     return { render: null, manifest, video };
+  }
+
+  private async assertVideoRunPublishable(
+    context: WorkspaceContext,
+    runId: string,
+    criticStepId: string | undefined,
+    assemblyStepId: string,
+  ): Promise<void> {
+    const run = await this.db.videoRun.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: runId } },
+      select: {
+        channelId: true,
+        state: true,
+        pauseReason: true,
+        effectiveAutonomy: true,
+        approvedShortsAtStart: true,
+      },
+    });
+    if (!run || run.state !== "SCHEDULED" || run.pauseReason !== null)
+      throw new ConflictException("VideoRun is not currently publishable");
+    const [critic, assembly, approval, budget] = await Promise.all([
+      criticStepId
+        ? this.db.videoRunStep.findUnique({
+            where: {
+              workspaceId_runId_id: { workspaceId: context.workspaceId, runId, id: criticStepId },
+            },
+            select: { id: true, key: true, state: true, output: true },
+          })
+        : this.db.videoRunStep.findFirst({
+            where: { workspaceId: context.workspaceId, runId, key: "CRITIC" },
+            orderBy: { attempt: "desc" },
+            select: { id: true, key: true, state: true, output: true },
+          }),
+      this.db.videoRunStep.findUnique({
+        where: {
+          workspaceId_runId_id: { workspaceId: context.workspaceId, runId, id: assemblyStepId },
+        },
+        select: { key: true, state: true },
+      }),
+      this.db.runEvent.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          runId,
+          type: { in: ["approved", "auto_approved"] },
+        },
+        orderBy: { sequence: "desc" },
+        select: { type: true, stepId: true },
+      }),
+      this.db.budgetEnvelope.findFirst({
+        where: { workspaceId: context.workspaceId, runId },
+        select: { spentMinor: true, reservedMinor: true, hardCapMinor: true },
+      }),
+    ]);
+    if (
+      !critic ||
+      critic.key !== "CRITIC" ||
+      critic.state !== "SUCCEEDED" ||
+      !assembly ||
+      assembly.key !== "ASSEMBLING" ||
+      assembly.state !== "SUCCEEDED"
+    )
+      throw new ConflictException("VideoRun critic and assembly evidence is stale");
+    if (!approvalMatchesCritic(approval, critic))
+      throw new ConflictException("VideoRun approval is not bound to the current critic");
+    const report = criticReport(critic.output);
+    if (!criticGatesPass(report) || (approval?.type === "approved" && !humanGatesPass(report)))
+      throw new ConflictException("VideoRun rights, provenance, policy or technical gates failed");
+    if (
+      approval?.type === "auto_approved" &&
+      (run.effectiveAutonomy !== "L3" || run.approvedShortsAtStart < 10)
+    )
+      throw new ConflictException("Automatic VideoRun publishing is not authorized");
+    if (!budget || budget.spentMinor + budget.reservedMinor > budget.hardCapMinor)
+      throw new ConflictException("VideoRun publishing budget is exhausted");
   }
 
   private async requirePost(
