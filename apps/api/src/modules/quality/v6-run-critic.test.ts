@@ -20,6 +20,7 @@ function fixture(
   hasRights = true,
   real = false,
   badClip = false,
+  noRefs = false,
 ): {
   service: V6RunCritic;
   review: ReturnType<typeof vi.fn>;
@@ -86,7 +87,7 @@ function fixture(
     ],
     plan: {
       script: { hook: "hook", beats: ["beat"], payoff: "payoff", cta: "cta" },
-      manifest: { shots: [{ references: [{ referenceAssetId: "a", version: 1 }] }] },
+      manifest: { shots: [{ references: noRefs ? [] : [{ referenceAssetId: "a", version: 1 }] }] },
     },
   }));
   const review = vi.fn(async () => ({
@@ -169,6 +170,13 @@ describe("V6 worker critic", () => {
     const t = fixture(undefined, false);
     await expect(t.service.execute(context, run, brief, step)).rejects.toThrow("rights evidence");
     expect(t.review).not.toHaveBeenCalled();
+  });
+  it("allows a plan with no reference assets", async () => {
+    const t = fixture(undefined, true, false, false, true);
+    await expect(t.service.execute(context, run, brief, step)).resolves.toMatchObject({
+      criticPassed: true,
+    });
+    expect(t.review).toHaveBeenCalledOnce();
   });
   it("runs the real V6 pipeline with a fake V2 provider", async () => {
     vi.stubEnv("PIPELINE_V2", "true");

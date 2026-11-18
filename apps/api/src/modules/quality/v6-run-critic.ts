@@ -78,6 +78,7 @@ export class V6RunCritic {
   }
   private async verifyRights(context: Context, evidence: Evidence): Promise<void> {
     const refs = evidence.plan.manifest.shots.flatMap((shot) => shot.references);
+    if (refs.length === 0) return;
     const resolved = await this.access.modules
       .get(ReferenceLibraryService, { strict: false })
       .resolve(context, refs);
@@ -103,7 +104,7 @@ export class V6RunCritic {
       },
     });
     const verified =
-      resolved.length > 0 &&
+      resolved.length === refs.length &&
       resolved.every((reference) => {
         const asset = assets.find(
           (item) =>
