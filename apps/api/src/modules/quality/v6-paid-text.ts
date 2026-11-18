@@ -64,6 +64,8 @@ export function criticTextPort(deps: {
         throw new ConflictException("RECONCILE_REQUIRED: critic submission outcome unknown");
       const modelId = process.env.GEMINI_TEXT_MODEL?.trim();
       if (!modelId) throw new ConflictException("Critic text model is not configured");
+      const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
+      if (!budget) throw new ConflictException("Critic budget envelope is unavailable");
       const native = await ports.get(context);
       const cost = reservationCents({
         currency: "USD",

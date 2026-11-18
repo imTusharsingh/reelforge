@@ -12,7 +12,10 @@ const spec = {
   jsonSchema: {},
   parse: (value: unknown): number => z.number().parse(value),
 };
-function fixture(previous: unknown = null): {
+function fixture(
+  previous: unknown = null,
+  budget: unknown = {},
+): {
   port: ReturnType<typeof criticTextPort>;
   calls: string[];
   findFirst: ReturnType<typeof vi.fn>;
@@ -25,6 +28,7 @@ function fixture(previous: unknown = null): {
     return { output: 8, providerJobId: "job", usage: {} };
   });
   const db = {
+    budgetEnvelope: { findFirst: async (): Promise<unknown> => budget },
     videoRunStep: {
       findFirst,
       updateMany: async (): Promise<void> => {
@@ -86,5 +90,14 @@ describe("V6 paid text boundary", () => {
     const changed = fixture({ state: "SUCCEEDED", input: { spec: { fingerprint: "different" } } });
     await expect(changed.port.complete(spec, "ignored")).rejects.toThrow("input changed");
     expect(changed.complete).not.toHaveBeenCalled();
+  });
+  it("refuses to dispatch when the run has no budget envelope", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
+    const t = fixture(null, null);
+    await expect(t.port.complete(spec, "ignored")).rejects.toThrow(
+      "budget envelope is unavailable",
+    );
+    expect(t.complete).not.toHaveBeenCalled();
+    expect(t.calls).toEqual([]);
   });
 });
