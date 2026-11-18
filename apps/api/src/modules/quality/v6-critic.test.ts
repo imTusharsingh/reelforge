@@ -103,6 +103,7 @@ describe("V6 critic and packaging", () => {
     ).toBe(0);
   });
   it("runs the complete gated V6 pipeline", async () => {
+    vi.stubEnv("PIPELINE_V2", "true");
     const text: TextPort = {
       complete: async <T>(spec: TextSpec<T>) => ({
         output: spec.parse(rubric),
@@ -113,7 +114,6 @@ describe("V6 critic and packaging", () => {
     const reshoot = vi.fn(async () => undefined);
     const result = await new V6QualityPipeline().review(
       {
-        enabled: true,
         clips: [good],
         brief: { requiredTerms: ["ocean"], bannedTerms: [] },
         critic: { prompt: "review", media: [], correlationId: "run" },

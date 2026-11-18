@@ -82,6 +82,35 @@ export type ReshootController = Readonly<{
   remainingCents: number;
 }>;
 
+export function boundedReshootController(
+  delegate: ReshootController,
+  hardCapCents = 800,
+): ReshootController {
+  const attempts = new Map<string, number>();
+  let spentCents = 0;
+  let reedited = false;
+  return {
+    get remainingCents(): number {
+      return Math.max(0, Math.min(delegate.remainingCents, hardCapCents - spentCents));
+    },
+    async reshoot(clipId: string): Promise<void> {
+      const attempt = (attempts.get(clipId) ?? 0) + 1;
+      if (attempt > 2) throw new Error(`Reshoot cap reached for ${clipId}`);
+      if (this.remainingCents <= 0) throw new Error("V6 reshoot envelope exhausted");
+      attempts.set(clipId, attempt);
+      spentCents += 1;
+      await delegate.reshoot(clipId);
+    },
+    async reedit(): Promise<void> {
+      if (reedited) throw new Error("V6 re-edit cap reached");
+      if (this.remainingCents <= 0) throw new Error("V6 re-edit envelope exhausted");
+      reedited = true;
+      spentCents += 1;
+      await delegate.reedit();
+    },
+  };
+}
+
 export type NoveltyHistory = ReadonlyArray<Readonly<{ title: string; angle: string }>>;
 
 export function noveltyScore(

@@ -1,4 +1,5 @@
 import { ConflictException, Injectable } from "@nestjs/common";
+import { pipelineV2Enabled } from "@reelforge/config-engine";
 import type { Packaging } from "@reelforge/contracts";
 import type { TextPort } from "@reelforge/ai-providers";
 import {
@@ -17,7 +18,6 @@ import { packageShort } from "./v6-packaging.js";
 export class V6QualityPipeline {
   public async review(
     input: Readonly<{
-      enabled: boolean;
       clips: ReadonlyArray<CriticClip>;
       brief: CriticBrief;
       critic: Readonly<{
@@ -37,7 +37,7 @@ export class V6QualityPipeline {
     }>,
     text: TextPort,
   ): Promise<Readonly<{ criticPassed: boolean; noveltyScore: number; packaging: Packaging }>> {
-    if (!input.enabled) throw new ConflictException("pipeline.v2 is disabled");
+    if (!pipelineV2Enabled()) throw new ConflictException("pipeline.v2 is disabled");
     const rubric = await multimodalRubric(text, input.critic);
     const result = critique(input.clips, input.brief, rubric);
     await boundedRedo(result, input.redo);
