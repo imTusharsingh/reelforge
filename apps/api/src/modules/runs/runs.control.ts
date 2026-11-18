@@ -23,13 +23,17 @@ export class RunsControl {
           where: { runId: id, key: "CRITIC", state: "SUCCEEDED" },
           orderBy: { attempt: "desc" },
         });
-        if (!humanGatesPass(criticReport(critic?.output)) || current.pauseReason !== null)
+        if (!critic || !humanGatesPass(criticReport(critic.output)) || current.pauseReason !== null)
           throw new ConflictException("Approval requires all hard gates and no unresolved pause");
         await db.videoRun.updateMany({
           where: { id },
           data: { state: "SCHEDULED", pauseReason: null },
         });
-        return { value: null, payload: { from: "AWAITING_APPROVAL", to: "SCHEDULED" } };
+        return {
+          value: null,
+          payload: { from: "AWAITING_APPROVAL", to: "SCHEDULED" },
+          stepId: critic.id,
+        };
       });
       await this.runs.events?.publish(result.event);
     } else {

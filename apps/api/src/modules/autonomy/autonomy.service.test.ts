@@ -99,5 +99,6 @@ describe("V8 durable decisions on fake V3 store", () => {
     await f.service.settle(context, f.run);
     expect(f.run.state).toBe("SCHEDULED");
     expect(f.db.events[0]?.type).toBe("auto_approved");
+    expect(f.db.events[0]?.stepId).toBe("critic-step");
   });
 });

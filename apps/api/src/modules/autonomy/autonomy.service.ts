@@ -99,7 +99,7 @@ export class AutonomyService {
     context: Context,
     decision: "APPROVE" | "REJECT",
     automatic: boolean,
-  ): Promise<{ value: null; payload: Json }> {
+  ): Promise<{ value: null; payload: Json; stepId?: string }> {
     const id = current.id;
     const previous = await db.runEvent.findFirst({
       where: { runId: id, type: { in: ["approved", "auto_approved", "human_rejected"] } },
@@ -137,6 +137,7 @@ export class AutonomyService {
     });
     return {
       value: null,
+      ...(step ? { stepId: step.id } : {}),
       payload: {
         decision,
         actorId: context.userId,

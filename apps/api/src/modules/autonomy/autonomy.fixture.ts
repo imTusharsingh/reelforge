@@ -45,10 +45,14 @@ export function fixture(): {
         _ctx: Context,
         _id: string,
         type: string,
-        work: (scoped: Scoped, current: Run) => Promise<{ payload: Json }>,
+        work: (scoped: Scoped, current: Run) => Promise<{ payload: Json; stepId?: string }>,
       ) => {
         const result = await work(db as unknown as Scoped, run);
-        db.events.push({ type, payload: result.payload });
+        db.events.push({
+          type,
+          payload: result.payload,
+          ...(result.stepId ? { stepId: result.stepId } : {}),
+        });
         return result;
       },
     ),
@@ -57,7 +61,7 @@ export function fixture(): {
   return { service: new AutonomyService(store, stop), run, db, stop };
 }
 function fakeDb(run: Run): {
-  events: Array<{ type: string; payload: Json }>;
+  events: Array<{ type: string; payload: Json; stepId?: string }>;
   runEvent: {
     count: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
@@ -66,7 +70,7 @@ function fakeDb(run: Run): {
   videoRun: { updateMany: ReturnType<typeof vi.fn> };
   videoRunStep: { findFirst: ReturnType<typeof vi.fn> };
 } {
-  const events: Array<{ type: string; payload: Json }> = [];
+  const events: Array<{ type: string; payload: Json; stepId?: string }> = [];
   return {
     events,
     runEvent: {
@@ -84,6 +88,8 @@ function fakeDb(run: Run): {
         return { count: 1 };
       }),
     },
-    videoRunStep: { findFirst: vi.fn(async () => ({ output: { result: report } })) },
+    videoRunStep: {
+      findFirst: vi.fn(async () => ({ id: "critic-step", output: { result: report } })),
+    },
   };
 }
