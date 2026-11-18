@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, max-lines-per-function */
 import { publishingClient, isScheduledAutomation, reconnectRequired } from "./automation-client.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -5,6 +6,7 @@ import {
   ConflictException,
   ForbiddenException,
   Inject,
+  Optional,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -13,6 +15,7 @@ import {
 } from "@nestjs/common";
 import {
   DisclosureDecisionSchema,
+  AssemblyManifestSchema,
   PostPublishedV1Schema,
   PublishFailedV1Schema,
   PublishedPostContextSchema,
@@ -33,6 +36,7 @@ import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js
 import { CompositionService } from "../composition/composition.service.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
 import { QualityService } from "../quality/quality.service.js";
+import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import {
   currentQualityReviewFilter,
   currentQualityReviewOrder,
@@ -118,6 +122,7 @@ export class PublishingService {
     @Inject(PUBLISHING_SCHEDULE_PORT) private readonly schedulePolicy: PublishingSchedulePort,
     @Inject(PUBLISHING_BUDGET_PORT) private readonly budgetPolicy: PublishingBudgetPort,
     private readonly sessionVault: PublishingSessionVault,
+    @Optional() private readonly runArtifacts?: RunsArtifacts,
   ) {}
 
   public async createScheduledPost(
@@ -641,34 +646,41 @@ export class PublishingService {
     let artifact: RenderRecord["artifacts"][number] | null = null;
     let mediaEvidence = "A successful, retained render with a verified video artifact is required.";
     try {
-      render = await this.db.renderJob.findUnique({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.renderJobId! } },
-        include: { sceneMediaJob: true, artifacts: true },
-      });
-      if (
-        render === null ||
-        render.status !== "SUCCEEDED" ||
-        render.expiredAt !== null ||
-        render.sceneMediaJob.channelId !== post.channelId
-      )
-        throw new ConflictException(
-          "The selected render is not a successful active channel render",
-        );
-      manifest = await this.composition.getManifest(context, post.renderJobId!);
-      artifact = render.artifacts.find((item) => item.kind === "VIDEO") ?? null;
-      if (
-        artifact === null ||
-        manifest.video.byteSize !== artifact.byteSize ||
-        manifest.video.checksumSha256 !== artifact.checksumSha256 ||
-        manifest.video.objectKey !== artifact.objectKey
-      )
-        throw new ConflictException("The rendered video does not match its verified manifest");
-      mediaEvidence = "M10 verified the successful render, manifest, media size, and checksum.";
+      if (post.videoRunId && post.assemblyStepId) {
+        await this.getVerifiedVideoRun(context, post.videoRunId, post.assemblyStepId);
+        mediaEvidence = "VideoRun assembly manifest and final artifact checksum verified.";
+        gates.push(gate("MEDIA", true, mediaEvidence));
+      } else {
+        render = await this.db.renderJob.findUnique({
+          where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.renderJobId! } },
+          include: { sceneMediaJob: true, artifacts: true },
+        });
+        if (
+          render === null ||
+          render.status !== "SUCCEEDED" ||
+          render.expiredAt !== null ||
+          render.sceneMediaJob.channelId !== post.channelId
+        )
+          throw new ConflictException(
+            "The selected render is not a successful active channel render",
+          );
+        manifest = await this.composition.getManifest(context, post.renderJobId!);
+        artifact = render.artifacts.find((item) => item.kind === "VIDEO") ?? null;
+        if (
+          artifact === null ||
+          manifest.video.byteSize !== artifact.byteSize ||
+          manifest.video.checksumSha256 !== artifact.checksumSha256 ||
+          manifest.video.objectKey !== artifact.objectKey
+        )
+          throw new ConflictException("The rendered video does not match its verified manifest");
+        mediaEvidence = "M10 verified the successful render, manifest, media size, and checksum.";
+        gates.push(gate("MEDIA", manifest !== null && artifact !== null, mediaEvidence));
+      }
     } catch (error) {
       if (!isExpectedPreflightError(error)) throw error;
       mediaEvidence = errorMessage(error);
+      gates.push(gate("MEDIA", false, mediaEvidence));
     }
-    gates.push(gate("MEDIA", manifest !== null && artifact !== null, mediaEvidence));
 
     const metadata = this.parseDestinationMetadata(destination);
     const metadataPassed = metadata !== null;
@@ -1772,7 +1784,13 @@ export class PublishingService {
   private async getVerifiedVideo(
     context: WorkspaceContext,
     destination: DestinationRecord,
-  ): Promise<{ render: RenderRecord; manifest: RenderManifest; video: Buffer }> {
+  ): Promise<{ render: RenderRecord | null; manifest: RenderManifest; video: Buffer }> {
+    if (destination.scheduledPost.videoRunId && destination.scheduledPost.assemblyStepId)
+      return this.getVerifiedVideoRun(
+        context,
+        destination.scheduledPost.videoRunId,
+        destination.scheduledPost.assemblyStepId,
+      );
     const render = await this.db.renderJob.findUnique({
       where: {
         workspaceId_id: {
@@ -1803,6 +1821,71 @@ export class PublishingService {
     )
       throw new ConflictException("The render video changed after M10 integrity verification");
     return { render, manifest, video };
+  }
+
+  private async getVerifiedVideoRun(
+    context: WorkspaceContext,
+    runId: string,
+    stepId: string,
+  ): Promise<{ render: RenderRecord | null; manifest: RenderManifest; video: Buffer }> {
+    if (!this.runArtifacts) throw new ConflictException("VideoRun artifact service is unavailable");
+    const step = await this.db.videoRunStep.findUnique({
+      where: { workspaceId_runId_id: { workspaceId: context.workspaceId, runId, id: stepId } },
+      select: { key: true, state: true, output: true },
+    });
+    if (!step || step.key !== "ASSEMBLING" || step.state !== "SUCCEEDED")
+      throw new ConflictException("A successful VideoRun assembly is required to publish");
+    const artifacts = this.runArtifacts.descriptors(step.output);
+    const finalArtifact = artifacts.find(
+      (item) => item.kind === "final" && item.contentType === "video/mp4",
+    );
+    const manifestArtifact = artifacts.find((item) => item.kind === "manifest");
+    if (!finalArtifact || !manifestArtifact)
+      throw new ConflictException("VideoRun assembly artifacts are incomplete");
+    const [video, manifestBytes] = await Promise.all([
+      this.storage.getObject({
+        workspaceId: context.workspaceId,
+        objectKey: finalArtifact.objectKey,
+      }),
+      this.storage.getObject({
+        workspaceId: context.workspaceId,
+        objectKey: manifestArtifact.objectKey,
+      }),
+    ]);
+    if (
+      video.byteLength !== finalArtifact.byteSize ||
+      createHash("sha256").update(video).digest("hex") !== finalArtifact.checksumSha256
+    )
+      throw new ConflictException("VideoRun final artifact checksum mismatch");
+    if (
+      createHash("sha256").update(manifestBytes).digest("hex") !== manifestArtifact.checksumSha256
+    )
+      throw new ConflictException("VideoRun manifest checksum mismatch");
+    const run = await this.db.videoRun.findUnique({
+      where: { workspaceId_id: { workspaceId: context.workspaceId, id: runId } },
+      select: { channelBriefId: true, channelBriefVersion: true },
+    });
+    const parsed = AssemblyManifestSchema.safeParse(JSON.parse(manifestBytes.toString("utf8")));
+    if (
+      !run ||
+      !parsed.success ||
+      parsed.data.workspaceId !== context.workspaceId ||
+      parsed.data.runId !== runId ||
+      parsed.data.briefId !== run.channelBriefId ||
+      parsed.data.briefVersion !== run.channelBriefVersion ||
+      parsed.data.videoChecksumSha256 !== finalArtifact.checksumSha256
+    )
+      throw new ConflictException("VideoRun assembly manifest provenance mismatch");
+    const manifest = {
+      ...parsed.data,
+      video: {
+        objectKey: finalArtifact.objectKey,
+        byteSize: finalArtifact.byteSize,
+        checksumSha256: finalArtifact.checksumSha256,
+        mediaType: finalArtifact.contentType,
+      },
+    } as unknown as RenderManifest;
+    return { render: null, manifest, video };
   }
 
   private async requirePost(
