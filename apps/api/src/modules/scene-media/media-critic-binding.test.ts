@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
-import { V6RunCritic } from "../quality/v6-run-critic.js";
+import { RunCritic } from "../quality/run-critic.js";
 import type { MediaAccess } from "./media-access.js";
 import { MediaBindings } from "./media-pipeline.module.js";
 
@@ -19,7 +19,7 @@ describe("V6 worker binding", () => {
         [RunGeneration, generation],
         [RunPlanning, planning],
         [RunOutputs, outputs],
-        [V6RunCritic, critic],
+        [RunCritic, critic],
       ]);
       const access = {
         modules: { get: (key: unknown) => instances.get(key) },

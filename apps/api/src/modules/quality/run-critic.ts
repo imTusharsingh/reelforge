@@ -7,10 +7,10 @@ import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
 import { ReferenceLibraryService } from "../reference-library/reference-library.service.js";
 import { screenPlanningContent } from "../script/planning-guardrails.js";
-import { V6QualityPipeline } from "./v6-quality.pipeline.js";
-import { V6Evidence } from "./v6-evidence.js";
+import { CriticPipeline } from "./critic.pipeline.js";
+import { CriticEvidence } from "./critic-evidence.js";
 
-type Evidence = Awaited<ReturnType<V6Evidence["load"]>>;
+type Evidence = Awaited<ReturnType<CriticEvidence["load"]>>;
 type Budget = {
   hardCapMinor: number;
   baseEstimateMinor: number;
@@ -18,15 +18,15 @@ type Budget = {
   spentMinor: number;
   reservedMinor: number;
 };
-type Review = Awaited<ReturnType<V6QualityPipeline["review"]>>;
+type Review = Awaited<ReturnType<CriticPipeline["review"]>>;
 @Injectable()
-export class V6RunCritic {
+export class RunCritic {
   public constructor(
     private readonly access: MediaAccess,
     private readonly accounts: MediaAccounts,
     private readonly ports: MediaPorts,
-    private readonly evidence: V6Evidence,
-    private readonly quality: V6QualityPipeline,
+    private readonly evidence: CriticEvidence,
+    private readonly quality: CriticPipeline,
   ) {}
   public async execute(
     context: Context,
@@ -196,7 +196,7 @@ export class V6RunCritic {
   private packageInput(
     brief: ChannelBrief,
     evidence: Evidence,
-  ): Parameters<V6QualityPipeline["review"]>[0]["package"] {
+  ): Parameters<CriticPipeline["review"]>[0]["package"] {
     return {
       title: brief.topic,
       description: [

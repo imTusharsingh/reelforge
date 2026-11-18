@@ -4,10 +4,10 @@ import type { Run, Step } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaPorts } from "../scene-media/media-ports.js";
-import type { V6Evidence } from "./v6-evidence.js";
-import { V6QualityPipeline } from "./v6-quality.pipeline.js";
+import type { CriticEvidence } from "./critic-evidence.js";
+import { CriticPipeline } from "./critic.pipeline.js";
 import type { TextSpec } from "@reelforge/ai-providers";
-import { V6RunCritic } from "./v6-run-critic.js";
+import { RunCritic } from "./run-critic.js";
 
 function fixture(
   budget: unknown = {
@@ -22,7 +22,7 @@ function fixture(
   badClip = false,
   noRefs = false,
 ): {
-  service: V6RunCritic;
+  service: RunCritic;
   review: ReturnType<typeof vi.fn>;
   load: ReturnType<typeof vi.fn>;
   native: ReturnType<typeof vi.fn>;
@@ -115,12 +115,12 @@ function fixture(
   } as unknown as MediaAccounts;
   const ports = { get: async () => ({ text: { complete: native } }) } as unknown as MediaPorts;
   return {
-    service: new V6RunCritic(
+    service: new RunCritic(
       access,
       accounts,
       ports,
-      { load } as unknown as V6Evidence,
-      real ? new V6QualityPipeline() : ({ reviewRun: review } as unknown as V6QualityPipeline),
+      { load } as unknown as CriticEvidence,
+      real ? new CriticPipeline() : ({ reviewRun: review } as unknown as CriticPipeline),
     ),
     review,
     load,

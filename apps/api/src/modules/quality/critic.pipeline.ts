@@ -13,9 +13,9 @@ import {
   type CriticResult,
   type NoveltyHistory,
   type ReshootController,
-} from "./v6-critic.js";
-import { packageShort } from "./v6-packaging.js";
-import { criticTextPort } from "./v6-paid-text.js";
+} from "./critic.js";
+import { packageShort } from "./short-packaging.js";
+import { criticTextPort } from "./critic-text-port.js";
 
 const reviewEvidence = z.object({
   clips: z
@@ -56,11 +56,11 @@ const reviewEvidence = z.object({
 });
 
 @Injectable()
-export class V6QualityPipeline {
+export class CriticPipeline {
   public async reviewRun(
-    input: Parameters<V6QualityPipeline["review"]>[0],
+    input: Parameters<CriticPipeline["review"]>[0],
     dependencies: Parameters<typeof criticTextPort>[0],
-  ): ReturnType<V6QualityPipeline["review"]> {
+  ): ReturnType<CriticPipeline["review"]> {
     return this.review(input, criticTextPort(dependencies));
   }
 

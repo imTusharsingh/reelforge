@@ -5,19 +5,19 @@ import type { Context, Run } from "../runs/runs.types.js";
 import { MediaAssembly } from "../composition/media-assembly.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
-import { V6MediaProbe } from "./v6-media-probe.js";
-import { captionDriftMs } from "./v6-caption-drift.js";
-import type { CriticClip } from "./v6-critic.js";
+import { MediaProbe } from "./media-probe.js";
+import { captionDriftMs } from "./caption-drift.js";
+import type { CriticClip } from "./critic.js";
 
 type Plan = NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>;
 type Manifest = z.infer<typeof AssemblyManifestSchema>;
 @Injectable()
-export class V6Evidence {
+export class CriticEvidence {
   public constructor(
     private readonly assembly: MediaAssembly,
     private readonly jobs: MediaJobs,
     private readonly planning: MediaPlanning,
-    private readonly probe: V6MediaProbe,
+    private readonly probe: MediaProbe,
   ) {}
   public async load(
     context: Context,

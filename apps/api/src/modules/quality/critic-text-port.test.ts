@@ -5,7 +5,7 @@ import type { Context, Run } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaPorts } from "../scene-media/media-ports.js";
-import { criticTextPort } from "./v6-paid-text.js";
+import { criticTextPort } from "./critic-text-port.js";
 
 const spec = {
   prompt: "review",

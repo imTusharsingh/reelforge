@@ -10,8 +10,8 @@ import type { Run } from "../runs/runs.types.js";
 import type { MediaAssembly } from "../composition/media-assembly.js";
 import type { MediaJobs } from "../scene-media/media-jobs.js";
 import type { MediaPlanning } from "../scene-media/media-planning.js";
-import type { V6MediaProbe } from "./v6-media-probe.js";
-import { V6Evidence } from "./v6-evidence.js";
+import type { MediaProbe } from "./media-probe.js";
+import { CriticEvidence } from "./critic-evidence.js";
 
 describe("V5 evidence for V6", () => {
   it("loads the assembled video, aligned captions and each pinned clip", async () => {
@@ -74,13 +74,13 @@ describe("V5 evidence for V6", () => {
       hasFrozenFrames: false,
       captionDriftMs: 0,
     }));
-    const service = new V6Evidence(
+    const service = new CriticEvidence(
       { artifacts: async () => artifacts } as unknown as MediaAssembly,
       { bytes } as unknown as MediaJobs,
       {
         saved: async () => ({ script: scriptFixture(), manifest: { shots } }),
       } as unknown as MediaPlanning,
-      { inspect } as unknown as V6MediaProbe,
+      { inspect } as unknown as MediaProbe,
     );
     const result = await service.load(context, run, request.brief);
     expect(result.final.toString()).toBe("final");
@@ -90,11 +90,11 @@ describe("V5 evidence for V6", () => {
   });
   it("fails closed when V5 evidence is absent", async () => {
     const request = planningFixture();
-    const service = new V6Evidence(
+    const service = new CriticEvidence(
       { artifacts: async () => [] } as unknown as MediaAssembly,
       {} as MediaJobs,
       { saved: async () => null } as unknown as MediaPlanning,
-      {} as V6MediaProbe,
+      {} as MediaProbe,
     );
     await expect(
       service.load(context, { id: request.runId } as Run, request.brief),

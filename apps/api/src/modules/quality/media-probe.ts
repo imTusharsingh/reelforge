@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
-import type { ClipProbe } from "./v6-critic.js";
+import type { ClipProbe } from "./critic.js";
 
 const probeResult = z.object({
   streams: z
@@ -22,7 +22,7 @@ const probeResult = z.object({
 
 /** Inspects bytes retrieved and checksum-verified by the caller. Caption drift needs independent evidence. */
 @Injectable()
-export class V6MediaProbe {
+export class MediaProbe {
   public constructor(private readonly runner: SpawnProcessRunner) {}
 
   public async inspect(bytes: Buffer, captionDriftMs: number): Promise<ClipProbe> {

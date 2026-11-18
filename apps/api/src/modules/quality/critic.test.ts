@@ -5,9 +5,9 @@ import {
   noveltyScore,
   multimodalRubric,
   type CriticClip,
-} from "./v6-critic.js";
-import { packageShort } from "./v6-packaging.js";
-import { V6QualityPipeline } from "./v6-quality.pipeline.js";
+} from "./critic.js";
+import { packageShort } from "./short-packaging.js";
+import { CriticPipeline } from "./critic.pipeline.js";
 import type { TextPort, TextSpec } from "@reelforge/ai-providers";
 
 const good: CriticClip = {
@@ -124,7 +124,7 @@ describe("V6 critic and packaging", () => {
       }),
     };
     const reshoot = vi.fn(async () => undefined);
-    const result = await new V6QualityPipeline().review(
+    const result = await new CriticPipeline().review(
       {
         clips: [good],
         brief: { requiredTerms: ["ocean"], bannedTerms: [] },
@@ -166,7 +166,7 @@ describe("V6 critic and packaging", () => {
       redo: { reshoot: vi.fn(), reedit: vi.fn(), remainingCents: 800 },
       package: { title: "Ocean", description: "A short", tags: [], coverFrameTimestampMs: 0 },
     };
-    const pipeline = new V6QualityPipeline();
+    const pipeline = new CriticPipeline();
     for (const evidence of [
       { ...input, clips: [] },
       { ...input, critic: { ...input.critic, media: [] } },

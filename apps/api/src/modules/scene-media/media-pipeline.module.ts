@@ -20,8 +20,8 @@ import { MediaRenderer } from "../composition/media-render.js";
 import { LocalWordAligner } from "../composition/media-alignment.js";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
 import { QualityModule } from "../quality/quality.module.js";
-import { V6Evidence } from "../quality/v6-evidence.js";
-import { V6RunCritic } from "../quality/v6-run-critic.js";
+import { CriticEvidence } from "../quality/critic-evidence.js";
+import { RunCritic } from "../quality/run-critic.js";
 /** Binding only: V3 retains every transition, SSE, queue and resume decision. */
 @Injectable()
 export class MediaBindings {
@@ -105,7 +105,7 @@ export class MediaBindings {
     return this.handler(async (run, brief, step) =>
       json(
         await this.access.modules
-          .get(V6RunCritic, { strict: false })
+          .get(RunCritic, { strict: false })
           .execute(await this.context(run), run, brief, step),
       ),
     );
@@ -136,8 +136,8 @@ export class MediaBindings {
     MediaRenderer,
     LocalWordAligner,
     SpawnProcessRunner,
-    V6Evidence,
-    V6RunCritic,
+    CriticEvidence,
+    RunCritic,
     MediaBindings,
   ],
 })

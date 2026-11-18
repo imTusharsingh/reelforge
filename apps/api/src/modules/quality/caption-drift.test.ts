@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { wordCaptions } from "../composition/media-alignment.js";
-import { captionDriftMs } from "./v6-caption-drift.js";
+import { captionDriftMs } from "./caption-drift.js";
 
 describe("caption alignment evidence", () => {
   const words = [{ text: "Hello", start: 0.104, end: 0.906 }];
