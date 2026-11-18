@@ -83,7 +83,7 @@ export class PublishingAutomation {
       orderBy: { sequence: "desc" },
     });
     const critic = await this.runs.scoped(context).videoRunStep.findFirst({
-      where: { runId: run.id, key: "CRITIC", state: "SUCCEEDED" },
+      where: { runId: run.id, key: "CRITIC" },
       orderBy: { attempt: "desc" },
     });
     if (

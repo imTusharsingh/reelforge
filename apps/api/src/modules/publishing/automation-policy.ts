@@ -47,7 +47,7 @@ export class AutomationPolicy {
         orderBy: { sequence: "desc" },
       }),
       db.videoRunStep.findFirst({
-        where: { runId: slot.runId, key: "CRITIC", state: "SUCCEEDED" },
+        where: { runId: slot.runId, key: "CRITIC" },
         orderBy: { attempt: "desc" },
       }),
     ]);

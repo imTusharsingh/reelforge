@@ -84,6 +84,12 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     }
     expect(f.publishing.createScheduledPost).not.toHaveBeenCalled();
   });
+  it("rejects a newer critic attempt that has not succeeded", async () => {
+    const f = automationFixture();
+    f.scoped.videoRunStep.findFirst.mockResolvedValueOnce({ ...criticStep, state: "RUNNING" });
+    await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("current critic evidence");
+    expect(f.publishing.createScheduledPost).not.toHaveBeenCalled();
+  });
   it("reconciles a partial upload before resuming and records public publication", async () => {
     const f = automationFixture();
     await f.service.dispatch(context, f.run.id);

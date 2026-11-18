@@ -20,6 +20,7 @@ export const packaged = {
 };
 export const criticStep = {
   id: id(12),
+  state: "SUCCEEDED",
   output: {
     result: {
       recommendation: "APPROVE",
