@@ -15,3 +15,4 @@ export * from "./discovery.js";
 export * from "./run-experience.js";
 export * from "./media-assembly.js";
 export * from "./publishing-automation.js";
+export * from "./quality.js";

@@ -13,6 +13,7 @@ import { CompositionModule } from "../composition/composition.module.js";
 import { QualityController } from "./quality.controller.js";
 import { QualityService } from "./quality.service.js";
 import { OpenAiQualityReviewPort, openAiRuntimeConfig } from "../openai/openai.adapters.js";
+import { V6QualityPipeline } from "./v6-quality.pipeline.js";
 
 class NotConfiguredQualityReviewPort implements QualityReviewPort {
   public review(request: QualityReviewRequest): Promise<QualityReviewResult> {
@@ -30,6 +31,7 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
   controllers: [QualityController],
   providers: [
     QualityService,
+    V6QualityPipeline,
     {
       provide: QUALITY_REVIEW_PORT,
       useFactory: (): QualityReviewPort => {
@@ -40,6 +42,6 @@ class NotConfiguredQualityReviewPort implements QualityReviewPort {
       },
     },
   ],
-  exports: [QualityService],
+  exports: [QualityService, V6QualityPipeline],
 })
 export class QualityModule {}
