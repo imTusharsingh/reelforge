@@ -79,6 +79,7 @@ export class PublishingAutomation {
       throw new ConflictException("Run has no current V8 approval");
     const evidence = await this.runs.scoped(context).runEvent.findFirst({
       where: { runId: run.id, type: { in: ["approved", "auto_approved"] } },
+      orderBy: { sequence: "desc" },
     });
     if (
       !evidence ||

@@ -122,6 +122,9 @@ describe("V9 project-wide insert leases and hard policy", () => {
   it("requires workspace-bound run approval, first-ten gating and budget", async () => {
     const f = fixture();
     expect((await f.policy.check(policyContext)).allowed).toBe(true);
+    expect(f.db.foundation.runEvent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { sequence: "desc" } }),
+    );
     expect(foundationWorkspaceGuard).toHaveBeenCalledWith(
       f.db,
       expect.objectContaining({ workspaceId: context.workspaceId, role: "VIEWER" }),

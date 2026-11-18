@@ -8,6 +8,9 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     const f = automationFixture();
     await f.service.dispatch(context, f.run.id);
     await f.service.dispatch(context, f.run.id);
+    expect(f.scoped.runEvent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { sequence: "desc" } }),
+    );
     expect(f.publishing.createScheduledPost).toHaveBeenCalledTimes(1);
     expect(f.publishing.publishNow).toHaveBeenCalledTimes(1);
     expect(f.publishing.reconcile).toHaveBeenCalledTimes(1);

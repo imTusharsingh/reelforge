@@ -43,6 +43,7 @@ export class AutomationPolicy {
       db.budgetEnvelope.findFirst({ where: { runId: slot.runId } }),
       db.runEvent.findFirst({
         where: { runId: slot.runId, type: { in: ["approved", "auto_approved"] } },
+        orderBy: { sequence: "desc" },
       }),
     ]);
     const auto = approval?.type === "auto_approved";
