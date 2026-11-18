@@ -10,6 +10,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/.next/**",
       "**/node_modules/**",
+      "**/.local-data/**",
       "packages/database/prisma/src/generated/**",
     ],
   },
