@@ -54,8 +54,11 @@ export type PublishingDestinationView = Readonly<{
 export type ScheduledPostView = Readonly<{
   id: string;
   channelId: string;
-  renderJobId: string;
-  qualityReviewRunId: string;
+  renderJobId: string | null;
+  qualityReviewRunId: string | null;
+  videoRunId: string | null;
+  criticStepId: string | null;
+  assemblyStepId: string | null;
   revision: number;
   scheduledAt: string | null;
   status: PublishStatus;

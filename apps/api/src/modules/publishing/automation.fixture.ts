@@ -10,12 +10,13 @@ import type { ScheduledPostView } from "./publishing.types.js";
 export const id = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 export const context: Context = { workspaceId: id(1), userId: id(2), role: "OWNER" };
 export const packaged = {
-  renderJobId: id(5),
-  qualityReviewRunId: id(6),
+  videoRunId: id(7),
+  criticStepId: id(12),
+  assemblyStepId: id(13),
   title: "Science",
   description: "An original short",
   tags: ["science"],
-  coverFrame: "cover.png",
+  coverFrameTimestampMs: 1200,
   containsSyntheticMedia: true as const,
 };
 export const criticStep = {
@@ -154,8 +155,11 @@ function publishingFake(): {
   const post = (): ScheduledPostView => ({
     id: id(10),
     channelId: id(4),
-    renderJobId: id(5),
-    qualityReviewRunId: id(6),
+    renderJobId: null,
+    qualityReviewRunId: null,
+    videoRunId: id(7),
+    criticStepId: id(12),
+    assemblyStepId: id(13),
     revision: 1,
     scheduledAt: "2027-03-14T07:00:00Z",
     status: "REMOTE_PROCESSING",
