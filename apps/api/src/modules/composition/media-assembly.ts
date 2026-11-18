@@ -85,6 +85,7 @@ export class MediaAssembly {
     rendered: Awaited<ReturnType<MediaRenderer["render"]>>,
   ): Promise<Artifact[]> {
     const manifest = this.manifest(context, run, brief, plan, receipts, rendered);
+    const attempt = await this.attempt(context, run);
     const artifacts = await Promise.all([
       this.access.artifacts.put(context, "final", rendered.video, "video/mp4"),
       this.access.artifacts.put(context, "refs", rendered.cover, "image/jpeg"),
@@ -106,8 +107,8 @@ export class MediaAssembly {
         workspaceId: context.workspaceId,
         runId: run.id,
         key: "local:assembly",
-        idempotencyKey: `${run.id}:local:assembly:1`,
-        attempt: 1,
+        idempotencyKey: `${run.id}:local:assembly:${attempt}`,
+        attempt,
         state: "SUCCEEDED",
         input: {},
         output: json({ storageArtifacts: artifacts }),
@@ -170,10 +171,19 @@ export class MediaAssembly {
     return { transcript, narration, music };
   }
   public async artifacts(context: Context, run: Run): Promise<Artifact[]> {
+    const attempt = await this.attempt(context, run);
     const step = await this.access.runs.store.scoped(context).videoRunStep.findFirst({
-      where: { runId: run.id, key: "local:assembly", state: "SUCCEEDED" },
+      where: { runId: run.id, key: "local:assembly", state: "SUCCEEDED", attempt },
     });
     return this.access.artifacts.descriptors(step?.output);
+  }
+  private async attempt(context: Context, run: Run): Promise<number> {
+    return (
+      1 +
+      (await this.access.runs.store.scoped(context).videoRunStep.count({
+        where: { runId: run.id, key: { startsWith: "shot-" }, attempt: { gt: 1 } },
+      }))
+    );
   }
   private async receipts(context: Context, run: Run): Promise<MediaReceipt[]> {
     const steps = await this.access.runs.store.scoped(context).videoRunStep.findMany({

@@ -10,6 +10,12 @@ import { RunJobSchema, type Context, type Run, type RunJob } from "../runs/runs.
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
+export function criticPassed(output: unknown): boolean {
+  const review = z.object({ result: z.object({ criticPassed: z.boolean() }) }).safeParse(output);
+  if (!review.success) throw new ConflictException("Validated critic result is required");
+  return review.data.result.criticPassed;
+}
+
 @Injectable()
 export class VideoRunEngine {
   public readonly queueName = "video-runs-v3";
@@ -73,6 +79,12 @@ export class VideoRunEngine {
       const step = await this.planning.stage(context, run);
       if (step.state === "WAITING_APPROVAL") return null;
       const current = await this.runs.store.get(context, run.id);
+      if (run.state === "CRITIC") {
+        if (!criticPassed(step.output)) {
+          await this.runs.move(context, current, "NEEDS_HUMAN", "Critic gate failed");
+          return null;
+        }
+      }
       if (run.state === "SHOT_PLANNING") await this.planning.prepare(context, current);
       const next = {
         SCRIPTING: "SHOT_PLANNING",

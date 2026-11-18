@@ -24,13 +24,19 @@ export class RunPlanning {
   }
   public async stage(context: Context, run: Run): Promise<Step> {
     const db = this.runs.store.scoped(context);
+    const attempt = ["ASSEMBLING", "CRITIC"].includes(run.state)
+      ? 1 +
+        (await db.videoRunStep.count({
+          where: { runId: run.id, key: { startsWith: "shot-" }, attempt: { gt: 1 } },
+        }))
+      : 1;
     const previous = await db.videoRunStep.findFirst({
-      where: { runId: run.id, key: run.state, attempt: 1 },
+      where: { runId: run.id, key: run.state, attempt },
     });
     if (previous?.state === "SUCCEEDED" || previous?.state === "WAITING_APPROVAL") return previous;
     const handler = this.handlers[run.state];
     if (!handler) throw new ConflictException("Step handler unavailable");
-    const step = previous ?? (await this.begin(context, run));
+    const step = previous ?? (await this.begin(context, run, attempt));
     const output = previous
       ? await handler.reconcile(run, this.brief(run), step)
       : await handler.execute(run, this.brief(run), step);
@@ -65,16 +71,16 @@ export class RunPlanning {
     await this.runs.events?.publish(result.event);
     return result.value;
   }
-  private async begin(context: Context, run: Run): Promise<Step> {
+  private async begin(context: Context, run: Run, attempt: number): Promise<Step> {
     const result = await this.runs.store.mutate(
       context,
       run.id,
       "stage_started",
       async (db, current) => {
         if (current.state !== run.state) throw new ConflictException("Stage changed");
-        const key = `${run.id}:${run.state}:1`;
+        const key = `${run.id}:${run.state}:${attempt}`;
         const existing = await db.videoRunStep.findFirst({
-          where: { runId: run.id, key: run.state },
+          where: { runId: run.id, key: run.state, attempt },
         });
         if (existing) throw new ConflictException("Stage already claimed");
         const step = await db.videoRunStep.create({
@@ -82,6 +88,7 @@ export class RunPlanning {
             workspaceId: context.workspaceId,
             runId: run.id,
             key: run.state,
+            attempt,
             idempotencyKey: key,
             state: "RUNNING",
             startedAt: new Date(),
