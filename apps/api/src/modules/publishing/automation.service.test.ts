@@ -61,6 +61,17 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     await f.service.tick(new Date());
     expect(f.db.workspace.findMany).not.toHaveBeenCalled();
   });
+  it("rejects missing or incompatible packaging before creating a post", async () => {
+    const f = automationFixture();
+    for (const step of [null, { output: { result: { title: "Critic package" } } }]) {
+      f.scoped.videoRunStep.findFirst.mockResolvedValueOnce(step);
+      await expect(f.service.prepare(context, f.run.id)).rejects.toThrow(
+        "Publishing package is unavailable or incompatible",
+      );
+    }
+    expect(f.publishing.createScheduledPost).not.toHaveBeenCalled();
+    expect(f.publishing.publishNow).not.toHaveBeenCalled();
+  });
   it("reconciles a partial upload before resuming and records public publication", async () => {
     const f = automationFixture();
     await f.service.dispatch(context, f.run.id);

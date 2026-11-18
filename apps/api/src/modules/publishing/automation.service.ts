@@ -26,10 +26,14 @@ export class PublishingAutomation {
       orderBy: { attempt: "desc" },
     });
     const output = step?.output;
-    const packaged = PublishingPackageSchema.parse(
+    const packaged = PublishingPackageSchema.safeParse(
       output && typeof output === "object" && !Array.isArray(output) ? output.result : null,
     );
-    const slot = await this.slots.reserve(context, run, packaged, now);
+    if (!packaged.success)
+      throw new ConflictException(
+        "Publishing package is unavailable or incompatible with this run",
+      );
+    const slot = await this.slots.reserve(context, run, packaged.data, now);
     if (slot.scheduledPostId) return slot;
     const post = await this.publishing.createScheduledPost(
       context,
