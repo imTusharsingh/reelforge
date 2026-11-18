@@ -212,15 +212,17 @@ export class PublishingService {
       )
         throw new ConflictException("VideoRun is not publishable");
     }
-    const render = await this.db.renderJob.findUnique({
-      where: {
-        workspaceId_id: {
-          workspaceId: context.workspaceId,
-          id: request.renderJobId ?? "00000000-0000-4000-8000-000000000000",
-        },
-      },
-      include: { sceneMediaJob: true, artifacts: true },
-    });
+    const render = videoSource
+      ? null
+      : await this.db.renderJob.findUnique({
+          where: {
+            workspaceId_id: {
+              workspaceId: context.workspaceId,
+              id: request.renderJobId!,
+            },
+          },
+          include: { sceneMediaJob: true, artifacts: true },
+        });
     if (!videoSource && (!render || render.sceneMediaJob.channelId !== request.channelId))
       throw new NotFoundException("Render job not found for this channel");
     const review = request.qualityReviewRunId
