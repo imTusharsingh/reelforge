@@ -14,6 +14,7 @@ import {
   type ReshootController,
 } from "./v6-critic.js";
 import { packageShort } from "./v6-packaging.js";
+import { criticTextPort } from "./v6-paid-text.js";
 
 const reviewEvidence = z.object({
   clips: z
@@ -55,6 +56,13 @@ const reviewEvidence = z.object({
 
 @Injectable()
 export class V6QualityPipeline {
+  public async reviewRun(
+    input: Parameters<V6QualityPipeline["review"]>[0],
+    dependencies: Parameters<typeof criticTextPort>[0],
+  ): ReturnType<V6QualityPipeline["review"]> {
+    return this.review(input, criticTextPort(dependencies));
+  }
+
   public async review(
     input: Readonly<{
       clips: ReadonlyArray<CriticClip>;
