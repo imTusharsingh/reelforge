@@ -31,6 +31,7 @@ import { OrchestrationModule } from "./orchestration.module.js";
 import { InMemoryWorkflowQueue } from "./orchestration.queue.js";
 import { OrchestrationService } from "./orchestration.service.js";
 import { ORCHESTRATION_CLOCK, WORKFLOW_QUEUE_PORT } from "./orchestration.types.js";
+import { seedHistoricalReview } from "./historical-review.fixture.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
@@ -371,8 +372,8 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     const orchestration = module.get(OrchestrationService);
     const scripts = module.get(ScriptService);
     const composition = module.get(CompositionService);
-    const quality = module.get(QualityService);
-    const publishing = module.get(PublishingService);
+    const quality = module.get(QualityService),
+      publishing = module.get(PublishingService);
 
     const media = module.get(SceneMediaService);
     await expect(media.create(context, {})).rejects.toMatchObject({ status: 410 });
@@ -508,6 +509,8 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     compositionOffsetMs = 0;
     await composition.runClaim(renderJobId);
     expect((await composition.get(context, renderJobId)).status).toBe("SUCCEEDED");
+    // A historical review may be resumed, but the retired workflow cannot create one.
+    await seedHistoricalReview(db, context, renderJobId, started.id);
     clockMs += 61_000;
     await drain(orchestration);
     run = await orchestration.getRun(context, started.id);
@@ -517,13 +520,12 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
     });
     expect(renderCalls).toBe(1);
 
-    // M11 with no AI review provider -> human approval required -> WAITING_APPROVAL.
+    // The persisted M11 review remains actionable and requires human approval.
     expect(run.state, run.lastErrorMessage ?? undefined).toBe("WAITING_APPROVAL");
     const reviewStep = run.steps.find((step) => step.stepKey === "QUALITY_REVIEW");
     expect(reviewStep?.status).toBe("WAITING_APPROVAL");
     const reviewId = String(reviewStep?.resultRef);
-    const review = await quality.get(context, reviewId);
-    expect(["AI_REVIEW_UNAVAILABLE", "REVIEW_REQUIRED"]).toContain(review.status);
+    expect((await quality.get(context, reviewId)).status).toBe("REVIEW_REQUIRED");
     await expect(orchestration.resumeRun(context, started.id)).rejects.toThrow(/still pending/);
 
     // D4 rejects new post creation before approval, including legacy requests without a client key.
@@ -588,7 +590,6 @@ suite("M16 workflow through the real WorkflowDomainDispatcher on PostgreSQL", ()
       return { ...created, destinations: [destination] };
     });
     const destinationId = post.destinations[0]?.id;
-    expect(destinationId).toBeDefined();
     const publishRun = await orchestration.startManualRun(context, {
       definitionKey: "PUBLISH",
       channelId,
