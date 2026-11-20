@@ -172,7 +172,8 @@ export class MediaAccounts {
       .scoped(context)
       .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (current.state === "CANCELLED") {
-      await this.access.paid.finish(context, step, false, 0);
+      if (this.record(current.output).closedBy === "RUN_CANCELED")
+        await this.access.paid.finish(context, step, false, 0);
       return;
     }
     if (current.state !== "RUNNING" || current.providerJobId)

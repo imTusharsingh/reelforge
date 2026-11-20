@@ -182,10 +182,15 @@ export class RunsControl {
     const refunded = steps
       .filter((step) => step.state === "RUNNING")
       .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
-    if (refunded) {
+    if (!refunded) return;
+    const budget = await db.budgetEnvelope.findFirst({ where: { runId } });
+    if (budget) {
       await db.budgetEnvelope.updateMany({
-        where: { runId, reservedMinor: { gte: refunded } },
-        data: { reservedMinor: { decrement: refunded }, revision: { increment: 1 } },
+        where: { id: budget.id },
+        data: {
+          reservedMinor: Math.max(0, budget.reservedMinor - refunded),
+          revision: budget.revision + 1,
+        },
       });
     }
   }

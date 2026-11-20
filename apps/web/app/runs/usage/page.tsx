@@ -2,11 +2,20 @@
 
 import { useEffect, useState, type JSX } from "react";
 import Link from "next/link";
+import { AuthWorkspace } from "../../../components/auth-workspace";
 import { useActiveWorkspace } from "../../../components/studio-workspace-context";
 import { runClient } from "../../../features/timeline/client";
 import { RunCost } from "../../../features/timeline/run-cost";
 
 export default function UsagePage(): JSX.Element {
+  return (
+    <AuthWorkspace>
+      <ActiveUsage />
+    </AuthWorkspace>
+  );
+}
+
+function ActiveUsage(): JSX.Element {
   const workspace = useActiveWorkspace();
   return <WorkspaceUsage key={workspace.id} workspaceId={workspace.id} />;
 }

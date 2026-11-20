@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, type JSX } from "react";
-import { z } from "zod";
 import { runRequest } from "./client";
 import { dollars } from "./view-model";
 
@@ -19,22 +18,10 @@ export function RunCost({
   useEffect(() => {
     let active = true;
     setError(false);
-    const schema = z.object({
-      totals: z.object({
-        currencies: z.array(
-          z.object({
-            currency: z.string(),
-            reservedMinor: z.number(),
-            committedMinor: z.number(),
-          }),
-        ),
-      }),
-    });
     void runRequest(`workspaces/${workspaceId}/usage/runs/${id}`, workspaceId)
       .then((data) => {
         if (!active) return;
-        const usd = schema.parse(data).totals.currencies.find((item) => item.currency === "USD");
-        setCost(usd ?? { reservedMinor: 0, committedMinor: 0 });
+        setCost(usdTotals(data));
       })
       .catch(() => {
         if (active) setError(true);
@@ -50,4 +37,30 @@ export function RunCost({
       {dollars(cost.reservedMinor)} reserved · {dollars(cost.committedMinor)} committed
     </p>
   );
+}
+
+function usdTotals(data: unknown): { reservedMinor: number; committedMinor: number } {
+  if (typeof data !== "object" || data === null || !("totals" in data))
+    throw new Error("Invalid run costs");
+  const totals = data.totals;
+  if (
+    typeof totals !== "object" ||
+    totals === null ||
+    !("currencies" in totals) ||
+    !Array.isArray(totals.currencies)
+  )
+    throw new Error("Invalid run cost currencies");
+  for (const row of totals.currencies as unknown[]) {
+    if (typeof row !== "object" || row === null || !("currency" in row) || row.currency !== "USD")
+      continue;
+    if (
+      !("reservedMinor" in row) ||
+      typeof row.reservedMinor !== "number" ||
+      !("committedMinor" in row) ||
+      typeof row.committedMinor !== "number"
+    )
+      throw new Error("Invalid USD totals");
+    return { reservedMinor: row.reservedMinor, committedMinor: row.committedMinor };
+  }
+  return { reservedMinor: 0, committedMinor: 0 };
 }
