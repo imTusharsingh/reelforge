@@ -5,7 +5,7 @@ import type {
   PerformanceWindow,
 } from "@reelforge/contracts";
 
-type InsightNarrativeInput = Readonly<{
+export type InsightNarrativeInput = Readonly<{
   correlationId?: string;
   channelId: string;
   currentWindow: PerformanceWindow;
@@ -14,7 +14,7 @@ type InsightNarrativeInput = Readonly<{
   dimensions: readonly PerformanceDimensionSummary[];
 }>;
 
-type InsightNarrativeResult = Readonly<{
+export type InsightNarrativeResult = Readonly<{
   narrative: string;
   provenance: ProviderProvenance;
 }>;
