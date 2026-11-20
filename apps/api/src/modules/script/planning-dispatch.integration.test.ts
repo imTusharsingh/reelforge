@@ -1,3 +1,4 @@
+import type { Prisma } from "@reelforge/database";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "pg";
@@ -22,6 +23,7 @@ const narrator = planningFixture().brief.narratorVoice;
 
 function media(t: Tenant): {
   jobs: MediaJobs;
+  accounts: MediaAccounts;
   library: ReferenceLibraryService;
   port: MediaJobPort<object>;
 } {
@@ -33,6 +35,7 @@ function media(t: Tenant): {
   };
   const accounts = new MediaAccounts(access as MediaAccess);
   return {
+    accounts,
     jobs: new MediaJobs(access as MediaAccess, accounts, t.storage),
     library: new ReferenceLibraryService(t.db),
     port: {
@@ -171,6 +174,13 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
   it("confirms non-dispatch and refunds ledgers when the reference session dies during accounting", async () => {
     const t = await fixture.tenant("L2", 45, narrator, false);
     const { jobs, library, port } = media(t);
+    await t.store.scoped(t.context).videoRun.updateMany({
+      where: { id: t.run.id },
+      data: { state: "SCRIPTING" },
+    });
+    const run = await t.store.get(t.context, t.run.id);
+    const paid = new RunPaidCalls(t.usage, t.store);
+    const release = vi.spyOn(t.usage, "release");
     await t.db.budgetEnvelope.create({
       data: {
         workspaceId: t.context.workspaceId,
@@ -203,7 +213,7 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
         await assertLocked();
         return jobs.wait(
           t.context,
-          t.run,
+          run,
           "reference:style",
           port,
           {},
@@ -252,20 +262,28 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
       where: { runId: t.run.id, key: "media:reference:style" },
     });
     expect(step).toMatchObject({ state: "CANCELLED", providerJobId: null });
-    expect(await t.db.budgetEnvelope.findFirst({ where: { runId: t.run.id } })).toMatchObject({
+    const envelope = (): Promise<Prisma.BudgetEnvelopeGetPayload<object>> =>
+      t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+    const releasedEnvelope = await envelope();
+    expect(releasedEnvelope).toMatchObject({
       reservedMinor: 0,
       spentMinor: 0,
     });
-    expect(
-      await t.db.usageReservation.findUnique({
+    const reservation = (): Promise<Prisma.UsageReservationGetPayload<object>> =>
+      t.db.usageReservation.findUniqueOrThrow({
         where: {
           workspaceId_idempotencyKey: {
             workspaceId: t.context.workspaceId,
             idempotencyKey: `m08:${step.idempotencyKey}`,
           },
         },
-      }),
-    ).toMatchObject({ status: "RELEASED", committedMinor: null, releaseReason: "NOT_DISPATCHED" });
+      });
+    const releasedReservation = await reservation();
+    expect(releasedReservation).toMatchObject({
+      status: "RELEASED",
+      committedMinor: null,
+      releaseReason: "NOT_DISPATCHED",
+    });
     const request = await t.db.providerRequest.findUniqueOrThrow({
       where: {
         workspaceId_correlationId: { workspaceId: t.context.workspaceId, correlationId: step.id },
@@ -277,5 +295,64 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
       responseMetadata: { dispatched: false, costKnown: true },
     });
     expect(request.actualCost?.toNumber()).toBe(0);
+    expect((await t.store.get(t.context, run.id)).state).toBe("SCRIPTING");
+
+    await paid.rollbackAdmission(t.context, step);
+    expect(release).toHaveBeenCalledOnce();
+    expect(await envelope()).toEqual(releasedEnvelope);
+    expect(await reservation()).toEqual(releasedReservation);
+    expect((await t.store.get(t.context, run.id)).state).toBe("SCRIPTING");
+  });
+
+  it("holds legacy reference media without resubmitting or releasing either claim", async () => {
+    const t = await fixture.tenant("L2", 45, narrator, false);
+    const { accounts, jobs, port } = media(t);
+    await t.db.budgetEnvelope.create({
+      data: {
+        workspaceId: t.context.workspaceId,
+        runId: t.run.id,
+        currency: "USD",
+        baseEstimateMinor: 200,
+        reshootReserveMinor: 100,
+        hardCapMinor: 800,
+        route: "PRIMARY",
+      },
+    });
+    const step = await accounts.begin(t.context, t.run, "media:reference:style", {}, 10, "offline");
+    await accounts.reserve(t.context, t.run, step, "offline");
+    const where = { workspaceId: t.context.workspaceId, correlationId: step.id };
+    await t.db.providerRequest.updateMany({
+      where,
+      data: { responseMetadata: { dispatched: false, costKnown: false } },
+    });
+
+    for (let i = 0; i < 2; i++)
+      await expect(
+        jobs.wait(t.context, t.run, "reference:style", port, {}, 10, "offline", "art-director:v2"),
+      ).rejects.toThrow("RECONCILE_REQUIRED");
+
+    expect(port.submit).not.toHaveBeenCalled();
+    expect(await t.db.videoRunStep.findMany({ where: { runId: t.run.id, key: step.key } })).toEqual(
+      [
+        expect.objectContaining({
+          idempotencyKey: step.idempotencyKey,
+          state: "RUNNING",
+          providerJobId: null,
+        }),
+      ],
+    );
+    expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+      status: "RESERVED",
+    });
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({
+      reservedMinor: 10,
+      spentMinor: 0,
+    });
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: t.run.state,
+      pauseReason: expect.stringContaining("RECONCILE_REQUIRED"),
+    });
   });
 });

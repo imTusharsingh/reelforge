@@ -1,4 +1,8 @@
-import { rollbackAdmission } from "./run-paid-admission.js";
+import {
+  ADMISSION_ORDERING,
+  SubmissionOutcomeUnknown,
+  rollbackAdmission,
+} from "./run-paid-admission.js";
 import { z } from "zod";
 import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
@@ -15,7 +19,7 @@ import {
   clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
 
-export class SubmissionOutcomeUnknown extends ConflictException {}
+export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
 export class DispatchAdmissionError extends ConflictException {}
 
@@ -74,26 +78,28 @@ export class RunPaidCalls {
       estimatedCost: amount / 100,
       actualCost: null,
       currency: "USD",
-      responseMetadata: { dispatched: false, costKnown: false },
+      responseMetadata: {
+        admissionOrdering: ADMISSION_ORDERING,
+        dispatched: false,
+        costKnown: false,
+      },
       errorCode: "PENDING",
     };
+    const where = { workspaceId: context.workspaceId, correlationId: step.id };
     const rearmed = await db.providerRequest.updateMany({
       where: {
-        workspaceId: context.workspaceId,
-        correlationId: step.id,
+        ...where,
         errorCode: "ADMISSION_ROLLED_BACK",
+        responseMetadata: { path: ["admissionOrdering"], equals: ADMISSION_ORDERING },
       },
       data: request,
     });
-    if (!rearmed.count)
-      await db.providerRequest.create({
-        data: {
-          workspaceId: context.workspaceId,
-          channelId: run.channelId,
-          correlationId: step.id,
-          ...request,
-        },
-      });
+    if (rearmed.count) return;
+    if (await db.providerRequest.findUnique({ where: { workspaceId_correlationId: where } }))
+      throw new ConflictException(`RECONCILE_REQUIRED: existing provider request (${step.id})`);
+    await db.providerRequest.create({
+      data: { ...where, channelId: run.channelId, ...request },
+    });
   }
   public async dispatch<T>(
     context: Context,

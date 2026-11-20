@@ -24,7 +24,7 @@ export class RunsStore {
       db: Scoped,
       run: Run,
       tx: Transaction,
-    ) => Promise<{ value: T; payload: Json; stepId?: string }>,
+    ) => Promise<{ value: T; payload: Json; stepId?: string; eventType?: string }>,
   ): Promise<{ value: T; event: Event }> {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -47,7 +47,7 @@ export class RunsStore {
       db: Scoped,
       run: Run,
       tx: Transaction,
-    ) => Promise<{ value: T; payload: Json; stepId?: string }>,
+    ) => Promise<{ value: T; payload: Json; stepId?: string; eventType?: string }>,
   ): Promise<{ value: T; event: Event }> {
     return this.db.$transaction(async (tx) => {
       const db = this.scoped(context, tx);
@@ -64,7 +64,7 @@ export class RunsStore {
           workspaceId: context.workspaceId,
           runId: id,
           sequence: run.revision + 1,
-          type,
+          type: result.eventType ?? type,
           correlationId: run.correlationId,
           payload: result.payload,
           stepId: result.stepId ?? null,
