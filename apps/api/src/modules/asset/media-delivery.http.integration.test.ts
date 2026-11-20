@@ -241,6 +241,29 @@ suite("authorized media delivery HTTP contract", () => {
     expect((await get(server, assetUrl, viewerToken)).status).toBe(200);
   });
 
+  it("authorizes the retired route before sending retirement headers", async () => {
+    if (!app) return;
+    const server = app.getHttpServer();
+    const url = (workspace: string, asset: string, version = 1): string =>
+      `/workspaces/${workspace}/assets/${asset}/versions/${version}/content`;
+
+    await get(server, url(workspaceId, assetRootId)).expect(401);
+    const denied = await get(server, url(workspaceId, assetRootId), foreignOwnerToken).expect(403);
+    const deniedMissing = await get(
+      server,
+      url(workspaceId, randomUUID()),
+      foreignOwnerToken,
+    ).expect(403);
+    expect(denied.body).toEqual(deniedMissing.body);
+
+    const foreign = await get(server, url(workspaceId, foreignAssetId), ownerToken).expect(404);
+    const missing = await get(server, url(workspaceId, randomUUID()), ownerToken).expect(404);
+    expect(foreign.body).toEqual(missing.body);
+    await get(server, url(workspaceId, assetRootId, 9), ownerToken).expect(404);
+    expect(denied.headers["clear-site-data"]).toBeUndefined();
+    expect(foreign.headers["clear-site-data"]).toBeUndefined();
+  });
+
   it("checks current membership even with a previously issued ETag", async () => {
     if (!app || !db) return;
     const server = app.getHttpServer();

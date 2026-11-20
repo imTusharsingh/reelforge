@@ -324,17 +324,12 @@ export class AssetService {
     };
   }
 
-  /**
-   * Resolves one exact immutable asset version and returns verified bytes.
-   * `assetId` may be the exact version row or its root asset ID. There is no
-   * implicit "latest" lookup on this delivery path.
-   */
-  public async getContent(
+  /** Resolves an exact version by its row ID or root asset ID, within the workspace. */
+  public async getVersion(
     context: WorkspaceContext,
     assetId: string,
     version: number,
-    options: MediaResponseOptions = {},
-  ): Promise<MediaContent> {
+  ): Promise<PersistedAsset> {
     if (!isUuid(assetId)) throw new BadRequestException("assetId must be a UUID");
     if (!Number.isInteger(version) || version < 1)
       throw new BadRequestException("version must be a positive integer");
@@ -346,6 +341,17 @@ export class AssetService {
       },
     });
     if (!asset) throw new NotFoundException("Asset version not found");
+    return asset;
+  }
+
+  /** Returns verified bytes for the exact immutable asset version. */
+  public async getContent(
+    context: WorkspaceContext,
+    assetId: string,
+    version: number,
+    options: MediaResponseOptions = {},
+  ): Promise<MediaContent> {
+    const asset = await this.getVersion(context, assetId, version);
     if (asset.status !== "PUBLISHED")
       throw new ConflictException("Asset version is not published and cannot be delivered");
     const mediaType = deliverableMediaType(asset.mediaType);

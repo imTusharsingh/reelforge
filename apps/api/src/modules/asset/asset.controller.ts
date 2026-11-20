@@ -126,7 +126,15 @@ export class AssetController {
   }
 
   @Get(":assetId/versions/:version/content")
-  public retiredContent(@Res() response: Response): void {
+  public async retiredContent(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("assetId") assetId: string,
+    @Param("version") version: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    const context = await this.context(request, workspaceId);
+    await this.assets.getVersion(context, assetId, parsePositiveInteger(version, "version"));
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Clear-Site-Data", '"cache"');
     response.status(410).end();
