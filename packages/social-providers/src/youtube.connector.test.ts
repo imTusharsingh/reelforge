@@ -28,7 +28,7 @@ describe("YouTubeConnector", () => {
     const url = connector.authorizationUrl({
       state: "fixture-state",
       codeChallenge: "fixture-challenge",
-      redirectUri: "http://localhost:3001/social-accounts/oauth/YOUTUBE/callback",
+      redirectUri: "http://localhost:3001/api/v1/social-accounts/oauth/YOUTUBE/callback",
     });
 
     expect(url.origin).toBe("https://accounts.google.com");

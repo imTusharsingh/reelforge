@@ -33,7 +33,9 @@ export type StartConnectionRequest = z.infer<typeof startConnectionSchema>;
 export type OAuthCallbackQuery = z.infer<typeof callbackQuerySchema>;
 
 export function parsePlatform(value: unknown): z.infer<typeof SocialPlatformSchema> {
-  const parsed = SocialPlatformSchema.safeParse(value);
+  const parsed = SocialPlatformSchema.safeParse(
+    typeof value === "string" ? value.toUpperCase() : value,
+  );
   if (!parsed.success) throw new BadRequestException("Unsupported social platform");
   return parsed.data;
 }

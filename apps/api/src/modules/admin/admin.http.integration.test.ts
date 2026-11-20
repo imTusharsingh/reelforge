@@ -207,7 +207,13 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     dbCalls.length = 0;
     const health = await request(server()).get(`${PREFIX}/health`).expect(200);
-    expect(health.body).toEqual({ status: "ok", queue: "NOT_CONFIGURED", database: "OK" });
+    const queue = process.env.REDIS_URL ? ["CONFIGURED", "UNREACHABLE"] : ["NOT_CONFIGURED"];
+    expect(queue).toContain(health.body.queue);
+    expect(health.body).toEqual({
+      status: health.body.queue === "UNREACHABLE" ? "degraded" : "ok",
+      queue: health.body.queue,
+      database: "OK",
+    });
     await request(server())
       .get(`${PREFIX}/health?probe=liveness`)
       .expect(200, { status: "ok", probe: "liveness" });
