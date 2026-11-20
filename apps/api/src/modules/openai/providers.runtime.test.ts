@@ -6,7 +6,10 @@ import type { ProviderLedger } from "./provider-ledger.js";
 import { ProvidersRuntime } from "./providers.runtime.js";
 import { shot, artifact } from "./provider.fixture.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 describe("registered provider runtime", () => {
   it("constructs all configured ports offline and wraps dispatch with ledger and limiter", async () => {
     for (const name of ["VIDEO", "IMAGE", "TEXT", "TTS", "MUSIC"])
@@ -45,7 +48,8 @@ describe("registered provider runtime", () => {
     ]);
     expect(fetcher).not.toHaveBeenCalled();
     const allow = vi.fn().mockResolvedValue(undefined);
-    const router = await runtime.router(context, null, refs, async (spec) => spec, allow);
+    const rewrite = vi.fn(async (spec: typeof shot) => spec);
+    const router = await runtime.router(context, null, refs, rewrite, allow);
     const job = await router.submit(shot, "run:shot:1", ["gemini", "xai"]);
     expect(job.providerJobId).toBe("job");
     expect(record).toHaveBeenCalledWith(context.workspaceId, "gemini", "ACCEPTED");
@@ -59,9 +63,36 @@ describe("registered provider runtime", () => {
     await expect(
       router.submit({ ...shot, workspaceId: "other" }, "other", ["gemini", "xai"]),
     ).rejects.toThrow("Cross-workspace");
-    ledger.submit.mockRejectedValueOnce(new ProviderFailure("OUTAGE", true));
-    await router.submit(shot, "run:shot:2", ["gemini", "xai"]);
-    expect(allow).toHaveBeenCalled();
+    for (const failure of [
+      new ProviderFailure("OUTAGE", true),
+      new ProviderFailure("REFUSAL", false, 0, { status: 403, code: "PERMISSION_DENIED" }),
+    ]) {
+      const key = `run:shot:${failure.kind}`;
+      ledger.submit.mockClear().mockRejectedValueOnce(failure);
+      await expect(router.submit(shot, key, ["gemini", "xai"])).rejects.toBe(failure);
+      expect(ledger.submit).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        shot,
+        expect.any(String),
+        null,
+        `${key}:gemini`,
+      );
+      expect(allow).not.toHaveBeenCalled();
+      expect(rewrite).not.toHaveBeenCalled();
+    }
+    ledger.submit.mockClear().mockRejectedValueOnce(new ProviderFailure("OUTAGE", false));
+    const fallback = await router.submit(shot, "run:shot:2", ["gemini", "xai"]);
+    expect(fallback).toMatchObject({ providerId: "xai", providerJobId: "job" });
+    expect(allow).toHaveBeenCalledOnce();
+    expect(allow).toHaveBeenCalledWith("xai", ports.grok.estimate(shot));
+    expect(ledger.submit).toHaveBeenCalledTimes(2);
+    expect(ledger.submit).toHaveBeenLastCalledWith(
+      expect.anything(),
+      shot,
+      expect.any(String),
+      null,
+      "run:shot:2:xai",
+    );
     vi.spyOn(ports.omni, "fetch").mockResolvedValue(artifact);
     await runtime.reconcile(context.workspaceId, "run:shot:1:gemini", ports.omni, "job");
     expect(ledger.finish).toHaveBeenCalledWith(
@@ -79,6 +110,5 @@ describe("registered provider runtime", () => {
     });
     expect(ledger.submit).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
-    fetcher.mockRestore();
   });
 });
