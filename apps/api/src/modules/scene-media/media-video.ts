@@ -62,7 +62,7 @@ export class RoutedMediaVideo implements VideoGenPort {
         },
       },
       async (): Promise<never> => {
-        throw new ProviderFailure("NEEDS_HUMAN", false);
+        throw new ProviderFailure("NEEDS_HUMAN", true);
       },
       Date.now,
       this.videoState,

@@ -28,6 +28,8 @@ export class MediaAccounts {
           where: { runId: run.id, key },
           orderBy: { attempt: "desc" },
         });
+        if (previous?.state === "FAILED")
+          throw new ConflictException("Media provider request was rejected");
         if (previous && !this.abandoned(previous))
           return {
             value: previous,

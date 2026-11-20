@@ -1,3 +1,4 @@
+import { ProviderFailure } from "@reelforge/ai-providers";
 import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
@@ -16,7 +17,7 @@ import { PlanningCharacterService } from "../character/planning-character.servic
 import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
-import { json, type Context, type Run } from "../runs/runs.types.js";
+import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
@@ -40,6 +41,10 @@ export class MediaPlanning {
       brief.targetDurationSeconds > 45
     )
       throw new Error("V5 requires a narrator and a 30–45 second target");
+    const rejected = await this.access.runs.store.scoped(context).videoRunStep.findFirst({
+      where: { runId: run.id, key: { startsWith: "media:text:" }, state: "FAILED" },
+    });
+    if (rejected) throw new Error("Planning provider request was rejected");
     const saved = await this.saved(context, run, brief);
     if (saved) return saved;
     const prompts = this.access.modules.get(PlanningPromptService, { strict: false });
@@ -148,6 +153,7 @@ export class MediaPlanning {
       orderBy: { attempt: "desc" },
     });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
+    if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
     if (previous && !this.accounts.abandoned(previous))
       throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${previous.id})`);
     const cost = reservationCents({
@@ -165,16 +171,7 @@ export class MediaPlanning {
       modelId,
     );
     await this.accounts.prepare(context, run, step, modelId);
-    const result = await this.accounts.dispatch(context, step, () =>
-      native.text.complete(
-        {
-          prompt: input.prompt,
-          jsonSchema: z.toJSONSchema(input.schema),
-          parse: (value): unknown => input.schema.parse(value),
-        },
-        step.idempotencyKey,
-      ),
-    );
+    const result = await this.dispatchText(context, step, native.text, input);
     this.validatePlan(input.promptVersion.role, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
@@ -196,6 +193,32 @@ export class MediaPlanning {
     });
     return result.output;
   }
+  private async dispatchText(
+    context: Context,
+    step: Step,
+    text: Awaited<ReturnType<MediaPorts["get"]>>["text"],
+    input: Parameters<TextPort["generate"]>[0],
+  ): Promise<{ output: unknown; providerJobId: string; usage: Record<string, unknown> }> {
+    return this.accounts
+      .dispatch(context, step, () =>
+        text.complete(
+          {
+            prompt: input.prompt,
+            jsonSchema: z.toJSONSchema(input.schema),
+            parse: (value): unknown => input.schema.parse(value),
+          },
+          step.idempotencyKey,
+        ),
+      )
+      .catch(async (error: unknown) => {
+        if (error instanceof ProviderFailure && !error.dispatched) {
+          const event = await this.access.paid.finalizeRejected(context, step, error);
+          await this.access.runs.events?.publish(event);
+        }
+        throw error;
+      });
+  }
+
   private validatePlan(role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);

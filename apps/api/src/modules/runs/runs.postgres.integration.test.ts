@@ -128,7 +128,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(submit).not.toHaveBeenCalled();
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toBe("EMERGENCY_STOP");
   });
-  it.each([400, 503, "network"] as const)(
+  it.each([400, 408, 429, 503, "network", "timeout", "malformed", "unconfirmed"] as const)(
     "finalizes or reconciles submission failure %s",
     async (status) => {
       const t = await fixture.tenant();
@@ -139,6 +139,19 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       });
       const fetcher = vi.fn<typeof fetch>();
       if (status === "network") fetcher.mockRejectedValue(new Error("simulated transport failure"));
+      else if (status === "timeout")
+        fetcher.mockImplementation(
+          (_url, init) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+                once: true,
+              });
+            }),
+        );
+      else if (status === "malformed")
+        fetcher.mockResolvedValue(new Response("{", { status: 200 }));
+      else if (status === "unconfirmed")
+        fetcher.mockResolvedValue(new Response("{}", { status: 401 }));
       else
         fetcher.mockResolvedValue(
           new Response(
@@ -146,7 +159,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
             { status },
           ),
         );
-      const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
+      const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher, 50);
       const submit = vi.spyOn(t.generation.provider, "submit").mockImplementation(async () => {
         await http.json("interactions", { prompt: "fixture" });
         throw new Error("Unexpected successful response");
@@ -154,9 +167,8 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       const job = t.runs.job(t.context, t.run.id, step.id);
       const rejected = status === 400;
       const message = "Provider invalid (HTTP 400, INVALID_ARGUMENT)";
-      await expect(t.engine.process(job)).rejects.toThrow(
-        rejected ? message : "RECONCILE_REQUIRED",
-      );
+      if (rejected) await expect(t.engine.process(job)).resolves.toBeNull();
+      else await expect(t.engine.process(job)).rejects.toThrow("RECONCILE_REQUIRED");
       expect(await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject(
         rejected
           ? {
@@ -169,7 +181,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       );
       expect(await t.store.get(t.context, t.run.id)).toMatchObject(
         rejected
-          ? { state: "FAILED", pauseReason: "PROVIDER_INVALID" }
+          ? { state: "GENERATING", pauseReason: null }
           : { state: "GENERATING", pauseReason: expect.stringMatching(/^RECONCILE_REQUIRED/) },
       );
       const ledger = await t.db.providerRequest.findFirstOrThrow({
@@ -210,7 +222,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     },
     15000,
   );
-  it("holds for reconciliation after a dispatch transaction rolls back", async () => {
+  it("keeps admission durable before invoking a provider", async () => {
     const t = await fixture.tenant();
     await generating(t);
     const db = t.store.scoped(t.context);
@@ -240,7 +252,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       mutate(context, id, type, async (scoped, run, tx) => {
         const result = await work(scoped, run, tx);
         if (type === "provider_dispatch") {
-          expect(submit).toHaveBeenCalledTimes(1);
+          expect(submit).not.toHaveBeenCalled();
           throw new Error("simulated dispatch transaction failure");
         }
         return result;
@@ -297,6 +309,6 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(hold).toHaveBeenCalledTimes(1);
     expect(charge).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
-    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled();
   });
 });

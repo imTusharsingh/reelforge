@@ -56,7 +56,7 @@ function setup(): {
 describe("routing policy", () => {
   it("falls back only on outage, authorizing fallback estimate before submit", async () => {
     const { router, primary, fallback, allow } = setup();
-    vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", true));
+    vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", false));
     const job = await router.submit(shot, "run:shot:1", ["gemini", "xai"]);
     expect(job.providerId).toBe("xai");
     expect(allow).toHaveBeenCalledWith("xai", fallback.estimate(shot));
@@ -74,6 +74,21 @@ describe("routing policy", () => {
     expect(primary.submit).toHaveBeenCalledTimes(2);
     expect(fallback.submit).not.toHaveBeenCalled();
   });
+  it.each([false, true])(
+    "preserves HTTP refusals unchanged when dispatched is %s",
+    async (dispatched) => {
+      const { router, primary, fallback, rewrite } = setup();
+      const failure = new ProviderFailure("REFUSAL", dispatched, 0, {
+        status: 403,
+        code: "PERMISSION_DENIED",
+      });
+      vi.mocked(primary.submit).mockRejectedValue(failure);
+      await expect(router.submit(shot, "key", ["gemini", "xai"])).rejects.toBe(failure);
+      expect(rewrite).not.toHaveBeenCalled();
+      expect(primary.submit).toHaveBeenCalledOnce();
+      expect(fallback.submit).not.toHaveBeenCalled();
+    },
+  );
   it("handles asynchronous refusal with a single same-vendor rewrite", async () => {
     const { router, fallback } = setup();
     const first = await router.submit(shot, "key", ["gemini", "xai"]);
@@ -93,7 +108,11 @@ describe("routing policy", () => {
   it("trips circuit after three outages and reports health locally", async () => {
     const { router, primary } = setup();
     vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", true));
-    for (let i = 0; i < 4; i++) await router.submit(shot, `key${i}`, ["gemini", "xai"]);
+    for (let i = 0; i < 3; i++)
+      await expect(router.submit(shot, `key${i}`, ["gemini", "xai"])).rejects.toMatchObject({
+        kind: "OUTAGE",
+      });
+    await router.submit(shot, "fallback", ["gemini", "xai"]);
     expect(primary.submit).toHaveBeenCalledTimes(3);
     expect(router.matrix()[0]!.health).toBe("UNAVAILABLE");
     expect(router.matrix()[1]!.health).toBe("HEALTHY");

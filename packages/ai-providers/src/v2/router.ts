@@ -65,7 +65,8 @@ export class VideoRouter {
       try {
         return await this.attempt(route.port, spec, `${key}:${providerId}`, 0);
       } catch (error) {
-        if (!(error instanceof ProviderFailure) || error.kind !== "OUTAGE") throw error;
+        if (!(error instanceof ProviderFailure) || error.kind !== "OUTAGE" || error.dispatched)
+          throw error;
         outage = error;
       }
     }
@@ -106,7 +107,12 @@ export class VideoRouter {
         providerId,
         error instanceof ProviderFailure && error.kind === "OUTAGE" ? "OUTAGE" : "REJECTED",
       );
-      if (error instanceof ProviderFailure && error.kind === "REFUSAL") {
+      if (
+        error instanceof ProviderFailure &&
+        error.kind === "REFUSAL" &&
+        error.dispatched &&
+        !error.http
+      ) {
         if (rewrites >= 1) throw new ProviderFailure("NEEDS_HUMAN", true);
         return this.attempt(port, await this.rewrite(spec), `${key}:rewrite`, 1);
       }

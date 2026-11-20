@@ -3,6 +3,7 @@ import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
 import { json, type Context, type Scoped, type Step, type Transaction } from "./runs.types.js";
+import { DISPATCHING, OUTCOME_UNKNOWN, PROTECTED_OUTCOMES } from "./run-outcomes.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
 @Injectable()
@@ -75,26 +76,13 @@ export class RunsControl {
           providerJobId: null,
         },
       });
-      const active = await tx.providerRequest.findMany({
-        where: {
-          workspaceId: context.workspaceId,
-          correlationId: { in: steps.map((step) => step.id) },
-          errorCode: "VIDEO_RUN_DISPATCHING",
-        },
-        select: { correlationId: true },
-      });
-      const dispatched = new Set(active.map((request) => request.correlationId));
-      await this.closeSteps(
-        context,
-        db,
-        tx,
-        id,
-        steps.filter((step) => !dispatched.has(step.id)),
-        "RUN_CANCELED",
-      );
+      await this.closeSteps(context, db, tx, id, steps);
       await db.videoRun.updateMany({
         where: { id },
-        data: { state: "CANCELED", pauseReason: null },
+        data: {
+          state: "CANCELED",
+          pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? run.pauseReason : null,
+        },
       });
       return { value: null, payload: { from: run.state, to: "CANCELED" } };
     });
@@ -126,7 +114,7 @@ export class RunsControl {
           where: {
             workspaceId: context.workspaceId,
             correlationId: step.id,
-            errorCode: "VIDEO_RUN_DISPATCHING",
+            errorCode: DISPATCHING,
           },
         });
         if (
@@ -134,8 +122,8 @@ export class RunsControl {
           (!run.pauseReason?.includes(step.id) || Date.now() - active.createdAt.getTime() < 120_000)
         )
           throw new ConflictException("Provider attempt may still be active");
-        await this.closeSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
-        if (step.key.startsWith("shot-")) {
+        await this.releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
+        if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
           await db.videoRunStep.create({
             data: {
               workspaceId: context.workspaceId,
@@ -147,22 +135,75 @@ export class RunsControl {
             },
           });
         }
-        await db.videoRun.updateMany({
-          where: { id },
-          data: { pauseReason: "OPERATOR_ABANDONED" },
-        });
+        await this.updateAbandonHold(context, db, tx, id, run.state === "CANCELED");
         return { value: null, payload: { key: step.key }, stepId };
       },
     );
     await this.runs.events?.publish(result.event);
   }
+  private async updateAbandonHold(
+    context: Context,
+    db: Scoped,
+    tx: Transaction,
+    id: string,
+    canceled: boolean,
+  ): Promise<void> {
+    const remaining = await db.videoRunStep.findMany({
+      where: { runId: id, state: "RUNNING", providerJobId: null },
+      select: { id: true },
+    });
+    const unknown = await tx.providerRequest.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: { in: remaining.map((item) => item.id) },
+        errorCode: OUTCOME_UNKNOWN,
+      },
+    });
+    await db.videoRun.updateMany({
+      where: { id },
+      data: {
+        pauseReason: unknown
+          ? `RECONCILE_REQUIRED: provider submission outcome unknown (${unknown.correlationId})`
+          : canceled
+            ? null
+            : "OPERATOR_ABANDONED",
+      },
+    });
+  }
+
   private async closeSteps(
     context: Context,
     db: Scoped,
     tx: Transaction,
     runId: string,
     steps: Step[],
-    reason: string,
+  ): Promise<void> {
+    const protectedRequests = await tx.providerRequest.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: { in: steps.map((step) => step.id) },
+        errorCode: { in: PROTECTED_OUTCOMES },
+      },
+      select: { correlationId: true },
+    });
+    const protectedIds = new Set(protectedRequests.map((request) => request.correlationId));
+    await this.releaseSteps(
+      context,
+      db,
+      tx,
+      runId,
+      steps.filter((step) => !protectedIds.has(step.id)),
+      "RUN_CANCELED",
+    );
+  }
+
+  private async releaseSteps(
+    context: Context,
+    db: Scoped,
+    tx: Transaction,
+    runId: string,
+    steps: Step[],
+    reason: "RUN_CANCELED" | "OPERATOR_ABANDONED",
   ): Promise<void> {
     const ids = steps.map((step) => step.id);
     await tx.usageReservation.updateMany({

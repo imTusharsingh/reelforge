@@ -462,10 +462,11 @@ export class UsageBudgetService {
     workspaceId: string,
     reservationId: string,
     actualMinorInput: unknown,
+    transaction?: Prisma.TransactionClient,
   ): Promise<ReservationView> {
     const actualMinor = parseActualMinor(actualMinorInput);
     const now = this.clock();
-    return this.db.$transaction(async (tx) => {
+    const commit = async (tx: Prisma.TransactionClient): Promise<ReservationView> => {
       const reservation = await this.lockReservation(tx, workspaceId, reservationId);
       if (reservation.status === "COMMITTED") {
         if (reservation.committedMinor === BigInt(actualMinor))
@@ -485,7 +486,8 @@ export class UsageBudgetService {
         data: { status: "COMMITTED", committedMinor: BigInt(actualMinor), committedAt: now },
       });
       return this.reservationView(updated as ReservationRecord);
-    });
+    };
+    return transaction ? commit(transaction) : this.db.$transaction(commit);
   }
 
   /** Releases an unused reservation. Idempotent; a committed reservation cannot be released. */
