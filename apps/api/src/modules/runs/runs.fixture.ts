@@ -158,6 +158,7 @@ export function runsFixture(): {
         artifacts,
         runs,
         generation,
+        usage,
         planning,
         outputs,
         engine,
@@ -185,6 +186,7 @@ export type Tenant = {
   artifacts: RunsArtifacts;
   runs: RunsService;
   generation: RunGeneration;
+  usage: UsageBudgetService;
   planning: RunPlanning;
   outputs: RunOutputs;
   engine: VideoRunEngine;

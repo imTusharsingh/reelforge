@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
+import type { Prisma } from "@reelforge/database";
+import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
 import { StubVideoGenPort } from "../scene-media/media-provider.fixture.js";
 import { ProviderOutage } from "../orchestration/video-run.generation.js";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
@@ -154,6 +155,21 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     const step = await db.videoRunStep.findFirstOrThrow({
       where: { runId: t.run.id, key: "shot-0" },
     });
+    const envelope = (): Promise<Prisma.BudgetEnvelopeGetPayload<object>> =>
+      db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
+    const before = await envelope();
+    const estimate = t.generation.provider.estimate(
+      ShotSpecSchema.parse(step.input),
+      before.route === "FALLBACK",
+    );
+    expect(estimate).toBeGreaterThan(0);
+    expect(before).toMatchObject({ reservedMinor: 0, spentMinor: 0 });
+    const reservations = (): Promise<Prisma.UsageReservationGetPayload<object>[]> =>
+      t.db.usageReservation.findMany({ where: { workspaceId: t.context.workspaceId } });
+    expect(await reservations()).toEqual([]);
+    const hold = vi.spyOn(t.usage, "reserve");
+    const charge = vi.spyOn(t.usage, "commit");
+    const release = vi.spyOn(t.usage, "release");
     const submit = vi.spyOn(t.generation.provider, "submit");
     const reconcile = vi.spyOn(t.generation.provider, "reconcile").mockResolvedValue(null);
     const job = t.runs.job(t.context, t.run.id, step.id);
@@ -183,13 +199,42 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       }),
     ).toMatchObject({ errorCode: "PENDING" });
 
+    const held = await reservations();
+    expect(held).toMatchObject([
+      {
+        idempotencyKey: `m08:${step.idempotencyKey}`,
+        correlationId: step.id,
+        status: "RESERVED",
+        currency: "USD",
+        amountMinor: BigInt(estimate),
+        committedMinor: null,
+        committedAt: null,
+        releasedAt: null,
+        releaseReason: null,
+      },
+    ]);
+    const heldEnvelope = await envelope();
+    expect(heldEnvelope).toEqual({
+      ...before,
+      reservedMinor: estimate,
+      revision: before.revision + 1,
+      updatedAt: heldEnvelope.updatedAt,
+    });
+
     await t.control.resume(t.context, t.run.id);
     await expect(t.engine.process(job)).rejects.toThrow("RECONCILE_REQUIRED");
     expect(reconcile).toHaveBeenCalledExactlyOnceWith(step.idempotencyKey);
     expect(await t.store.get(t.context, t.run.id)).toMatchObject({
       pauseReason: `RECONCILE_REQUIRED: submission outcome unknown (${step.id})`,
     });
+    expect(await reservations()).toEqual(held);
+    expect(await envelope()).toEqual(heldEnvelope);
     await expect(t.engine.process(job)).resolves.toBeNull();
+    expect(await reservations()).toEqual(held);
+    expect(await envelope()).toEqual(heldEnvelope);
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(charge).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
     expect(submit).toHaveBeenCalledTimes(1);
   });
 });
