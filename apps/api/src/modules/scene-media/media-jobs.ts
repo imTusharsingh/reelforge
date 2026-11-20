@@ -43,14 +43,7 @@ export class MediaJobs {
     if (step?.state === "FAILED") throw new ConflictException("Media provider job failed");
     if (step?.state === "CANCELLED")
       throw new ConflictException("MEDIA_NOT_DISPATCHED: new attempt required");
-    if (step && !step.providerJobId) {
-      if (await this.accounts.recoverUndispatched(context, step)) step = null;
-      else {
-        const providerJobId = await this.access.paid.jobReceipt(context, step);
-        if (!providerJobId) return this.accounts.reconcilePending(context, step);
-        step = await this.attachJob(context, step, providerJobId);
-      }
-    }
+    if (step && !step.providerJobId) step = await this.recoverIntent(context, step);
     if (!step) {
       const claimed = await this.accounts.begin(context, run, `media:${key}`, spec, cost, modelId);
       await this.accounts.prepare(context, run, claimed, modelId);
@@ -62,7 +55,7 @@ export class MediaJobs {
           assertLocked,
         );
         await this.access.paid.recordJob(context, claimed, job.providerJobId);
-        step = await this.attachJob(context, claimed, job.providerJobId);
+        step = await this.access.runs.attachJob(context, claimed, job.providerJobId);
       } catch (error) {
         if (error instanceof ProviderFailure && !error.dispatched)
           await this.accounts.cancelUndispatched(context, claimed);
@@ -71,13 +64,32 @@ export class MediaJobs {
     }
     return this.collect(context, key, port, step, modelId, promptVersion, seconds);
   }
-  private async attachJob(context: Context, step: Step, providerJobId: string): Promise<Step> {
-    const db = this.access.runs.store.scoped(context);
-    await db.videoRunStep.updateMany({
-      where: { id: step.id, state: "RUNNING", providerJobId: null },
-      data: { providerJobId, state: "WAITING_EXTERNAL" },
-    });
-    return db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+  private async recoverIntent(context: Context, step: Step): Promise<Step | null> {
+    if (await this.accounts.recoverUndispatched(context, step)) return null;
+    const providerJobId = await this.access.paid.jobReceipt(context, step);
+    if (!providerJobId) return this.accounts.reconcilePending(context, step);
+    return this.access.runs.attachJob(context, step, providerJobId);
+  }
+
+  /** Drain only this admitted keyframe, including while its parent cannot start a shot. */
+  public async recoverKeyframe<T>(
+    context: Context,
+    step: Step,
+    port: MediaJobPort<T>,
+  ): Promise<number | null> {
+    const pending = step.providerJobId ? step : await this.recoverIntent(context, step);
+    if (!pending) return null;
+    const { modelId } = z.object({ modelId: z.string().min(1) }).parse(pending.input);
+    const result = await this.collect(
+      context,
+      step.key.slice("media:".length),
+      port,
+      pending,
+      modelId,
+      "art-director:v2",
+      0,
+    );
+    return result ? null : 12000;
   }
 
   private async collect<T>(

@@ -1,6 +1,7 @@
 import { type ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
+import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
 import { clipEstimate, fallbackEstimate, runEstimate } from "../usage-budget/run-envelope.js";
@@ -59,6 +60,7 @@ export class RunFallback {
             input: shot,
           },
         });
+        await clearResolvedSubmissionHold(db, tx, current, step.id);
         return { value: true, payload: { ...estimate, warning: estimate.baseEstimateMinor > 600 } };
       },
     );

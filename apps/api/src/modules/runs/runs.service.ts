@@ -9,8 +9,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { autonomyPolicy, StoredChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
+import { clearResolvedSubmissionHold } from "./run-outcomes.js";
 import { RunsStore } from "./runs.store.js";
-import { json, type Context, type Run, type RunJob } from "./runs.types.js";
+import { json, type Context, type Run, type RunJob, type Step, type Json } from "./runs.types.js";
 import type { RunQueueHealth, RunsQueue } from "./runs.queue.js";
 import type { RunsEvents } from "./runs.events.js";
 
@@ -91,6 +92,45 @@ export class RunsService {
     if (run.channelBriefId !== briefId)
       throw new ConflictException("Idempotency key reused with different input");
     return run;
+  }
+  public async attachJob(
+    context: Context,
+    step: Step,
+    providerJobId: string,
+    output?: Json,
+  ): Promise<Step> {
+    const saved = await this.store.mutate(
+      context,
+      step.runId,
+      "provider_submitted",
+      async (db, currentRun, tx) => {
+        const changed = await db.videoRunStep.updateMany({
+          where: {
+            id: step.id,
+            runId: step.runId,
+            state: "RUNNING",
+            idempotencyKey: step.idempotencyKey,
+            providerJobId: null,
+          },
+          data: {
+            providerJobId,
+            state: "WAITING_EXTERNAL",
+            ...(output !== undefined ? { output } : {}),
+          },
+        });
+        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+        if (!changed.count && current.providerJobId !== providerJobId)
+          throw new ConflictException("Provider job claim changed");
+        await clearResolvedSubmissionHold(db, tx, currentRun, step.id);
+        return {
+          value: current,
+          payload: { providerJobId, idempotencyKey: step.idempotencyKey },
+          stepId: step.id,
+        };
+      },
+    );
+    await this.events?.publish(saved.event);
+    return saved.value;
   }
   public async enqueue(context: Context, run: Run): Promise<void> {
     if (

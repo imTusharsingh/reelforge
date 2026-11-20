@@ -12,11 +12,7 @@ import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
-import {
-  clearResolvedSubmissionHold,
-  SETTLED_SHOTS,
-  failSettledGeneration,
-} from "../runs/run-outcomes.js";
+import { SETTLED_SHOTS, failSettledGeneration, keyframeKey } from "../runs/run-outcomes.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
@@ -30,6 +26,7 @@ import {
 export class RunGeneration {
   public provider: VideoGenPort = new UnconfiguredVideoPort();
   public fallbackProvider: VideoGenPort = new UnconfiguredVideoPort();
+  public recoverKeyframe?: (context: Context, step: Step) => Promise<number | null>;
   public resolvePorts?: MediaPortResolver;
   public constructor(
     private readonly runs: RunsService,
@@ -43,17 +40,34 @@ export class RunGeneration {
     const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!initial) throw new ConflictException("Step not found in run");
     if (SETTLED_SHOTS.some((state) => state === initial.state)) return null;
+    if (initial.key.startsWith("media:keyframe:")) {
+      if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
+      return this.recoverKeyframe(context, initial);
+    }
     let step = initial;
     if (!step.providerJobId && step.state !== "RUNNING") {
-      if (
+      const stopped =
         run.state === "CANCELED" ||
         run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-        run.pauseReason === "OPERATOR_ABANDONED"
-      )
-        return null;
-      if (run.state !== "GENERATING") return 12000;
+        run.pauseReason === "OPERATOR_ABANDONED";
+      if (stopped || run.state !== "GENERATING") {
+        const frame = await db.videoRunStep.findFirst({
+          where: {
+            runId: run.id,
+            key: `media:${keyframeKey(ShotSpecSchema.parse(step.input))}`,
+            state: "WAITING_EXTERNAL",
+            providerJobId: { not: null },
+          },
+          orderBy: { attempt: "desc" },
+        });
+        if (frame && this.recoverKeyframe) {
+          const delay = await this.recoverKeyframe(context, frame);
+          if (delay) return delay;
+        }
+        return stopped ? null : 12000;
+      }
+      await this.boundary.check(context, run);
     }
-    if (!step.providerJobId && step.state !== "RUNNING") await this.boundary.check(context, run);
     const shot = ShotSpecSchema.parse(step.input);
     const delay = await waitForShotContinuity(this.runs, context, run, step, shot.firstFrameFrom);
     if (delay !== undefined) return delay;
@@ -150,7 +164,7 @@ export class RunGeneration {
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     }
     await this.paid.recordJob(context, claimed, result.providerJobId);
-    return this.saveJob(context, run, claimed, result.providerJobId);
+    return this.runs.attachJob(context, claimed, result.providerJobId);
   }
   private async recoverJob(
     context: Context,
@@ -158,7 +172,7 @@ export class RunGeneration {
     step: Step,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<Step> {
-    const admission = await readAdmission(this.runs.store.db, context.workspaceId, step);
+    const admission = await readAdmission(this.runs.store.db, context, step);
     if (canRollback(admission) || admission.evidence === "ambiguous") {
       await this.paid.rollbackAdmission(context, step);
       return this.runs.store
@@ -166,7 +180,7 @@ export class RunGeneration {
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     }
     const jobId = jobIdFromAdmission(admission);
-    if (jobId) return this.saveJob(context, run, step, jobId);
+    if (jobId) return this.runs.attachJob(context, step, jobId);
     if (
       admission.evidence === "dispatching" &&
       admission.request &&
@@ -182,7 +196,7 @@ export class RunGeneration {
       if (run.pauseReason?.startsWith("RECONCILE_REQUIRED")) return step;
       throw new ConflictException(`RECONCILE_REQUIRED: submission outcome unknown (${step.id})`);
     }
-    return this.saveJob(context, run, step, recovered.providerJobId);
+    return this.runs.attachJob(context, step, recovered.providerJobId);
   }
 
   private async claim(
@@ -239,35 +253,6 @@ export class RunGeneration {
     );
     await this.runs.events?.publish(claim.event);
     return claim.value;
-  }
-  private async saveJob(
-    context: Context,
-    run: Run,
-    step: Step,
-    providerJobId: string,
-  ): Promise<Step> {
-    const saved = await this.runs.store.mutate(
-      context,
-      run.id,
-      "provider_submitted",
-      async (db, currentRun, tx) => {
-        const changed = await db.videoRunStep.updateMany({
-          where: { id: step.id, runId: run.id, state: "RUNNING", providerJobId: null },
-          data: { providerJobId, state: "WAITING_EXTERNAL" },
-        });
-        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        if (!changed.count && current.providerJobId !== providerJobId)
-          throw new ConflictException("Provider job claim changed");
-        await clearResolvedSubmissionHold(db, tx, currentRun, step.id);
-        return {
-          value: current,
-          payload: { providerJobId },
-          stepId: step.id,
-        };
-      },
-    );
-    await this.runs.events?.publish(saved.event);
-    return saved.value;
   }
   private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
     const registry = new Map(

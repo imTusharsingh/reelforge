@@ -40,7 +40,7 @@ export class RunPaidCalls {
   ): Promise<PaidCallReservation> {
     if (!transaction)
       return this.store.db.$transaction((tx) => this.reserve(context, run, step, amount, tx));
-    const admission = await readAdmission(transaction, context.workspaceId, step);
+    const admission = await readAdmission(transaction, context, step);
     if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
       throw new ConflictException(submissionHold(step.id));
     const result = await this.usage.reserve(
@@ -128,7 +128,7 @@ export class RunPaidCalls {
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
           throw new DispatchAdmissionError("Paid dispatch is closed");
-        const { reservation, evidence } = await readAdmission(tx, context.workspaceId, current);
+        const { reservation, evidence } = await readAdmission(tx, context, current);
         if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
           throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
         if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
@@ -145,7 +145,7 @@ export class RunPaidCalls {
         } catch (cause) {
           throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
         }
-        return { value: null, payload: {}, stepId: step.id };
+        return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
       })
       .catch(async (error: unknown) => {
         await this.rollbackAdmission(context, step);
@@ -161,7 +161,7 @@ export class RunPaidCalls {
   }
 
   public async jobReceipt(context: Context, step: Step): Promise<string | null> {
-    return jobIdFromAdmission(await readAdmission(this.store.db, context.workspaceId, step));
+    return jobIdFromAdmission(await readAdmission(this.store.db, context, step));
   }
 
   public async recordJob(context: Context, step: Step, providerJobId: string): Promise<void> {
@@ -380,7 +380,7 @@ export class RunPaidCalls {
     transaction?: Transaction,
   ): Promise<void> {
     const finish = async (tx: Transaction): Promise<void> => {
-      const admission = await readAdmission(tx, context.workspaceId, step);
+      const admission = await readAdmission(tx, context, step);
       const reservation = admission.reservation;
       if (!reservation) throw new ConflictException("Paid dispatch reservation is inactive");
       // The media adapter can also explicitly confirm rejection of an admitted dispatch.

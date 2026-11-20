@@ -1,3 +1,4 @@
+import { ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
 import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
@@ -98,6 +99,21 @@ export class MediaAccounts {
   ): Promise<T> {
     return this.access.paid.dispatch(context, step, call, assertLocked);
   }
+  public async dispatchText<T extends { providerJobId: string }>(
+    context: Context,
+    step: Step,
+    call: () => Promise<T>,
+  ): Promise<T> {
+    const result = await this.dispatch(context, step, call).catch(async (error: unknown) => {
+      if (error instanceof ProviderFailure && !error.dispatched) {
+        const event = await this.access.paid.finalizeRejected(context, step, error);
+        await this.access.runs.events?.publish(event);
+      }
+      throw error;
+    });
+    await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
+    return result;
+  }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     await this.access.runs.store.mutate(
       context,
@@ -151,7 +167,7 @@ export class MediaAccounts {
   }
 
   public async reconcilePending(context: Context, step: Step): Promise<never> {
-    const ledger = await readAdmission(this.access.runs.store.db, context.workspaceId, step);
+    const ledger = await readAdmission(this.access.runs.store.db, context, step);
     if (canRollback(ledger)) {
       await this.access.paid.rollbackAdmission(context, step);
       throw new ConflictException("Media admission changed before reconciliation");

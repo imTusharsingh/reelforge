@@ -10,7 +10,13 @@ import {
   type Step,
   type Transaction,
 } from "./runs.types.js";
-import { remainingSubmissionHold, SETTLED_SHOTS, submissionHold } from "./run-outcomes.js";
+import {
+  activeSubmissionHold,
+  remainingSubmissionHold,
+  SETTLED_SHOTS,
+  submissionHold,
+  storedSubmissionHold,
+} from "./run-outcomes.js";
 import { canRollback, readAdmission, readAdmissions } from "../usage-budget/run-admission-state.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
@@ -89,7 +95,7 @@ export class RunsControl {
         where: { id },
         data: {
           state: "CANCELED",
-          pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? run.pauseReason : hold,
+          pauseReason: hold ?? (await storedSubmissionHold(db, id, run.pauseReason)),
         },
       });
       return { value: null, payload: { from: run.state, to: "CANCELED" } };
@@ -113,7 +119,7 @@ export class RunsControl {
           },
         });
         if (!step) throw new ConflictException("Step has no unknown submission to abandon");
-        const admission = await readAdmission(tx, context.workspaceId, step);
+        const admission = await readAdmission(tx, context, step);
         if (!canRollback(admission)) {
           const reason = submissionHold(step.id);
           if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
@@ -161,7 +167,7 @@ export class RunsControl {
     runId: string,
     steps: Step[],
   ): Promise<string | null> {
-    const admissions = await readAdmissions(tx, context.workspaceId, steps);
+    const admissions = await readAdmissions(db, tx, context.workspaceId, steps);
     await this.releaseSteps(
       context,
       db,
@@ -229,20 +235,26 @@ export class RunsControl {
     await this.boundary.check(context, run);
     const result = await this.runs.store.mutate(context, id, "resumed", async (db, current, tx) => {
       if (current.revision !== run.revision) throw new ConflictException("Run changed");
-      const hold = await remainingSubmissionHold(db, tx, current);
-      if (hold || current.pauseReason?.startsWith("RECONCILE_REQUIRED")) {
-        if (hold && !current.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+      const hold = await activeSubmissionHold(db, tx, current);
+      if (hold) {
+        if (hold !== current.pauseReason)
           await db.videoRun.updateMany({ where: { id }, data: { pauseReason: hold } });
         return {
           value: false,
-          payload: { reason: hold ?? current.pauseReason },
+          payload: { reason: hold },
           eventType: "reconcile_required",
         };
       }
       const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
-      if (!abandoned && !["PAUSED_BUDGET", "NEEDS_HUMAN"].includes(current.state))
+      const resolved =
+        current.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+        ["SCRIPTING", "SHOT_PLANNING", "GENERATING", "ASSEMBLING", "CRITIC"].includes(
+          current.state,
+        );
+      if (!resolved && !abandoned && !["PAUSED_BUDGET", "NEEDS_HUMAN"].includes(current.state))
         throw new ConflictException("Run cannot resume");
-      const state = abandoned && current.state !== "PAUSED_BUDGET" ? current.state : "GENERATING";
+      const state =
+        (resolved || abandoned) && current.state !== "PAUSED_BUDGET" ? current.state : "GENERATING";
       await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
       return {
         value: true,
@@ -261,10 +273,7 @@ export class RunsControl {
     if (run.state !== "CRITIC")
       throw new ConflictException("Reshoots are selected at the critic boundary");
     const db = this.runs.store.scoped(context);
-    if (
-      run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-      (await remainingSubmissionHold(db, this.runs.store.db, run))
-    )
+    if (await activeSubmissionHold(db, this.runs.store.db, run))
       throw new ConflictException("Reconcile the unknown attempt before reshooting");
     const previous = await db.videoRunStep.findFirstOrThrow({
       where: { runId: id, key: `shot-${ordinal}` },

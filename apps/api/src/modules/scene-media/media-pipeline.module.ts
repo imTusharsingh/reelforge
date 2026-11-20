@@ -41,6 +41,8 @@ export class MediaBindings {
     const generation = module.get(RunGeneration, { strict: false });
     generation.resolvePorts = (...args): ReturnType<NonNullable<RunGeneration["resolvePorts"]>> =>
       this.resolveVideoPorts(...args);
+    generation.recoverKeyframe = async (context, step): Promise<number | null> =>
+      this.jobs.recoverKeyframe(context, step, (await this.ports.get(context)).image);
     const planning = module.get(RunPlanning, { strict: false });
     planning.handlers = {
       ...planning.handlers,

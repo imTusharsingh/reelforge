@@ -58,6 +58,7 @@ function harness(): {
   };
   const db = {
     videoRunStep: steps,
+    runEvent: { findMany: vi.fn().mockResolvedValue([]) },
     budgetEnvelope: {
       findFirst: vi.fn(async () => ({
         id: "budget",
@@ -125,6 +126,10 @@ function harness(): {
     paid,
     boundary,
     runs: {
+      attachJob: async (_ctx: Context, step: Step, providerJobId: string): Promise<Step> => {
+        state.step = { ...step, state: "WAITING_EXTERNAL", providerJobId };
+        return state.step;
+      },
       store: {
         db,
         scoped: (): typeof db => db,

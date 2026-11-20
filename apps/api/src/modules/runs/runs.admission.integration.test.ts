@@ -1,3 +1,4 @@
+import { ShotSpecSchema } from "@reelforge/contracts";
 import type { Prisma } from "@reelforge/database";
 import { describe, expect, it, vi } from "vitest";
 import { ADMISSION_ORDERING, OUTCOME_UNKNOWN } from "../usage-budget/run-admission-state.js";
@@ -197,6 +198,139 @@ describe.skipIf(!process.env.DATABASE_URL)("shot admission recovery", () => {
       spentMinor: 0,
     });
   });
+
+  it.each(["keyed", "legacy"] as const)(
+    "honors a %s dispatch event after loss of both ledger rows",
+    async (marker) => {
+      const t = await fixture.tenant();
+      const run = await generating(t);
+      const step = await claimShot(t, run);
+      const paid = new RunPaidCalls(t.usage, t.store);
+      if (marker === "legacy") {
+        const mutate = t.store.mutate.bind(t.store);
+        vi.spyOn(t.store, "mutate").mockImplementationOnce((ctx, id, type, work) =>
+          mutate(ctx, id, type, async (db, current, tx) => ({
+            ...(await work(db, current, tx)),
+            payload: {},
+          })),
+        );
+      }
+      const submit = vi.spyOn(t.generation.provider, "submit");
+      await paid.dispatch(t.context, step, () =>
+        submit(ShotSpecSchema.parse(step.input), step.idempotencyKey),
+      );
+      const where = { workspaceId: run.workspaceId, correlationId: step.id };
+      const event = { runId: run.id, stepId: step.id, type: "provider_dispatch" };
+      expect((await t.db.runEvent.findFirstOrThrow({ where: event })).payload).toEqual(
+        marker === "legacy" ? {} : { idempotencyKey: step.idempotencyKey },
+      );
+      await t.db.providerRequest.deleteMany({ where });
+      await t.db.usageReservation.deleteMany({ where });
+      const reconcile = vi.spyOn(t.generation.provider, "reconcile").mockResolvedValue(null);
+      const job = t.runs.job(t.context, run.id, step.id);
+      await expect(t.engine.process(job)).rejects.toThrow("RECONCILE_REQUIRED");
+      await expect(t.engine.process(job)).resolves.toBeNull();
+      expect(reconcile).toHaveBeenCalledExactlyOnceWith(step.idempotencyKey);
+      await expect(t.control.abandon(t.context, run.id, step.id)).rejects.toThrow("Reconcile");
+      await t.control.cancel(t.context, run.id);
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        pauseReason: expect.stringContaining(step.id),
+      });
+      expect(await t.db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject({
+        state: "RUNNING",
+        costMinor: amountMinor,
+        providerJobId: null,
+        idempotencyKey: step.idempotencyKey,
+      });
+      expect(await t.db.providerRequest.findFirstOrThrow({ where })).toMatchObject({
+        errorCode: OUTCOME_UNKNOWN,
+        actualCost: null,
+      });
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({ reservedMinor: amountMinor, spentMinor: 0 });
+      expect(submit).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["cancel", "rollback"] as const)(
+    "refunds once when %s locks the run revision first",
+    async (first) => {
+      const t = await fixture.tenant();
+      const run = await generating(t);
+      const step = await claimShot(t, run);
+      const sibling = await claimShot(t, run, "shot-1");
+      const paid = new RunPaidCalls(t.usage, t.store);
+      await paid.dispatch(t.context, sibling, async () => undefined);
+      const envelope = (): Promise<Prisma.BudgetEnvelopeGetPayload<object>> =>
+        t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+      const before = await envelope();
+      const locked = Promise.withResolvers<number>();
+      const release = Promise.withResolvers<void>();
+      const mutate = t.store.mutate.bind(t.store);
+      const spy = vi.spyOn(t.store, "mutate").mockImplementation((ctx, id, type, work) =>
+        mutate(ctx, id, type, async (db, current, tx) => {
+          if (type === (first === "cancel" ? "transition" : "dispatch_released")) {
+            const [backend] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            locked.resolve(backend!.pid);
+            await release.promise;
+          }
+          return work(db, current, tx);
+        }),
+      );
+      const cancel = (): Promise<void> => t.control.cancel(t.context, run.id);
+      const rollback = (): Promise<void> => paid.rollbackAdmission(t.context, step);
+      const leader = first === "cancel" ? cancel() : rollback();
+      let contender: Promise<void> | undefined;
+      try {
+        const pid = await Promise.race([
+          locked.promise,
+          leader.then(() => {
+            throw new Error("Expected revision lock");
+          }),
+        ]);
+        contender = first === "cancel" ? rollback() : cancel();
+        await expect
+          .poll(
+            async () => {
+              const [status] = await t.db.$queryRaw<{ blocked: boolean }[]>`
+          SELECT EXISTS (SELECT FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))) AS blocked
+        `;
+              return status?.blocked;
+            },
+            { timeout: 2000 },
+          )
+          .toBe(true);
+      } finally {
+        release.resolve();
+        try {
+          await Promise.all([leader, contender]);
+        } finally {
+          spy.mockRestore();
+        }
+      }
+      expect(await envelope()).toMatchObject({
+        reservedMinor: amountMinor,
+        spentMinor: 0,
+        revision: before.revision + 1,
+      });
+      expect(await t.db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject({
+        state: "CANCELLED",
+      });
+      expect(
+        await t.db.usageReservation.findFirstOrThrow({
+          where: { idempotencyKey: `m08:${step.idempotencyKey}` },
+        }),
+      ).toMatchObject({ status: "RELEASED" });
+      expect(
+        await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: sibling.id } }),
+      ).toMatchObject({ status: "RESERVED" });
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: "CANCELED",
+        pauseReason: expect.stringContaining(sibling.id),
+      });
+    },
+  );
 
   it("refuses dispatch without a reservation and returns the never-dispatched shot to PENDING", async () => {
     const t = await fixture.tenant();

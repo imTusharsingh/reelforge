@@ -6,6 +6,7 @@ import { reservationCents, type VideoOptions, type MediaInput } from "@reelforge
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import type { ShotSpec } from "@reelforge/contracts";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
+import { keyframeKey } from "../runs/run-outcomes.js";
 import { json, type Context, type Run } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaJobs } from "./media-jobs.js";
@@ -25,7 +26,7 @@ export class MediaFrames {
     const frame = await this.jobs.tick(
       context,
       run,
-      `keyframe:${shot.ordinal}:v${shot.version}`,
+      keyframeKey(shot),
       ports.image,
       { prompt: shot.keyframePrompt, references: refs },
       reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.imageMicroUsd }),

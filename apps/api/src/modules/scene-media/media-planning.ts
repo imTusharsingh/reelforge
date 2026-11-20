@@ -1,4 +1,3 @@
-import { ProviderFailure } from "@reelforge/ai-providers";
 import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
@@ -200,7 +199,7 @@ export class MediaPlanning {
     input: Parameters<TextPort["generate"]>[0],
     modelId: string,
     replay: boolean,
-  ): ReturnType<MediaPlanning["dispatchText"]> {
+  ): Promise<{ output: unknown; providerJobId: string; usage: Record<string, unknown> }> {
     if (replay) {
       const saved = z
         .object({
@@ -215,42 +214,16 @@ export class MediaPlanning {
     }
     const native = await this.ports.get(context);
     await this.accounts.prepare(context, run, step, modelId);
-    const result = await this.dispatchText(context, step, native.text, input);
-    await this.access.runs.store.scoped(context).videoRunStep.updateMany({
-      where: { id: step.id, state: "RUNNING" },
-      data: {
-        providerJobId: result.providerJobId,
-        output: json(result),
-        state: "WAITING_EXTERNAL",
-      },
-    });
-    return result;
-  }
-
-  private async dispatchText(
-    context: Context,
-    step: Step,
-    text: Awaited<ReturnType<MediaPorts["get"]>>["text"],
-    input: Parameters<TextPort["generate"]>[0],
-  ): Promise<{ output: unknown; providerJobId: string; usage: Record<string, unknown> }> {
-    return this.accounts
-      .dispatch(context, step, () =>
-        text.complete(
-          {
-            prompt: input.prompt,
-            jsonSchema: z.toJSONSchema(input.schema),
-            parse: (value): unknown => input.schema.parse(value),
-          },
-          step.idempotencyKey,
-        ),
-      )
-      .catch(async (error: unknown) => {
-        if (error instanceof ProviderFailure && !error.dispatched) {
-          const event = await this.access.paid.finalizeRejected(context, step, error);
-          await this.access.runs.events?.publish(event);
-        }
-        throw error;
-      });
+    return this.accounts.dispatchText(context, step, () =>
+      native.text.complete(
+        {
+          prompt: input.prompt,
+          jsonSchema: z.toJSONSchema(input.schema),
+          parse: (value): unknown => input.schema.parse(value),
+        },
+        step.idempotencyKey,
+      ),
+    );
   }
 
   private async validateAcceptedPlan(

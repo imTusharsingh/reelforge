@@ -13,7 +13,11 @@ import {
   type RunJob,
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
-import { failSettledGeneration, unsettledShots } from "../runs/run-outcomes.js";
+import {
+  failSettledGeneration,
+  storedSubmissionHold,
+  unsettledShots,
+} from "../runs/run-outcomes.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -98,7 +102,11 @@ export class VideoRunEngine {
       run.id,
       "reconcile_required",
       async (db, current) => {
-        if (current.state === run.state && current.pauseReason === null)
+        if (
+          current.state === run.state &&
+          current.pauseReason === null &&
+          (await storedSubmissionHold(db, current.id, reason))
+        )
           await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
         return { value: null, payload: { reason } };
       },
@@ -254,7 +262,7 @@ export class VideoRunEngine {
           const admitted = await this.runs.store.scoped(context).videoRunStep.findMany({
             where: {
               runId: run.id,
-              key: { startsWith: "shot-" },
+              OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:keyframe:" } }],
               state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
             },
           });

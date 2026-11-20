@@ -382,6 +382,11 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
         where: { workspaceId: run.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
       }),
     ).toBe(0);
+    expect(
+      await t.db.runEvent.count({
+        where: { runId: run.id, stepId: step.id, type: "provider_dispatch" },
+      }),
+    ).toBe(0);
     expect(await t.db.providerRequest.count({ where })).toBe(0);
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       reservedMinor: 0,

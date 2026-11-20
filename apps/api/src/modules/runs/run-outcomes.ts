@@ -1,8 +1,13 @@
+import type { ShotSpec } from "@reelforge/contracts";
 import { canRollback, readAdmissions } from "../usage-budget/run-admission-state.js";
 import type { Run, Scoped, Step, Transaction } from "./runs.types.js";
 
 export const PLANNING_MANIFEST_KEY = "planning:manifest:v1";
 export const SETTLED_SHOTS = ["SUCCEEDED", "SKIPPED", "CANCELLED", "FAILED"] as const;
+
+export function keyframeKey(shot: ShotSpec): string {
+  return `keyframe:${shot.ordinal}:v${shot.version}`;
+}
 
 export function unsettledShots(runId: string): {
   runId: string;
@@ -27,11 +32,42 @@ export async function remainingSubmissionHold(
 ): Promise<string | null> {
   const steps = await db.videoRunStep.findMany({
     where: { runId: run.id, state: { notIn: [...SETTLED_SHOTS] }, providerJobId: null },
-    select: { id: true, idempotencyKey: true },
+    select: { id: true, runId: true, providerJobId: true, idempotencyKey: true },
   });
-  const admissions = await readAdmissions(tx, run.workspaceId, steps);
+  const admissions = await readAdmissions(db, tx, run.workspaceId, steps);
   const other = admissions.find((admission) => !canRollback(admission));
   return other ? submissionHold(other.step.id) : null;
+}
+
+/** Legacy workers could leave a step-specific reason after attaching or settling the job. */
+export async function storedSubmissionHold(
+  db: Scoped,
+  runId: string,
+  reason: string | null,
+): Promise<string | null> {
+  if (!reason?.startsWith("RECONCILE_REQUIRED")) return null;
+  const stepId = /\(([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\)$/i.exec(reason)?.[1];
+  if (!stepId) return reason;
+  const resolved = await db.videoRunStep.findFirst({
+    where: {
+      runId,
+      id: stepId,
+      OR: [{ providerJobId: { not: null } }, { state: { in: [...SETTLED_SHOTS] } }],
+    },
+    select: { id: true },
+  });
+  return resolved ? null : reason;
+}
+
+export async function activeSubmissionHold(
+  db: Scoped,
+  tx: Transaction,
+  run: Run,
+): Promise<string | null> {
+  return (
+    (await remainingSubmissionHold(db, tx, run)) ??
+    storedSubmissionHold(db, run.id, run.pauseReason)
+  );
 }
 
 export async function clearResolvedSubmissionHold(
@@ -40,9 +76,10 @@ export async function clearResolvedSubmissionHold(
   run: Run,
   stepId: string,
 ): Promise<string | null> {
-  if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED") || !run.pauseReason.includes(stepId))
-    return run.pauseReason;
-  const pauseReason = await remainingSubmissionHold(db, tx, run);
+  if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED")) return run.pauseReason;
+  const pauseReason = run.pauseReason.includes(stepId)
+    ? await remainingSubmissionHold(db, tx, run)
+    : await activeSubmissionHold(db, tx, run);
   await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
   return pauseReason;
 }

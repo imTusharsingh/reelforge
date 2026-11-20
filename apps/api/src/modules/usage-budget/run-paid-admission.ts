@@ -31,7 +31,7 @@ export async function rollbackAdmission(
         current.state === "RUNNING" &&
         !current.providerJobId;
       if (!unchanged) return { value: null, payload: { replay: true } };
-      const admission = await readAdmission(tx, context.workspaceId, current);
+      const admission = await readAdmission(tx, context, current);
       if (admission.evidence === "ambiguous")
         return holdAmbiguousAdmission(db, tx, run, current, admission.request !== null);
       if (!canRollback(admission)) return { value: null, payload: { replay: true } };
