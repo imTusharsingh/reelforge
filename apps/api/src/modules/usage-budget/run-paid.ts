@@ -1,3 +1,4 @@
+import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
@@ -101,6 +102,13 @@ export class RunPaidCalls {
       },
       data: { errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN" },
     });
+    if (outcome.error instanceof ProviderFailure && outcome.error.dispatched)
+      throw new ConflictException(
+        `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`,
+        {
+          cause: outcome.error,
+        },
+      );
     throw outcome.error;
   }
   public async finish(

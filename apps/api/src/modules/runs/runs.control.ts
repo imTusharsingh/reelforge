@@ -129,7 +129,10 @@ export class RunsControl {
             errorCode: "VIDEO_RUN_DISPATCHING",
           },
         });
-        if (active && !run.pauseReason?.includes(step.id))
+        if (
+          active &&
+          (!run.pauseReason?.includes(step.id) || Date.now() - active.createdAt.getTime() < 120_000)
+        )
           throw new ConflictException("Provider attempt may still be active");
         await this.closeSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (step.key.startsWith("shot-")) {

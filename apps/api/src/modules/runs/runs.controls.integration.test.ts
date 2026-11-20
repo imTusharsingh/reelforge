@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { MediaAccounts } from "../scene-media/media-accounts.js";
+import type { MediaAccess } from "../scene-media/media-access.js";
 import { ArtifactSchema } from "./runs.types.js";
 
 const suite = describe.skipIf(!process.env.DATABASE_URL);
@@ -116,6 +118,14 @@ suite("V3 approval, caps and retention", () => {
       state: "SCRIPTING",
       pauseReason: null,
     });
+    const resumed = await t.store.get(t.context, t.run.id);
+    const accounts = new MediaAccounts({
+      runs: t.runs,
+      boundary: { check: vi.fn() },
+    } as unknown as MediaAccess);
+    const next = await accounts.begin(t.context, resumed, step.key, {}, 12, "fixture");
+    expect(next).toMatchObject({ attempt: 2, state: "RUNNING" });
+    expect(next.idempotencyKey).not.toBe(step.idempotencyKey);
   });
   it("reports reserved and committed VideoRun costs", async () => {
     const t = await fixture.tenant();
