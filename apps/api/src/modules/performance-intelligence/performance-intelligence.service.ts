@@ -61,7 +61,7 @@ const maximumPublishedPostPages = 1_000;
 const dimensionMinimumSample: PerformanceSample = { videos: 3, days: 1, snapshots: 3 };
 const weekdayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
 
-export const performanceKpiDefinitions: readonly PerformanceKpiDefinition[] = [
+const performanceKpiDefinitions: readonly PerformanceKpiDefinition[] = [
   {
     key: "TOTAL_VIEWS",
     label: "Total views",

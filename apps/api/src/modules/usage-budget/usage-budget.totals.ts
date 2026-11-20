@@ -18,7 +18,7 @@ type CurrencyBucket = {
   categories: Map<UsageCategoryValue, Bucket>;
 };
 
-export type CategoryTotalsView = Readonly<{
+type CategoryTotalsView = Readonly<{
   category: UsageCategoryValue;
   actualMinor: number;
   estimatedMinor: number;
@@ -32,7 +32,7 @@ export type CategoryTotalsView = Readonly<{
   unknownCostRequests: number;
 }>;
 
-export type CurrencyTotalsView = Readonly<{
+type CurrencyTotalsView = Readonly<{
   currency: string;
   totalMinor: number;
   actualMinor: number;

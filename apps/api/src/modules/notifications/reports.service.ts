@@ -34,7 +34,7 @@ import {
   type ReportPeriodType,
 } from "./reports.periods.js";
 
-export const CHANNEL_REPORT_SCHEMA_VERSION = 1;
+const CHANNEL_REPORT_SCHEMA_VERSION = 1;
 
 /** Read-only system context for scheduled reports; it never authorizes a write. */
 const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
@@ -46,7 +46,7 @@ const INSIGHT_REPORT_LIMIT = 50;
 const RECOMMENDATION_LIMIT = 100;
 const editorRoles = new Set(["OWNER", "EDITOR"]);
 
-export type SectionStatus = "AVAILABLE" | "PARTIAL" | "NO_DATA" | "UNAVAILABLE";
+type SectionStatus = "AVAILABLE" | "PARTIAL" | "NO_DATA" | "UNAVAILABLE";
 
 export type MissingDataItem = Readonly<{ section: string; code: string; detail: string }>;
 

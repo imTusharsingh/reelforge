@@ -10,8 +10,8 @@ export const ASSET_MEDIA_TYPES = [
 ] as const;
 
 export type AssetMediaType = (typeof ASSET_MEDIA_TYPES)[number];
-export type AssetOwnership = "USER_UPLOADED" | "STARTER_LIBRARY" | "SYSTEM_GENERATED";
-export type AssetStatus = "PENDING" | "PUBLISHED" | "FAILED" | "ARCHIVED";
+type AssetOwnership = "USER_UPLOADED" | "STARTER_LIBRARY" | "SYSTEM_GENERATED";
+type AssetStatus = "PENDING" | "PUBLISHED" | "FAILED" | "ARCHIVED";
 
 export type AssetRights = Readonly<{
   ownership: AssetOwnership;

@@ -15,7 +15,7 @@ export class StoragePathError extends Error {
   }
 }
 
-export function assertSafeObjectKey(objectKey: string): void {
+function assertSafeObjectKey(objectKey: string): void {
   if (objectKey.length === 0 || objectKey.length > 512)
     throw new StoragePathError("Object key must be between 1 and 512 characters");
   if (!SAFE_OBJECT_KEY.test(objectKey))

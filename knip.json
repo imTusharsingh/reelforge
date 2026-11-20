@@ -16,6 +16,11 @@
       ],
       "project": ["**/*.{ts,tsx,mjs}"]
     },
+    "packages/database": {
+      "entry": ["src/index.ts", "src/**/*.test.ts", "prisma.config.ts"],
+      "project": ["src/**/*.ts", "prisma.config.ts"],
+      "ignoreDependencies": ["@prisma/client"]
+    },
     "packages/*": {
       "entry": ["src/index.ts", "src/**/*.test.ts", "prisma.config.ts"],
       "project": ["src/**/*.ts", "prisma.config.ts"]

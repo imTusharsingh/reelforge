@@ -1255,3 +1255,23 @@ Issue #112 and final fix comment supersede the earlier assumptions. Addressed re
 ## 2026-11-16 — Merge approved decision prerequisite into PR #111
 
 Official Minu re-review approved #110 head ef34d69 and Minu squash-merged it as cd39f30. The implementer merged origin/main into the existing foundations branch, preserving both append-only work-log histories. No force-push/rebase or implementer PR merge. Final code checks and full suite follow on that merged head.
+
+## 2026-11-20 — T2c final cleanup verification for #133
+
+The local branch work/t2c-cleanup-gate starts at origin/main 8ab1aeb. Implementation
+through 1e10938 repairs both account browser harnesses, clears the Knip baseline,
+removes redundant dependencies, and follows a queued VideoRun through approval
+and scheduling in offline Playwright and axe. The reviewed persistence inventory
+remains in DEPRECATIONS.md pending consumer and retention decisions and approved
+migration ADRs.
+
+- Node 24.22.2 and pnpm 12.16.1.
+- Frozen offline lockfile validation, lint and Knip exited 0. Knip reported zero findings.
+- Typecheck initially exited 1 for two port types used by the OpenAI adapter.
+  Restored those exports. The retry with a local placeholder DATABASE_URL exited 0.
+- Targeted Vitest run exited 0 with 150 tests in 28 files. Playwright and axe
+  exited 0 on both mobile and desktop. The mounted account harness passed
+  12 scenarios, and the mounted CSRF smoke passed. Both disposable databases
+  applied all migrations successfully.
+- Full-suite CI evidence, the authorized YouTube publish, the seven-day L2 soak,
+  and production launch gates remain open.

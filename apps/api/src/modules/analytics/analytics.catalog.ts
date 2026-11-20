@@ -107,10 +107,6 @@ export const youtubeMetricCatalog = [
   },
 ] as const satisfies readonly AnalyticsMetricDefinition[];
 
-export const youtubeMetricKeys = youtubeMetricCatalog.map(
-  (metric) => metric.key,
-) as readonly AnalyticsMetricKey[];
-
 export function youtubeMetricKeysFor(
   granularity: "CHANNEL" | "VIDEO",
 ): readonly AnalyticsMetricKey[] {

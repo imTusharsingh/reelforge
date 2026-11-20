@@ -1,8 +1,6 @@
 import type { JsonValue } from "../channel/channel.types.js";
 import type { AssetReference, AssetReferenceRequest } from "../asset/asset.types.js";
-
-export type CharacterStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
-export type CharacterVersionStatus = "DRAFT" | "PUBLISHED";
+type CharacterVersionStatus = "DRAFT" | "PUBLISHED";
 
 /** Mutable profile fields for a character draft head. */
 export type CharacterProfile = Readonly<{
@@ -12,16 +10,6 @@ export type CharacterProfile = Readonly<{
   voicePreference: JsonValue;
   visualInvariants: JsonValue;
   variationRules: JsonValue;
-}>;
-
-export type CharacterInput = Readonly<{
-  name: string;
-  description?: string;
-  personality: JsonValue;
-  voicePreference: JsonValue;
-  visualInvariants: JsonValue;
-  variationRules: JsonValue;
-  referenceAssets: readonly AssetReferenceRequest[];
 }>;
 
 export type CharacterCreateInput = Readonly<{
@@ -43,21 +31,6 @@ export type CharacterPatch = Readonly<{
   visualInvariants?: JsonValue;
   variationRules?: JsonValue;
   referenceAssets?: readonly AssetReferenceRequest[];
-}>;
-
-export type CharacterTemplateSummary = Readonly<{
-  id: string;
-  key: string;
-  name: string;
-  description: string;
-  personality: JsonValue;
-  voicePreference: JsonValue;
-  visualInvariants: JsonValue;
-  variationRules: JsonValue;
-  starterAssetKey: string | null;
-  rightsHolder: string;
-  licenseType: string;
-  licenseTerms: string;
 }>;
 
 export type CharacterVersionRecord = Readonly<{

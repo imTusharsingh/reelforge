@@ -3,14 +3,14 @@ import type { NextFunction, Request, Response } from "express";
 import { ForbiddenException } from "@nestjs/common";
 
 export const CSRF_COOKIE = "reelforge_csrf";
-export const SESSION_COOKIE = "reelforge_session";
+const SESSION_COOKIE = "reelforge_session";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export function createCsrfToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-export function cookieValue(request: Pick<Request, "headers">, name: string): string | undefined {
+function cookieValue(request: Pick<Request, "headers">, name: string): string | undefined {
   return request.headers.cookie
     ?.split(";")
     .map((part) => part.trim())

@@ -30,7 +30,7 @@ export interface InsightReportLlmPort {
   generate(input: InsightNarrativeInput): Promise<InsightNarrativeResult>;
 }
 
-export class InsightConnectorUnavailableError extends Error {
+class InsightConnectorUnavailableError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "InsightConnectorUnavailableError";

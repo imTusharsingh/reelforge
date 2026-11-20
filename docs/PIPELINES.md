@@ -1,32 +1,15 @@
 # Canonical Pipelines and State Machines
 
-This file defines the v1 end-to-end behavior. Individual modules implement their assigned steps; the Orchestrator coordinates them. A UI button and a scheduled run must call the same application workflow, not separate business logic.
+The browser and scheduler use VideoRun for generation. ADR-027 and the
+[locked VideoRun specification](REELFORGE_V2_SPEC.md#a1-videorun-state-page-mermaid-sources--v3)
+define generation states and transitions.
 
 ## 1. Generation pipeline
 
-```text
-Manual trigger OR scheduler tick
-  -> verify workspace/channel access and channel is active
-  -> load immutable channel/series/config/prompt snapshot
-  -> check schedule, per-channel concurrency, budget reservation, and approval policy
-  -> select user-approved idea OR request ideas from M06
-  -> topic similarity / cooldown validation
-  -> create approved idea snapshot
-  -> generate structured script and storyboard (M07)
-  -> validate schema, duration, genre policy, character references, factuality requirements
-  -> create per-scene generation jobs (M09)
-  -> call only registered real providers with valid credentials and budget
-  -> store scene assets, provider job IDs, metadata, costs, and checksums
-  -> assemble final video with FFmpeg (M10)
-  -> deterministic media and rights checks (M11)
-  -> structured AI review with evidence (M11)
-  -> if hard gate fails: reject or route to bounded regeneration
-  -> if score below threshold: request review/regeneration per channel policy
-  -> default: human review queue
-  -> approval decision stored with reviewer/time/reasons
-  -> approved video becomes READY_TO_SCHEDULE
-  -> publish scheduler or user schedules it (M13)
-```
+A VideoRun binds the channel to an immutable Brief and budget envelope. It
+coordinates planning, shot generation, assembly, critic review and approval.
+L1 can pause for stage approval. L2 requires human approval before scheduling.
+ADR-028 defines when L3 may be offered and which gates still apply.
 
 ## 2. Publishing pipeline
 
@@ -84,31 +67,16 @@ Daily report scheduler
 
 ## 5. Canonical state machines
 
-### Video production state
+### VideoRun and step state
 
-`IDEA_PENDING -> IDEA_APPROVED -> SCRIPT_PENDING -> SCRIPT_READY -> GENERATION_PENDING -> GENERATING -> ASSEMBLING -> QA_PENDING -> REVIEW_REQUIRED -> APPROVED -> READY_TO_SCHEDULE`
-
-Terminal/exception states: `REJECTED`, `FAILED`, `CANCELED`, `ARCHIVED`.
-
-State transitions must be enforced server-side. A video cannot jump directly from `GENERATING` to `APPROVED`.
-
-### Scene state
-
-`QUEUED -> SUBMITTED -> PROVIDER_PROCESSING -> SUCCEEDED`.
-
-Exception states: `RETRY_WAIT`, `FAILED_RETRYABLE`, `FAILED_FINAL`, `CANCELED`.
+See the locked specification above for server-enforced VideoRun and step
+transitions.
 
 ### Publish state (per destination)
 
 `DRAFT -> SCHEDULED -> PREFLIGHT -> UPLOADING -> REMOTE_PROCESSING -> PUBLISHED`.
 
 Exception states: `FAILED_RETRYABLE`, `FAILED_FINAL`, `CANCELED`, `RECONCILIATION_REQUIRED`.
-
-### Workflow state
-
-`CREATED -> QUEUED -> RUNNING -> WAITING_APPROVAL -> SUCCEEDED`.
-
-Exception/paused states: `PAUSED`, `RETRY_WAIT`, `FAILED`, `CANCELED`.
 
 ## 6. Required event envelope
 
@@ -129,7 +97,7 @@ Do not include secrets, raw tokens, private signed URLs, or unnecessary personal
 
 ## 7. Idempotency and retry rules
 
-- Every generation request uses a stable idempotency key based on workflow run, scene/version, provider, and generation attempt policy.
+- Every generation request uses a stable idempotency key based on VideoRun, shot/version, provider, and generation attempt policy.
 - Every publish request uses a stable key per video + destination account + intended publication revision.
 - A worker must persist the side-effect intent before external execution.
 - If the network times out after a possible success, mark `RECONCILIATION_REQUIRED`, query the destination, and only retry when duplicate side effect risk is resolved.

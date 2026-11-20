@@ -12,8 +12,7 @@ export const AUDIT_CATEGORIES = [
 ] as const;
 export type AuditCategoryValue = (typeof AUDIT_CATEGORIES)[number];
 
-export const AUDIT_OUTCOMES = ["SUCCESS", "FAILURE", "DENIED"] as const;
-export type AuditOutcomeValue = (typeof AUDIT_OUTCOMES)[number];
+export type AuditOutcomeValue = "SUCCESS" | "FAILURE" | "DENIED";
 
 export type AuditEntry = Readonly<{
   workspaceId: string | null;

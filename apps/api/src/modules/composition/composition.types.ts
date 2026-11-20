@@ -1,6 +1,6 @@
 import { DEFAULT_RENDER_PROFILE } from "@reelforge/media";
 type RenderProfile = typeof DEFAULT_RENDER_PROFILE;
-export type RenderSceneInput = Readonly<{
+type RenderSceneInput = Readonly<{
   sceneId: string;
   assetId: string;
   assetVersion: number;

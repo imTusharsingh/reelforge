@@ -2,17 +2,16 @@
 
 **Project:** AI Shorts Channel Controller  
 **State version:** 1.0  
-**Last updated:** 2026-11-16
+**Last updated:** 2026-11-20
 **Maintained by:** Core Architect/Reviewer
 
 > This is the canonical handover summary for a new AI session. Update it after every approved integration or material decision. The detailed event history is in `WORK_LOG.md`; per-module detail is in each `STATUS.md`.
 
 ## Current project status
 
-- **Snapshot:** 2026-11-16, main `eb33136464c0f2e011d6d8b47976b9ba30d3d34b` after V1 foundations #111.
-- **Phase:** v1 product code through M29 remains on main (M28 remains NOT_STARTED). The ReelForge v2 plan is locked in [#112](https://github.com/imTusharsingh/reelforge/issues/112) (versioned copy: `docs/REELFORGE_V2_SPEC.md`). Wave 0 / V1 foundations are integrated via #110 and #111. Wave 1 (#113 V2, #114 V3, #115 V4, #116 V7) is in progress. Code integration does not establish production release or live-provider acceptance.
-- **Repository:** PUBLIC (verified via GitHub repository metadata). Public visibility does not prove branch protection or squash-only settings are enabled.
-- **Current assigned follow-ups:** Wave 1 implementation issues #113–#116. #79 Playwright/axe E2E remains a residual v1 follow-up if still open; it is not part of Wave 1.
+- **Snapshot:** T2c cleanup work is on `work/t2c-cleanup-gate`, based on `origin/main` at `8ab1aeb` after #140 and #141.
+- **Phase:** VideoRun is the only generation path. The creator studio uses it for new Shorts, progress and review. The rollout flag and legacy manual flow have been retired.
+- **Current assigned follow-up:** T2c final cleanup and offline verification under [#133](https://github.com/imTusharsingh/reelforge/issues/133).
 - **Open budget gap:** [#78](https://github.com/imTusharsingh/reelforge/issues/78) remains OPEN: M06/M11/M15 paid paths require the M08/M18 boundary; exact SQL/implementation approval remains outstanding. ADR-021–024 architecture acceptance is not application authorization.
 - **Review/integration policy:** independent Minu review before merge; authorized integrator uses squash only. ci.yml and PROJECT_STATE changes use dedicated chore PRs. Required secret scan is enforced by #72; see ADR-020 and PROCESS_ENFORCEMENT.md for limits of technical enforcement.
 
@@ -29,7 +28,14 @@
 
 ## Current milestone
 
-V1 Wave 0 foundations are on main (#110 decision record, #111 contracts and offline defaults). The v2 plan is locked in #112. Next: Wave 1 implementation in #113–#116 (V2 provider layer, V3 VideoRun orchestrator, V4 planning agents, V7 Channel Brief). Do not infer a production release from merged code or green CI.
+T2c adds offline approval and schedule coverage to the Playwright/axe Brief flow.
+Persistence follow-ups remain in [DEPRECATIONS.md](../DEPRECATIONS.md) pending
+consumer and retention review, approved ADRs, and reversible migrations.
+
+Release evidence remains open for the owner-authorized private/unlisted YouTube
+Short with synthetic disclosure and the seven-day L2 soak. Hosting, the launch
+checklist, and production observability and retention remain release gates under
+#133.
 
 ## Module status index
 

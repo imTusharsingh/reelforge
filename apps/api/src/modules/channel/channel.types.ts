@@ -16,9 +16,3 @@ export type ChannelInput = Readonly<{
   publishingDestinations?: JsonValue;
 }>;
 export type ChannelPatch = Partial<ChannelInput>;
-export type ChannelSummary = Readonly<{
-  id: string;
-  workspaceId: string;
-  name: string;
-  status: ChannelStatus;
-}>;

@@ -11,8 +11,10 @@ The primary screens are `/channels/:id`, `/onboarding`, `/settings` and
 - POST `/api/v1/runs` takes the workspace ID, immutable Brief ID and idempotency key. It returns the queued VideoRun ID.
 
 The browser test uses real signup, workspace, Brief and run endpoints backed by
-Postgres. It intercepts provider settings requests and checks accessibility on
-mobile and desktop. No test calls a live provider.
+Postgres. Browser fixtures supply provider settings, Critic results and the publishing
+slot after approval. Playwright checks the approved Short in the schedule, and axe
+checks onboarding, Brief editing, review, the schedule and settings on mobile and
+desktop. No test calls a live provider.
 
 Run after generating Prisma, building contracts and deploying migrations to a
 disposable Postgres, with Redis available:

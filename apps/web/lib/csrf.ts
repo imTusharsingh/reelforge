@@ -8,7 +8,7 @@ export function csrfFailureMessage(payload: unknown): string | undefined {
     : undefined;
 }
 
-export function csrfTokenFromCookie(): string | undefined {
+function csrfTokenFromCookie(): string | undefined {
   if (typeof document === "undefined") return undefined;
   return document.cookie
     .split(";")

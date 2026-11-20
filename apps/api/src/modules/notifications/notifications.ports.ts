@@ -2,7 +2,7 @@ export const NOTIFICATION_EMAIL_PORT = Symbol("NOTIFICATION_EMAIL_PORT");
 export const NOTIFICATIONS_CLOCK = Symbol("NOTIFICATIONS_CLOCK");
 export const NOTIFICATIONS_CONFIG = Symbol("NOTIFICATIONS_CONFIG");
 
-export type NotificationEmailMessage = Readonly<{
+type NotificationEmailMessage = Readonly<{
   to: string;
   subject: string;
   text: string;

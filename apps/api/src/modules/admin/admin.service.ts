@@ -15,7 +15,7 @@ function safeMessage(value: string | null | undefined): string | null {
   return value === null || value === undefined ? null : redactString(value).slice(0, 500);
 }
 
-export type FailedItem = Readonly<{
+type FailedItem = Readonly<{
   kind: string;
   id: string;
   status: string;
