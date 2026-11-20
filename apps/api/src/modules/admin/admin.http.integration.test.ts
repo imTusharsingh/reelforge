@@ -482,11 +482,16 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
 });
 
 /**
- * Routes that intentionally have no AuthGuard: health probes, credential exchange, the OAuth
- * redirect (state-bound), and the operator metrics scrape (404 unless OPS_METRICS_TOKEN matches).
+ * Routes that intentionally have no AuthGuard: health probes, credential exchange, password reset,
+ * email change confirmation, the state-bound OAuth redirect, and the operator metrics scrape
+ * (404 unless OPS_METRICS_TOKEN matches). Reset and email confirmation POSTs require CSRF,
+ * and both confirmation handlers require a valid email challenge code.
  * Adding a route here is a security-review item (M19-T08 checklist).
  */
 const PUBLIC_ROUTES: string[] = [
+  "AccountEmailController.confirmEmail",
+  "AccountEmailController.confirmReset",
+  "AccountEmailController.requestReset",
   "HealthController.getHealth",
   "IdentityController.csrf",
   "IdentityController.login",

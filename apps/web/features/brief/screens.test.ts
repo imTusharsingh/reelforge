@@ -140,9 +140,24 @@ describe("V7 mounted screens", () => {
     expect(container.textContent).toContain("valid JSON");
     await change("#json-narratorVoice", JSON.stringify(brief.narratorVoice));
     await submit();
+    expect(container.textContent).toContain("Brief was not saved");
+    expect(stub.versions).toEqual([brief]);
+
+    await change(
+      "#json-narratorVoice",
+      JSON.stringify({ ...brief.narratorVoice, language: "Hindi" }),
+    );
+    await submit();
     expect(container.textContent).toContain("Saved immutable Brief version 2");
-    expect(stub.versions[1]!.topic).toBe("Science");
-    expect(stub.versions[0]!.topic).toBe("Space");
+    expect(stub.versions).toHaveLength(2);
+    expect(stub.versions[1]).toEqual(brief);
+    expect(stub.versions[0]).toMatchObject({
+      version: 2,
+      topic: "Space",
+      narrationLanguage: "Hindi",
+      languages: { narration: "Hindi" },
+      narratorVoice: { language: "Hindi" },
+    });
     stub.fail = true;
     await submit();
     expect(container.textContent).toContain("Brief was not saved");
