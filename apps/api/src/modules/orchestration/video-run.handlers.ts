@@ -49,6 +49,7 @@ export type MediaPortResolver = (
   context: Context,
   run: Run,
   shot: ShotSpec,
+  admitted?: boolean,
 ) => Promise<{ primary: VideoGenPort; fallback: VideoGenPort } | null>;
 export class UnconfiguredVideoPort implements VideoGenPort {
   public readonly providerId = "unconfigured";

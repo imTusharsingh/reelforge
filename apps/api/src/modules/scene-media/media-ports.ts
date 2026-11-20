@@ -57,7 +57,7 @@ export class MediaPorts {
     context: Context,
     videoShot?: ShotSpec,
   ): Promise<Awaited<ReturnType<ProvidersRuntime["ports"]>>> {
-    // Video ports resolve these immediately when they start their HTTP request under the run lock.
+    // Video ports resolve these immediately when they start their HTTP request.
     // Resolve storage and database references before paid dispatch admission.
     const prepared = videoShot && {
       key: JSON.stringify(videoShot.references),

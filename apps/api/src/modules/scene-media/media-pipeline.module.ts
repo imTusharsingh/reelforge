@@ -39,36 +39,10 @@ export class MediaBindings {
   public onModuleInit(): void {
     const module = this.access.modules;
     const generation = module.get(RunGeneration, { strict: false });
-    generation.resolvePorts = async (
-      context,
-      run,
-      shot,
-    ): ReturnType<NonNullable<RunGeneration["resolvePorts"]>> => {
-      await this.accounts.sync(context, run);
-      const options = await this.frames.prepare(context, run, shot);
-      if (!options) return null;
-      const [ports, videoState] = await Promise.all([
-        this.ports.get(context, shot),
-        this.ports.videoState(context.workspaceId),
-      ]);
-      const routed = (
-        port: typeof ports.omni | typeof ports.grok,
-        vendor: Parameters<typeof ports.assertKey>[0],
-      ): RoutedMediaVideo =>
-        new RoutedMediaVideo(
-          port,
-          this.jobs,
-          context,
-          run,
-          options,
-          this.ports.limiter(context.workspaceId, vendor),
-          (body, from) => this.frames.extensionTail(body, from),
-          () => ports.assertKey(vendor),
-          videoState,
-          this.ports.videoOutcome(context.workspaceId),
-        );
-      return { primary: routed(ports.omni, "gemini"), fallback: routed(ports.grok, "xai") };
-    };
+    generation.resolvePorts = (...args): ReturnType<NonNullable<RunGeneration["resolvePorts"]>> =>
+      this.resolveVideoPorts(...args);
+    generation.recoverKeyframe = async (context, step): Promise<number | null> =>
+      this.jobs.recoverKeyframe(context, step, (await this.ports.get(context)).image);
     const planning = module.get(RunPlanning, { strict: false });
     planning.handlers = {
       ...planning.handlers,
@@ -95,6 +69,37 @@ export class MediaBindings {
       context,
       run,
     ): ReturnType<RunOutputs["assembly"]> => this.assembly.artifacts(context, run);
+  }
+  private async resolveVideoPorts(
+    ...[context, run, shot, admitted]: Parameters<NonNullable<RunGeneration["resolvePorts"]>>
+  ): ReturnType<NonNullable<RunGeneration["resolvePorts"]>> {
+    if (!admitted) await this.accounts.sync(context, run);
+    const options = admitted
+      ? this.frames.extension(shot)
+      : await this.frames.prepare(context, run, shot);
+    if (!options) return null;
+    const [ports, videoState] = await Promise.all([
+      this.ports.get(context, shot),
+      this.ports.videoState(context.workspaceId),
+    ]);
+    const routed = (
+      port: typeof ports.omni | typeof ports.grok,
+      vendor: Parameters<typeof ports.assertKey>[0],
+    ): RoutedMediaVideo =>
+      new RoutedMediaVideo(
+        port,
+        this.jobs,
+        context,
+        run,
+        options,
+        this.ports.limiter(context.workspaceId, vendor),
+        (body, from) => this.frames.extensionTail(body, from),
+        () => ports.assertKey(vendor),
+        videoState,
+        this.ports.videoOutcome(context.workspaceId),
+        admitted ? 1 + Number(!!shot.firstFrameFrom) : undefined,
+      );
+    return { primary: routed(ports.omni, "gemini"), fallback: routed(ports.grok, "xai") };
   }
   private handler(execute: StepHandler["execute"]): StepHandler {
     return { execute, reconcile: execute };

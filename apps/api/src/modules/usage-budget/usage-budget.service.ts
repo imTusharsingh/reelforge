@@ -381,70 +381,77 @@ export class UsageBudgetService {
    * limit. Idempotent per (workspaceId, idempotencyKey). Throws BudgetExhaustedError (hard stop)
    * and returns NOT_CONFIGURED (BUDGET_POLICY_UNAVAILABLE) when no budget applies.
    */
-  public async reserve(workspaceId: string, body: unknown): Promise<ReserveResult> {
+  public async reserve(
+    workspaceId: string,
+    body: unknown,
+    transaction?: Tx,
+  ): Promise<ReserveResult> {
     const input = parseReserve(body);
     const channelId = input.channelId ?? null;
-    if (channelId !== null) await this.channel(this.db, workspaceId, channelId);
-    const existing = await this.findReservationByKey(this.db, workspaceId, input.idempotencyKey);
+    const db = transaction ?? this.db;
+    if (channelId !== null) await this.channel(db, workspaceId, channelId);
+    const existing = await this.findReservationByKey(db, workspaceId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
     const now = this.clock();
-    try {
-      return await this.db.$transaction(async (tx) => {
-        const candidates = await this.applicableBudgets(tx, workspaceId, channelId);
-        if (candidates.length === 0)
-          return { decision: "NOT_CONFIGURED", reason: "BUDGET_POLICY_UNAVAILABLE" } as const;
-        await this.lockBudgets(tx, workspaceId, candidates);
-        const raced = await this.findReservationByKey(tx, workspaceId, input.idempotencyKey);
-        if (raced) return this.replay(raced, input);
-        await this.expireReservations(tx, now, workspaceId);
-        // Re-read under the lock: a concurrent limit change must be seen.
-        const budgets = await this.applicableBudgets(tx, workspaceId, channelId);
-        for (const budget of budgets) {
-          if (budget.currency !== input.currency)
-            throw new BudgetUnresolvableError(
-              "BUDGET_CURRENCY_MISMATCH",
-              `Reservation currency ${input.currency} does not match budget currency ${budget.currency}`,
-            );
-          const status = await this.budgetStatus(tx, budget, now);
-          if (status.unconvertedLedgerRows > 0)
-            throw new BudgetUnresolvableError(
-              "BUDGET_CURRENCY_MISMATCH",
-              "Spend in another currency exists in this budget's scope; it cannot be compared without FX",
-            );
-          for (const period of status.periods)
-            if (period.consumedMinor + input.amountMinor > period.limitMinor)
-              throw new BudgetExhaustedError({
-                budgetId: budget.id,
-                period: period.period,
-                limitMinor: period.limitMinor,
-                consumedMinor: period.consumedMinor,
-                requestedMinor: input.amountMinor,
-                currency: budget.currency,
-              });
-        }
-        const created = await tx.usageReservation.create({
-          data: {
-            workspaceId,
-            channelId,
-            idempotencyKey: input.idempotencyKey,
-            category: input.category,
-            currency: input.currency,
-            amountMinor: BigInt(input.amountMinor),
-            correlationId: input.correlationId ?? null,
-            workflowRunId: input.workflowRunId ?? null,
-            scriptId: input.scriptId ?? null,
-            expiresAt: new Date(now.getTime() + (input.ttlMs ?? DEFAULT_RESERVATION_TTL_MS)),
-            createdAt: now,
-          },
-        });
-        const after = await this.statuses(tx, budgets, now);
-        return {
-          decision: "RESERVED",
-          reservation: this.reservationView(created as ReservationRecord),
-          budgets: after,
-          replayed: false,
-        } as const;
+    const reserve = async (tx: Tx): Promise<ReserveResult> => {
+      const candidates = await this.applicableBudgets(tx, workspaceId, channelId);
+      if (candidates.length === 0)
+        return { decision: "NOT_CONFIGURED", reason: "BUDGET_POLICY_UNAVAILABLE" } as const;
+      await this.lockBudgets(tx, workspaceId, candidates);
+      const raced = await this.findReservationByKey(tx, workspaceId, input.idempotencyKey);
+      if (raced) return this.replay(raced, input);
+      await this.expireReservations(tx, now, workspaceId);
+      // Re-read under the lock: a concurrent limit change must be seen.
+      const budgets = await this.applicableBudgets(tx, workspaceId, channelId);
+      for (const budget of budgets) {
+        if (budget.currency !== input.currency)
+          throw new BudgetUnresolvableError(
+            "BUDGET_CURRENCY_MISMATCH",
+            `Reservation currency ${input.currency} does not match budget currency ${budget.currency}`,
+          );
+        const status = await this.budgetStatus(tx, budget, now);
+        if (status.unconvertedLedgerRows > 0)
+          throw new BudgetUnresolvableError(
+            "BUDGET_CURRENCY_MISMATCH",
+            "Spend in another currency exists in this budget's scope; it cannot be compared without FX",
+          );
+        for (const period of status.periods)
+          if (period.consumedMinor + input.amountMinor > period.limitMinor)
+            throw new BudgetExhaustedError({
+              budgetId: budget.id,
+              period: period.period,
+              limitMinor: period.limitMinor,
+              consumedMinor: period.consumedMinor,
+              requestedMinor: input.amountMinor,
+              currency: budget.currency,
+            });
+      }
+      const created = await tx.usageReservation.create({
+        data: {
+          workspaceId,
+          channelId,
+          idempotencyKey: input.idempotencyKey,
+          category: input.category,
+          currency: input.currency,
+          amountMinor: BigInt(input.amountMinor),
+          correlationId: input.correlationId ?? null,
+          workflowRunId: input.workflowRunId ?? null,
+          scriptId: input.scriptId ?? null,
+          expiresAt: new Date(now.getTime() + (input.ttlMs ?? DEFAULT_RESERVATION_TTL_MS)),
+          createdAt: now,
+        },
       });
+      const after = await this.statuses(tx, budgets, now);
+      return {
+        decision: "RESERVED",
+        reservation: this.reservationView(created as ReservationRecord),
+        budgets: after,
+        replayed: false,
+      } as const;
+    };
+    if (transaction) return reserve(transaction);
+    try {
+      return await this.db.$transaction(reserve);
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       const winner = await this.findReservationByKey(this.db, workspaceId, input.idempotencyKey);
@@ -462,10 +469,11 @@ export class UsageBudgetService {
     workspaceId: string,
     reservationId: string,
     actualMinorInput: unknown,
+    transaction?: Prisma.TransactionClient,
   ): Promise<ReservationView> {
     const actualMinor = parseActualMinor(actualMinorInput);
     const now = this.clock();
-    return this.db.$transaction(async (tx) => {
+    const commit = async (tx: Prisma.TransactionClient): Promise<ReservationView> => {
       const reservation = await this.lockReservation(tx, workspaceId, reservationId);
       if (reservation.status === "COMMITTED") {
         if (reservation.committedMinor === BigInt(actualMinor))
@@ -485,7 +493,8 @@ export class UsageBudgetService {
         data: { status: "COMMITTED", committedMinor: BigInt(actualMinor), committedAt: now },
       });
       return this.reservationView(updated as ReservationRecord);
-    });
+    };
+    return transaction ? commit(transaction) : this.db.$transaction(commit);
   }
 
   /** Releases an unused reservation. Idempotent; a committed reservation cannot be released. */
@@ -493,9 +502,10 @@ export class UsageBudgetService {
     workspaceId: string,
     reservationId: string,
     reason = "RELEASED_BY_CALLER",
+    transaction?: Prisma.TransactionClient,
   ): Promise<ReservationView> {
     const now = this.clock();
-    return this.db.$transaction(async (tx) => {
+    const release = async (tx: Prisma.TransactionClient): Promise<ReservationView> => {
       const reservation = await this.lockReservation(tx, workspaceId, reservationId);
       if (reservation.status === "RELEASED" || reservation.status === "EXPIRED")
         return this.reservationView(reservation);
@@ -509,7 +519,8 @@ export class UsageBudgetService {
         data: { status: "RELEASED", releasedAt: now, releaseReason: reason.slice(0, 200) },
       });
       return this.reservationView(updated as ReservationRecord);
-    });
+    };
+    return transaction ? release(transaction) : this.db.$transaction(release);
   }
 
   /**
@@ -539,6 +550,7 @@ export class UsageBudgetService {
       estimate: number;
       ttlMs?: number;
     }>,
+    transaction?: Tx,
   ): Promise<PaidCallReservation | null> {
     let result: ReserveResult;
     try {
@@ -552,15 +564,19 @@ export class UsageBudgetService {
         if (stop.stopped) throw new EmergencyStopError(stop, "the paid provider call");
       }
       const currency = input.currency.trim().toUpperCase();
-      result = await this.reserve(input.workspaceId, {
-        channelId: input.channelId,
-        idempotencyKey: `m08:${input.correlationId}`,
-        category: input.category,
-        currency,
-        amountMinor: minorToNumber(decimalToMinor(input.estimate, currency)),
-        ttlMs: input.ttlMs ?? PAID_CALL_TTL_MS,
-        correlationId: input.correlationId,
-      });
+      result = await this.reserve(
+        input.workspaceId,
+        {
+          channelId: input.channelId,
+          idempotencyKey: `m08:${input.correlationId}`,
+          category: input.category,
+          currency,
+          amountMinor: minorToNumber(decimalToMinor(input.estimate, currency)),
+          ttlMs: input.ttlMs ?? PAID_CALL_TTL_MS,
+          correlationId: input.correlationId,
+        },
+        transaction,
+      );
     } catch (error) {
       if (error instanceof ConflictException) throw error;
       throw new PaidCallNotDispatchedError(

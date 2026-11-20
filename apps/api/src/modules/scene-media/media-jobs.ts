@@ -12,7 +12,6 @@ import {
   type Artifact,
 } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
-import { DispatchAdmissionError } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "./media-accounts.js";
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
 @Injectable()
@@ -41,9 +40,10 @@ export class MediaJobs {
     });
     let step = previous && !this.accounts.abandoned(previous) ? previous : null;
     if (step?.state === "SUCCEEDED") return this.completed(step.output);
+    if (step?.state === "FAILED") throw new ConflictException("Media provider job failed");
     if (step?.state === "CANCELLED")
       throw new ConflictException("MEDIA_NOT_DISPATCHED: new attempt required");
-    if (step && !step.providerJobId) return this.accounts.reconcilePending(context, step);
+    if (step && !step.providerJobId) step = await this.recoverIntent(context, step);
     if (!step) {
       const claimed = await this.accounts.begin(context, run, `media:${key}`, spec, cost, modelId);
       await this.accounts.prepare(context, run, claimed, modelId);
@@ -54,22 +54,44 @@ export class MediaJobs {
           () => port.submit(spec, claimed.idempotencyKey),
           assertLocked,
         );
-        await db.videoRunStep.updateMany({
-          where: { id: claimed.id },
-          data: { providerJobId: job.providerJobId, state: "WAITING_EXTERNAL" },
-        });
-        step = { ...claimed, providerJobId: job.providerJobId };
+        await this.access.paid.recordJob(context, claimed, job.providerJobId);
+        step = await this.access.runs.attachJob(context, claimed, job.providerJobId);
       } catch (error) {
-        if (
-          error instanceof DispatchAdmissionError ||
-          (error instanceof ProviderFailure && !error.dispatched)
-        )
+        if (error instanceof ProviderFailure && !error.dispatched)
           await this.accounts.cancelUndispatched(context, claimed);
         throw error;
       }
     }
     return this.collect(context, key, port, step, modelId, promptVersion, seconds);
   }
+  private async recoverIntent(context: Context, step: Step): Promise<Step | null> {
+    if (await this.accounts.recoverUndispatched(context, step)) return null;
+    const providerJobId = await this.access.paid.jobReceipt(context, step);
+    if (!providerJobId) return this.accounts.reconcilePending(context, step);
+    return this.access.runs.attachJob(context, step, providerJobId);
+  }
+
+  /** Drain only this admitted keyframe, including while its parent cannot start a shot. */
+  public async recoverKeyframe<T>(
+    context: Context,
+    step: Step,
+    port: MediaJobPort<T>,
+  ): Promise<number | null> {
+    const pending = step.providerJobId ? step : await this.recoverIntent(context, step);
+    if (!pending) return null;
+    const { modelId } = z.object({ modelId: z.string().min(1) }).parse(pending.input);
+    const result = await this.collect(
+      context,
+      step.key.slice("media:".length),
+      port,
+      pending,
+      modelId,
+      "art-director:v2",
+      0,
+    );
+    return result ? null : 12000;
+  }
+
   private async collect<T>(
     context: Context,
     key: string,
@@ -81,7 +103,12 @@ export class MediaJobs {
   ): Promise<CompletedMedia | null> {
     const status = await port.poll(step.providerJobId!);
     if (status === "queued" || status === "running") return null;
-    if (status !== "succeeded") throw new ConflictException(`PROVIDER_${status.toUpperCase()}`);
+    if (status !== "succeeded") {
+      const code = `PROVIDER_${status.toUpperCase()}`;
+      const event = await this.access.paid.finalizeJobFailure(context, step, code);
+      await this.access.runs.events?.publish(event);
+      throw new ConflictException(code);
+    }
     const media = await port.fetch(step.providerJobId!, seconds || undefined);
     const body = await this.bytes(context, media);
     const artifact = await this.access.artifacts.put(context, mediaKind(key), body, media.mimeType);

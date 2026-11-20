@@ -33,18 +33,30 @@ function harness(): {
   const db = {
     videoRunStep: {
       findFirst: vi.fn(async () => state.step),
+      findFirstOrThrow: vi.fn(async () => state.step),
       updateMany: vi.fn(async ({ data }: { data: object }) => {
         state.step = { ...state.step, ...data };
         return { count: 1 };
       }),
     },
   };
-  const paid = { finish: vi.fn() };
+  const paid = {
+    finish: vi.fn(),
+    recordJob: vi.fn(),
+    jobReceipt: vi.fn().mockResolvedValue(null),
+    finalizeJobFailure: vi.fn(),
+  };
   const access = {
     gate: vi.fn(),
     boundary: { check: vi.fn() },
     paid,
-    runs: { store: { scoped: () => db, get: async () => run } },
+    runs: {
+      store: { scoped: () => db, get: async () => run },
+      attachJob: async (_ctx: Context, _step: unknown, providerJobId: string) => {
+        await db.videoRunStep.updateMany({ data: { providerJobId, state: "WAITING_EXTERNAL" } });
+        return state.step;
+      },
+    },
     artifacts: {
       put: async () => ({
         kind: "keyframes",
@@ -78,6 +90,7 @@ function harness(): {
     prepare: vi.fn(async () => {
       await account.reserve();
     }),
+    recoverUndispatched: vi.fn().mockResolvedValue(false),
     reconcilePending: vi.fn(async () => {
       throw new Error("RECONCILE_REQUIRED");
     }),

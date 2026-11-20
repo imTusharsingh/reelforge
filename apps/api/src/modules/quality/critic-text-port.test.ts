@@ -44,11 +44,19 @@ function fixture(
         return { id: "step", idempotencyKey: "idem" };
       },
       abandoned: (): boolean => false,
-      dispatch: async (
+      recoverUndispatched: async (): Promise<boolean> => false,
+      reconcilePending: async (): Promise<never> => {
+        throw new Error("RECONCILE_REQUIRED");
+      },
+      dispatchText: async (
         _context: unknown,
         _step: unknown,
         call: () => Promise<unknown>,
-      ): Promise<unknown> => call(),
+      ): Promise<unknown> => {
+        const result = await call();
+        await db.videoRunStep.updateMany();
+        return result;
+      },
       prepare: async () => {
         calls.push("reserve");
       },

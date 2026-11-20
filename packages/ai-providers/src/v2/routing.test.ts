@@ -56,7 +56,7 @@ function setup(): {
 describe("routing policy", () => {
   it("falls back only on outage, authorizing fallback estimate before submit", async () => {
     const { router, primary, fallback, allow } = setup();
-    vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", true));
+    vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", false));
     const job = await router.submit(shot, "run:shot:1", ["gemini", "xai"]);
     expect(job.providerId).toBe("xai");
     expect(allow).toHaveBeenCalledWith("xai", fallback.estimate(shot));
@@ -74,6 +74,21 @@ describe("routing policy", () => {
     expect(primary.submit).toHaveBeenCalledTimes(2);
     expect(fallback.submit).not.toHaveBeenCalled();
   });
+  it.each([false, true])(
+    "preserves HTTP refusals unchanged when dispatched is %s",
+    async (dispatched) => {
+      const { router, primary, fallback, rewrite } = setup();
+      const failure = new ProviderFailure("REFUSAL", dispatched, 0, {
+        status: 403,
+        code: "PERMISSION_DENIED",
+      });
+      vi.mocked(primary.submit).mockRejectedValue(failure);
+      await expect(router.submit(shot, "key", ["gemini", "xai"])).rejects.toBe(failure);
+      expect(rewrite).not.toHaveBeenCalled();
+      expect(primary.submit).toHaveBeenCalledOnce();
+      expect(fallback.submit).not.toHaveBeenCalled();
+    },
+  );
   it("handles asynchronous refusal with a single same-vendor rewrite", async () => {
     const { router, fallback } = setup();
     const first = await router.submit(shot, "key", ["gemini", "xai"]);
@@ -93,7 +108,11 @@ describe("routing policy", () => {
   it("trips circuit after three outages and reports health locally", async () => {
     const { router, primary } = setup();
     vi.mocked(primary.submit).mockRejectedValue(new ProviderFailure("OUTAGE", true));
-    for (let i = 0; i < 4; i++) await router.submit(shot, `key${i}`, ["gemini", "xai"]);
+    for (let i = 0; i < 3; i++)
+      await expect(router.submit(shot, `key${i}`, ["gemini", "xai"])).rejects.toMatchObject({
+        kind: "OUTAGE",
+      });
+    await router.submit(shot, "fallback", ["gemini", "xai"]);
     expect(primary.submit).toHaveBeenCalledTimes(3);
     expect(router.matrix()[0]!.health).toBe("UNAVAILABLE");
     expect(router.matrix()[1]!.health).toBe("HEALTHY");
@@ -202,7 +221,7 @@ describe("exact catalog and money", () => {
   });
 });
 describe("HTTP failure boundary", () => {
-  it("redacts errors, distinguishes status and rejects unsafe downloads", async () => {
+  it("discards error bodies, distinguishes status and rejects unsafe downloads", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
     for (const [status, kind] of [
@@ -213,7 +232,12 @@ describe("HTTP failure boundary", () => {
       [429, "RATE_LIMIT"],
     ] as const) {
       fetcher.mockResolvedValueOnce(json({ key: "secret" }, status, { "retry-after": "2" }));
-      await expect(http.json("interactions", {})).rejects.toMatchObject({ kind });
+      await expect(http.json("interactions", {})).rejects.toMatchObject({
+        kind,
+        http: { status },
+        message: `Provider ${kind.toLowerCase().replace("_", " ")} (HTTP ${status})`,
+        retryAfterMs: status === 429 ? 2000 : 0,
+      });
     }
     await expect(http.bytes("http://localhost/secret")).rejects.toMatchObject({
       dispatched: false,
@@ -235,4 +259,88 @@ describe("HTTP failure boundary", () => {
     expect(() => record(null)).toThrow();
     expect(() => requiredString("")).toThrow();
   });
+
+  it.each([
+    [400, "invalid_request", "INVALID", false],
+    [400, "INVALID_ARGUMENT", "INVALID", false],
+    [401, "UNAUTHENTICATED", "REFUSAL", false],
+    [403, "permission_denied", "REFUSAL", false],
+    [404, "NOT_FOUND", "INVALID", false],
+    [400, "unlabeled-secret", "INVALID", true],
+    [403, 403, "REFUSAL", true],
+    [408, "invalid_request", "OUTAGE", true],
+    [409, "invalid_request", "INVALID", true],
+    [429, "RESOURCE_EXHAUSTED", "RATE_LIMIT", true],
+    [503, "INVALID_ARGUMENT", "OUTAGE", true],
+  ])("classifies HTTP %i with diagnostic %s", async (status, code, kind, dispatched) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
+    fetcher.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            message: "Invalid request for alice@example.test: private prompt, key=other-secret",
+            status:
+              typeof code === "string" && code === code.toUpperCase() ? code : "another-secret",
+            code,
+            details: { code: "invalid_request" },
+          },
+        },
+        status,
+      ),
+    );
+    const allowed = typeof code === "string" && code !== "unlabeled-secret" ? code : undefined;
+    const labels = {
+      INVALID: "Provider invalid",
+      REFUSAL: "Provider refusal",
+      OUTAGE: "Provider outage",
+      RATE_LIMIT: "Provider rate limit",
+    };
+    const error: unknown = await http.json("interactions").catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ProviderFailure);
+    expect(error).toMatchObject({
+      kind,
+      dispatched,
+      message: `${labels[kind as keyof typeof labels]} (HTTP ${status}${allowed ? `, ${allowed}` : ""})`,
+      retryAfterMs: status === 429 ? 1000 : 0,
+    });
+    expect((error as ProviderFailure).http).toEqual({
+      status,
+      ...(allowed ? { code: allowed } : {}),
+    });
+  });
+
+  it.each(["large", "slow"])(
+    "reads only a bounded prefix of a %s error response",
+    async (mode) => {
+      const fetcher = vi.fn<typeof fetch>();
+      const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
+      const cancel = vi.fn();
+      const pull = vi.fn(() => new Promise<void>(() => undefined));
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(controller): void {
+            controller.enqueue(
+              new TextEncoder().encode(
+                '{"error":{"status":"INVALID_ARGUMENT","message":"' +
+                  (mode === "large" ? "x".repeat(8192) : ""),
+              ),
+            );
+          },
+          pull,
+          cancel,
+        },
+        { highWaterMark: 0 },
+      );
+      fetcher.mockResolvedValueOnce(new Response(body, { status: 400 }));
+      await expect(http.json("interactions")).rejects.toMatchObject({
+        dispatched: false,
+        http: { status: 400, code: "INVALID_ARGUMENT" },
+        message: "Provider invalid (HTTP 400, INVALID_ARGUMENT)",
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(pull).toHaveBeenCalledTimes(mode === "large" ? 0 : 1);
+    },
+    1000,
+  );
 });

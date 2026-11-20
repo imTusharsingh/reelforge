@@ -31,6 +31,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     private readonly validateKey?: () => void,
     private readonly videoState?: VideoRoutingState,
     private readonly recordOutcome?: RecordVideoOutcome,
+    private readonly frameCount = Number(!!options.firstFrame) + Number(!!options.lastFrame),
   ) {
     void _run;
     this.providerId = native.capabilities().providerId;
@@ -41,10 +42,10 @@ export class RoutedMediaVideo implements VideoGenPort {
   }
   public estimate(shot: ShotSpec): number {
     const estimate = this.native.estimate(shot);
-    const frames = Number(!!this.options.firstFrame) + Number(!!this.options.lastFrame);
     return reservationCents({
       ...estimate,
-      microUsd: estimate.microUsd + (this.providerId === "xai" ? frames * imageSurcharge() : 0),
+      microUsd:
+        estimate.microUsd + (this.providerId === "xai" ? this.frameCount * imageSurcharge() : 0),
     });
   }
   public async submit(shot: ShotSpec, key: string): Promise<{ providerJobId: string }> {
@@ -62,7 +63,7 @@ export class RoutedMediaVideo implements VideoGenPort {
         },
       },
       async (): Promise<never> => {
-        throw new ProviderFailure("NEEDS_HUMAN", false);
+        throw new ProviderFailure("NEEDS_HUMAN", true);
       },
       Date.now,
       this.videoState,
@@ -106,8 +107,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     if (!media) throw new Error("Provider receipt unavailable");
     const seconds = media.billedSeconds ?? shot.durationSeconds;
     const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
-    const images =
-      shot.references.length + Number(!!this.options.firstFrame) + Number(!!this.options.lastFrame);
+    const images = shot.references.length + this.frameCount;
     return {
       seconds,
       providerDurationSeconds: media.durationSeconds,

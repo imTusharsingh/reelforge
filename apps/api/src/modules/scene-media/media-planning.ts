@@ -16,7 +16,7 @@ import { PlanningCharacterService } from "../character/planning-character.servic
 import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
-import { json, type Context, type Run } from "../runs/runs.types.js";
+import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
@@ -40,6 +40,10 @@ export class MediaPlanning {
       brief.targetDurationSeconds > 45
     )
       throw new Error("V5 requires a narrator and a 30–45 second target");
+    const rejected = await this.access.runs.store.scoped(context).videoRunStep.findFirst({
+      where: { runId: run.id, key: { startsWith: "media:text:" }, state: "FAILED" },
+    });
+    if (rejected) throw new Error("Planning provider request was rejected");
     const saved = await this.saved(context, run, brief);
     if (saved) return saved;
     const prompts = this.access.modules.get(PlanningPromptService, { strict: false });
@@ -148,24 +152,69 @@ export class MediaPlanning {
       orderBy: { attempt: "desc" },
     });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
-    if (previous && !this.accounts.abandoned(previous))
-      throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${previous.id})`);
+    if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
     const cost = reservationCents({
       currency: "USD",
       microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
     });
     const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
-    const native = await this.ports.get(context);
-    const step = await this.accounts.begin(
+    const pending =
+      previous &&
+      !this.accounts.abandoned(previous) &&
+      !(await this.accounts.recoverUndispatched(context, previous))
+        ? previous
+        : null;
+    const step =
+      pending ??
+      (await this.accounts.begin(
+        context,
+        run,
+        key,
+        { prompt: input.prompt, promptVersion: input.promptVersion },
+        cost,
+        modelId,
+      ));
+    const result = await this.textResult(context, run, step, input, modelId, !!pending);
+    await this.validateAcceptedPlan(context, step, input.promptVersion.role, result.output);
+    const { artifact, receipt } = await this.textReceipt(
       context,
-      run,
       key,
-      { prompt: input.prompt, promptVersion: input.promptVersion },
-      cost,
+      input,
+      result,
       modelId,
+      cost,
     );
+    await this.accounts.complete(context, step, {
+      ...result,
+      receipt,
+      artifact,
+      promptVersion: input.promptVersion,
+    });
+    return result.output;
+  }
+  private async textResult(
+    context: Context,
+    run: Run,
+    step: Step,
+    input: Parameters<TextPort["generate"]>[0],
+    modelId: string,
+    replay: boolean,
+  ): Promise<{ output: unknown; providerJobId: string; usage: Record<string, unknown> }> {
+    if (replay) {
+      const saved = z
+        .object({
+          output: input.schema,
+          providerJobId: z.string().min(1),
+          usage: z.record(z.string(), z.unknown()),
+        })
+        .safeParse(step.output);
+      if (!saved.success)
+        throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
+      return saved.data;
+    }
+    const native = await this.ports.get(context);
     await this.accounts.prepare(context, run, step, modelId);
-    const result = await this.accounts.dispatch(context, step, () =>
+    return this.accounts.dispatchText(context, step, () =>
       native.text.complete(
         {
           prompt: input.prompt,
@@ -175,26 +224,28 @@ export class MediaPlanning {
         step.idempotencyKey,
       ),
     );
-    this.validatePlan(input.promptVersion.role, result.output);
-    const { artifact, receipt } = await this.textReceipt(
-      context,
-      key,
-      input,
-      result,
-      modelId,
-      cost,
-    );
-    await db.videoRunStep.updateMany({
-      where: { id: step.id },
-      data: { providerJobId: result.providerJobId },
-    });
-    await this.accounts.complete(context, step, {
-      ...result,
-      receipt,
-      artifact,
-      promptVersion: input.promptVersion,
-    });
-    return result.output;
+  }
+
+  private async validateAcceptedPlan(
+    context: Context,
+    step: Step,
+    role: string,
+    output: unknown,
+  ): Promise<void> {
+    try {
+      this.validatePlan(role, output);
+    } catch (error) {
+      const accepted = await this.access.runs.store
+        .scoped(context)
+        .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      const event = await this.access.paid.finalizeJobFailure(
+        context,
+        accepted,
+        "PROVIDER_INVALID",
+      );
+      await this.access.runs.events?.publish(event);
+      throw error;
+    }
   }
   private validatePlan(role: string, output: unknown): void {
     if (role === "director") {

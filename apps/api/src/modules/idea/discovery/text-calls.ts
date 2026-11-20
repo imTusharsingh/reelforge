@@ -55,13 +55,16 @@ export class DiscoveryTextCalls {
         correlationId,
         capability,
         dispatched,
-        actualCost: null,
-        metadata: { dispatched, costKnown: false },
+        actualCost: dispatched ? null : 0,
+        metadata: { dispatched, costKnown: !dispatched },
         latencyMs: Date.now() - started,
         prompt: spec.prompt,
         error,
       });
-      await this.budget.finishPaidCall(reservation, { dispatched, actualCost: null });
+      await this.budget.finishPaidCall(reservation, {
+        dispatched,
+        actualCost: dispatched ? null : 0,
+      });
       throw error;
     }
   }

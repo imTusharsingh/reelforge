@@ -15,13 +15,19 @@ export class RunsBoundary {
       channelId: run.channelId,
     });
     if (!decision.stopped) return;
-    const result = await this.runs.store.mutate(context, run.id, "emergency_stop", async (db) => {
-      await db.videoRun.updateMany({
-        where: { id: run.id },
-        data: { pauseReason: "EMERGENCY_STOP" },
-      });
-      return { value: null, payload: { reason: "EMERGENCY_STOP" } };
-    });
+    const result = await this.runs.store.mutate(
+      context,
+      run.id,
+      "emergency_stop",
+      async (db, current) => {
+        if (!current.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+          await db.videoRun.updateMany({
+            where: { id: run.id },
+            data: { pauseReason: "EMERGENCY_STOP" },
+          });
+        return { value: null, payload: { reason: "EMERGENCY_STOP" } };
+      },
+    );
     await this.runs.events?.publish(result.event);
     throw new ConflictException({ code: "EMERGENCY_STOP", message: "Run halted at step boundary" });
   }

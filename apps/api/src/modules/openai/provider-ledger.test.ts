@@ -66,6 +66,7 @@ describe("M18 to M08 exact cost path", () => {
     expect(await ledger.submit(port, shot, shot.id, null)).toEqual({ providerJobId: "job" });
     expect(budgets.reservePaidCall).toHaveBeenCalledWith(
       expect.objectContaining({ estimate: 0.56, correlationId: shot.id }),
+      undefined,
     );
     expect(db.providerRequest.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ estimatedCost: "0.556032", errorCode: "PENDING" }),

@@ -26,7 +26,7 @@ import { pinPlanningShots } from "./planning-shots.js";
 import { withSessionLock } from "../runs/session-lock.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
 
-const receiptKey = "planning:manifest:v1";
+import { PLANNING_MANIFEST_KEY as receiptKey } from "../runs/run-outcomes.js";
 const resultSchema = z.object({
   script: PlanningScriptSchema,
   manifest: z.object({

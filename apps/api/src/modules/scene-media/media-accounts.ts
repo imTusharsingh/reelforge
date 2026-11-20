@@ -1,3 +1,6 @@
+import { ProviderFailure } from "@reelforge/ai-providers";
+import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
+import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   BudgetExhaustedError,
@@ -28,6 +31,8 @@ export class MediaAccounts {
           where: { runId: run.id, key },
           orderBy: { attempt: "desc" },
         });
+        if (previous?.state === "FAILED")
+          throw new ConflictException("Media provider request was rejected");
         if (previous && !this.abandoned(previous))
           return {
             value: previous,
@@ -81,7 +86,10 @@ export class MediaAccounts {
       throw new ConflictException(`RECONCILE_REQUIRED: media intent already claimed (${step.id})`);
   }
   public abandoned(step: Step): boolean {
-    return step.state === "CANCELLED" && this.record(step.output).closedBy === "OPERATOR_ABANDONED";
+    return (
+      step.state === "CANCELLED" &&
+      ["OPERATOR_ABANDONED", "NOT_DISPATCHED"].includes(String(this.record(step.output).closedBy))
+    );
   }
   public async dispatch<T>(
     context: Context,
@@ -91,44 +99,79 @@ export class MediaAccounts {
   ): Promise<T> {
     return this.access.paid.dispatch(context, step, call, assertLocked);
   }
-  public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
-    await this.access.paid.reserve(context, run, step, step.costMinor ?? 0);
-    await this.access.runs.store.db.providerRequest.updateMany({
-      where: { workspaceId: context.workspaceId, correlationId: step.id },
-      data: {
-        providerId: "gemini",
-        capabilityId: modelId,
-        dispatchedPrompt: "V5 media job; immutable input on VideoRunStep",
-      },
+  public async dispatchText<T extends { providerJobId: string }>(
+    context: Context,
+    step: Step,
+    call: () => Promise<T>,
+  ): Promise<T> {
+    const result = await this.dispatch(context, step, call).catch(async (error: unknown) => {
+      if (error instanceof ProviderFailure && !error.dispatched) {
+        const event = await this.access.paid.finalizeRejected(context, step, error);
+        await this.access.runs.events?.publish(event);
+      }
+      throw error;
     });
+    await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
+    return result;
+  }
+  public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
+    await this.access.runs.store.mutate(
+      context,
+      run.id,
+      "media_reserved",
+      async (db, current, tx) => {
+        this.requireDispatchable(run, current);
+        const intent = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+        if (intent.state !== "RUNNING") throw new ConflictException("Media intent changed");
+        await this.access.paid.reserve(context, run, step, step.costMinor ?? 0, tx);
+        await tx.providerRequest.updateMany({
+          where: { workspaceId: context.workspaceId, correlationId: step.id },
+          data: { providerId: "gemini", capabilityId: modelId },
+        });
+        return { value: null, payload: {}, stepId: step.id };
+      },
+    );
   }
   public async prepare(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     try {
       await this.reserve(context, run, step, modelId);
     } catch (error) {
-      const ledger = await this.reservationEvidence(context, step);
       const denied =
         error instanceof BudgetExhaustedError ||
         error instanceof BudgetUnresolvableError ||
         (error instanceof ServiceUnavailableException &&
           error.message === "Budget policy unavailable");
-      if (denied && !ledger.reservation && !ledger.request) {
-        await this.closeUndispatched(context, step);
-        throw error;
-      }
-      // A timeout, replay or partial ledger write is not proof of non-reservation.
+      if (await this.recoverUndispatched(context, step, denied)) throw error;
+      // Any persisted dispatch marker still requires reconciliation.
       await this.reconcilePending(context, step);
     }
     try {
       await this.access.boundary.check(context, await this.access.runs.store.get(context, run.id));
     } catch (error) {
       // reserve resolved successfully and submit has not been invoked.
-      await this.cancelUndispatched(context, step);
+      await this.access.paid.rollbackAdmission(context, step);
       throw error;
     }
   }
+  public async recoverUndispatched(
+    context: Context,
+    step: Step,
+    budgetDenied = false,
+  ): Promise<boolean> {
+    if (step.state !== "RUNNING" || step.providerJobId) return false;
+    await this.access.paid.rollbackAdmission(context, step, budgetDenied);
+    const current = await this.access.runs.store.scoped(context).videoRunStep.findFirstOrThrow({
+      where: { id: step.id },
+    });
+    return this.abandoned(current) || (budgetDenied && current.state === "CANCELLED");
+  }
+
   public async reconcilePending(context: Context, step: Step): Promise<never> {
-    const ledger = await this.reservationEvidence(context, step);
+    const ledger = await readAdmission(this.access.runs.store.db, context, step);
+    if (canRollback(ledger)) {
+      await this.access.paid.rollbackAdmission(context, step);
+      throw new ConflictException("Media admission changed before reconciliation");
+    }
     await this.access.runs.store.scoped(context).videoRunStep.updateMany({
       where: { id: step.id, state: "RUNNING", providerJobId: null },
       data: {
@@ -145,57 +188,18 @@ export class MediaAccounts {
       `RECONCILE_REQUIRED: media paid intent requires ledger reconciliation (${step.id})`,
     );
   }
-  private async reservationEvidence(
-    context: Context,
-    step: Step,
-  ): Promise<{
-    reservation: { id: string } | null;
-    request: { id: string } | null;
-  }> {
-    const db = this.access.runs.store.db;
-    const [reservation, request] = await Promise.all([
-      db.usageReservation.findFirst({
-        where: {
-          workspaceId: context.workspaceId,
-          idempotencyKey: `m08:${step.idempotencyKey}`,
-        },
-        select: { id: true },
-      }),
-      db.providerRequest.findFirst({
-        where: {
-          workspaceId: context.workspaceId,
-          correlationId: step.id,
-        },
-        select: { id: true },
-      }),
-    ]);
-    return { reservation, request };
-  }
-  /** A confirmed non-dispatch refunds both ledgers and closes the attempt. */
+  /** The provider explicitly rejected the submission before dispatch. */
   public async cancelUndispatched(context: Context, step: Step): Promise<void> {
-    const current = await this.access.runs.store
-      .scoped(context)
-      .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-    if (current.state === "CANCELLED") {
-      if (this.record(current.output).closedBy === "RUN_CANCELED")
-        await this.access.paid.finish(context, step, false, 0);
-      return;
-    }
-    if (current.state !== "RUNNING" || current.providerJobId)
-      throw new ConflictException("Dispatched media cannot be cancelled as unsubmitted");
-    await this.access.paid.finish(context, step, false, 0);
-    await this.closeUndispatched(context, step);
-  }
-  private async closeUndispatched(context: Context, step: Step): Promise<void> {
     const result = await this.access.runs.store.mutate(
       context,
       step.runId,
       "media_not_dispatched",
-      async (db) => {
+      async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "CANCELLED") return { value: null, payload: { replay: true } };
         if (current.providerJobId || current.state !== "RUNNING")
           throw new ConflictException("Dispatched media cannot be cancelled as unsubmitted");
+        await this.access.paid.finish(context, step, false, 0, tx);
         const closed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "RUNNING", providerJobId: null },
           data: { state: "CANCELLED", finishedAt: new Date() },
@@ -210,20 +214,21 @@ export class MediaAccounts {
               revision: budget.revision + 1,
             },
           });
+        await clearResolvedSubmissionHold(db, tx, run, step.id);
         return { value: null, payload: { refundedMinor: step.costMinor }, stepId: step.id };
       },
     );
     await this.access.runs.events?.publish(result.event);
   }
   public async complete(context: Context, step: Step, output: unknown): Promise<void> {
-    await this.access.paid.finish(context, step, true, step.costMinor ?? 0);
     const result = await this.access.runs.store.mutate(
       context,
       step.runId,
       "media_completed",
-      async (db) => {
+      async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
+        await this.access.paid.commitJob(tx, context, current, current.costMinor ?? 0);
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: step.runId } });
         if (budget)
           await db.budgetEnvelope.updateMany({
@@ -242,6 +247,7 @@ export class MediaAccounts {
             output: json({ result: output, budgetAccounted: !!budget }),
           },
         });
+        await clearResolvedSubmissionHold(db, tx, run, step.id);
         return { value: null, payload: { costMinor: step.costMinor }, stepId: step.id };
       },
     );
