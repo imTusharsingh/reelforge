@@ -18,7 +18,7 @@ export class GeminiText implements TextPort {
         input: [{ type: "text", text: spec.prompt }, ...(spec.media ?? [])],
         ...(spec.systemPrompt ? { system_instruction: spec.systemPrompt } : {}),
         ...(spec.grounding ? { tools: [{ type: "google_search" }] } : {}),
-        response_format: { type: "json", schema: spec.jsonSchema },
+        response_format: { type: "text", mime_type: "application/json", schema: spec.jsonSchema },
       },
       key,
     );
@@ -36,7 +36,7 @@ export class GeminiText implements TextPort {
         input: [{ type: "text", text: spec.prompt }, ...(spec.media ?? [])],
         ...(spec.systemPrompt ? { system_instruction: spec.systemPrompt } : {}),
         ...(spec.grounding ? { tools: [{ type: "google_search" }] } : {}),
-        response_format: { type: "json", schema: spec.jsonSchema },
+        response_format: { type: "text", mime_type: "application/json", schema: spec.jsonSchema },
       },
       key,
     );

@@ -192,6 +192,11 @@ describe("Gemini structured multimodal text", () => {
       jsonSchema: { type: "object" },
       parse: (value: unknown): unknown => value,
     };
+    const responseFormat = {
+      type: "text",
+      mime_type: "application/json",
+      schema: spec.jsonSchema,
+    };
     fetcher.mockResolvedValueOnce(json(response));
     expect(await port.complete(spec, "key")).toMatchObject({
       output: { score: 8 },
@@ -199,13 +204,19 @@ describe("Gemini structured multimodal text", () => {
     });
     expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toMatchObject({
       background: false,
+      system_instruction: spec.systemPrompt,
       tools: [{ type: "google_search" }],
+      response_format: responseFormat,
     });
     fetcher
       .mockResolvedValueOnce(json({ id: "job", status: "queued" }))
       .mockResolvedValueOnce(json({ status: "queued" }))
       .mockResolvedValueOnce(json(response));
     expect(await port.submit(spec, "key")).toEqual({ providerJobId: "job" });
+    expect(JSON.parse(String(fetcher.mock.calls[1]![1]!.body))).toMatchObject({
+      system_instruction: spec.systemPrompt,
+      response_format: responseFormat,
+    });
     expect(await port.poll("job")).toBe("queued");
     expect(await port.fetch("job", spec.parse)).toMatchObject({ output: { score: 8 } });
     fetcher.mockResolvedValueOnce(json({ status: "refused" }));

@@ -9,13 +9,25 @@ export type FailureKind =
   | "NOT_CONFIGURED"
   | "INVALID_KEY"
   | "NEEDS_HUMAN";
+interface HttpFailureDetail {
+  readonly status: number;
+  readonly message?: string;
+  readonly providerStatus?: string;
+  readonly code?: string;
+}
+
 export class ProviderFailure extends Error {
   public constructor(
     public readonly kind: FailureKind,
     public readonly dispatched: boolean,
     public readonly retryAfterMs = 0,
+    public readonly http?: HttpFailureDetail,
   ) {
-    super(`Provider ${kind.toLowerCase()}`);
+    const detail =
+      http && [http.providerStatus, http.code, http.message].filter(Boolean).join("; ");
+    super(
+      `Provider ${kind.toLowerCase()}${http ? ` (HTTP ${http.status})` : ""}${detail ? `: ${detail}` : ""}`,
+    );
   }
 }
 export function record(value: unknown): Json {
@@ -95,7 +107,7 @@ export class ProviderHttp {
         signal: controller.signal,
         redirect: "error",
       });
-      if (!response.ok) this.reject(response);
+      if (!response.ok) return await this.reject(response, idemKey);
       return await consume(response);
     } catch (error) {
       if (error instanceof ProviderFailure) throw error;
@@ -104,7 +116,47 @@ export class ProviderHttp {
       clearTimeout(timer);
     }
   }
-  private reject(response: Response): never {
+  private async errorDetail(response: Response, idemKey?: string): Promise<HttpFailureDetail> {
+    const status = response.status;
+    try {
+      const error = record(record(await response.json()).error);
+      const sanitize = (value: unknown): string | undefined => {
+        if (typeof value !== "string") return undefined;
+        let safe = value;
+        for (const secret of [this.key, idemKey]) {
+          if (secret) safe = safe.replaceAll(secret, "<redacted>");
+        }
+        // Discard appended headers, URLs and structured payloads that may echo request data.
+        return (
+          safe
+            .split(
+              /\r|\n|\{|\[|https?:\/\/|\b(?:authorization|bearer|(?:x[-_]?goog[-_]?)?api[-_ ]?key|idempotency[-_ ]?key)\b/i,
+              1,
+            )[0]
+            ?.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
+            .trim()
+            .slice(0, 240) || undefined
+        );
+      };
+      const label = (value: unknown): string | undefined => {
+        const safe = sanitize(typeof value === "number" ? String(value) : value);
+        return safe && /^[a-z0-9_-]{1,64}$/i.test(safe) ? safe : undefined;
+      };
+      const message = sanitize(error.message);
+      const providerStatus = label(error.status);
+      const code = label(error.code);
+      return {
+        status,
+        ...(message ? { message } : {}),
+        ...(providerStatus ? { providerStatus } : {}),
+        ...(code ? { code } : {}),
+      };
+    } catch {
+      return { status };
+    }
+  }
+  private async reject(response: Response, idemKey?: string): Promise<never> {
+    const detail = await this.errorDetail(response, idemKey);
     if (response.status === 429) {
       const retry = response.headers.get("retry-after");
       const seconds = Number(retry);
@@ -114,7 +166,7 @@ export class ProviderHttp {
           : Number.isFinite(seconds)
             ? seconds * 1000
             : Date.parse(retry) - Date.now();
-      throw new ProviderFailure("RATE_LIMIT", true, Math.max(1000, delay || 1000));
+      throw new ProviderFailure("RATE_LIMIT", true, Math.max(1000, delay || 1000), detail);
     }
     throw new ProviderFailure(
       response.status >= 500 || response.status === 408
@@ -123,6 +175,8 @@ export class ProviderHttp {
           ? "REFUSAL"
           : "INVALID",
       true,
+      0,
+      detail,
     );
   }
 }

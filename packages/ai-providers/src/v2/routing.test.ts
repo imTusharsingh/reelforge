@@ -213,7 +213,12 @@ describe("HTTP failure boundary", () => {
       [429, "RATE_LIMIT"],
     ] as const) {
       fetcher.mockResolvedValueOnce(json({ key: "secret" }, status, { "retry-after": "2" }));
-      await expect(http.json("interactions", {})).rejects.toMatchObject({ kind });
+      await expect(http.json("interactions", {})).rejects.toMatchObject({
+        kind,
+        http: { status },
+        message: `Provider ${kind.toLowerCase()} (HTTP ${status})`,
+        retryAfterMs: status === 429 ? 2000 : 0,
+      });
     }
     await expect(http.bytes("http://localhost/secret")).rejects.toMatchObject({
       dispatched: false,
@@ -234,5 +239,64 @@ describe("HTTP failure boundary", () => {
     });
     expect(() => record(null)).toThrow();
     expect(() => requiredString("")).toThrow();
+  });
+
+  it("keeps structured diagnostics and strips echoed credentials and payloads", async () => {
+    const key = "AIza" + "aB1".repeat(12);
+    const idem = "private-operation-id";
+    const body = { prompt: "private prompt" };
+    const fetcher = vi.fn<typeof fetch>();
+    const http = new ProviderHttp(key, "gemini", fetcher);
+    const message = "The value 'json' is not supported for 'type' at 'response_format'.";
+    fetcher.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            message: `${message} ${key} ${idem} ${JSON.stringify(body)}`,
+            status: "INVALID_ARGUMENT",
+            code: "invalid_request",
+            details: { request: body },
+          },
+        },
+        400,
+      ),
+    );
+    await expect(http.json("interactions", body, idem)).rejects.toMatchObject({
+      kind: "INVALID",
+      dispatched: true,
+      http: {
+        status: 400,
+        providerStatus: "INVALID_ARGUMENT",
+        code: "invalid_request",
+        message: `${message} <redacted> <redacted>`,
+      },
+      message: `Provider invalid (HTTP 400): INVALID_ARGUMENT; invalid_request; ${message} <redacted> <redacted>`,
+    });
+
+    fetcher.mockResolvedValueOnce(
+      json(
+        { error: { message: "Forbidden. Authorization: Bearer unknown-token", code: 403 } },
+        403,
+      ),
+    );
+    await expect(http.json("interactions")).rejects.toMatchObject({
+      kind: "REFUSAL",
+      message: "Provider refusal (HTTP 403): 403; Forbidden.",
+    });
+
+    const long = "a".repeat(300);
+    fetcher.mockResolvedValueOnce(json({ error: { message: long } }, 429));
+    await expect(http.json("interactions")).rejects.toMatchObject({
+      kind: "RATE_LIMIT",
+      retryAfterMs: 1000,
+      http: { status: 429, message: long.slice(0, 240) },
+    });
+
+    fetcher.mockResolvedValueOnce(new Response("private raw response", { status: 502 }));
+    await expect(http.json("interactions")).rejects.toMatchObject({
+      kind: "OUTAGE",
+      http: { status: 502 },
+      message: "Provider outage (HTTP 502)",
+    });
   });
 });
