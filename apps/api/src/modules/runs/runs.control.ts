@@ -66,7 +66,7 @@ export class RunsControl {
   public async cancel(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
     const result = await this.runs.store.mutate(context, id, "transition", async (db, run, tx) => {
-      if (["LEARNING", "FAILED", "CANCELED"].includes(run.state))
+      if (["PUBLISHED", "LEARNING", "FAILED", "CANCELED"].includes(run.state))
         throw new ConflictException("Run is terminal");
       const steps = await db.videoRunStep.findMany({
         where: {

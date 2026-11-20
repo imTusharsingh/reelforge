@@ -124,8 +124,12 @@ function useKeyFormState({
       await ensureCsrfToken();
       await client.saveKey(provider, secret);
       onSaved();
-    } catch {
-      setError("Key was not saved. Paste it again to retry.");
+    } catch (error) {
+      setError(
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Key was not saved. Paste it again to retry.",
+      );
     } finally {
       secret = "";
       setBusy(false);

@@ -169,11 +169,14 @@ function RunOperatorControls({
   controls,
 }: Pick<RunContentProps, "detail" | "controls">): JSX.Element {
   const { action, busy } = controls;
+  const cancelable = !["PUBLISHED", "LEARNING", "FAILED", "CANCELED"].includes(detail.run.state);
   return (
     <div className="rf-actions">
-      <Button tone="danger" disabled={busy} onClick={() => void action("cancel")}>
-        Cancel run
-      </Button>
+      {cancelable && (
+        <Button tone="danger" disabled={busy} onClick={() => void action("cancel")}>
+          Cancel run
+        </Button>
+      )}
       {(detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
         detail.run.pauseReason === "OPERATOR_ABANDONED") &&
         detail.steps

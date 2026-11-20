@@ -78,6 +78,17 @@ describe("V7 HTTP ports", () => {
     );
     await expect(client.saveKey("gemini", "fixture-secret")).rejects.not.toThrow("fixture-secret");
   });
+  it("surfaces a safe INVALID_KEY message without reading a secret-bearing body text", async () => {
+    const client = new BriefClient(workspaceId, async () =>
+      Response.json(
+        { code: "INVALID_KEY", message: "Enter a valid provider key" },
+        { status: 400 },
+      ),
+    );
+    await expect(client.saveKey("gemini", "fixture-secret")).rejects.toThrow(
+      "Enter a valid provider key",
+    );
+  });
   it("rejects malformed and cross-workspace responses", async () => {
     const value = (data: unknown): BriefClient =>
       new BriefClient(workspaceId, async () => Response.json(data));

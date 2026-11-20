@@ -38,12 +38,23 @@ export class BriefClient implements SetupPorts {
       }),
     );
     // Never surface arbitrary server response bodies: they could contain submitted secrets.
-    if (!result.ok)
+    if (!result.ok) {
+      if (result.status === 400) {
+        const payload: unknown = await result.json().catch(() => null);
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          "code" in payload &&
+          payload.code === "INVALID_KEY"
+        )
+          throw new Error("Enter a valid provider key.");
+      }
       throw new Error(
         result.status === 403
           ? "Workspace access denied."
           : "The service is unavailable. Retry when it is ready.",
       );
+    }
     return result;
   }
   private async json(path: string, method = "GET", body?: unknown): Promise<unknown> {
