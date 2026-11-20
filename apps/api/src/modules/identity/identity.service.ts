@@ -1,3 +1,4 @@
+import { lockIdentityUser } from "./identity-lock.js";
 import {
   BadRequestException,
   HttpException,
@@ -75,15 +76,28 @@ export class IdentityService {
       throw new UnauthorizedException("Invalid credentials");
     }
     const token = createSessionToken();
-    await this.db.session.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashSessionToken(token),
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
-      },
-    });
-    await this.db.authEvent.create({
-      data: { userId: user.id, eventType: "auth.login", outcome: "success" },
+    await this.db.$transaction(async (tx) => {
+      await lockIdentityUser(tx, user.id);
+      const current = await tx.user.findUnique({
+        where: { id: user.id },
+        include: { credential: true },
+      });
+      if (
+        !user.credential ||
+        current?.email !== user.email ||
+        current.credential?.passwordHash !== user.credential.passwordHash
+      )
+        throw new UnauthorizedException("Invalid credentials");
+      await tx.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashSessionToken(token),
+          expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+        },
+      });
+      await tx.authEvent.create({
+        data: { userId: user.id, eventType: "auth.login", outcome: "success" },
+      });
     });
     return { userId: user.id, token };
   }
@@ -194,14 +208,16 @@ export class IdentityService {
     if (newPassword === currentPassword) {
       throw new BadRequestException("New password must differ from the current password.");
     }
+    const previousHash = user.credential.passwordHash;
     const passwordHash = await hashPassword(newPassword);
 
     const revokedSessions = await this.db.$transaction(async (tx) => {
-      await tx.passwordCredential.upsert({
-        where: { userId: principal.userId },
-        update: { passwordHash },
-        create: { userId: principal.userId, passwordHash },
+      await lockIdentityUser(tx, principal.userId);
+      const updated = await tx.passwordCredential.updateMany({
+        where: { userId: principal.userId, passwordHash: previousHash },
+        data: { passwordHash },
       });
+      if (updated.count !== 1) throw new UnauthorizedException("Invalid credentials");
       const revoked = await tx.session.updateMany({
         where: {
           userId: principal.userId,

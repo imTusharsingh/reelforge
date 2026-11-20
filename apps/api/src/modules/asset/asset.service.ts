@@ -29,11 +29,12 @@ import {
 import {
   defaultContentFilename,
   deliverableMediaType,
-  IMMUTABLE_ASSET_CACHE_CONTROL,
-  readVerifiedStorageObject,
+  AUTHENTICATED_ASSET_CACHE_CONTROL,
+  deliveryChunkHashes,
+  readMediaBody,
   sanitizeContentFilename,
 } from "./content-delivery.js";
-import type { MediaContent } from "./content-delivery.js";
+import type { MediaContent, MediaResponseOptions } from "./content-delivery.js";
 import { STORAGE_PORT } from "./storage/storage.port.js";
 import type { StoragePort } from "./storage/storage.port.js";
 
@@ -223,6 +224,7 @@ export class AssetService {
       mediaType: validated.mediaType,
       byteSize: stored.byteSize,
       checksumSha256: stored.checksumSha256,
+      deliveryChunkHashes: deliveryChunkHashes(input.body),
       ownership: "STARTER_LIBRARY" as const,
       status: "PUBLISHED" as const,
       licenseType,
@@ -331,6 +333,7 @@ export class AssetService {
     context: WorkspaceContext,
     assetId: string,
     version: number,
+    options: MediaResponseOptions = {},
   ): Promise<MediaContent> {
     if (!isUuid(assetId)) throw new BadRequestException("assetId must be a UUID");
     if (!Number.isInteger(version) || version < 1)
@@ -350,16 +353,29 @@ export class AssetService {
       throw new ConflictException("Asset media type is not supported for delivery");
     if (asset.byteSize === null || asset.checksumSha256 === null)
       throw new ConflictException("Asset version is missing byte size or checksum");
-    const body = await readVerifiedStorageObject({
-      storage: this.storage,
-      workspaceId: context.workspaceId,
-      objectKey: asset.objectKey,
-      byteSize: asset.byteSize,
-      checksumSha256: asset.checksumSha256,
-      label: "Asset",
-    });
+    const { legacyHashes, ...media } = await readMediaBody(
+      {
+        storage: this.storage,
+        workspaceId: context.workspaceId,
+        objectKey: asset.objectKey,
+        byteSize: asset.byteSize,
+        checksumSha256: asset.checksumSha256,
+        label: "Asset",
+      },
+      options,
+      asset.deliveryChunkHashes,
+    );
+    if (legacyHashes)
+      await this.db.asset.updateMany({
+        where: {
+          id: asset.id,
+          workspaceId: context.workspaceId,
+          checksumSha256: asset.checksumSha256,
+        },
+        data: { deliveryChunkHashes: legacyHashes },
+      });
     return {
-      body,
+      ...media,
       mediaType,
       filename: sanitizeContentFilename(
         asset.filename,
@@ -367,7 +383,7 @@ export class AssetService {
       ),
       byteSize: asset.byteSize,
       checksumSha256: asset.checksumSha256,
-      cacheControl: IMMUTABLE_ASSET_CACHE_CONTROL,
+      cacheControl: AUTHENTICATED_ASSET_CACHE_CONTROL,
     };
   }
 
@@ -429,6 +445,7 @@ export class AssetService {
         status: "PUBLISHED",
         checksumSha256: stored.checksumSha256,
         byteSize: stored.byteSize,
+        deliveryChunkHashes: deliveryChunkHashes(body),
       },
     });
   }

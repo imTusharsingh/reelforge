@@ -1,3 +1,4 @@
+import { deliveryChunkHashes } from "./content-delivery.js";
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
@@ -52,6 +53,7 @@ export class PlanningReferenceAssetsService {
         filename: validated.filename,
         byteSize: validated.byteSize,
         checksumSha256: validated.checksumSha256,
+        deliveryChunkHashes: deliveryChunkHashes(image.body),
         ownership: "SYSTEM_GENERATED",
         status: "PUBLISHED",
         licenseType: "SYSTEM_GENERATED",

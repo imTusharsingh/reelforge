@@ -81,10 +81,10 @@ No other query parameter changes authorization, storage location, media type, or
 | `X-Content-Type-Options` | `nosniff` |
 | `Accept-Ranges` | `bytes` |
 | `ETag` | `"sha256-<64 hex>"` |
-| `Cache-Control` | Asset versions: `private, max-age=31536000, immutable`; render artifacts: `private, no-store`. |
+| `Cache-Control` | Asset versions: `private, no-store`; render artifacts: `private, no-store`. |
 | `Content-Range` | Present on `206` and `416` only. |
 
-Asset versions are immutable and non-expiring, so browsers may cache them privately for a year. Render artifacts can expire and their bytes can be deleted by retention, so they are never stored in a shared or persistent HTTP cache.
+Asset bytes require current workspace membership on every request. Both asset versions and render artifacts use private, no-store. Previously cached immutable responses may remain fresh until their original expiry. Deployments requiring immediate invalidation of those entries must rotate the external media URL namespace.
 
 ### Status codes
 
@@ -139,7 +139,7 @@ Recommended M25 behavior:
 
 ## Limits and known gaps
 
-- The current `StoragePort` returns a full `Buffer`; this contract verifies the whole object before serving a range. Large render memory use is bounded by the existing render size, but a future storage adapter should add server-side range reads while preserving checksum/state checks.
+- Local storage opens a consistent file handle and checks its length for HEAD. GET validates SHA-256 before delivery. Byte ranges use 256 KiB chunks with digests pinned in the database or artifact descriptor. A legacy object without digests receives a bounded full checksum scan and lazy digest backfill. Delivery rejects objects above 128 MiB and limits concurrent responses to four per API process.
 - Multi-range requests are rejected rather than multipart-encoded.
 - No transcoding, thumbnailing, watermarking, or format negotiation is performed.
 - No public/signed URL is issued.

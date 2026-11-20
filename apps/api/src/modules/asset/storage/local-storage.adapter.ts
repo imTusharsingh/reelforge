@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { sha256Hex } from "./checksum.js";
 import { StorageObjectNotFoundError } from "./storage.port.js";
-import type { StoragePort, StoragePutInput, StoragePutResult } from "./storage.port.js";
+import type {
+  StoragePort,
+  StorageReader,
+  StoragePutInput,
+  StoragePutResult,
+} from "./storage.port.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_OBJECT_KEY = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -56,6 +61,39 @@ export class LocalFilesystemStorageAdapter implements StoragePort {
       byteSize: input.body.byteLength,
       checksumSha256: sha256Hex(input.body),
     };
+  }
+
+  public async openObject(input: {
+    workspaceId: string;
+    objectKey: string;
+  }): Promise<StorageReader> {
+    const handle = await open(
+      this.resolveWorkspaceObject(input.workspaceId, input.objectKey),
+      "r",
+    ).catch((error: unknown) => {
+      if (isMissingFile(error)) throw new StorageObjectNotFoundError();
+      throw error;
+    });
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new Error("Storage object must be a regular file");
+      return {
+        byteSize: stat.size,
+        read: async (offset, length): Promise<Buffer> => {
+          const buffer = Buffer.allocUnsafe(length);
+          for (let read = 0; read < length;) {
+            const result = await handle.read(buffer, read, length - read, offset + read);
+            if (!result.bytesRead) return buffer.subarray(0, read);
+            read += result.bytesRead;
+          }
+          return buffer;
+        },
+        close: () => handle.close(),
+      };
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
   }
 
   public async getObject(input: { workspaceId: string; objectKey: string }): Promise<Buffer> {

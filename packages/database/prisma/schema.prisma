@@ -220,6 +220,8 @@ model User {
   id                         String                @id @default(uuid()) @db.Uuid
   email                      String                @unique
   displayName                String?               @map("display_name")
+  emailVerifiedAt            DateTime?             @map("email_verified_at") @db.Timestamptz(6)
+  emailChallenges            EmailChallenge[]
   createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships                WorkspaceMembership[]
@@ -343,6 +345,26 @@ model PasswordCredential {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("password_credentials")
+}
+
+enum EmailChallengePurpose {
+  RESET_PASSWORD
+  CHANGE_EMAIL
+}
+
+model EmailChallenge {
+  userId                String                @map("user_id") @db.Uuid
+  purpose               EmailChallengePurpose
+  tokenHash             String                @unique @map("token_hash")
+  sourceEmail           String                @map("source_email")
+  targetEmail           String                @map("target_email")
+  credentialFingerprint String              @map("credential_fingerprint")
+  expiresAt             DateTime              @map("expires_at") @db.Timestamptz(6)
+  issuedAt              DateTime              @map("issued_at") @db.Timestamptz(6)
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, purpose])
+  @@map("email_challenges")
 }
 
 model Session {
@@ -643,6 +665,7 @@ model Asset {
   filename             String?
   byteSize             Int?                    @map("byte_size")
   checksumSha256       String?                 @map("checksum_sha256")
+  deliveryChunkHashes  Json?                   @map("delivery_chunk_hashes")
   version              Int                     @default(1)
   rootAssetId          String                  @map("root_asset_id") @db.Uuid
   supersedesAssetId    String?                 @map("supersedes_asset_id") @db.Uuid

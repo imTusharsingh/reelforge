@@ -72,6 +72,15 @@ describe("CSRF validation", () => {
     ).toBe(true);
   });
 
+  it.each(["password-reset", "password-reset/confirm", "email-change/confirm"])(
+    "requires a pre-auth CSRF token on %s",
+    (route) => {
+      expect(runMiddleware({ method: "POST", path: `/api/v1/auth/${route}` })).toMatchObject({
+        response: { code: "CSRF_TOKEN_INVALID" },
+      });
+    },
+  );
+
   it("checks login and register before a session exists", () => {
     vi.stubEnv("WEB_APP_ORIGIN", "https://studio.example");
     const token = createCsrfToken();

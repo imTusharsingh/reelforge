@@ -180,6 +180,6 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
         Number(parsed.searchParams.get("expires")),
         parsed.searchParams.get("signature")!,
       ),
-    ).rejects.toThrow("checksum");
+    ).rejects.toThrow("integrity validation");
   });
 });

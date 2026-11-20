@@ -1,4 +1,10 @@
 import {
+  claimMediaDelivery,
+  defaultContentFilename,
+  sendMediaContent,
+  singleHeaderValue,
+} from "../asset/content-delivery.js";
+import {
   BadRequestException,
   Body,
   Controller,
@@ -142,17 +148,39 @@ export class RunsController {
     @Res() response: Response,
   ): Promise<void> {
     const context = await this.context(request, query.workspaceId);
-    const media = await this.artifacts.get(
-      context,
-      this.id(id),
-      this.id(stepId),
-      checksum,
-      Number(query.expires),
-      query.signature ?? "",
-    );
-    response.setHeader("Cache-Control", "private, no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
-    response.type(media.contentType).send(media.body);
+    const options = {
+      head: request.method === "HEAD",
+      rangeHeader: singleHeaderValue(request.headers.range),
+      ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
+    };
+    const release = claimMediaDelivery(response);
+    try {
+      const media = await this.artifacts.get(
+        context,
+        this.id(id),
+        this.id(stepId),
+        checksum,
+        Number(query.expires),
+        query.signature ?? "",
+        options,
+      );
+      sendMediaContent(
+        response,
+        {
+          ...media,
+          mediaType: media.contentType,
+          filename: defaultContentFilename(media.contentType, "run-artifact"),
+          checksumSha256: checksum,
+          cacheControl: "private, no-store",
+        },
+        options,
+      );
+      if (response.destroyed) release();
+      else response.once("close", release);
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
   private id(value: unknown): string {
     const parsed = z.uuid().safeParse(value);

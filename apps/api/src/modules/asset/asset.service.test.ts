@@ -292,7 +292,7 @@ describe("AssetService", () => {
       byteSize: png.byteLength,
       checksumSha256: sha256Hex(png),
       filename: "file.png",
-      cacheControl: "private, max-age=31536000, immutable",
+      cacheControl: "private, no-store",
     });
     expect(content.body).toEqual(png);
   });

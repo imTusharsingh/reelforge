@@ -1,8 +1,19 @@
+import {
+  deliveryChunkHashes,
+  readMediaBody,
+  type MediaResponseOptions,
+} from "../asset/content-delivery.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { z } from "zod";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
-import { ArtifactSchema, type Artifact, type Context } from "./runs.types.js";
+import {
+  ArtifactSchema,
+  RECOVERY_PRINCIPAL,
+  type Artifact,
+  type Context,
+  type Step,
+} from "./runs.types.js";
 import { RunsStore } from "./runs.store.js";
 
 @Injectable()
@@ -35,6 +46,7 @@ export class RunsArtifacts {
       objectKey,
       contentType,
       byteSize: body.length,
+      deliveryChunkHashes: deliveryChunkHashes(body),
       expiresAt,
     });
   }
@@ -51,7 +63,13 @@ export class RunsArtifacts {
     checksum: string,
     expires: number,
     signature: string,
-  ): Promise<{ body: Buffer; contentType: string }> {
+    options: MediaResponseOptions = {},
+  ): Promise<{
+    body: Buffer;
+    bodyOffset: number | undefined;
+    contentType: string;
+    byteSize: number;
+  }> {
     const path = `/api/v1/runs/${runId}/artifacts/${stepId}/${checksum}`;
     const expected = this.mac(`${context.workspaceId}:${path}:${expires}`);
     if (
@@ -70,13 +88,46 @@ export class RunsArtifacts {
     const artifact = artifacts.find((item) => item.checksumSha256 === checksum);
     if (!artifact || (artifact.expiresAt && Date.parse(artifact.expiresAt) < Date.now()))
       throw new NotFoundException("Artifact unavailable");
-    const body = await this.storage.getObject({
-      workspaceId: context.workspaceId,
-      objectKey: artifact.objectKey,
-    });
-    if (createHash("sha256").update(body).digest("hex") !== checksum)
-      throw new Error("Artifact checksum mismatch");
-    return { body, contentType: artifact.contentType };
+    const { body, bodyOffset, legacyHashes } = await readMediaBody(
+      {
+        storage: this.storage,
+        workspaceId: context.workspaceId,
+        objectKey: artifact.objectKey,
+        byteSize: artifact.byteSize,
+        checksumSha256: checksum,
+        label: "Artifact",
+      },
+      options,
+      artifact.deliveryChunkHashes,
+    );
+    if (legacyHashes && step)
+      await this.indexLegacy(context, step, artifacts, artifact, legacyHashes);
+    const { contentType, byteSize } = artifact;
+    return { body, bodyOffset, contentType, byteSize };
+  }
+  private async indexLegacy(
+    context: Context,
+    step: Step,
+    artifacts: Artifact[],
+    artifact: Artifact,
+    legacyHashes: string[],
+  ): Promise<void> {
+    const output = step.output;
+    if (output && typeof output === "object" && !Array.isArray(output)) {
+      // Only write digests derived from bytes verified against the immutable descriptor.
+      const indexer = this.store.scoped({ ...context, userId: RECOVERY_PRINCIPAL, role: "OWNER" });
+      await indexer.videoRunStep.updateMany({
+        where: { id: step.id, runId: step.runId, updatedAt: step.updatedAt },
+        data: {
+          output: {
+            ...output,
+            storageArtifacts: artifacts.map((item) =>
+              item === artifact ? { ...item, deliveryChunkHashes: legacyHashes } : item,
+            ),
+          },
+        },
+      });
+    }
   }
   public async sweep(context: Context): Promise<void> {
     const db = this.store.scoped(context);
@@ -106,7 +157,15 @@ export class RunsArtifacts {
     if (!artifacts.success) return [];
     return artifacts.data
       .filter((a) => !a.expiresAt || Date.parse(a.expiresAt) > Date.now())
-      .map((a) => ({ ...a, url: this.sign(context, runId, stepId, a) }));
+      .map((a) => ({
+        kind: a.kind,
+        checksumSha256: a.checksumSha256,
+        objectKey: a.objectKey,
+        contentType: a.contentType,
+        byteSize: a.byteSize,
+        expiresAt: a.expiresAt,
+        url: this.sign(context, runId, stepId, a),
+      }));
   }
   private mac(value: string): string {
     return createHmac("sha256", this.signingKey).update(value).digest("hex");

@@ -132,7 +132,23 @@ async function request<T>(
   return payload;
 }
 
+async function accountEmail(path: string, body: Record<string, string>): Promise<void> {
+  await ensureCsrfToken();
+  await request(
+    path,
+    { method: "POST", body: JSON.stringify(body) },
+    (payload): payload is undefined => payload === undefined,
+  );
+}
+
 export const api = {
+  requestReset: (email: string): Promise<void> => accountEmail("/auth/password-reset", { email }),
+  confirmReset: (code: string, password: string): Promise<void> =>
+    accountEmail("/auth/password-reset/confirm", { code, password }),
+  requestEmailChange: (email: string, password: string): Promise<void> =>
+    accountEmail("/auth/me/email-change", { email, password }),
+  confirmEmailChange: (code: string): Promise<void> =>
+    accountEmail("/auth/email-change/confirm", { code }),
   login: (email: string, password: string): Promise<{ userId: string }> =>
     ensureCsrfToken().then(() =>
       request(

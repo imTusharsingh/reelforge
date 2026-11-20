@@ -56,7 +56,13 @@ export function csrfMiddleware(request: Request, _response: Response, next: Next
   if (!UNSAFE_METHODS.has(request.method)) return next();
   const path = request.path.replace(/^\/api\/v1(?=\/|$)/, "");
   const session = cookieValue(request, SESSION_COOKIE);
-  const preAuth = path === "/auth/login" || path === "/auth/register";
+  const preAuth = [
+    "/auth/login",
+    "/auth/register",
+    "/auth/password-reset",
+    "/auth/password-reset/confirm",
+    "/auth/email-change/confirm",
+  ].includes(path);
   if (session === undefined && !preAuth) return next();
   try {
     validateCsrf(request);

@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountEmailForm } from "./account-email-form";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { Alert, Button, Field, Panel, StateMessage } from "./ui/primitives";
 import { ApiError, api, type AuthMe } from "../lib/api";
@@ -226,6 +227,10 @@ export function AccountScreen(): JSX.Element {
       <div className="rf-account-grid">
         <ProfilePanel />
         <PasswordPanel />
+        <Panel>
+          <h2>Change email address</h2>
+          <AccountEmailForm mode="change" />
+        </Panel>
       </div>
     </section>
   );

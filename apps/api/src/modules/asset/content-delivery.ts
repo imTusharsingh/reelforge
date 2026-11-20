@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -8,13 +9,14 @@ import type { Response } from "express";
 import { ASSET_MEDIA_TYPES } from "./asset.types.js";
 import { sha256Hex } from "./storage/checksum.js";
 import { StorageObjectNotFoundError } from "./storage/storage.port.js";
-import type { StoragePort } from "./storage/storage.port.js";
+import type { StoragePort, StorageReader } from "./storage/storage.port.js";
 
 export type MediaContent = Readonly<{
   body: Buffer;
   mediaType: string;
   filename: string;
   byteSize: number;
+  bodyOffset?: number | undefined;
   checksumSha256: string;
   cacheControl: string;
 }>;
@@ -32,13 +34,15 @@ const MEDIA_EXTENSIONS: Readonly<Record<string, string>> = {
   "audio/wav": "wav",
   "video/mp4": "mp4",
   "application/json": "json",
+  "text/plain": "txt",
+  "text/vtt": "vtt",
 };
 
 const DELIVERABLE_MEDIA_TYPES = new Set<string>([...ASSET_MEDIA_TYPES, "application/json"]);
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_FILENAME_LENGTH = 200;
 
-export const IMMUTABLE_ASSET_CACHE_CONTROL = "private, max-age=31536000, immutable";
+export const AUTHENTICATED_ASSET_CACHE_CONTROL = "private, no-store";
 
 /** Returns the normalized persisted media type only when it is safe to deliver. */
 export function deliverableMediaType(value: string): string | undefined {
@@ -142,6 +146,96 @@ export function parseRangeHeader(
   return { kind: "partial", start, end: Math.min(end, size - 1) };
 }
 
+const chunkBytes = 256 * 1024;
+const maxDeliveryBytes = 128 * 1024 * 1024;
+export function deliveryChunkHashes(body: Buffer): string[] {
+  return Array.from({ length: Math.ceil(body.byteLength / chunkBytes) }, (_, index) =>
+    sha256Hex(body.subarray(index * chunkBytes, (index + 1) * chunkBytes)),
+  );
+}
+
+type ObjectInput = Parameters<typeof readVerifiedStorageObject>[0];
+type ReadMediaResult = { body: Buffer; bodyOffset?: number; legacyHashes?: string[] };
+export async function readMediaBody(
+  input: ObjectInput,
+  options: MediaResponseOptions,
+  hashes: unknown,
+): Promise<ReadMediaResult> {
+  if (
+    !Number.isSafeInteger(input.byteSize) ||
+    input.byteSize <= 0 ||
+    input.byteSize > maxDeliveryBytes ||
+    !SHA256_PATTERN.test(input.checksumSha256)
+  )
+    throw new ConflictException("Invalid media size or checksum");
+  const range = parseRangeHeader(
+    options.rangeHeader,
+    input.byteSize,
+    `"sha256-${input.checksumSha256}"`,
+    options.ifRangeHeader,
+  );
+  if (!input.storage.openObject) return { body: await readVerifiedStorageObject(input) };
+  const reader = await input.storage.openObject(input).catch((error: unknown) => {
+    if (error instanceof StorageObjectNotFoundError)
+      throw new NotFoundException(`${input.label} content is not available`);
+    throw new ServiceUnavailableException("Media storage could not be opened", { cause: error });
+  });
+  const invalid = (): ConflictException =>
+    new ConflictException(`${input.label} content failed integrity validation`);
+  try {
+    if (reader.byteSize !== input.byteSize) throw invalid();
+    if (options.head || range.kind === "unsatisfiable") return { body: Buffer.alloc(0) };
+    return await readVerifiedChunks(input, reader, range, hashes, invalid);
+  } finally {
+    await reader.close();
+  }
+}
+
+async function readVerifiedChunks(
+  input: ObjectInput,
+  reader: StorageReader,
+  range: Exclude<RangeResult, { kind: "unsatisfiable" }>,
+  hashes: unknown,
+  invalid: () => ConflictException,
+): Promise<ReadMediaResult> {
+  const start = range.kind === "partial" ? range.start : 0;
+  const end = range.kind === "partial" ? range.end : input.byteSize - 1;
+  const chunkCount = Math.ceil(input.byteSize / chunkBytes);
+  if (
+    hashes != null &&
+    (!Array.isArray(hashes) ||
+      hashes.length !== chunkCount ||
+      hashes.some((hash: unknown) => typeof hash !== "string" || !SHA256_PATTERN.test(hash)))
+  )
+    throw invalid();
+  const legacy = !Array.isArray(hashes);
+  const whole = legacy || range.kind === "full" ? createHash("sha256") : null;
+  const output = Buffer.allocUnsafe(end - start + 1);
+  const legacyHashes: string[] = [];
+  const first = legacy ? 0 : Math.floor(start / chunkBytes);
+  const last = legacy ? chunkCount - 1 : Math.floor(end / chunkBytes);
+  for (let index = first; index <= last; index++) {
+    const offset = index * chunkBytes;
+    const length = Math.min(chunkBytes, input.byteSize - offset);
+    const bytes = await reader.read(offset, length);
+    if (bytes.byteLength !== length) throw invalid();
+    const digest = sha256Hex(bytes);
+    if (legacy) legacyHashes.push(digest);
+    else if (hashes[index] !== digest) throw invalid();
+    whole?.update(bytes);
+    const overlapStart = Math.max(start, offset);
+    const overlapEnd = Math.min(end + 1, offset + length);
+    if (overlapStart < overlapEnd)
+      bytes.copy(output, overlapStart - start, overlapStart - offset, overlapEnd - offset);
+  }
+  if (whole && whole.digest("hex") !== input.checksumSha256) throw invalid();
+  return {
+    body: output,
+    ...(range.kind === "partial" ? { bodyOffset: start } : {}),
+    ...(legacy ? { legacyHashes } : {}),
+  };
+}
+
 /** Reads and verifies stored bytes before any success response can be written. */
 export async function readVerifiedStorageObject(input: {
   storage: StoragePort;
@@ -218,7 +312,8 @@ export function sendMediaContent(
     return;
   }
   if (range.kind === "partial") {
-    const body = content.body.subarray(range.start, range.end + 1);
+    const offset = content.bodyOffset ?? 0;
+    const body = content.body.subarray(range.start - offset, range.end + 1 - offset);
     response.status(206);
     response.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${content.byteSize}`);
     response.setHeader("Content-Length", String(body.byteLength));
@@ -228,4 +323,21 @@ export function sendMediaContent(
   response.status(200);
   response.setHeader("Content-Length", String(content.byteSize));
   response.end(content.body);
+}
+
+let activeDeliveries = 0;
+export function claimMediaDelivery(response: Response): () => void {
+  if (activeDeliveries >= 4)
+    throw new ServiceUnavailableException("Media delivery is busy. Retry shortly.");
+  activeDeliveries++;
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    activeDeliveries--;
+    response.off("finish", release);
+    response.off("close", release);
+  };
+  response.once("finish", release);
+  return release;
 }
