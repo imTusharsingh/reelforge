@@ -234,7 +234,7 @@ suite("authorized media delivery HTTP contract", () => {
   it("requires a session and current workspace membership", async () => {
     if (!app) return;
     const server = app.getHttpServer();
-    const assetUrl = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content`;
+    const assetUrl = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2`;
     expect((await get(server, assetUrl)).status).toBe(401);
     expect((await get(server, assetUrl, outsiderToken)).status).toBe(403);
     expect((await get(server, assetUrl, foreignOwnerToken)).status).toBe(403);
@@ -244,7 +244,13 @@ suite("authorized media delivery HTTP contract", () => {
   it("checks current membership even with a previously issued ETag", async () => {
     if (!app || !db) return;
     const server = app.getHttpServer();
-    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content`;
+    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2`;
+    const legacy = url.replace(/-v2$/, "");
+    const retired = await get(server, legacy, viewerToken);
+    expect(retired.status).toBe(410);
+    expect(retired.headers["clear-site-data"]).toBe('"cache"');
+    expect(retired.headers["cache-control"]).toBe("private, no-store");
+    expect(retired.body).toHaveLength(0);
     const original = await get(server, url, viewerToken);
     expect(original.status).toBe(200);
     expect(original.headers["cache-control"]).toBe("private, no-store");
@@ -271,7 +277,7 @@ suite("authorized media delivery HTTP contract", () => {
     const server = app.getHttpServer();
     const v1 = await get(
       server,
-      `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content`,
+      `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2`,
       viewerToken,
     );
     expect(v1.status).toBe(200);
@@ -286,7 +292,7 @@ suite("authorized media delivery HTTP contract", () => {
 
     const v2 = await get(
       server,
-      `/workspaces/${workspaceId}/assets/${assetRootId}/versions/2/content`,
+      `/workspaces/${workspaceId}/assets/${assetRootId}/versions/2/content-v2`,
       viewerToken,
     );
     expect(v2.status).toBe(200);
@@ -296,7 +302,7 @@ suite("authorized media delivery HTTP contract", () => {
       (
         await get(
           server,
-          `/workspaces/${workspaceId}/assets/${assetRootId}/versions/9/content`,
+          `/workspaces/${workspaceId}/assets/${assetRootId}/versions/9/content-v2`,
           viewerToken,
         )
       ).status,
@@ -305,7 +311,7 @@ suite("authorized media delivery HTTP contract", () => {
       (
         await get(
           server,
-          `/workspaces/${workspaceId}/assets/${assetRootId}/versions/not-a-number/content`,
+          `/workspaces/${workspaceId}/assets/${assetRootId}/versions/not-a-number/content-v2`,
           viewerToken,
         )
       ).status,
@@ -316,7 +322,7 @@ suite("authorized media delivery HTTP contract", () => {
     if (!app) return;
     const response = await get(
       app.getHttpServer(),
-      `/workspaces/${workspaceId}/assets/${foreignAssetId}/versions/1/content`,
+      `/workspaces/${workspaceId}/assets/${foreignAssetId}/versions/1/content-v2`,
       ownerToken,
     );
     expect(response.status).toBe(404);
@@ -324,7 +330,7 @@ suite("authorized media delivery HTTP contract", () => {
 
   it("supports single ranges and rejects unsatisfiable or multiple ranges", async () => {
     if (!app) return;
-    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content`;
+    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2`;
     const server = app.getHttpServer();
     const partial = await get(server, url, viewerToken, { Range: "bytes=0-3" });
     expect(partial.status).toBe(206);
@@ -356,7 +362,7 @@ suite("authorized media delivery HTTP contract", () => {
 
   it("forces attachment downloads and supports HEAD metadata", async () => {
     if (!app) return;
-    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content`;
+    const url = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2`;
     const download = await get(app.getHttpServer(), `${url}?download=true`, viewerToken);
     expect(download.status).toBe(200);
     expect(download.headers["content-disposition"]).toContain("attachment");
@@ -374,9 +380,9 @@ suite("authorized media delivery HTTP contract", () => {
   it("rejects unknown download values before reading or resolving bytes", async () => {
     if (!app) return;
     const server = app.getHttpServer();
-    const assetUrl = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content?download=1`;
+    const assetUrl = `/workspaces/${workspaceId}/assets/${assetRootId}/versions/1/content-v2?download=1`;
     expect((await get(server, assetUrl, viewerToken)).status).toBe(400);
-    const missingAssetUrl = `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content?download=1`;
+    const missingAssetUrl = `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content-v2?download=1`;
     expect((await get(server, missingAssetUrl, viewerToken)).status).toBe(400);
   });
 
@@ -387,7 +393,7 @@ suite("authorized media delivery HTTP contract", () => {
       (
         await get(
           server,
-          `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content`,
+          `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content-v2`,
           viewerToken,
         )
       ).status,
@@ -396,7 +402,7 @@ suite("authorized media delivery HTTP contract", () => {
       (
         await get(
           server,
-          `/workspaces/${workspaceId}/assets/${corruptAssetId}/versions/1/content`,
+          `/workspaces/${workspaceId}/assets/${corruptAssetId}/versions/1/content-v2`,
           viewerToken,
         )
       ).status,

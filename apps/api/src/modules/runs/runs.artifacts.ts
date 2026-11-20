@@ -1,10 +1,17 @@
 import {
   deliveryChunkHashes,
+  maxDeliveryBytes,
   readMediaBody,
   type MediaResponseOptions,
 } from "../asset/content-delivery.js";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  PayloadTooLargeException,
+} from "@nestjs/common";
 import { z } from "zod";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import {
@@ -14,6 +21,7 @@ import {
   type Context,
   type Step,
 } from "./runs.types.js";
+import { verifyLargeLegacyArtifact, type VerifiedArtifactFile } from "./legacy-artifact.js";
 import { RunsStore } from "./runs.store.js";
 
 @Injectable()
@@ -29,18 +37,14 @@ export class RunsArtifacts {
     body: Buffer,
     contentType: string,
   ): Promise<Artifact> {
+    if (body.byteLength > maxDeliveryBytes)
+      throw new PayloadTooLargeException("Run artifact exceeds 128 MiB");
     const checksumSha256 = createHash("sha256").update(body).digest("hex");
     // Distinct retention namespaces prevent draft cleanup deleting a final with identical bytes.
     const permanent = kind === "final" || kind === "manifest";
     const expiresAt = permanent ? null : new Date(Date.now() + 14 * 86400000).toISOString();
     const objectKey = `runs/${permanent ? "permanent" : `draft/${Date.parse(expiresAt!)}`}/${checksumSha256}`;
-    await this.storage.putObject({
-      workspaceId: context.workspaceId,
-      objectKey,
-      body,
-      contentType,
-    });
-    return ArtifactSchema.parse({
+    const artifact = ArtifactSchema.parse({
       kind,
       checksumSha256,
       objectKey,
@@ -49,6 +53,13 @@ export class RunsArtifacts {
       deliveryChunkHashes: deliveryChunkHashes(body),
       expiresAt,
     });
+    await this.storage.putObject({
+      workspaceId: context.workspaceId,
+      objectKey,
+      body,
+      contentType,
+    });
+    return artifact;
   }
   public sign(context: Context, runId: string, stepId: string, artifact: Artifact): string {
     const expires = Date.now() + 5 * 60000;
@@ -69,6 +80,7 @@ export class RunsArtifacts {
     bodyOffset: number | undefined;
     contentType: string;
     byteSize: number;
+    file?: VerifiedArtifactFile;
   }> {
     const path = `/api/v1/runs/${runId}/artifacts/${stepId}/${checksum}`;
     const expected = this.mac(`${context.workspaceId}:${path}:${expires}`);
@@ -88,6 +100,7 @@ export class RunsArtifacts {
     const artifact = artifacts.find((item) => item.checksumSha256 === checksum);
     if (!artifact || (artifact.expiresAt && Date.parse(artifact.expiresAt) < Date.now()))
       throw new NotFoundException("Artifact unavailable");
+    if (artifact.byteSize > maxDeliveryBytes) return this.getHistorical(context, artifact, options);
     const { body, bodyOffset, legacyHashes } = await readMediaBody(
       {
         storage: this.storage,
@@ -104,6 +117,25 @@ export class RunsArtifacts {
       await this.indexLegacy(context, step, artifacts, artifact, legacyHashes);
     const { contentType, byteSize } = artifact;
     return { body, bodyOffset, contentType, byteSize };
+  }
+  private async getHistorical(
+    context: Context,
+    artifact: Artifact,
+    options: MediaResponseOptions,
+  ): ReturnType<RunsArtifacts["get"]> {
+    const file = await verifyLargeLegacyArtifact(
+      this.storage,
+      context.workspaceId,
+      artifact,
+      options,
+    );
+    return {
+      byteSize: artifact.byteSize,
+      contentType: artifact.contentType,
+      body: Buffer.alloc(0),
+      bodyOffset: undefined,
+      ...(file ? { file } : {}),
+    };
   }
   private async indexLegacy(
     context: Context,

@@ -38,6 +38,7 @@ export type StorageReader = {
 
 export interface StoragePort {
   openObject?(input: { workspaceId: string; objectKey: string }): Promise<StorageReader>;
+  /** Publish a complete object atomically and remove temporary bytes on failure. */
   putObject(input: StoragePutInput): Promise<StoragePutResult>;
   getObject(input: { workspaceId: string; objectKey: string }): Promise<Buffer>;
   deleteObject(input: { workspaceId: string; objectKey: string }): Promise<void>;

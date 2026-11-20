@@ -147,7 +147,7 @@ export function parseRangeHeader(
 }
 
 const chunkBytes = 256 * 1024;
-const maxDeliveryBytes = 128 * 1024 * 1024;
+export const maxDeliveryBytes = 128 * 1024 * 1024;
 export function deliveryChunkHashes(body: Buffer): string[] {
   return Array.from({ length: Math.ceil(body.byteLength / chunkBytes) }, (_, index) =>
     sha256Hex(body.subarray(index * chunkBytes, (index + 1) * chunkBytes)),
@@ -272,14 +272,14 @@ export type MediaResponseOptions = Readonly<{
   head?: boolean | undefined;
   rangeHeader?: string | undefined;
   ifRangeHeader?: string | undefined;
+  signal?: AbortSignal;
 }>;
 
-/** Writes the complete response contract, including range and cache semantics. */
-export function sendMediaContent(
+export function setMediaHeaders(
   response: Response,
-  content: MediaContent,
-  options: MediaResponseOptions = {},
-): void {
+  content: Omit<MediaContent, "body">,
+  options: MediaResponseOptions,
+): string {
   const etag = `"sha256-${content.checksumSha256}"`;
   response.setHeader("Content-Type", content.mediaType);
   response.setHeader(
@@ -290,6 +290,17 @@ export function sendMediaContent(
   response.setHeader("Accept-Ranges", "bytes");
   response.setHeader("ETag", etag);
   response.setHeader("Cache-Control", content.cacheControl);
+
+  return etag;
+}
+
+/** Writes the complete response contract, including range and cache semantics. */
+export function sendMediaContent(
+  response: Response,
+  content: MediaContent,
+  options: MediaResponseOptions = {},
+): void {
+  const etag = setMediaHeaders(response, content, options);
 
   if (options.head === true) {
     response.status(200);

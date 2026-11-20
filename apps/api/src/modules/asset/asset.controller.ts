@@ -125,7 +125,14 @@ export class AssetController {
     return this.assets.listUsage(await this.context(request, workspaceId), assetId);
   }
 
-  @Get(":assetId/versions/:version/content") public async content(
+  @Get(":assetId/versions/:version/content")
+  public retiredContent(@Res() response: Response): void {
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Clear-Site-Data", '"cache"');
+    response.status(410).end();
+  }
+
+  @Get(":assetId/versions/:version/content-v2") public async content(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Param("assetId") assetId: string,
