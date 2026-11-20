@@ -76,21 +76,41 @@ describe("V10 paid grounded text boundary", () => {
     );
   });
   it.each([
-    new ProviderFailure("REFUSAL", true),
-    new ProviderFailure("INVALID", false),
-    new Error("timeout"),
+    { error: new ProviderFailure("REFUSAL", true), dispatched: true, message: "Provider refusal" },
+    {
+      error: Object.assign(
+        new ProviderFailure("INVALID", false, 0, {
+          status: 400,
+          code: "INVALID_ARGUMENT",
+        }),
+        { message: "private email alice@example.test and key=secret" },
+      ),
+      dispatched: false,
+      message: "Provider invalid (HTTP 400, INVALID_ARGUMENT)",
+    },
+    {
+      error: Object.assign(new Error("private prompt"), { name: "other-secret" }),
+      dispatched: true,
+      message: "Provider dispatch failed",
+    },
   ])(
-    "records uncertain, refused and not-dispatched errors without vendor fallback",
-    async (error) => {
+    "persists only local diagnostics and finalizes the reservation",
+    async ({ error, dispatched, message }) => {
       vi.stubEnv("DISCOVERY_TEXT_ESTIMATE_USD", "0.02");
       const { calls, db, budget, text } = fixture();
       text.complete.mockRejectedValue(error);
-      await expect(calls.complete(context, channelId, text as never, spec, "key")).rejects.toBe(
+      await expect(calls.complete(context, channelId, text as never, spec, "tick")).rejects.toBe(
         error,
       );
-      const dispatched = !(error instanceof ProviderFailure) || error.dispatched;
-      expect(budget.finishPaidCall).toHaveBeenCalledWith(null, { dispatched, actualCost: null });
-      expect(db.providerRequest.update.mock.calls[0]?.[0].data.status).toBe("FAILED");
+      const actualCost = dispatched ? null : 0;
+      expect(budget.finishPaidCall).toHaveBeenCalledWith(null, { dispatched, actualCost });
+      expect(db.providerRequest.update.mock.calls[0]?.[0].data).toMatchObject({
+        status: "FAILED",
+        actualCost,
+        responseMetadata: { dispatched, costKnown: !dispatched },
+        errorCode: error instanceof ProviderFailure ? "PROVIDER_FAILURE" : "UNKNOWN",
+        errorMessage: message,
+      });
       expect(text.complete).toHaveBeenCalledOnce();
     },
   );

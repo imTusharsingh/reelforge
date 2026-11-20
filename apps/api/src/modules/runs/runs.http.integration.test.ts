@@ -14,24 +14,23 @@ import type { Artifact } from "./runs.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { WorkspaceRepository } from "../workspace/workspace.repository.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
-import { runsFixture, type Tenant } from "./runs.fixture.js";
+import { generateClips, generating, runsFixture, type Tenant } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
   const fixture = runsFixture();
   let t: Tenant, other: Tenant, app: INestApplication;
-  let artifact: Artifact, artifactStepId: string;
+  let artifact: Artifact, artifactStepId: string, artifactRunId: string;
   const token = randomUUID();
   afterEach(() => vi.unstubAllEnvs());
   beforeAll(async () => {
-    t = await fixture.tenant("L2", 45, null, false);
+    t = await fixture.tenant("L2", 7.5);
     other = await fixture.tenant("L2", 45, null, false);
-    // Delivery only needs a persisted artifact and its bytes. Running generation here
-    // can leave a worker transaction in flight after Vitest times out the test.
+    artifactRunId = (await t.runs.create(t.context, t.brief.id, randomUUID())).id;
     artifact = await t.artifacts.put(t.context, "clips", Buffer.from("fixture clip"), "video/mp4");
     const step = await t.store.scoped(t.context).videoRunStep.create({
       data: {
         workspaceId: t.context.workspaceId,
-        runId: t.run.id,
+        runId: artifactRunId,
         key: "shot-0",
         state: "SUCCEEDED",
         idempotencyKey: randomUUID(),
@@ -144,7 +143,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     ).rejects.toThrow();
   });
   it("serves checksum-addressed signed artifacts with tenant and expiry checks", async () => {
-    const url = t.artifacts.sign(t.context, t.run.id, artifactStepId, artifact);
+    const url = t.artifacts.sign(t.context, artifactRunId, artifactStepId, artifact);
     await request(app.getHttpServer() as never)
       .get(url)
       .set("Authorization", `Bearer ${token}`)
@@ -157,27 +156,39 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .timeout(3000)
       .expect(403);
     const parsed = new URL(url, "http://fixture.invalid");
-    await expect(
-      t.artifacts.get(
-        t.context,
-        t.run.id,
-        artifactStepId,
-        artifact.checksumSha256,
-        0,
-        parsed.searchParams.get("signature")!,
-      ),
-    ).rejects.toThrow();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now - 6 * 60_000);
+    let expiredUrl: string;
+    try {
+      expiredUrl = t.artifacts.sign(t.context, artifactRunId, artifactStepId, artifact);
+    } finally {
+      clock.mockRestore();
+    }
+    const expired = new URL(expiredUrl, "http://fixture.invalid");
+    expect(Number(expired.searchParams.get("expires"))).toBe(now - 60_000);
+    await request(app.getHttpServer() as never)
+      .get(expiredUrl)
+      .set("Authorization", `Bearer ${token}`)
+      .timeout(3000)
+      .expect(403);
+
+    const otherUrl = new URL(
+      t.artifacts.sign(other.context, artifactRunId, artifactStepId, artifact),
+      "http://fixture.invalid",
+    );
     await expect(
       t.artifacts.get(
         other.context,
-        t.run.id,
+        artifactRunId,
         artifactStepId,
         artifact.checksumSha256,
-        Number(parsed.searchParams.get("expires")),
-        parsed.searchParams.get("signature")!,
+        Number(otherUrl.searchParams.get("expires")),
+        otherUrl.searchParams.get("signature")!,
       ),
-    ).rejects.toThrow();
-    expect(t.artifacts.views(t.context, t.run.id, artifactStepId, [{ bad: true }])).toEqual([]);
+    ).rejects.toThrow("Run not found");
+    expect(t.artifacts.views(t.context, artifactRunId, artifactStepId, [{ bad: true }])).toEqual(
+      [],
+    );
     await t.storage.putObject({
       workspaceId: t.context.workspaceId,
       objectKey: artifact.objectKey,
@@ -187,7 +198,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     await expect(
       t.artifacts.get(
         t.context,
-        t.run.id,
+        artifactRunId,
         artifactStepId,
         artifact.checksumSha256,
         Number(parsed.searchParams.get("expires")),
@@ -195,4 +206,30 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       ),
     ).rejects.toThrow("integrity validation");
   });
+  it("serves the clip persisted by planning and generation over HTTP", async () => {
+    expect((await generating(t)).state).toBe("GENERATING");
+    await generateClips(t);
+    const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0", state: "SUCCEEDED" },
+    });
+    const [clip] = t.artifacts.descriptors(step.output);
+    expect(clip?.kind).toBe("clips");
+    const expected = Buffer.from(
+      JSON.stringify({ fixture: true, providerJobId: step.providerJobId }),
+    );
+    await request(app.getHttpServer() as never)
+      .get(t.artifacts.sign(t.context, t.run.id, step.id, clip!))
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => callback(null, Buffer.concat(chunks)));
+        response.on("error", callback);
+      })
+      .timeout(3000)
+      .expect("Content-Type", "video/mp4")
+      .expect(200)
+      .expect(({ body }) => expect(body).toEqual(expected));
+  }, 15000);
 });

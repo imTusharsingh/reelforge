@@ -1,9 +1,9 @@
-import { ProviderFailure } from "@reelforge/ai-providers";
+import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
-import type { Context, Run, Step } from "../runs/runs.types.js";
+import type { Context, Run, Step, Transaction } from "../runs/runs.types.js";
 
 async function dispatchOutcome<T>(
   call: () => Promise<T>,
@@ -109,6 +109,7 @@ export class RunPaidCalls {
       });
     const outcome = await admission.value;
     if (outcome.ok) return outcome.value;
+    if (outcome.error instanceof ProviderFailure && !outcome.error.dispatched) throw outcome.error;
     await this.store.db.providerRequest.updateMany({
       where: {
         workspaceId: context.workspaceId,
@@ -117,14 +118,36 @@ export class RunPaidCalls {
       },
       data: { errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN" },
     });
-    if (outcome.error instanceof ProviderFailure && outcome.error.dispatched)
-      throw new ConflictException(
-        `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`,
-        {
-          cause: outcome.error,
-        },
-      );
-    throw outcome.error;
+    throw new ConflictException(
+      `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`,
+      { cause: outcome.error },
+    );
+  }
+  public async finishRejected(
+    tx: Transaction,
+    context: Context,
+    step: Step,
+    failure: ProviderFailure,
+  ): Promise<void> {
+    const reservation = await tx.usageReservation.findFirstOrThrow({
+      where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+    });
+    await this.usage.release(context.workspaceId, reservation.id, "NOT_DISPATCHED", tx);
+    const updated = await tx.providerRequest.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: step.id,
+        errorCode: "VIDEO_RUN_DISPATCHING",
+      },
+      data: {
+        status: "FAILED",
+        actualCost: 0,
+        responseMetadata: { dispatched: false, costKnown: true },
+        errorCode: "NOT_DISPATCHED",
+        errorMessage: providerFailureMessage(failure.kind, failure.http),
+      },
+    });
+    if (updated.count !== 1) throw new ConflictException("Paid dispatch outcome changed");
   }
   public async finish(
     context: Context,

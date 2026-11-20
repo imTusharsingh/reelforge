@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProviderFailure, ProviderHttp } from "@reelforge/ai-providers";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
-import { StubVideoGenPort } from "../scene-media/media-provider.fixture.js";
-import { ProviderOutage } from "../orchestration/video-run.generation.js";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
@@ -91,7 +90,9 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       orderBy: { key: "asc" },
     });
     await t.engine.process(t.runs.job(t.context, t.run.id, steps[0]!.id));
-    vi.spyOn(t.generation.provider, "submit").mockRejectedValue(new ProviderOutage(true));
+    vi.spyOn(t.generation.provider, "submit").mockRejectedValue(
+      new ProviderFailure("OUTAGE", false),
+    );
     await t.engine.process(t.runs.job(t.context, t.run.id, steps[1]!.id));
     const budget = await t.store
       .scoped(t.context)
@@ -127,27 +128,88 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(submit).not.toHaveBeenCalled();
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toBe("EMERGENCY_STOP");
   });
-  it("reconciles an uncertain submit without another paid dispatch", async () => {
-    const t = await fixture.tenant();
-    await generating(t);
-    const step = await t.store
-      .scoped(t.context)
-      .videoRunStep.findFirstOrThrow({ where: { runId: t.run.id, key: "shot-0" } });
-    const provider = new StubVideoGenPort();
-    vi.spyOn(provider, "submit").mockRejectedValue(
-      new Error("simulated process loss after provider accepted"),
-    );
-    t.generation.provider = provider;
-    await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).rejects.toThrow();
-    await t.control.resume(t.context, t.run.id);
-    const submits = vi.spyOn(provider, "submit");
-    await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
-    expect(submits).toHaveBeenCalledTimes(1);
-    expect(
-      (await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({ where: { id: step.id } }))
-        .state,
-    ).toBe("SUCCEEDED");
-  });
+  it.each([400, 503, "network"] as const)(
+    "finalizes or reconciles submission failure %s",
+    async (status) => {
+      const t = await fixture.tenant();
+      await generating(t);
+      const db = t.store.scoped(t.context);
+      const step = await db.videoRunStep.findFirstOrThrow({
+        where: { runId: t.run.id, key: "shot-0" },
+      });
+      const fetcher = vi.fn<typeof fetch>();
+      if (status === "network") fetcher.mockRejectedValue(new Error("simulated transport failure"));
+      else
+        fetcher.mockResolvedValue(
+          new Response(
+            JSON.stringify({ error: { status: "INVALID_ARGUMENT", message: "key=private" } }),
+            { status },
+          ),
+        );
+      const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
+      const submit = vi.spyOn(t.generation.provider, "submit").mockImplementation(async () => {
+        await http.json("interactions", { prompt: "fixture" });
+        throw new Error("Unexpected successful response");
+      });
+      const job = t.runs.job(t.context, t.run.id, step.id);
+      const rejected = status === 400;
+      const message = "Provider invalid (HTTP 400, INVALID_ARGUMENT)";
+      await expect(t.engine.process(job)).rejects.toThrow(
+        rejected ? message : "RECONCILE_REQUIRED",
+      );
+      expect(await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject(
+        rejected
+          ? {
+              state: "FAILED",
+              providerJobId: null,
+              costMinor: 0,
+              error: { code: "PROVIDER_INVALID", message },
+            }
+          : { state: "RUNNING", providerJobId: null },
+      );
+      expect(await t.store.get(t.context, t.run.id)).toMatchObject(
+        rejected
+          ? { state: "FAILED", pauseReason: "PROVIDER_INVALID" }
+          : { state: "GENERATING", pauseReason: expect.stringMatching(/^RECONCILE_REQUIRED/) },
+      );
+      const ledger = await t.db.providerRequest.findFirstOrThrow({
+        where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+      });
+      expect(ledger).toMatchObject(
+        rejected
+          ? {
+              status: "FAILED",
+              errorCode: "NOT_DISPATCHED",
+              errorMessage: message,
+              responseMetadata: { dispatched: false, costKnown: true },
+            }
+          : {
+              errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN",
+              actualCost: null,
+              responseMetadata: { dispatched: true, costKnown: false },
+            },
+      );
+      if (rejected) expect(ledger.actualCost?.toString()).toBe("0");
+      const reservation = await t.db.usageReservation.findFirstOrThrow({
+        where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+      });
+      expect(reservation).toMatchObject({
+        status: rejected ? "RELEASED" : "RESERVED",
+        committedMinor: null,
+      });
+      expect(
+        await db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+      ).toMatchObject({
+        reservedMinor: rejected ? 0 : Number(reservation.amountMinor),
+        spentMinor: 0,
+      });
+      const events = await t.store.events(t.context, t.run.id, 0);
+      expect(events.some((event) => event.type === "reconcile_required")).toBe(!rejected);
+      await expect(t.engine.process(job)).resolves.toBeNull();
+      expect(submit).toHaveBeenCalledOnce();
+    },
+    15000,
+  );
   it("holds for reconciliation after a dispatch transaction rolls back", async () => {
     const t = await fixture.tenant();
     await generating(t);

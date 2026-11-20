@@ -1,6 +1,10 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
-import type { CapabilityMetadata } from "@reelforge/ai-providers";
+import {
+  ProviderFailure,
+  providerFailureMessage,
+  type CapabilityMetadata,
+} from "@reelforge/ai-providers";
 import type { Database } from "../identity/identity.types.js";
 
 export function paidCapability(port: unknown): CapabilityMetadata | null {
@@ -76,6 +80,7 @@ export async function finishPaidLedger(
     error?: unknown;
   }>,
 ): Promise<void> {
+  const failure = input.error instanceof ProviderFailure ? input.error : undefined;
   await db.providerRequest.update({
     where: {
       workspaceId_correlationId: {
@@ -91,17 +96,12 @@ export async function finishPaidLedger(
       latencyMs: input.latencyMs,
       dispatchedPrompt: input.prompt,
       responseMetadata: input.metadata,
-      errorCode:
-        input.error === undefined
-          ? null
-          : input.error instanceof Error
-            ? input.error.name
-            : "UNKNOWN",
+      errorCode: input.error === undefined ? null : failure ? "PROVIDER_FAILURE" : "UNKNOWN",
       errorMessage:
         input.error === undefined
           ? null
-          : input.error instanceof Error
-            ? input.error.message
+          : failure
+            ? providerFailureMessage(failure.kind, failure.http)
             : "Provider dispatch failed",
     },
   });

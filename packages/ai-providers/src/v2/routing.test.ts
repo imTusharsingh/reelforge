@@ -202,7 +202,7 @@ describe("exact catalog and money", () => {
   });
 });
 describe("HTTP failure boundary", () => {
-  it("redacts errors, distinguishes status and rejects unsafe downloads", async () => {
+  it("discards error bodies, distinguishes status and rejects unsafe downloads", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
     for (const [status, kind] of [
@@ -216,7 +216,7 @@ describe("HTTP failure boundary", () => {
       await expect(http.json("interactions", {})).rejects.toMatchObject({
         kind,
         http: { status },
-        message: `Provider ${kind.toLowerCase()} (HTTP ${status})`,
+        message: `Provider ${kind.toLowerCase().replace("_", " ")} (HTTP ${status})`,
         retryAfterMs: status === 429 ? 2000 : 0,
       });
     }
@@ -241,62 +241,87 @@ describe("HTTP failure boundary", () => {
     expect(() => requiredString("")).toThrow();
   });
 
-  it("keeps structured diagnostics and strips echoed credentials and payloads", async () => {
-    const key = "AIza" + "aB1".repeat(12);
-    const idem = "private-operation-id";
-    const body = { prompt: "private prompt" };
+  it.each([
+    [400, "invalid_request", "INVALID", false],
+    [400, "INVALID_ARGUMENT", "INVALID", false],
+    [401, "UNAUTHENTICATED", "REFUSAL", false],
+    [403, "permission_denied", "REFUSAL", false],
+    [404, "NOT_FOUND", "INVALID", false],
+    [400, "unlabeled-secret", "INVALID", true],
+    [403, 403, "REFUSAL", true],
+    [408, "invalid_request", "OUTAGE", true],
+    [409, "invalid_request", "INVALID", true],
+    [429, "RESOURCE_EXHAUSTED", "RATE_LIMIT", true],
+    [503, "INVALID_ARGUMENT", "OUTAGE", true],
+  ])("classifies HTTP %i with diagnostic %s", async (status, code, kind, dispatched) => {
     const fetcher = vi.fn<typeof fetch>();
-    const http = new ProviderHttp(key, "gemini", fetcher);
-    const message = "The value 'json' is not supported for 'type' at 'response_format'.";
+    const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
     fetcher.mockResolvedValueOnce(
       json(
         {
           error: {
-            message: `${message} ${key} ${idem} ${JSON.stringify(body)}`,
-            status: "INVALID_ARGUMENT",
-            code: "invalid_request",
-            details: { request: body },
+            message: "Invalid request for alice@example.test: private prompt, key=other-secret",
+            status:
+              typeof code === "string" && code === code.toUpperCase() ? code : "another-secret",
+            code,
+            details: { code: "invalid_request" },
           },
         },
-        400,
+        status,
       ),
     );
-    await expect(http.json("interactions", body, idem)).rejects.toMatchObject({
-      kind: "INVALID",
-      dispatched: true,
-      http: {
-        status: 400,
-        providerStatus: "INVALID_ARGUMENT",
-        code: "invalid_request",
-        message: `${message} <redacted> <redacted>`,
-      },
-      message: `Provider invalid (HTTP 400): INVALID_ARGUMENT; invalid_request; ${message} <redacted> <redacted>`,
+    const allowed = typeof code === "string" && code !== "unlabeled-secret" ? code : undefined;
+    const labels = {
+      INVALID: "Provider invalid",
+      REFUSAL: "Provider refusal",
+      OUTAGE: "Provider outage",
+      RATE_LIMIT: "Provider rate limit",
+    };
+    const error: unknown = await http.json("interactions").catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ProviderFailure);
+    expect(error).toMatchObject({
+      kind,
+      dispatched,
+      message: `${labels[kind as keyof typeof labels]} (HTTP ${status}${allowed ? `, ${allowed}` : ""})`,
+      retryAfterMs: status === 429 ? 1000 : 0,
     });
-
-    fetcher.mockResolvedValueOnce(
-      json(
-        { error: { message: "Forbidden. Authorization: Bearer unknown-token", code: 403 } },
-        403,
-      ),
-    );
-    await expect(http.json("interactions")).rejects.toMatchObject({
-      kind: "REFUSAL",
-      message: "Provider refusal (HTTP 403): 403; Forbidden.",
-    });
-
-    const long = "a".repeat(300);
-    fetcher.mockResolvedValueOnce(json({ error: { message: long } }, 429));
-    await expect(http.json("interactions")).rejects.toMatchObject({
-      kind: "RATE_LIMIT",
-      retryAfterMs: 1000,
-      http: { status: 429, message: long.slice(0, 240) },
-    });
-
-    fetcher.mockResolvedValueOnce(new Response("private raw response", { status: 502 }));
-    await expect(http.json("interactions")).rejects.toMatchObject({
-      kind: "OUTAGE",
-      http: { status: 502 },
-      message: "Provider outage (HTTP 502)",
+    expect((error as ProviderFailure).http).toEqual({
+      status,
+      ...(allowed ? { code: allowed } : {}),
     });
   });
+
+  it.each(["large", "slow"])(
+    "reads only a bounded prefix of a %s error response",
+    async (mode) => {
+      const fetcher = vi.fn<typeof fetch>();
+      const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
+      const cancel = vi.fn();
+      const pull = vi.fn(() => new Promise<void>(() => undefined));
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(controller): void {
+            controller.enqueue(
+              new TextEncoder().encode(
+                '{"error":{"status":"INVALID_ARGUMENT","message":"' +
+                  (mode === "large" ? "x".repeat(8192) : ""),
+              ),
+            );
+          },
+          pull,
+          cancel,
+        },
+        { highWaterMark: 0 },
+      );
+      fetcher.mockResolvedValueOnce(new Response(body, { status: 400 }));
+      await expect(http.json("interactions")).rejects.toMatchObject({
+        dispatched: false,
+        http: { status: 400, code: "INVALID_ARGUMENT" },
+        message: "Provider invalid (HTTP 400, INVALID_ARGUMENT)",
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(pull).toHaveBeenCalledTimes(mode === "large" ? 0 : 1);
+    },
+    1000,
+  );
 });

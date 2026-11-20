@@ -69,6 +69,7 @@ export class VideoRunEngine {
               return job.stepId ? this.shot(context, run, job.stepId) : null;
             }
             if (
+              run.state === "FAILED" ||
               run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
               run.pauseReason === "OPERATOR_ABANDONED"
             )

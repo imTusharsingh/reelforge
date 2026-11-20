@@ -1,4 +1,4 @@
-import { ProviderFailure } from "@reelforge/ai-providers";
+import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
@@ -15,11 +15,6 @@ import {
   type VideoGenPort,
 } from "./video-run.handlers.js";
 
-export class ProviderOutage extends Error {
-  public constructor(public readonly notDispatched: boolean) {
-    super("Provider outage");
-  }
-}
 @Injectable()
 export class RunGeneration {
   public provider: VideoGenPort = new UnconfiguredVideoPort();
@@ -36,7 +31,7 @@ export class RunGeneration {
     const db = this.runs.store.scoped(context);
     let step = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!step) throw new ConflictException("Step not found in run");
-    if (["SUCCEEDED", "SKIPPED", "CANCELLED"].includes(step.state)) return null;
+    if (["SUCCEEDED", "SKIPPED", "CANCELLED", "FAILED"].includes(step.state)) return null;
     if (run.state === "CANCELED" && !step.providerJobId) return null;
     if (run.state !== "GENERATING" && run.state !== "CANCELED") return 12000;
     await this.boundary.check(context, run);
@@ -48,10 +43,7 @@ export class RunGeneration {
       try {
         step = await this.submit(context, run, step, ports);
       } catch (error) {
-        if (!(
-          (error instanceof ProviderOutage && error.notDispatched) ||
-          (error instanceof ProviderFailure && error.kind === "OUTAGE" && !error.dispatched)
-        ))
+        if (!(error instanceof ProviderFailure && error.kind === "OUTAGE" && !error.dispatched))
           throw error;
         const failed = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         await this.fallback.apply(context, run, failed);
@@ -115,26 +107,79 @@ export class RunGeneration {
     await this.runs.store.db.providerRequest.updateMany({
       where: { workspaceId: context.workspaceId, correlationId: step.id },
       data: {
-        providerId: (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).providerId,
-        capabilityId:
-          (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).modelId ?? "video",
+        providerId: selected.providerId,
+        capabilityId: selected.modelId ?? "video",
         dispatchedPrompt: "V5 immutable ShotSpec on VideoRunStep",
       },
     });
     const currentRun = await this.runs.store.get(context, run.id);
     if (currentRun.state !== "CANCELED") await this.boundary.check(context, currentRun);
-    const result = await this.paid.dispatch(context, step, () =>
-      withSpan(
-        "run.provider.submit",
-        () =>
-          (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).submit(
-            shot,
-            step.idempotencyKey,
-          ),
-        "CLIENT",
-      ),
-    );
+    let result: { providerJobId: string };
+    try {
+      result = await this.paid.dispatch(context, step, () =>
+        withSpan("run.provider.submit", () => selected.submit(shot, step.idempotencyKey), "CLIENT"),
+      );
+    } catch (error) {
+      if (error instanceof ProviderFailure && !error.dispatched && error.kind !== "OUTAGE")
+        await this.failRejected(context, step, amount, error);
+      throw error;
+    }
     return this.saveJob(context, run, step, result.providerJobId);
+  }
+  private async failRejected(
+    context: Context,
+    step: Step,
+    amount: number,
+    failure: ProviderFailure,
+  ): Promise<void> {
+    const reason = ["REFUSAL", "NEEDS_HUMAN"].includes(failure.kind)
+      ? "PROVIDER_REFUSED"
+      : `PROVIDER_${failure.kind}`;
+    const message = providerFailureMessage(failure.kind, failure.http);
+    const result = await this.runs.store.mutate(
+      context,
+      step.runId,
+      "step_failed",
+      async (db, run, tx) => {
+        const updated = await db.videoRunStep.updateMany({
+          where: {
+            id: step.id,
+            runId: run.id,
+            state: "RUNNING",
+            providerJobId: null,
+            costMinor: amount,
+          },
+          data: {
+            state: "FAILED",
+            costMinor: 0,
+            finishedAt: new Date(),
+            error: { code: reason, message },
+          },
+        });
+        if (updated.count !== 1) throw new ConflictException("Dispatch claim changed");
+        await this.paid.finishRejected(tx, context, step, failure);
+        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+        await db.budgetEnvelope.updateMany({
+          where: { id: budget.id },
+          data: { reservedMinor: budget.reservedMinor - amount, revision: budget.revision + 1 },
+        });
+        if (run.state === "GENERATING")
+          await db.videoRun.updateMany({
+            where: { id: run.id },
+            data: {
+              state: "FAILED",
+              pauseReason: reason,
+              ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+            },
+          });
+        return {
+          value: null,
+          payload: { reason, message, releasedMinor: amount },
+          stepId: step.id,
+        };
+      },
+    );
+    await this.runs.events?.publish(result.event);
   }
   private async claim(
     context: Context,

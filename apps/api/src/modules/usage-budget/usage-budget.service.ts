@@ -493,9 +493,10 @@ export class UsageBudgetService {
     workspaceId: string,
     reservationId: string,
     reason = "RELEASED_BY_CALLER",
+    transaction?: Prisma.TransactionClient,
   ): Promise<ReservationView> {
     const now = this.clock();
-    return this.db.$transaction(async (tx) => {
+    const release = async (tx: Prisma.TransactionClient): Promise<ReservationView> => {
       const reservation = await this.lockReservation(tx, workspaceId, reservationId);
       if (reservation.status === "RELEASED" || reservation.status === "EXPIRED")
         return this.reservationView(reservation);
@@ -509,7 +510,8 @@ export class UsageBudgetService {
         data: { status: "RELEASED", releasedAt: now, releaseReason: reason.slice(0, 200) },
       });
       return this.reservationView(updated as ReservationRecord);
-    });
+    };
+    return transaction ? release(transaction) : this.db.$transaction(release);
   }
 
   /**
