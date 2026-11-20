@@ -10,7 +10,8 @@ const key = process.env.OPENAI_API_KEY?.trim();
 if (!enabled) throw new Error("Set LIVE_AI_SMOKE=1 to run the manual OpenAI smoke.");
 if (!key) throw new Error("OPENAI_API_KEY is required for the manual OpenAI smoke.");
 
-const model = process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-4.1-mini";
+const model = process.env.OPENAI_TEXT_MODEL?.trim();
+if (!model) throw new Error("OPENAI_TEXT_MODEL must name the model to verify.");
 const response = await fetch("https://api.openai.com/v1/chat/completions", {
   method: "POST",
   headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

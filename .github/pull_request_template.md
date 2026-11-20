@@ -42,3 +42,5 @@ APPROVE the latest head after blocking findings are resolved. The integrator
 freshly revalidates both Required CI and Process Policy, authorization records and
 protected blobs immediately before an owner-authorized squash merge. See
 `docs/PROCESS_ENFORCEMENT.md` for bootstrap and unprotected-main limitations.
+
+For protected paths, obtain the independent authorization on the linked issue and replace the sample `authorizationComment` with its numeric comment ID. Follow [Process Enforcement](../docs/PROCESS_ENFORCEMENT.md).

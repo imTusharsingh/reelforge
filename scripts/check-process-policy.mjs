@@ -7,7 +7,11 @@ import { isDeepStrictEqual } from "node:util";
 const SELF = fileURLToPath(import.meta.url);
 export const LIMITS = Object.freeze({ bytes: 262144, nodes: 20000, depth: 40, milliseconds: 3000 });
 const sha = (s) => createHash("sha256").update(s).digest("hex");
-export const metadataDigest = (metadata) => sha(JSON.stringify(metadata));
+export const metadataDigest = (metadata) => {
+  const boundMetadata = { ...metadata };
+  delete boundMetadata.authorizationComment;
+  return sha(JSON.stringify(boundMetadata));
+};
 const fail = (s) => {
   throw new Error(s);
 };
@@ -113,6 +117,7 @@ async function yamlChild() {
 
 const CI_PATH = ".github/workflows/ci.yml";
 const PROCESS_PATH = ".github/workflows/process-policy.yml";
+const RELIABILITY_PATH = ".github/workflows/full-suite-reliability.yml";
 
 function inspectCiTopology(flow, policy) {
   const mandatory = ["quality", "database", "tests", "build", "secrets"];
@@ -208,7 +213,11 @@ function inspectCiTopology(flow, policy) {
       !Array.isArray(steps) ||
       !isDeepStrictEqual(
         steps.filter((step) => Object.hasOwn(step, "run")),
-        expected.map((run) => ({ run })),
+        expected.map((run) =>
+          name === "build" && run === "pnpm build"
+            ? { run, env: { REELFORGE_API_ORIGIN: "http://127.0.0.1:3001" } }
+            : { run },
+        ),
       )
     )
       fail(`CI unconditional command topology: ${name}`);
@@ -287,7 +296,18 @@ function inspectProcessTopology(flow, policy) {
 export function inspectWorkflow(flow, policy, path) {
   if (!object(flow) || !object(flow.jobs)) fail("Workflow structure");
   if (path === CI_PATH) inspectCiTopology(flow, policy);
-  else if (
+  else if (path === RELIABILITY_PATH) {
+    if (
+      !isDeepStrictEqual(flow.on, { workflow_dispatch: null }) ||
+      !isDeepStrictEqual(flow.permissions, { contents: "read" }) ||
+      !isDeepStrictEqual(Object.keys(flow.jobs), ["repeat"]) ||
+      !isDeepStrictEqual(flow.jobs.repeat?.strategy, {
+        "fail-fast": false,
+        matrix: { mode: ["baseline", "redis", "ffmpeg"] },
+      })
+    )
+      fail("Reliability workflow must remain a read-only manual matrix");
+  } else if (
     path !== PROCESS_PATH ||
     !object(flow.on) ||
     !Object.hasOwn(flow.on, "pull_request_target")
@@ -337,6 +357,7 @@ export function inspectWorkflow(flow, policy, path) {
       "needs",
       "concurrency",
     ]);
+    if (path === RELIABILITY_PATH) jobKeys.add("strategy");
     if (Object.keys(job).some((k) => !jobKeys.has(k))) fail("Unsupported job key");
     if (
       privilegedEvent &&
@@ -651,7 +672,12 @@ export async function evaluateLive({ api, policy, number, trustedBase }) {
     if (batch.length < 100) break;
   }
   const metadata = extractRecord(pr.body, "reelforge-process-v1");
-  if (!Number.isSafeInteger(metadata.authorizationComment) || !Number.isSafeInteger(metadata.issue))
+  if (
+    !Number.isSafeInteger(metadata.authorizationComment) ||
+    metadata.authorizationComment < 1 ||
+    !Number.isSafeInteger(metadata.issue) ||
+    metadata.issue < 1
+  )
     fail("Record IDs");
   const issue = await api(`issues/${metadata.issue}`);
   const comment = await api(`issues/comments/${metadata.authorizationComment}`);

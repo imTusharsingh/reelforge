@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createRequire } from "node:module";
+import { chromium } from "@playwright/test";
+import { build } from "esbuild";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright-core");
-const esbuild = require(process.env.ESBUILD_MODULE || "esbuild");
-const output = await esbuild.build({
+const output = await build({
   entryPoints: [path.join(directory, "mounted-fixture.tsx")],
   bundle: true,
   write: false,
@@ -36,7 +34,7 @@ const server = http.createServer((request, response) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+  executablePath: process.env.CHROMIUM_PATH,
   headless: true,
 });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

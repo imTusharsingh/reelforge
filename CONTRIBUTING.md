@@ -28,3 +28,15 @@ A Husky pre-commit hook runs Prettier and ESLint `--fix` on staged files only, v
 ## Scope and review
 
 Keep changes within the assigned work package. Shared contracts, schema, migration order, and root configuration require Core Reviewer ownership. Do not claim approval or merge your own PR. Record exact command results and changed files in the assigned status report and append a dated `docs/WORK_LOG.md` entry.
+
+The optional **Full suite reliability** GitHub Actions workflow runs the entire
+offline suite three times per mode. Select it under Actions and use Run workflow.
+The modes use PostgreSQL alone, PostgreSQL with Redis, and PostgreSQL with FFmpeg.
+Each job publishes the output of all three attempts.
+
+Set `REELFORGE_API_ORIGIN` to the API's explicit HTTP(S) origin for a production
+web build. The manual text smoke also requires an explicit `OPENAI_TEXT_MODEL`.
+Account recovery can use an HTTPS email relay configured through
+`ACCOUNT_EMAIL_RELAY_URL` and `ACCOUNT_EMAIL_RELAY_TOKEN`. The relay accepts an
+authenticated JSON POST containing `to`, `purpose` and a one-time `code`. Deliver
+the code in the email body for the recipient to paste into the account form.

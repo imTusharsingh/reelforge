@@ -26,6 +26,18 @@ function run(command, args, env = process.env, capture = false) {
   });
 }
 const docker = (args, capture = false) => run("docker", args, process.env, capture);
+async function waitForService(container, command, expected) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if ((await docker(["exec", container, ...command], true)) !== expected && expected)
+        throw new Error(`${container} did not return ${expected}`);
+      break;
+    } catch (error) {
+      if (attempt === 30) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child?.kill(signal));
 try {
   await mkdir(storage, { recursive: true });
@@ -55,15 +67,8 @@ try {
   ]);
   const pgPort = (await docker(["port", containers[0], "5432/tcp"], true)).split(":").at(-1);
   const redisPort = (await docker(["port", containers[1], "6379/tcp"], true)).split(":").at(-1);
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await docker(["exec", containers[0], "pg_isready", "-U", "postgres"]);
-      break;
-    } catch (error) {
-      if (attempt === 30) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
+  await waitForService(containers[0], ["pg_isready", "-U", "postgres"]);
+  await waitForService(containers[1], ["redis-cli", "ping"], "PONG");
   const env = {
     ...process.env,
     DATABASE_URL: `postgresql://postgres:e2e-only@127.0.0.1:${pgPort}/reelforge_e2e`,
