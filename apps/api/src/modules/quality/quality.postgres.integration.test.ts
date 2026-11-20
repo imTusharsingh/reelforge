@@ -1,13 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabaseClient, Prisma } from "@reelforge/database";
-import { ProviderError } from "@reelforge/ai-providers";
 import { DEFAULT_RENDER_PROFILE } from "@reelforge/media";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
-import type { CompositionService } from "../composition/composition.service.js";
-import type { RenderManifest } from "../composition/composition.manifest.js";
 import type { RenderCompositionInput } from "../composition/composition.types.js";
-import type { QualityReviewPort } from "@reelforge/ai-providers";
 import { QualityService } from "./quality.service.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -62,47 +58,11 @@ function renderInput(renderJobId: string): RenderCompositionInput {
   };
 }
 
-function manifest(jobId: string, input: RenderCompositionInput): RenderManifest {
-  return {
-    schemaVersion: "1.0",
-    jobId,
-    title: input.title,
-    renderSeed: input.renderSeed,
-    renderProfile: input.profile,
-    sourceMediaPackage: input.sourceMediaPackage,
-    pinnedInputs: { scenes: input.scenes, audio: input.audio, coverFrames: input.coverFrames },
-    video: {
-      filename: "final.mp4",
-      mediaType: "video/mp4",
-      byteSize: 64,
-      checksumSha256: "a".repeat(64),
-      durationMs: 1000,
-    },
-    artifactOrder: ["VIDEO", "COVER", "MANIFEST"],
-    covers: [],
-  };
-}
-
 suite("QualityService PostgreSQL persistence", () => {
   const db = databaseUrl === undefined ? undefined : createDatabaseClient(databaseUrl);
   const blockedInput = renderInput(blockedRenderJobId);
   const manualInput = renderInput(manualRenderJobId);
-  const composition = {
-    getManifest: async (_context: WorkspaceContext, jobId: string): Promise<RenderManifest> =>
-      manifest(jobId, jobId === blockedRenderJobId ? blockedInput : manualInput),
-  } as unknown as CompositionService;
-  const unconfiguredPort: QualityReviewPort = {
-    review: async (request) => {
-      throw new ProviderError(
-        "NOT_CONFIGURED",
-        "No real AI quality-review adapter is configured",
-        request.correlationId,
-      );
-    },
-  };
-  const quality = db
-    ? new QualityService(db as Database, composition, unconfiguredPort)
-    : undefined;
+  const quality = db ? new QualityService(db as Database) : undefined;
 
   beforeAll(async () => {
     if (!db) return;
@@ -300,32 +260,32 @@ suite("QualityService PostgreSQL persistence", () => {
     await db.$disconnect();
   });
 
-  it("persists and decides blocked and unconfigured review runs", async () => {
+  it("can reject an existing blocked review and persists the decision", async () => {
     if (!db || !quality) throw new Error("DATABASE_URL is required for this integration suite");
-    const blocked = await quality.create(context, { renderJobId: blockedRenderJobId });
-    expect(blocked.status).toBe("BLOCKED");
-    const storedBlocked = await db.qualityReviewRun.findUniqueOrThrow({
-      where: { workspaceId_id: { workspaceId, id: blocked.id } },
+    const review = await db.qualityReviewRun.create({
+      data: {
+        workspaceId,
+        renderJobId: blockedRenderJobId,
+        renderFamilyId: blockedRenderJobId,
+        createdByUserId: userId,
+        status: "BLOCKED",
+        gateSummary: [{ id: "GENRE_POLICY", passed: false, evidence: ["Blocked topic"] }],
+        policySnapshot: { mode: "MANUAL" },
+        disclosures: [],
+        limitations: [],
+      },
     });
-    expect(storedBlocked.scorecard).toBeNull();
-    const rejected = await quality.decide(context, blocked.id, {
+    await expect(
+      quality.decide(context, review.id, { action: "APPROVE", reason: "Approve" }),
+    ).rejects.toThrow("A blocked quality run cannot be approved");
+    const result = await quality.decide(context, review.id, {
       action: "REJECT",
       reason: "Blocked topic",
     });
-    expect(rejected.status).toBe("REJECTED");
-
-    await db.genre.update({ where: { id: genreId }, data: { topicsBlocked: [] } });
-    const manual = await quality.create(context, { renderJobId: manualRenderJobId });
-    expect(manual.status).toBe("REVIEW_REQUIRED");
-    expect(manual.scorecard).toBeNull();
-    const storedManual = await db.qualityReviewRun.findUniqueOrThrow({
-      where: { workspaceId_id: { workspaceId, id: manual.id } },
-    });
-    expect(storedManual.scorecard).toBeNull();
-    const approved = await quality.decide(context, manual.id, {
-      action: "APPROVE",
-      reason: "Manual review completed; hard gates pass",
-    });
-    expect(approved.status).toBe("APPROVED");
+    expect(result.status).toBe("REJECTED");
+    expect(result.decisions).toMatchObject([{ action: "REJECT", reason: "Blocked topic" }]);
+    expect(await db.qualityDecision.count({ where: { workspaceId, reviewRunId: review.id } })).toBe(
+      1,
+    );
   });
 });

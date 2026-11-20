@@ -41,7 +41,7 @@ export const hardGateSummarySchema = z.array(
     .strict(),
 );
 
-export const qualityReviewResultSchema = z
+const qualityReviewResultSchema = z
   .object({
     criteria: z
       .object({
