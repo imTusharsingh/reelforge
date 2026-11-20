@@ -119,3 +119,11 @@ meter { width: 100%; accent-color: var(--rf-accent); }
 @media (max-width: 700px) {
   .rf-review { grid-template-columns: minmax(0,1fr); }
 }
+
+.rf-schedule { list-style: none; padding: 0; display: grid; gap: var(--rf-space-3); }
+.rf-schedule-slot { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr) auto; gap: var(--rf-space-4); align-items: start; }
+.rf-schedule-slot > * + * { margin-block-start: 0; }
+.rf-schedule-slot a { color: var(--rf-text); }
+@media (max-width: 620px) {
+  .rf-schedule-slot { grid-template-columns: 1fr; }
+}
