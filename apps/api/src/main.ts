@@ -17,6 +17,8 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: frameworkLogger,
   });
+  const trustedProxies = process.env.API_TRUSTED_PROXIES?.trim();
+  if (trustedProxies) app.set("trust proxy", trustedProxies);
   // Asset uploads use base64 JSON so no multipart dependency is required. Allow
   // the largest supported asset (25 MB default) plus JSON/base64 overhead.
   app.useBodyParser("json", { limit: "40mb" });

@@ -46,7 +46,11 @@ export function originAllowed(
 export function validateCsrf(request: Pick<Request, "headers">): void {
   const cookie = cookieValue(request, CSRF_COOKIE);
   const header = request.headers["x-csrf-token"];
-  if (!cookie || typeof header !== "string" || cookie.length !== header.length)
+  if (
+    !cookie ||
+    typeof header !== "string" ||
+    Buffer.byteLength(cookie) !== Buffer.byteLength(header)
+  )
     invalid("CSRF_TOKEN_INVALID");
   if (!timingSafeEqual(Buffer.from(cookie), Buffer.from(header))) invalid("CSRF_TOKEN_INVALID");
   if (!originAllowed(request, process.env.WEB_APP_ORIGIN)) invalid("CSRF_ORIGIN_INVALID");
@@ -54,7 +58,10 @@ export function validateCsrf(request: Pick<Request, "headers">): void {
 
 export function csrfMiddleware(request: Request, _response: Response, next: NextFunction): void {
   if (!UNSAFE_METHODS.has(request.method)) return next();
-  const path = request.path.replace(/^\/api\/v1(?=\/|$)/, "");
+  const path = request.path
+    .toLowerCase()
+    .replace(/^\/api\/v1(?=\/|$)/, "")
+    .replace(/\/$/, "");
   const session = cookieValue(request, SESSION_COOKIE);
   const preAuth = [
     "/auth/login",

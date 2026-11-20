@@ -218,6 +218,7 @@ export class IdentityService {
         data: { passwordHash },
       });
       if (updated.count !== 1) throw new UnauthorizedException("Invalid credentials");
+      await tx.emailChallenge.deleteMany({ where: { userId: principal.userId } });
       const revoked = await tx.session.updateMany({
         where: {
           userId: principal.userId,

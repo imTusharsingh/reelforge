@@ -6,6 +6,8 @@ import {
   HttpException,
   Injectable,
   Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -19,44 +21,97 @@ import {
 } from "./auth.crypto.js";
 import type { Database } from "./identity.types.js";
 
+import { AccountResetQueue } from "./account-reset-queue.js";
+import { claimEmailQuota } from "./account-email-admission.js";
+
 const invalidCode = (): BadRequestException => new BadRequestException("Invalid or expired code");
 
 @Injectable()
-export class AccountEmailService {
+export class AccountEmailService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(AccountEmailService.name);
+  private readonly queue: AccountResetQueue;
+  private timer?: ReturnType<typeof setInterval>;
+  private draining: Promise<void> | undefined;
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
     @Inject(ACCOUNT_EMAIL) private readonly mail: AccountEmailPort,
-  ) {}
+  ) {
+    this.queue = new AccountResetQueue(db);
+  }
 
-  public async requestReset(email: string): Promise<void> {
-    const user = await this.db.user.findUnique({ where: { email }, include: { credential: true } });
-    if (!user?.credential) return;
-    const code = await this.issue(
-      user.id,
-      email,
-      email,
-      user.credential.passwordHash,
-      "RESET_PASSWORD",
-    );
-    // The response and its timing are independent of the relay's result.
-    if (code)
-      void this.deliver(email, "RESET_PASSWORD", code).catch(() => {
-        this.log.warn("Password reset email delivery failed");
-      });
+  public onModuleInit(): void {
+    this.timer = setInterval(() => {
+      this.draining ??= this.processResetDelivery()
+        .then(() => undefined)
+        .catch(() => this.log.warn("Account reset queue temporarily unavailable"))
+        .finally(() => {
+          this.draining = undefined;
+        });
+    }, 1000);
+    this.timer.unref();
+  }
+
+  public async onModuleDestroy(): Promise<void> {
+    clearInterval(this.timer);
+    await this.draining;
+  }
+
+  private requireRelay(): void {
+    if (this.mail.available === false)
+      throw new ServiceUnavailableException("Account email delivery is not configured");
+  }
+
+  public async requestReset(email: string, source: string): Promise<void> {
+    this.requireRelay();
+    await this.queue.enqueue(email, source).catch((cause: unknown) => {
+      throw new ServiceUnavailableException("Account recovery queue is unavailable", { cause });
+    });
+  }
+
+  public async processResetDelivery(): Promise<void> {
+    await this.queue.purge();
+    if (this.mail.available === false) return;
+    const job = await this.queue.take();
+    if (!job) return;
+    try {
+      let code = job.code;
+      if (!code) {
+        const user = await this.db.user.findUnique({
+          where: { email: job.email },
+          include: { credential: true },
+        });
+        if (user?.credential)
+          code = await this.issue(
+            user.id,
+            job.email,
+            job.email,
+            user.credential.passwordHash,
+            "RESET_PASSWORD",
+            (tx, issued) => this.queue.saveCode(tx, job, issued),
+          );
+      }
+      if (code) {
+        const challenge = await this.db.emailChallenge.findUnique({
+          where: { tokenHash: hashSessionToken(code) },
+        });
+        if (challenge && challenge.expiresAt > new Date())
+          await this.mail.send({ to: job.email, purpose: "RESET_PASSWORD", code });
+      }
+    } catch {
+      this.log.warn("Password reset delivery attempt failed");
+      await this.queue.finish(job, true);
+      return;
+    }
+    await this.queue.finish(job, false);
   }
 
   public async requestEmailChange(userId: string, email: string, password: string): Promise<void> {
-    const windowStart = new Date(Date.now() - 15 * 60_000);
-    const failures = await this.db.authEvent.count({
-      where: {
-        userId,
-        eventType: "auth.email_change_requested",
-        outcome: "failure",
-        occurredAt: { gte: windowStart },
-      },
+    this.requireRelay();
+    const admitted = await this.db.$transaction(async (tx) => {
+      if (!(await claimEmailQuota(tx, "change:user", userId, 5, 900))) return false;
+      return claimEmailQuota(tx, "change:destination", email, 5, 900);
     });
-    if (failures >= 5) throw new HttpException("Too many attempts. Try again later.", 429);
+    if (!admitted) throw new HttpException("Too many attempts. Try again later.", 429);
     const user = await this.db.user.findUnique({
       where: { id: userId },
       include: { credential: true },
@@ -72,6 +127,8 @@ export class AccountEmailService {
       throw new UnauthorizedException("Invalid credentials");
     }
     if (user.email === email) throw new BadRequestException("Enter a different email address");
+    if (await this.db.user.findUnique({ where: { email }, select: { id: true } }))
+      throw new ConflictException("Email address is unavailable");
     const code = await this.issue(
       user.id,
       user.email,
@@ -98,6 +155,7 @@ export class AccountEmailService {
     targetEmail: string,
     passwordHash: string,
     purpose: EmailPurpose,
+    onIssued?: (tx: Prisma.TransactionClient, code: string) => Promise<void>,
   ): Promise<string | null> {
     const code = createSessionToken();
     return this.db.$transaction(async (tx) => {
@@ -125,6 +183,7 @@ export class AccountEmailService {
         create: { ...key, ...data },
         update: data,
       });
+      await onIssued?.(tx, code);
       return code;
     });
   }

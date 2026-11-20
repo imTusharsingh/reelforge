@@ -8,6 +8,7 @@ import {
   Req,
   UseGuards,
 } from "@nestjs/common";
+import type { Request } from "express";
 import { z } from "zod";
 import { AuthGuard, type AuthenticatedRequest } from "./auth.guard.js";
 import { AccountEmailService } from "./account-email.service.js";
@@ -32,8 +33,8 @@ export class AccountEmailController {
   @Post("password-reset")
   @Header("Cache-Control", "no-store")
   @HttpCode(202)
-  public async requestReset(@Body() body: unknown): Promise<void> {
-    await this.account.requestReset(input(resetRequest, body).email);
+  public async requestReset(@Req() request: Request, @Body() body: unknown): Promise<void> {
+    await this.account.requestReset(input(resetRequest, body).email, request.ip ?? "unknown");
   }
 
   @Post("password-reset/confirm")

@@ -2,6 +2,7 @@ export const ACCOUNT_EMAIL = Symbol("ACCOUNT_EMAIL");
 
 export type EmailPurpose = "RESET_PASSWORD" | "CHANGE_EMAIL";
 export interface AccountEmailPort {
+  readonly available?: boolean;
   send(input: { to: string; purpose: EmailPurpose; code: string }): Promise<void>;
 }
 
@@ -9,12 +10,13 @@ export interface AccountEmailPort {
 export function accountEmailRelay(env: NodeJS.ProcessEnv): AccountEmailPort {
   const url = env.ACCOUNT_EMAIL_RELAY_URL;
   const token = env.ACCOUNT_EMAIL_RELAY_TOKEN;
+  const endpoint = URL.parse(url ?? "");
+  const available =
+    !!token && endpoint?.protocol === "https:" && !endpoint.username && !endpoint.password;
   return {
+    available,
     async send(input): Promise<void> {
-      if (!url || !token) throw new Error("Account email relay is unavailable");
-      const endpoint = new URL(url);
-      if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password)
-        throw new Error("Account email relay requires HTTPS");
+      if (!available || !endpoint) throw new Error("Account email relay is unavailable");
       const response = await fetch(endpoint, {
         method: "POST",
         redirect: "error",

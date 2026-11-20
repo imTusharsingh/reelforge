@@ -13,6 +13,7 @@ type MockFunction = ReturnType<typeof vi.fn>;
 type TestTransaction = {
   user: { update: MockFunction };
   passwordCredential: { updateMany: MockFunction };
+  emailChallenge: { deleteMany: MockFunction };
   session: { updateMany: MockFunction };
   authEvent: { create: MockFunction };
 };
@@ -33,6 +34,7 @@ function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
       }),
     },
     passwordCredential: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    emailChallenge: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     authEvent: { create: vi.fn().mockResolvedValue({}) },
     ...(overrides.tx as Record<string, unknown> | undefined),
@@ -53,6 +55,7 @@ function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
       }),
     },
     passwordCredential: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    emailChallenge: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     $transaction: vi.fn(async (cb: (client: unknown) => Promise<unknown>) => cb(tx)),
     _tx: tx,

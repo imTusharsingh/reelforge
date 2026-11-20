@@ -2942,3 +2942,23 @@ model V9InsertLease {
   @@index([projectKey, quotaDay])
   @@map("v9_insert_leases")
 }
+
+model AccountEmailLimit {
+  key       String   @id
+  count     Int
+  expiresAt DateTime @db.Timestamptz(6)
+
+  @@index([expiresAt])
+}
+
+model AccountResetDelivery {
+  id          String   @id @db.Uuid
+  email       String
+  code        String?
+  attempt     Int      @default(0)
+  availableAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt   DateTime @db.Timestamptz(6)
+
+  @@index([availableAt])
+  @@index([expiresAt])
+}
