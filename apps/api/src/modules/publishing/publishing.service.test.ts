@@ -624,7 +624,12 @@ describe("PublishingService YouTube delivery", () => {
   it("defaults to dry-run and records completion without upload", async () => {
     vi.stubEnv("PUBLISH_DRY_RUN", undefined);
     const harness = publishHarness(0);
+    vi.mocked(harness.publishing.preflight).mockRestore();
+    harness.fixtures.socialAccounts.authenticatedClient.mockRejectedValue(
+      new ConflictException("YouTube not configured"),
+    );
     await harness.publishing.publishNow(context(), destinationId);
+    expect(harness.fixtures.socialAccounts.authenticatedClient).not.toHaveBeenCalled();
     expect(harness.fixtures.account.startVideoUpload).not.toHaveBeenCalled();
     expect(harness.fixtures.account.uploadVideoChunk).not.toHaveBeenCalled();
     expect(harness.tx.publishingDestination.update).toHaveBeenCalledWith(
@@ -634,6 +639,18 @@ describe("PublishingService YouTube delivery", () => {
     );
   });
 
+  it("blocks live publishing when YouTube is unconfigured", async () => {
+    const harness = publishHarness(0);
+    vi.mocked(harness.publishing.preflight).mockRestore();
+    harness.fixtures.socialAccounts.authenticatedClient.mockRejectedValue(
+      new ConflictException("YouTube not configured"),
+    );
+    await expect(harness.publishing.publishNow(context(), destinationId)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(harness.fixtures.account.startVideoUpload).not.toHaveBeenCalled();
+    expect(harness.fixtures.account.uploadVideoChunk).not.toHaveBeenCalled();
+  });
   it("retries session persistence before transfer and stores the URI before continuing", async () => {
     const harness = publishHarness(1);
     await harness.publishing.publishNow(context(), destinationId);

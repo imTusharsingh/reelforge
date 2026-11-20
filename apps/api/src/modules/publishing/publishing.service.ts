@@ -191,7 +191,7 @@ export class PublishingService {
           : destination.platform === "INSTAGRAM"
             ? { publishable: false, reasonCode: "INSTAGRAM_NOT_VERIFIED" as const }
             : { publishable: true, reasonCode: null };
-      if (!availability?.publishable) {
+      if (!availability?.publishable && !(dryRunEnabled() && destination.platform === "YOUTUBE")) {
         throw new UnprocessableEntityException({
           code: availability?.reasonCode ?? "PLATFORM_NOT_CONFIGURED",
           message: `Publishing to ${destination.platform} is unavailable`,
