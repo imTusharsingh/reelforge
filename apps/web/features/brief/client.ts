@@ -1,5 +1,6 @@
 import {
   ChannelBriefSchema,
+  StoredChannelBriefSchema,
   ProviderCapabilitySchema,
   type ChannelBrief,
   type ProviderCapability,
@@ -63,20 +64,21 @@ export class BriefClient implements SetupPorts {
   public async briefs(channelId: string): Promise<ChannelBrief[]> {
     const data = await this.json(`${this.root()}/channels/${encodeURIComponent(channelId)}/briefs`);
     if (!Array.isArray(data)) throw new Error("Invalid Brief response.");
-    return data.map((item) => this.ownedBrief(item, channelId));
+    return data.map((item) => this.ownedBrief(StoredChannelBriefSchema.parse(item), channelId));
   }
-  private ownedBrief(value: unknown, channelId: string): ChannelBrief {
-    const brief = ChannelBriefSchema.parse(value);
+  private ownedBrief(brief: ChannelBrief, channelId: string): ChannelBrief {
     if (brief.workspaceId !== this.workspaceId || brief.channelId !== channelId)
       throw new Error("Invalid Brief scope.");
     return brief;
   }
   public async save(channelId: string, input: BriefInput): Promise<ChannelBrief> {
     return this.ownedBrief(
-      await this.json(
-        `${this.root()}/channels/${encodeURIComponent(channelId)}/briefs`,
-        "POST",
-        BriefInputSchema.parse(input),
+      ChannelBriefSchema.parse(
+        await this.json(
+          `${this.root()}/channels/${encodeURIComponent(channelId)}/briefs`,
+          "POST",
+          BriefInputSchema.parse(input),
+        ),
       ),
       channelId,
     );

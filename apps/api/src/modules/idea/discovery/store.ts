@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
-  ChannelBriefSchema,
+  StoredChannelBriefSchema,
   LearnedChangeSchema,
   LearningStateSchema,
   RankedIdeaSchema,
@@ -27,7 +27,7 @@ export class DiscoveryStore {
       orderBy: { version: "desc" },
     });
     if (!brief) throw new NotFoundException("Channel Brief not found");
-    return ChannelBriefSchema.parse(brief.document);
+    return StoredChannelBriefSchema.parse(brief.document);
   }
   public async assertChannel(context: WorkspaceContext, channelId: string): Promise<void> {
     if (!context.workspaceId || !context.userId)

@@ -10,6 +10,7 @@ import {
 import {
   BriefInputSchema,
   ChannelBriefSchema,
+  StoredChannelBriefSchema,
   autonomyPolicy,
   type ChannelBrief,
 } from "@reelforge/contracts";
@@ -30,7 +31,7 @@ export class BriefService {
       where: { channelId },
       orderBy: { version: "desc" },
     });
-    return rows.map((row) => ChannelBriefSchema.parse(row.document));
+    return rows.map((row) => StoredChannelBriefSchema.parse(row.document));
   }
 
   public async create(
@@ -58,7 +59,7 @@ export class BriefService {
       id: randomUUID(),
       workspaceId: context.workspaceId,
       channelId,
-      schemaVersion: "1.0",
+      schemaVersion: "1.1",
       version: (latest?.version ?? 0) + 1,
     });
     // The unique workspace/channel/version index rejects concurrent stale appends.
@@ -69,6 +70,7 @@ export class BriefService {
           workspaceId: context.workspaceId,
           channelId,
           version: document.version,
+          schemaVersion: document.schemaVersion,
           document,
         },
       });

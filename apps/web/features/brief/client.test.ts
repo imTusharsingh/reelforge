@@ -24,6 +24,18 @@ describe("V7 HTTP ports", () => {
     stub.approved = 10;
     expect(await client.eligibility(channelId)).toBe(true);
   });
+  it("reads historical inconsistent Briefs and enforces consistency when saving", async () => {
+    const legacy = { ...brief, narrationLanguage: "French", formatKey: "story" };
+    const current = { ...brief, schemaVersion: "1.1" };
+    const client = new BriefClient(workspaceId, async (_url, options) =>
+      Response.json(options?.method === "POST" ? current : [current, legacy]),
+    );
+    expect(await client.briefs(channelId)).toEqual([current, legacy]);
+    expect(await client.save(channelId, input())).toEqual(current);
+    await expect(
+      client.save(channelId, { ...input(), narrationLanguage: legacy.narrationLanguage }),
+    ).rejects.toThrow();
+  });
   it("binds the browser fetch receiver when using the default transport", async () => {
     vi.stubGlobal("fetch", function (this: unknown): Promise<Response> {
       expect(this).toBe(globalThis);

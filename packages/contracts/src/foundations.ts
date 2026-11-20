@@ -183,7 +183,15 @@ export const ChannelBriefShape = owned
     constraints: z.record(z.string(), z.json()),
   })
   .strict();
-export const ChannelBriefSchema = ChannelBriefShape.superRefine(validateBriefDuplicates);
+export const ChannelBriefSchema = ChannelBriefShape.extend({
+  schemaVersion: z.enum(["1.0", "1.1"]),
+}).superRefine(validateBriefDuplicates);
+
+// 1.0 documents written before consistency validation retain their pinned field values.
+export const StoredChannelBriefSchema = z.union([
+  ChannelBriefShape,
+  ChannelBriefSchema.refine((brief) => brief.schemaVersion === "1.1"),
+]);
 export type ChannelBrief = z.infer<typeof ChannelBriefSchema>;
 export const VideoRunSchema = owned
   .extend({

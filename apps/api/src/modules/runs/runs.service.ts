@@ -8,7 +8,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { autonomyPolicy, ChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
+import { autonomyPolicy, StoredChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
 import { RunsStore } from "./runs.store.js";
 import { json, type Context, type Run, type RunJob } from "./runs.types.js";
 import type { RunQueueHealth, RunsQueue } from "./runs.queue.js";
@@ -36,7 +36,7 @@ export class RunsService {
     if (previous) return this.replay(previous, briefId);
     const briefRow = await db.channelBrief.findFirst({ where: { id: briefId } });
     if (!briefRow) throw new NotFoundException("Brief not found");
-    const brief = ChannelBriefSchema.parse(briefRow.document);
+    const brief = StoredChannelBriefSchema.parse(briefRow.document);
     if (
       brief.id !== briefRow.id ||
       brief.workspaceId !== context.workspaceId ||

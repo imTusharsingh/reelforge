@@ -1,7 +1,7 @@
 import { RunOutputs } from "./video-run.outputs.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import {
-  ChannelBriefSchema,
+  StoredChannelBriefSchema,
   ShotSpecSchema,
   type ChannelBrief,
   type ShotSpec,
@@ -20,7 +20,7 @@ export class RunPlanning {
   ) {}
   public brief(run: Run): ChannelBrief {
     const snapshot = json(run.inputSnapshot) as Record<string, unknown>;
-    return ChannelBriefSchema.parse(snapshot.brief);
+    return StoredChannelBriefSchema.parse(snapshot.brief);
   }
   public async stage(context: Context, run: Run): Promise<Step> {
     const db = this.runs.store.scoped(context);

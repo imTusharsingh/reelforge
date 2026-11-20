@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabaseClient } from "@reelforge/database";
-import { defaultBrief } from "@reelforge/contracts";
+import { ChannelBriefSchema, defaultBrief } from "@reelforge/contracts";
+import { RunPlanning } from "../orchestration/video-run.planning.js";
+import { RunOutputs } from "../orchestration/video-run.outputs.js";
+import { RunsService } from "../runs/runs.service.js";
+import { RunsArtifacts } from "../runs/runs.artifacts.js";
+import { RunsStore } from "../runs/runs.store.js";
 import { BriefService } from "./brief.service.js";
 import { BriefApprovals } from "./brief-approvals.js";
 import { BriefController } from "./brief.controller.js";
@@ -47,6 +52,48 @@ describe.skipIf(!enabled)("V7 persisted Brief versions", () => {
       first,
     );
   });
+  it("pins previously valid inconsistent Brief fields without rewriting the snapshot", async () => {
+    const legacy = {
+      ...input,
+      id: randomUUID(),
+      channelId,
+      workspaceId,
+      version: 900,
+      schemaVersion: "1.0",
+      narrationLanguage: "French",
+      formatKey: "story",
+      narratorVoice: { providerId: "gemini", voiceId: "Kore", pace: 1, language: "German" },
+    };
+    expect(ChannelBriefSchema.safeParse(legacy).success).toBe(false);
+    await expect(
+      service.create(context, channelId, {
+        ...input,
+        narrationLanguage: legacy.narrationLanguage,
+        formatKey: legacy.formatKey,
+        narratorVoice: legacy.narratorVoice,
+      }),
+    ).rejects.toThrow();
+    await db.channelBrief.create({
+      data: { id: legacy.id, workspaceId, channelId, version: legacy.version, document: legacy },
+    });
+    expect(await service.list(context, channelId)).toContainEqual(legacy);
+
+    const store = new RunsStore(db);
+    const artifacts = new RunsArtifacts(
+      { putObject: vi.fn(), getObject: vi.fn(), deleteObject: vi.fn() },
+      store,
+    );
+    const runs = new RunsService(store, artifacts);
+    const run = await runs.create(context, legacy.id, randomUUID());
+    await db.videoRun.update({
+      where: { id: run.id },
+      data: { state: "SHOT_PLANNING", inputSnapshot: { brief: legacy, actorId: context.userId } },
+    });
+    const inFlight = await store.get(context, run.id);
+    expect(inFlight.inputSnapshot).toMatchObject({ brief: legacy });
+    expect(new RunPlanning(runs, new RunOutputs(artifacts, store)).brief(inFlight)).toEqual(legacy);
+  });
+
   it("rejects foreign reads, writes, eligibility, viewers and forged identity", async () => {
     const other = { ...context, workspaceId: foreign };
     await expect(service.list(other, channelId)).rejects.toThrow("Channel not found");
