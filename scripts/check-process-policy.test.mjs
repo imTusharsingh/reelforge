@@ -784,17 +784,22 @@ test("authorization can be posted before the PR links its comment ID", () => {
   assert.notEqual(metadataDigest({ ...metadata, workstream: "B" }), digest);
 });
 
-test("the reliability matrix is manual and read-only", async () => {
-  const path = ".github/workflows/full-suite-reliability.yml";
-  const content = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
-  const flow = await inspectYaml(content);
-  assert.equal(inspectWorkflow(flow, policy, path), true);
-  flow.on.pull_request_target = {};
-  assert.throws(
-    () => inspectWorkflow(flow, policy, path),
-    /Unsupported reliability workflow topology/,
-  );
-});
+for (const source of [
+  "./fixtures/full-suite-reliability.txt",
+  "../.github/workflows/full-suite-reliability.yml",
+]) {
+  test(`the reliability matrix is manual and read-only (${source})`, async () => {
+    const path = ".github/workflows/full-suite-reliability.yml";
+    const content = await readFile(new URL(source, import.meta.url), "utf8");
+    const flow = await inspectYaml(content);
+    assert.equal(inspectWorkflow(flow, policy, path), true);
+    flow.on.pull_request_target = {};
+    assert.throws(
+      () => inspectWorkflow(flow, policy, path),
+      /Unsupported reliability workflow topology/,
+    );
+  });
+}
 
 test("CI build accepts the established and reviewed loopback configurations", () => {
   const flow = structuredClone(submittedCi);
