@@ -57,7 +57,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
         <>
           <Panel>
             <h2>
-              <Badge tone={statusTone(post.status)}>{post.status}</Badge>{" "}
+              <Badge tone={statusTone(post.status)}>{post.dryRun ? "Dry run" : post.status}</Badge>{" "}
               {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "Unscheduled draft"}
             </h2>
             <p>

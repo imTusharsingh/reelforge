@@ -52,6 +52,7 @@ export type PublishingDestinationView = Readonly<{
 }>;
 
 export type ScheduledPostView = Readonly<{
+  dryRun?: boolean;
   id: string;
   channelId: string;
   renderJobId: string;

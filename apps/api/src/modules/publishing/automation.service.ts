@@ -88,7 +88,11 @@ export class PublishingAutomation {
     let slot: AutoSlot | null = null;
     try {
       slot = await this.prepare(context, id);
-      if (!slot.scheduledPostId || slot.status === "COMPLETE" || slot.status === "NEEDS_HUMAN")
+      if (
+        !slot.scheduledPostId ||
+        ["COMPLETE", "DRY_RUN"].includes(slot.status) ||
+        slot.status === "NEEDS_HUMAN"
+      )
         return;
       const post = await this.publishing.getScheduledPost(context, slot.scheduledPostId);
       const destination = post.destinations[0];
@@ -102,12 +106,24 @@ export class PublishingAutomation {
       const published = result.destinations[0]?.status === "PUBLISHED";
       await this.db.v9PublishSlot.updateMany({
         where: { workspaceId: context.workspaceId, id: slot.id },
-        data: { status: published ? "COMPLETE" : "WAITING", lastError: null },
+        data: {
+          status: published ? (result.dryRun ? "DRY_RUN" : "COMPLETE") : "WAITING",
+          lastError: null,
+        },
       });
       if (published) {
         const run = await this.runs.get(context, id);
         if (run.state === "SCHEDULED")
-          await this.runs.transition(context, id, run.revision, "PUBLISHED");
+          if (result.dryRun) {
+            await this.runs.mutate(context, id, "publish_dry_run", async (db, current) => {
+              if (current.state !== "SCHEDULED") throw new ConflictException("Run changed");
+              await db.videoRun.updateMany({
+                where: { id },
+                data: { state: "PUBLISHED", pauseReason: "PUBLISH_DRY_RUN" },
+              });
+              return { value: null, payload: { dryRun: true } };
+            });
+          } else await this.runs.transition(context, id, run.revision, "PUBLISHED");
       }
     } catch (error) {
       await this.failure(context, id, slot, error);

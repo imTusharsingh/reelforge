@@ -97,6 +97,11 @@ type RenderRecord = Prisma.RenderJobGetPayload<{
   include: { sceneMediaJob: true; artifacts: true };
 }>;
 
+const dryRunMarker = "PUBLISH_DRY_RUN";
+function dryRunEnabled(): boolean {
+  return process.env.PUBLISH_DRY_RUN?.trim().toLowerCase() !== "false";
+}
+
 @Injectable()
 export class PublishingService {
   public constructor(
@@ -408,12 +413,51 @@ export class PublishingService {
       ),
     );
 
+    const dryRun = dryRunEnabled() && destination.platform === "YOUTUBE";
+    gates.push(...(await this.connectionGates(context, destination, dryRun)));
+
+    const policyContext = this.policyContext(destination);
+    const scheduleCheck = await this.schedulePolicy.check(policyContext);
+    gates.push(gate("SCHEDULE", scheduleCheck.allowed, scheduleCheck.reason));
+    const budgetCheck = await this.budgetPolicy.check(policyContext);
+    gates.push(gate("BUDGET", budgetCheck.allowed, budgetCheck.reason));
+    gates.push(
+      gate(
+        "RECONCILIATION_STORAGE",
+        dryRun || this.sessionVault.isConfigured(),
+        dryRun
+          ? "Dry-run does not open a resumable upload session."
+          : this.sessionVault.isConfigured()
+            ? "Resumable upload sessions can be encrypted before persistence."
+            : "PUBLISH_SESSION_ENCRYPTION_KEY is not configured; resumable sessions cannot be persisted safely.",
+      ),
+    );
+    return {
+      scheduledPostId: post.id,
+      destinationId: destination.id,
+      canPublish: gates.every((item) => item.passed),
+      gates,
+      hardGates,
+    };
+  }
+
+  private async connectionGates(
+    context: WorkspaceContext,
+    destination: DestinationRecord,
+    dryRun: boolean,
+  ): Promise<PublishingPreflightGate[]> {
+    if (dryRun)
+      return [
+        gate("ACCOUNT", true, "Dry-run preflight skips remote account validation."),
+        gate("SCOPE", true, "Dry-run does not send an upload."),
+      ];
+    const gates: PublishingPreflightGate[] = [];
     let client: AuthenticatedPlatformClient | null = null;
     let accountEvidence = "A connected account on this channel is required.";
     try {
       client = await this.socialAccounts.authenticatedClient(context, destination.socialAccountId);
       if (
-        client.account.channelId !== post.channelId ||
+        client.account.channelId !== destination.scheduledPost.channelId ||
         client.account.platform !== destination.platform ||
         client.account.health !== "HEALTHY"
       )
@@ -456,27 +500,7 @@ export class PublishingService {
       ),
     );
 
-    const policyContext = this.policyContext(destination);
-    const scheduleCheck = await this.schedulePolicy.check(policyContext);
-    gates.push(gate("SCHEDULE", scheduleCheck.allowed, scheduleCheck.reason));
-    const budgetCheck = await this.budgetPolicy.check(policyContext);
-    gates.push(gate("BUDGET", budgetCheck.allowed, budgetCheck.reason));
-    gates.push(
-      gate(
-        "RECONCILIATION_STORAGE",
-        this.sessionVault.isConfigured(),
-        this.sessionVault.isConfigured()
-          ? "Resumable upload sessions can be encrypted before persistence."
-          : "PUBLISH_SESSION_ENCRYPTION_KEY is not configured; resumable sessions cannot be persisted safely.",
-      ),
-    );
-    return {
-      scheduledPostId: post.id,
-      destinationId: destination.id,
-      canPublish: gates.every((item) => item.passed),
-      gates,
-      hardGates,
-    };
+    return gates;
   }
 
   public async publishNow(
@@ -495,12 +519,19 @@ export class PublishingService {
     if (destination.status === "FAILED_RETRYABLE") return this.retry(context, destinationId);
     const preflight = await this.preflight(context, destinationId);
     this.requirePassingPreflight(preflight);
-    return this.startNewUpload(context, destination);
+    return dryRunEnabled()
+      ? this.completeDryRun(context, destination)
+      : this.startNewUpload(context, destination);
   }
 
   public async retry(context: WorkspaceContext, destinationId: string): Promise<ScheduledPostView> {
     this.requireEditor(context);
     const current = await this.requireDestination(context.workspaceId, destinationId);
+    if (dryRunEnabled() && current.publishJob?.attempts.length === 0) {
+      const preflight = await this.preflight(context, destinationId);
+      this.requirePassingPreflight(preflight);
+      return this.completeDryRun(context, current);
+    }
     let lastAttempt = current.publishJob?.attempts[0] ?? null;
     if (lastAttempt?.sessionCiphertext !== null && lastAttempt?.sessionCiphertext !== undefined) {
       await this.reconcile(context, destinationId);
@@ -526,6 +557,8 @@ export class PublishingService {
       throw new ConflictException("Only a retryable publish job can be retried");
     const preflight = await this.preflight(context, destinationId);
     this.requirePassingPreflight(preflight);
+    if (dryRunEnabled())
+      throw new ConflictException("Dry-run cannot continue an existing live upload");
     if (lastAttempt?.sessionCiphertext) {
       return this.resumeUpload(context, destination, lastAttempt);
     }
@@ -810,6 +843,40 @@ export class PublishingService {
         durationSeconds: renderDurationSeconds(post.renderJob.input),
       });
     });
+  }
+
+  private async completeDryRun(
+    context: WorkspaceContext,
+    destination: DestinationRecord,
+  ): Promise<ScheduledPostView> {
+    const { workspaceId } = context;
+    const job = destination.publishJob;
+    if (
+      destination.platform !== "YOUTUBE" ||
+      !job ||
+      job.attempts.length ||
+      destination.remotePostId
+    )
+      throw new ConflictException("Destination is not eligible for a dry-run");
+    await this.getVerifiedVideo(context, destination);
+    await this.db.$transaction(async (tx) => {
+      const claimed = await tx.publishJob.updateMany({
+        where: {
+          workspaceId,
+          id: job.id,
+          status: { in: ["DRAFT", "SCHEDULED", "FAILED_RETRYABLE"] },
+          retryCount: 0,
+        },
+        data: { status: "PUBLISHED", nextAttemptAt: null },
+      });
+      if (!claimed.count) throw new ConflictException("Destination was already claimed");
+      await tx.publishingDestination.update({
+        where: { workspaceId_id: { workspaceId, id: destination.id } },
+        data: { status: "PUBLISHED", lastErrorCode: dryRunMarker, lastErrorMessage: null },
+      });
+      await this.updateParentStatus(tx, workspaceId, destination.scheduledPostId);
+    });
+    return this.getScheduledPost(context, destination.scheduledPostId);
   }
 
   private async startNewUpload(
@@ -1592,6 +1659,7 @@ export class PublishingService {
       revision: post.revision,
       scheduledAt: post.scheduledAt?.toISOString() ?? null,
       status: post.status,
+      dryRun: post.destinations.some((destination) => destination.lastErrorCode === dryRunMarker),
       disclosureDecision: post.disclosureDecision,
       disclosureText: post.disclosureText,
       disclosureReason: post.disclosureReason,

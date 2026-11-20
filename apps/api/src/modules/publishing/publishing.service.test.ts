@@ -2,7 +2,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from "@nestj
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@reelforge/database";
 import { Prisma } from "@reelforge/database";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import type { CompositionService } from "../composition/composition.service.js";
 import type { QualityService } from "../quality/quality.service.js";
@@ -20,6 +20,11 @@ import {
 } from "./publishing.ports.js";
 import { PublishingService } from "./publishing.service.js";
 import { PublishingSessionVault } from "./publishing-session-vault.js";
+
+beforeEach(() => {
+  vi.stubEnv("PUBLISH_DRY_RUN", "false");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const userId = "22222222-2222-4222-8222-222222222222";
@@ -616,6 +621,19 @@ describe("PublishingService published-post export", () => {
 });
 
 describe("PublishingService YouTube delivery", () => {
+  it("defaults to dry-run and records completion without upload", async () => {
+    vi.stubEnv("PUBLISH_DRY_RUN", undefined);
+    const harness = publishHarness(0);
+    await harness.publishing.publishNow(context(), destinationId);
+    expect(harness.fixtures.account.startVideoUpload).not.toHaveBeenCalled();
+    expect(harness.fixtures.account.uploadVideoChunk).not.toHaveBeenCalled();
+    expect(harness.tx.publishingDestination.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "PUBLISHED", lastErrorCode: "PUBLISH_DRY_RUN" }),
+      }),
+    );
+  });
+
   it("retries session persistence before transfer and stores the URI before continuing", async () => {
     const harness = publishHarness(1);
     await harness.publishing.publishNow(context(), destinationId);

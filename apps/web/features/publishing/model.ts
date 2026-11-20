@@ -40,6 +40,7 @@ type Destination = {
   } | null;
 };
 export type Post = {
+  dryRun?: boolean;
   id: string;
   channelId: string;
   renderJobId: string;
@@ -191,6 +192,7 @@ export function parsePost(value: unknown, expectedId?: string): Post {
     revision: integer(row.revision, 1),
     scheduledAt: nullableTimestamp(row.scheduledAt),
     status: text(row.status),
+    dryRun: row.dryRun === true,
     disclosureDecision: oneOf(row.disclosureDecision, ["DISCLOSE", "NOT_REQUIRED"] as const),
     disclosureText: nullableText(row.disclosureText),
     disclosureReason: text(row.disclosureReason),

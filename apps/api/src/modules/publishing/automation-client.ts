@@ -23,7 +23,12 @@ export async function publishingClient(
     ...client,
     startVideoUpload: async (metadata, bytes, contentType): Promise<string> => {
       const claimed = await db.v9InsertLease.updateMany({
-        where: { workspaceId: context.workspaceId, slotId: slot.id, status: "RESERVED" },
+        where: {
+          workspaceId: context.workspaceId,
+          slotId: slot.id,
+          status: "RESERVED",
+          slot: { run: { state: "SCHEDULED", pauseReason: null } },
+        },
         data: { status: "DISPATCHED" },
       });
       if (claimed.count !== 1)
