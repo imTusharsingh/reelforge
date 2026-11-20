@@ -7,6 +7,7 @@ import {
   SocialOAuthCallbackController,
 } from "./social-accounts.controller.js";
 import { SocialAccountsService } from "./social-accounts.service.js";
+import { requireYouTubeCallbackUrl } from "./social-accounts.validation.js";
 import { TokenVault } from "./token-vault.js";
 
 @Module({
@@ -34,20 +35,8 @@ import { TokenVault } from "./token-vault.js";
       provide: "YOUTUBE_OAUTH_CALLBACK_URL",
       useFactory: (): string | undefined => {
         const callback = process.env.YOUTUBE_OAUTH_CALLBACK_URL;
-        if (process.env.YOUTUBE_OAUTH_CLIENT_ID && process.env.YOUTUBE_OAUTH_CLIENT_SECRET) {
-          const url = URL.parse(callback ?? "");
-          if (
-            !url ||
-            !["http:", "https:"].includes(url.protocol) ||
-            !/^\/api\/v1\/social-accounts\/oauth\/[yY][oO][uU][tT][uU][bB][eE]\/callback$/.test(
-              url.pathname,
-            )
-          ) {
-            throw new Error(
-              "YOUTUBE_OAUTH_CALLBACK_URL must be an HTTP(S) URL with path /api/v1/social-accounts/oauth/youtube/callback",
-            );
-          }
-        }
+        if (process.env.YOUTUBE_OAUTH_CLIENT_ID && process.env.YOUTUBE_OAUTH_CLIENT_SECRET)
+          return requireYouTubeCallbackUrl(callback);
         return callback;
       },
     },
