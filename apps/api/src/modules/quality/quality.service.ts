@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -8,19 +7,13 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from "@nestjs/common";
-import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { Prisma } from "@reelforge/database";
-import {
-  ProviderError,
-  QUALITY_REVIEW_PORT,
-  type QualityReviewPort,
-  type QualityReviewRequest,
-} from "@reelforge/ai-providers";
+import { z } from "zod";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { CompositionService } from "../composition/composition.service.js";
-import { createRenderSchema } from "../composition/composition.validation.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
+import { createRenderSchema, duration } from "../composition/composition.validation.js";
 import type { RenderCompositionInput } from "../composition/composition.types.js";
 import { validateGenrePolicy, scriptDocumentSchema } from "../script/script.validation.js";
 import type { ScriptDocument } from "../script/script.types.js";
@@ -40,20 +33,9 @@ import {
   hardGateSummarySchema,
   parseApprovalPolicy,
   QUALITY_CRITERIA,
-  qualityReviewResultSchema,
   qualityScorecardSchema,
 } from "./quality.validation.js";
 import { currentQualityReviewOrder, currentQualityReviewWhere } from "./quality.current-review.js";
-import { Optional } from "@nestjs/common";
-import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
-import {
-  createPendingPaidLedger,
-  finishPaidLedger,
-  paidCapability,
-  isPaidCallReplay,
-} from "../usage-budget/paid-call.js";
-import type { PaidCallReservation } from "../usage-budget/usage-budget.types.js";
-
 const editableRoles = new Set(["OWNER", "EDITOR"]);
 const qualityInputSchema = createRenderSchema.shape.input;
 
@@ -61,560 +43,24 @@ const qualityInputSchema = createRenderSchema.shape.input;
 export class QualityService {
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
-    private readonly composition: CompositionService,
-    @Inject(QUALITY_REVIEW_PORT) private readonly aiReview: QualityReviewPort,
-    @Optional() private readonly usage?: UsageBudgetService,
+    @Inject(CompositionService) private readonly composition?: CompositionService,
   ) {}
 
+  /** Compatibility for legacy workflows that still require a human quality decision. */
   public async create(context: WorkspaceContext, body: unknown): Promise<QualityRunView> {
     this.requireEditor(context);
-    const createRequest = parseCreateBody(body);
-    const job = await this.db.renderJob.findUnique({
-      where: {
-        workspaceId_id: { workspaceId: context.workspaceId, id: createRequest.renderJobId },
-      },
-      include: { sceneMediaJob: { include: { channel: true } } },
+    const input = z.object({ renderJobId: z.uuid() }).safeParse(body);
+    if (!input.success) throw new BadRequestException(input.error.issues);
+    const existing = await this.db.qualityReviewRun.findFirst({
+      where: currentQualityReviewWhere(context.workspaceId, input.data.renderJobId),
+      orderBy: currentQualityReviewOrder,
+      select: { id: true },
     });
-    if (!job) throw new NotFoundException("Render job not found");
-
-    const parsedInput = qualityInputSchema.safeParse(job.input);
-    const input = parsedInput.success ? parsedInput.data : null;
-    const gates: HardGateResult[] = [];
-    let manifest: RenderManifest | null = null;
-    let manifestError: string | null = null;
-    if (input) {
-      try {
-        manifest = await this.composition.getManifest(context, job.id);
-      } catch (error) {
-        if (
-          error instanceof BadRequestException ||
-          error instanceof ConflictException ||
-          error instanceof NotFoundException
-        ) {
-          manifestError = error.message;
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      manifestError = "Persisted render input does not match the M10 schema";
-    }
-
-    gates.push(
-      gate(
-        "ARTIFACT_INTEGRITY",
-        manifest !== null,
-        manifest
-          ? ["M10 verified the stored manifest, artifact set, sizes, and SHA-256 checksums"]
-          : [manifestError ?? "A validated M10 manifest is unavailable"],
-      ),
-    );
-
-    const profile = manifest?.renderProfile;
-    const aspectRatioPass =
-      profile !== undefined &&
-      profile.width === 1080 &&
-      profile.height === 1920 &&
-      profile.width * 16 === profile.height * 9;
-    gates.push(
-      gate(
-        "ASPECT_RATIO",
-        aspectRatioPass,
-        aspectRatioPass
-          ? ["M10 validated the pinned 1080x1920 (9:16) output profile"]
-          : ["Verified M10 output profile is missing or is not 9:16"],
-      ),
-    );
-
-    const expectedDurationMs = input
-      ? input.scenes.reduce((sum, scene) => sum + scene.durationMs, 0) -
-        (input.scenes.length - 1) * input.profile.transitionDurationMs
-      : null;
-    const durationPass =
-      manifest !== null &&
-      expectedDurationMs !== null &&
-      Math.abs(manifest.video.durationMs - expectedDurationMs) <= 50;
-    gates.push(
-      gate(
-        "DURATION",
-        durationPass,
-        durationPass && manifest !== null && expectedDurationMs !== null
-          ? [
-              `M10 duration ${manifest.video.durationMs}ms matches pinned duration ${expectedDurationMs}ms within 50ms`,
-            ]
-          : ["Verified M10 duration is missing or outside the pinned duration tolerance"],
-      ),
-    );
-
-    const codecPass = profile?.videoCodec === "h264" && manifest?.video.mediaType === "video/mp4";
-    gates.push(
-      gate(
-        "VIDEO_CODEC",
-        codecPass,
-        codecPass
-          ? ["M10 validated H.264 video in an MP4 artifact"]
-          : ["Verified M10 video codec or container does not match the required profile"],
-      ),
-    );
-
-    const audioPass =
-      profile?.audioCodec === "aac" &&
-      profile.audioSampleRate === 48_000 &&
-      profile.audioChannels === 2;
-    gates.push(
-      gate(
-        "AUDIO",
-        audioPass,
-        audioPass
-          ? [
-              "M10 validated AAC audio at 48kHz stereo, including a track when no source audio was pinned",
-            ]
-          : [
-              "Verified M10 audio profile is missing or does not meet the required codec/sample/channel profile",
-            ],
-      ),
-    );
-
-    const subtitlesPass =
-      input !== null &&
-      input.profile.captionSafeMarginPixels >= 24 &&
-      input.scenes.every((scene) =>
-        scene.captions.every((caption, index) => {
-          const previous = scene.captions[index - 1];
-          return (
-            caption.startMs >= 0 &&
-            caption.endMs > caption.startMs &&
-            caption.endMs <= scene.durationMs &&
-            (previous === undefined || caption.startMs >= previous.endMs)
-          );
-        }),
-      );
-    gates.push(
-      gate(
-        "SUBTITLES",
-        subtitlesPass,
-        subtitlesPass
-          ? [
-              input.scenes.some((scene) => scene.captions.length > 0)
-                ? "Pinned subtitle intervals are ordered, non-overlapping, scene-bounded, and use the M10 safe-margin profile"
-                : "No subtitle intervals were pinned; no subtitle track is required",
-            ]
-          : ["Pinned subtitle timing or safe-margin profile is invalid"],
-      ),
-    );
-
-    const scriptRevision = await this.db.scriptRevision.findUnique({
-      where: {
-        workspaceId_scriptId_revision: {
-          workspaceId: context.workspaceId,
-          scriptId: job.sceneMediaJob.scriptId,
-          revision: job.sceneMediaJob.scriptRevision,
-        },
-      },
-      include: { script: { include: { snapshot: { select: { references: true } } } } },
-    });
-    const sourceRevisionMatches =
-      input !== null &&
-      scriptRevision !== null &&
-      input.sourceMediaPackage.jobId === job.sceneMediaJob.id &&
-      input.sourceMediaPackage.scriptId === job.sceneMediaJob.scriptId &&
-      input.sourceMediaPackage.scriptRevision === job.sceneMediaJob.scriptRevision;
-    gates.push(
-      gate(
-        "SCRIPT_PROVENANCE",
-        sourceRevisionMatches,
-        sourceRevisionMatches
-          ? ["Rendered source package matches the workspace-pinned script revision"]
-          : ["Rendered source package does not match the scene-media job's script revision"],
-      ),
-    );
-    const script = scriptRevision ? parseScriptDocument(scriptRevision.document) : null;
-    const genre = script
-      ? await this.db.genre.findFirst({
-          where: { workspaceId: context.workspaceId, name: script.metadata.genre },
-          select: {
-            name: true,
-            topicsAllowed: true,
-            topicsBlocked: true,
-            safetyProfile: true,
-          },
-        })
-      : null;
-    let allowedTopics: string[] = [];
-    let blockedTopics: string[] = [];
-    const policyEvidence: string[] = [];
-    let genrePass = script !== null && genre !== null;
-    if (!script) policyEvidence.push("The exact script revision is missing or invalid");
-    if (script && !genre)
-      policyEvidence.push("The script genre is not configured in this workspace");
-    if (genre && script) {
-      const allowed = stringArray(genre.topicsAllowed);
-      const blocked = stringArray(genre.topicsBlocked);
-      if (!allowed || !blocked) {
-        genrePass = false;
-        policyEvidence.push("Genre allowed/blocked topic policy is not a string array");
-      } else {
-        allowedTopics = allowed;
-        blockedTopics = blocked;
-        const searchableText = normalizePolicyText(
-          [
-            scriptText(script),
-            input?.title ?? "",
-            ...(input?.scenes.flatMap((scene) => scene.captions.map((caption) => caption.text)) ??
-              []),
-          ].join("\n"),
-        );
-        const blockedMatch = blocked.find((term) =>
-          searchableText.includes(normalizePolicyText(term)),
-        );
-        if (blockedMatch) {
-          genrePass = false;
-          policyEvidence.push(`Script contains a configured blocked topic: ${blockedMatch}`);
-        }
-        try {
-          validateGenrePolicy(
-            script,
-            { safetyProfile: genre.safetyProfile },
-            scriptRevision?.script.snapshot.references,
-          );
-          policyEvidence.push("Factuality and approved-source requirements match the genre policy");
-        } catch (error) {
-          if (error instanceof ConflictException) {
-            genrePass = false;
-            policyEvidence.push(error.message);
-          } else {
-            throw error;
-          }
-        }
-      }
-    }
-    gates.push(
-      gate(
-        "GENRE_POLICY",
-        genrePass,
-        policyEvidence.length > 0
-          ? policyEvidence
-          : ["Script, genre, and factuality policy are present and compatible"],
-      ),
-    );
-
-    let approvalPolicy: ApprovalPolicy;
-    let approvalPolicyValid = true;
-    const approvalPolicyEvidence: string[] = [];
-    try {
-      approvalPolicy = parseApprovalPolicy(job.sceneMediaJob.channel?.approvalPolicy);
-      approvalPolicyEvidence.push(
-        `Approval mode ${approvalPolicy.mode}; score threshold ${approvalPolicy.scoreThreshold}`,
-      );
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-      approvalPolicyValid = false;
-      approvalPolicy = { mode: "MANUAL", scoreThreshold: 80, criterionThresholds: {} };
-      approvalPolicyEvidence.push(`Invalid channel approval policy: ${error.message}`);
-    }
-    gates.push(gate("APPROVAL_POLICY", approvalPolicyValid, approvalPolicyEvidence));
-
-    const assetPairs = input ? collectAssetPairs(input) : [];
-    const assetIds = [...new Set(assetPairs.map((asset) => asset.assetId))];
-    const assets = assetIds.length
-      ? await this.db.asset.findMany({
-          where: { workspaceId: context.workspaceId, id: { in: assetIds } },
-          select: {
-            id: true,
-            version: true,
-            ownership: true,
-            status: true,
-            licenseType: true,
-            licenseTerms: true,
-            rightsHolder: true,
-            rightsAttestedAt: true,
-          },
-        })
-      : [];
-    const usageReferences = assetIds.length
-      ? await this.db.assetUsageReference.findMany({
-          where: {
-            workspaceId: context.workspaceId,
-            usedByType: "render_input",
-            usedById: job.id,
-            assetId: { in: assetIds },
-          },
-          select: { assetId: true, assetVersion: true },
-        })
-      : [];
-    const usedPairs = new Set(usageReferences.map((reference) => assetPairKey(reference)));
-    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
-    const rightsProblems = assetPairs.flatMap((expected) => {
-      const asset = assetById.get(expected.assetId);
-      const problems: string[] = [];
-      if (!asset || asset.version !== expected.assetVersion || asset.status !== "PUBLISHED")
-        problems.push(
-          `${expected.assetId}@${expected.assetVersion} is missing, unpinned, or unpublished`,
-        );
-      else if (
-        !asset.licenseType?.trim() ||
-        !asset.licenseTerms?.trim() ||
-        !asset.rightsHolder?.trim() ||
-        asset.rightsAttestedAt === null
-      )
-        problems.push(
-          `${expected.assetId}@${expected.assetVersion} has incomplete rights attestation`,
-        );
-      if (!usedPairs.has(assetPairKey(expected)))
-        problems.push(
-          `${expected.assetId}@${expected.assetVersion} has no M10 render-input provenance record`,
-        );
-      return problems;
-    });
-    const rightsPass = assetPairs.length > 0 && rightsProblems.length === 0;
-    gates.push(
-      gate(
-        "ASSET_RIGHTS",
-        rightsPass,
-        rightsPass
-          ? [
-              `Verified rights and M10 input provenance for ${assetPairs.length} pinned asset reference(s)`,
-            ]
-          : rightsProblems.length > 0
-            ? rightsProblems
-            : ["No pinned media assets were available for rights verification"],
-      ),
-    );
-    const disclosures = [
-      ...(assets.some((asset) => asset.ownership === "SYSTEM_GENERATED")
-        ? ["AI_GENERATED_ASSET"]
-        : []),
-      ...(assets.some((asset) => asset.ownership === "STARTER_LIBRARY")
-        ? ["STARTER_LIBRARY_ASSET"]
-        : []),
-    ];
-    gates.push(
-      gate(
-        "DISCLOSURES",
-        rightsPass,
-        rightsPass
-          ? disclosures.length > 0
-            ? disclosures.map((disclosure) => `Required disclosure flag: ${disclosure}`)
-            : ["No required disclosure flags apply to the verified pinned asset ownership"]
-          : ["Disclosure flags cannot be derived until pinned asset provenance is verified"],
-      ),
-    );
-
-    const allGatesPass = gates.every((result) => result.passed);
-    let status: QualityRunStatus = allGatesPass ? "REVIEW_REQUIRED" : "BLOCKED";
-    let scorecard: QualityScorecard | null = null;
-    const limitations: string[] = [];
-    if (allGatesPass && script && genre && input) {
-      const request: QualityReviewRequest = {
-        correlationId: createRequest.correlationId ?? randomUUID(),
-        title: script.title,
-        hook: script.hook,
-        dialogue: script.dialogue,
-        narration: script.narration ?? "",
-        callToAction: script.cta,
-        genre: genre.name,
-        allowedTopics,
-        blockedTopics,
-        claims: script.claims ?? [],
-        scenes: script.scenes.map((scene) => ({
-          id: scene.id,
-          dialogue: scene.dialogue,
-          narration: scene.narration ?? "",
-          visualDescription: scene.visualDescription,
-          captions:
-            input.scenes
-              .find((renderScene) => renderScene.sceneId === scene.id)
-              ?.captions.map((caption) => caption.text) ?? [],
-        })),
-        requiredDisclosures: disclosures,
-      };
-      const capability = paidCapability(this.aiReview);
-      const estimate = capability?.costModel.amount;
-      if (
-        capability === null ||
-        estimate === null ||
-        estimate === undefined ||
-        this.usage === undefined
-      ) {
-        limitations.push(
-          "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
-        );
-      } else {
-        let reservation: PaidCallReservation | null;
-        try {
-          reservation = await this.usage.reservePaidCall({
-            workspaceId: context.workspaceId,
-            channelId: job.sceneMediaJob.channelId,
-            correlationId: request.correlationId,
-            category: "LLM",
-            currency: capability.costModel.currency,
-            estimate,
-          });
-        } catch (error) {
-          if (isPaidCallReplay(error)) throw error;
-          reservation = null;
-        }
-        if (reservation === null) {
-          limitations.push(
-            "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
-          );
-        } else {
-          const prompt = JSON.stringify(request);
-          let dispatched = false;
-          let ledgerCreated = false;
-          const started = Date.now();
-          try {
-            await createPendingPaidLedger(this.db, {
-              workspaceId: context.workspaceId,
-              channelId: job.sceneMediaJob.channelId,
-              correlationId: request.correlationId,
-              capability,
-              prompt,
-            });
-            ledgerCreated = true;
-            dispatched = true;
-            const untrustedResult = await this.aiReview.review(request);
-            const parsedResult = qualityReviewResultSchema.safeParse(untrustedResult);
-            if (!parsedResult.success)
-              throw new BadGatewayException(
-                "AI quality review returned an invalid structured result",
-              );
-            const criteria = parsedResult.data.criteria;
-            const scores = Object.values(criteria).map((criterion) => criterion.score);
-            const computedScore = Math.round(
-              scores.reduce((sum, item) => sum + item, 0) / scores.length,
-            );
-            const metadata = parsedResult.data.metadata;
-            const normalizedMetadata = {
-              modelVersion: metadata.modelVersion,
-              promptVersion: metadata.promptVersion,
-              cost: metadata.cost,
-              ...(metadata.currency === undefined ? {} : { currency: metadata.currency }),
-              ...(metadata.usage === undefined
-                ? {}
-                : {
-                    usage: {
-                      ...(metadata.usage.inputTokens === undefined
-                        ? {}
-                        : { inputTokens: metadata.usage.inputTokens }),
-                      ...(metadata.usage.outputTokens === undefined
-                        ? {}
-                        : { outputTokens: metadata.usage.outputTokens }),
-                      ...(metadata.usage.seconds === undefined
-                        ? {}
-                        : { seconds: metadata.usage.seconds }),
-                      ...(metadata.usage.characters === undefined
-                        ? {}
-                        : { characters: metadata.usage.characters }),
-                    },
-                  }),
-            };
-            scorecard = {
-              criteria,
-              score: computedScore,
-              metadata: normalizedMetadata,
-            };
-            const criteriaMeetThresholds = QUALITY_CRITERIA.every((criterionKey) => {
-              const result = criteria[criterionKey];
-              return (
-                result.score >=
-                (approvalPolicy.criterionThresholds[criterionKey] ?? approvalPolicy.scoreThreshold)
-              );
-            });
-            const allThresholdsMet =
-              computedScore >= approvalPolicy.scoreThreshold && criteriaMeetThresholds;
-            status =
-              approvalPolicy.mode === "AUTO" && scorecard !== null && allThresholdsMet
-                ? "AUTO_APPROVED"
-                : "REVIEW_REQUIRED";
-            limitations.push(
-              ...Object.values(criteria).flatMap((criterion) => criterion.limitations),
-            );
-            await finishPaidLedger(this.db, {
-              workspaceId: context.workspaceId,
-              correlationId: request.correlationId,
-              capability,
-              dispatched,
-              actualCost: metadata.cost,
-              currency: metadata.currency ?? null,
-              metadata: { dispatched: true, costKnown: metadata.cost !== null },
-              latencyMs: Date.now() - started,
-              prompt,
-            });
-            await this.usage.finishPaidCall(reservation, {
-              dispatched: true,
-              actualCost: metadata.cost,
-              actualCurrency: metadata.currency ?? null,
-            });
-          } catch (error) {
-            if (ledgerCreated)
-              await finishPaidLedger(this.db, {
-                workspaceId: context.workspaceId,
-                correlationId: request.correlationId,
-                capability,
-                dispatched,
-                actualCost: null,
-                metadata: { dispatched, costKnown: false },
-                latencyMs: Date.now() - started,
-                prompt,
-                error,
-              });
-            await this.usage.finishPaidCall(reservation, { dispatched, actualCost: null });
-            if (error instanceof ProviderError && error.code === "NOT_CONFIGURED") {
-              status = "REVIEW_REQUIRED";
-              limitations.push(
-                "AI quality review is unavailable; this run requires human review and cannot be auto-approved",
-              );
-            } else {
-              throw error;
-            }
-          }
-        }
-      }
-    }
-    if (!allGatesPass)
-      limitations.push("At least one hard gate failed; approval and auto-approval are blocked");
-
-    const renderFamilyId = await this.renderFamilyId(context.workspaceId, job.id, job.parentJobId);
-    let created: { id: string };
-    try {
-      created = await this.db.$transaction(
-        async (tx) => {
-          await tx.qualityReviewRun.updateMany({
-            where: {
-              workspaceId: context.workspaceId,
-              renderJobId: job.id,
-              status: { in: ["REVIEW_REQUIRED", "BLOCKED", "AI_REVIEW_UNAVAILABLE"] },
-              supersededAt: null,
-            },
-            data: { status: "SUPERSEDED", supersededAt: new Date() },
-          });
-          return tx.qualityReviewRun.create({
-            data: {
-              workspaceId: context.workspaceId,
-              renderJobId: job.id,
-              renderFamilyId,
-              createdByUserId: context.userId,
-              status,
-              gateSummary: gates as Prisma.InputJsonValue,
-              scorecard: scorecard === null ? Prisma.DbNull : (scorecard as Prisma.InputJsonValue),
-              policySnapshot: approvalPolicy as Prisma.InputJsonValue,
-              disclosures: disclosures as Prisma.InputJsonValue,
-              limitations: limitations as Prisma.InputJsonValue,
-              modelVersion: scorecard?.metadata.modelVersion ?? null,
-              promptVersion: scorecard?.metadata.promptVersion ?? null,
-            },
-            select: { id: true },
-          });
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")
-        throw new ConflictException("Concurrent quality review update; retry the request");
-      throw error;
-    }
-    return this.get(context, created.id);
+    if (existing) return this.get(context, existing.id);
+    if (pipelineV2Enabled())
+      throw new ConflictException("New quality reviews require a pipeline.v2 run");
+    const reviewId = await this.createLegacyReview(context, input.data.renderJobId);
+    return this.get(context, reviewId);
   }
 
   public async queue(context: WorkspaceContext): Promise<QualityRunView[]> {
@@ -990,6 +436,327 @@ export class QualityService {
     return this.get(context, runId);
   }
 
+  private async createLegacyReview(
+    context: WorkspaceContext,
+    renderJobId: string,
+  ): Promise<string> {
+    const job = await this.db.renderJob.findUnique({
+      where: {
+        workspaceId_id: { workspaceId: context.workspaceId, id: renderJobId },
+      },
+      include: { sceneMediaJob: { include: { channel: true } } },
+    });
+    if (!job) throw new NotFoundException("Render job not found");
+
+    const parsedInput = qualityInputSchema.safeParse(job.input);
+    const input = parsedInput.success ? parsedInput.data : null;
+    const gates = await this.legacyTechnicalGates(context, job.id, input);
+    const { policy, gate: policyGate } = this.legacyApprovalPolicy(
+      job.sceneMediaJob.channel?.approvalPolicy,
+    );
+    gates.push(
+      ...(await this.legacyScriptGates(context.workspaceId, job.sceneMediaJob, input)),
+      policyGate,
+    );
+    const { gates: rightsGates, disclosures } = await this.legacyRightsGates(
+      context.workspaceId,
+      job.id,
+      input,
+    );
+    gates.push(...rightsGates);
+    const allGatesPass = gates.every((result) => result.passed);
+    const renderFamilyId = await this.renderFamilyId(context.workspaceId, job.id, job.parentJobId);
+    const where = currentQualityReviewWhere(context.workspaceId, job.id);
+    try {
+      return await this.db.$transaction(
+        async (tx) => {
+          const current = await tx.qualityReviewRun.findFirst({
+            where,
+            orderBy: currentQualityReviewOrder,
+            select: { id: true },
+          });
+          if (current) return current.id;
+          const created = await tx.qualityReviewRun.create({
+            data: {
+              workspaceId: context.workspaceId,
+              renderJobId: job.id,
+              renderFamilyId,
+              createdByUserId: context.userId,
+              status: allGatesPass ? "REVIEW_REQUIRED" : "BLOCKED",
+              gateSummary: gates.map(({ id, passed, evidence }) => ({ id, passed, evidence })),
+              policySnapshot: { ...policy },
+              disclosures,
+              limitations: [
+                allGatesPass
+                  ? "AI quality review is unavailable; this run requires human review and cannot be auto-approved"
+                  : "At least one hard gate failed; approval and auto-approval are blocked",
+              ],
+            },
+            select: { id: true },
+          });
+          return created.id;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034")
+        throw new ConflictException("Concurrent quality review update; retry the request");
+      throw error;
+    }
+  }
+
+  private async legacyTechnicalGates(
+    context: WorkspaceContext,
+    renderJobId: string,
+    input: RenderCompositionInput | null,
+  ): Promise<HardGateResult[]> {
+    const composition = this.composition;
+    if (!composition) throw new InternalServerErrorException("Render validation is unavailable");
+    let manifest: RenderManifest | null = null;
+    let integrityEvidence = "Persisted render input does not match the M10 schema";
+    if (input) {
+      try {
+        manifest = await composition.getManifest(context, renderJobId);
+        integrityEvidence = "M10 verified the manifest, artifacts, sizes, and checksums";
+      } catch (error) {
+        if (!(
+          error instanceof BadRequestException ||
+          error instanceof ConflictException ||
+          error instanceof NotFoundException
+        ))
+          throw error;
+        integrityEvidence = error.message;
+      }
+    }
+
+    const profile = manifest?.renderProfile;
+    const subtitlesPass =
+      input !== null &&
+      input.profile.captionSafeMarginPixels >= 24 &&
+      input.scenes.every((scene) =>
+        scene.captions.every(
+          (caption, index) =>
+            caption.endMs > caption.startMs &&
+            caption.endMs <= scene.durationMs &&
+            caption.startMs >= (scene.captions[index - 1]?.endMs ?? 0),
+        ),
+      );
+    return [
+      gate("ARTIFACT_INTEGRITY", manifest !== null, integrityEvidence),
+      gate(
+        "ASPECT_RATIO",
+        profile?.width === 1080 && profile.height === 1920,
+        "Expected a 1080x1920 (9:16) render",
+      ),
+      gate(
+        "DURATION",
+        manifest !== null &&
+          input !== null &&
+          Math.abs(manifest.video.durationMs - duration(input)) <= 50,
+        "Expected the render duration to match the pinned duration within 50ms",
+      ),
+      gate(
+        "VIDEO_CODEC",
+        profile?.videoCodec === "h264" && manifest?.video.mediaType === "video/mp4",
+        "Expected H.264 video in an MP4 artifact",
+      ),
+      gate(
+        "AUDIO",
+        profile?.audioCodec === "aac" &&
+          profile.audioSampleRate === 48_000 &&
+          profile.audioChannels === 2,
+        "Expected 48kHz stereo AAC audio",
+      ),
+      gate(
+        "SUBTITLES",
+        subtitlesPass,
+        "Expected ordered, non-overlapping, scene-bounded captions with safe margins",
+      ),
+    ];
+  }
+
+  private async legacyScriptGates(
+    workspaceId: string,
+    sceneMediaJob: { id: string; scriptId: string; scriptRevision: number },
+    input: RenderCompositionInput | null,
+  ): Promise<HardGateResult[]> {
+    const scriptRevision = await this.db.scriptRevision.findUnique({
+      where: {
+        workspaceId_scriptId_revision: {
+          workspaceId,
+          scriptId: sceneMediaJob.scriptId,
+          revision: sceneMediaJob.scriptRevision,
+        },
+      },
+      include: { script: { include: { snapshot: { select: { references: true } } } } },
+    });
+    const source = input?.sourceMediaPackage;
+    const provenance = gate(
+      "SCRIPT_PROVENANCE",
+      scriptRevision !== null &&
+        source?.jobId === sceneMediaJob.id &&
+        source.scriptId === sceneMediaJob.scriptId &&
+        source.scriptRevision === sceneMediaJob.scriptRevision,
+      "Expected the rendered source package to match the pinned script revision",
+    );
+    const script = scriptRevision && parseScriptDocument(scriptRevision.document);
+    if (!script)
+      return [provenance, gate("GENRE_POLICY", false, "The pinned script is missing or invalid")];
+
+    const genre = await this.db.genre.findFirst({
+      where: { workspaceId, name: script.metadata.genre },
+      select: { topicsAllowed: true, topicsBlocked: true, safetyProfile: true },
+    });
+    const blockedTopics = genre && stringArray(genre.topicsBlocked);
+    if (!genre || !stringArray(genre.topicsAllowed) || !blockedTopics)
+      return [
+        provenance,
+        gate("GENRE_POLICY", false, "The workspace genre topic policy is missing or invalid"),
+      ];
+
+    const text = normalizePolicyText(
+      [
+        scriptText(script),
+        input?.title ?? "",
+        ...(input?.scenes.flatMap((scene) => scene.captions.map((caption) => caption.text)) ?? []),
+      ].join("\n"),
+    );
+    const blockedMatch = blockedTopics.find((term) => text.includes(normalizePolicyText(term)));
+    if (blockedMatch)
+      return [
+        provenance,
+        gate("GENRE_POLICY", false, `Script contains a configured blocked topic: ${blockedMatch}`),
+      ];
+    try {
+      validateGenrePolicy(script, genre, scriptRevision?.script.snapshot.references);
+      return [provenance, gate("GENRE_POLICY", true, "Script matches the workspace genre policy")];
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      return [provenance, gate("GENRE_POLICY", false, error.message)];
+    }
+  }
+
+  private legacyApprovalPolicy(value: unknown): { policy: ApprovalPolicy; gate: HardGateResult } {
+    try {
+      const policy = parseApprovalPolicy(value);
+      return {
+        policy,
+        gate: gate(
+          "APPROVAL_POLICY",
+          true,
+          `Approval mode ${policy.mode} with score threshold ${policy.scoreThreshold}`,
+        ),
+      };
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return {
+        policy: parseApprovalPolicy(null),
+        gate: gate("APPROVAL_POLICY", false, `Invalid channel approval policy: ${error.message}`),
+      };
+    }
+  }
+
+  private async legacyRightsGates(
+    workspaceId: string,
+    renderJobId: string,
+    input: RenderCompositionInput | null,
+  ): Promise<{ gates: HardGateResult[]; disclosures: string[] }> {
+    const assetPairs = input ? collectAssetPairs(input) : [];
+    const assetIds = [...new Set(assetPairs.map((asset) => asset.assetId))];
+    const assets = assetIds.length
+      ? await this.db.asset.findMany({
+          where: { workspaceId, id: { in: assetIds } },
+          select: {
+            id: true,
+            version: true,
+            ownership: true,
+            status: true,
+            licenseType: true,
+            licenseTerms: true,
+            rightsHolder: true,
+            rightsAttestedAt: true,
+          },
+        })
+      : [];
+    const usageReferences = assetIds.length
+      ? await this.db.assetUsageReference.findMany({
+          where: {
+            workspaceId,
+            usedByType: "render_input",
+            usedById: renderJobId,
+            assetId: { in: assetIds },
+          },
+          select: { assetId: true, assetVersion: true },
+        })
+      : [];
+    const usedPairs = new Set(usageReferences.map(assetPairKey));
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const invalidPairs = assetPairs.filter((expected) => {
+      const asset = assetById.get(expected.assetId);
+      return (
+        !asset ||
+        asset.version !== expected.assetVersion ||
+        asset.status !== "PUBLISHED" ||
+        !asset.licenseType?.trim() ||
+        !asset.licenseTerms?.trim() ||
+        !asset.rightsHolder?.trim() ||
+        asset.rightsAttestedAt === null ||
+        !usedPairs.has(assetPairKey(expected))
+      );
+    });
+    const rightsPass = assetPairs.length > 0 && invalidPairs.length === 0;
+    const disclosures = [
+      ...(assets.some((asset) => asset.ownership === "SYSTEM_GENERATED")
+        ? ["AI_GENERATED_ASSET"]
+        : []),
+      ...(assets.some((asset) => asset.ownership === "STARTER_LIBRARY")
+        ? ["STARTER_LIBRARY_ASSET"]
+        : []),
+    ];
+    return {
+      disclosures,
+      gates: [
+        gate(
+          "ASSET_RIGHTS",
+          rightsPass,
+          invalidPairs.length > 0
+            ? `Rights or render provenance could not be verified for ${invalidPairs.map(assetPairKey).join(", ")}`
+            : "Expected verified rights and provenance for every pinned asset",
+        ),
+        gate(
+          "DISCLOSURES",
+          rightsPass,
+          rightsPass
+            ? "Disclosures derived from pinned asset ownership"
+            : "Disclosures require verified asset provenance",
+        ),
+      ],
+    };
+  }
+
+  private async renderFamilyId(
+    workspaceId: string,
+    renderJobId: string,
+    parentJobId: string | null,
+  ): Promise<string> {
+    let familyId = renderJobId;
+    let parentId = parentJobId;
+    const visited = new Set([renderJobId]);
+    while (parentId !== null) {
+      if (visited.has(parentId) || visited.size >= 100)
+        throw new InternalServerErrorException("Render retry ancestry is invalid");
+      visited.add(parentId);
+      const parent = await this.db.renderJob.findUnique({
+        where: { workspaceId_id: { workspaceId, id: parentId } },
+        select: { id: true, parentJobId: true },
+      });
+      if (!parent) throw new InternalServerErrorException("Render retry parent is missing");
+      familyId = parent.id;
+      parentId = parent.parentJobId;
+    }
+    return familyId;
+  }
+
   private requireEditor(context: WorkspaceContext): void {
     if (!editableRoles.has(context.role))
       throw new ForbiddenException("Owner or editor permission required");
@@ -1116,29 +883,6 @@ export class QualityService {
       throw new ConflictException("Current asset rights or provenance no longer pass validation");
   }
 
-  private async renderFamilyId(
-    workspaceId: string,
-    renderJobId: string,
-    parentJobId: string | null,
-  ): Promise<string> {
-    let familyId = renderJobId;
-    let parentId = parentJobId;
-    const visited = new Set([renderJobId]);
-    while (parentId !== null) {
-      if (visited.has(parentId) || visited.size >= 100)
-        throw new InternalServerErrorException("Render retry ancestry is invalid");
-      visited.add(parentId);
-      const parent = await this.db.renderJob.findUnique({
-        where: { workspaceId_id: { workspaceId, id: parentId } },
-        select: { id: true, parentJobId: true },
-      });
-      if (!parent) throw new InternalServerErrorException("Render retry parent is missing");
-      familyId = parent.id;
-      parentId = parent.parentJobId;
-    }
-    return familyId;
-  }
-
   private present(run: {
     id: string;
     renderJobId: string;
@@ -1209,13 +953,6 @@ export class QualityService {
   }
 }
 
-function parseCreateBody(body: unknown): { renderJobId: string; correlationId?: string } {
-  const parsed = createBodySchema.safeParse(body);
-  if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-  const { renderJobId, correlationId } = parsed.data;
-  return typeof correlationId === "string" ? { renderJobId, correlationId } : { renderJobId };
-}
-
 function parseScriptDocument(value: unknown): ScriptDocument | null {
   const parsed = scriptDocumentSchema.safeParse(value);
   if (!parsed.success) return null;
@@ -1249,10 +986,6 @@ function parseScriptDocument(value: unknown): ScriptDocument | null {
           })),
         }),
   };
-}
-
-function gate(id: HardGateId, passed: boolean, evidence: string[]): HardGateResult {
-  return { id, passed, evidence };
 }
 
 function stringArray(value: unknown): string[] | null {
@@ -1372,6 +1105,6 @@ function safePolicySnapshot(value: Prisma.JsonValue): QualityRunView["policySnap
   return parsed.success ? parseApprovalPolicy(parsed.data) : null;
 }
 
-const createBodySchema = z
-  .object({ renderJobId: z.string().uuid(), correlationId: z.uuid().optional() })
-  .strict();
+function gate(id: HardGateId, passed: boolean, evidence: string): HardGateResult {
+  return { id, passed, evidence: [evidence] };
+}

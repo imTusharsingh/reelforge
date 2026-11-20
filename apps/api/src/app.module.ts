@@ -50,6 +50,7 @@ import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
     AutonomyModule,
     ...(process.env.PIPELINE_V2 === "true" ? [RunsModule] : []),
     ...(process.env.PIPELINE_V2 === "true" ? [MediaPipelineModule] : []),
+    ...(process.env.PIPELINE_V2 === "true" ? [CriticModule] : []),
   ],
   controllers: [HealthController],
 })
@@ -64,3 +65,4 @@ import { RunsModule } from "./modules/runs/runs.module.js";
 
 import { AutonomyModule } from "./modules/autonomy/autonomy.module.js";
 import { MediaPipelineModule } from "./modules/scene-media/media-pipeline.module.js";
+import { CriticModule } from "./modules/quality/critic.module.js";

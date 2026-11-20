@@ -13,15 +13,6 @@ export class QualityController {
     private readonly workspaces: WorkspaceService,
   ) {}
 
-  @Post("runs")
-  public async create(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Body() body: unknown,
-  ): Promise<QualityRunView> {
-    return this.quality.create(await this.context(request, workspaceId), body);
-  }
-
   @Get("queue")
   public async queue(
     @Req() request: AuthenticatedRequest,
