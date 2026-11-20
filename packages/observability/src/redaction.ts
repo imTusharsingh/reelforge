@@ -61,6 +61,7 @@ export function isSecretKey(key: string): boolean {
 const URL_PATTERN = /\b([a-z][a-z0-9+.-]{1,20}):\/\/([^\s"'<>`]+)/gi;
 const BEARER_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
+const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]{20,}/g;
 const GOOGLE_TOKEN_PATTERN = /\b(ya29\.[0-9A-Za-z_-]{10,}|1\/\/[0-9A-Za-z_-]{10,})/g;
 const KEY_VALUE_PATTERN =
   /\b(password|passwd|secret|token|access_token|refresh_token|id_token|client_secret|api[_-]?key|apikey|sig|signature|x-amz-signature|x-amz-credential|upload_id)=([^&\s"',;]+)/gi;
@@ -126,6 +127,7 @@ export function redactString(input: string): string {
     .replace(BEARER_PATTERN, (_match, kind: string) => `${kind} ${REDACTED}`)
     .replace(JWT_PATTERN, REDACTED)
     .replace(GOOGLE_TOKEN_PATTERN, REDACTED)
+    .replace(OPENAI_KEY_PATTERN, REDACTED)
     .replace(SESSION_COOKIE_PATTERN, (_match, key: string) => `${key}=${REDACTED}`)
     .replace(KEY_VALUE_PATTERN, (_match, key: string) => `${key}=${REDACTED}`)
     .replace(
