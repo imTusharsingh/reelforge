@@ -86,16 +86,21 @@ describe("V7 mounted screens", () => {
     expect(container.textContent).toContain("first Short is queued");
   });
   it("shows safe failures and clears submitted keys on success and failure", async () => {
+    vi.stubGlobal("fetch", (url: RequestInfo | URL, init?: RequestInit) =>
+      String(url).endsWith("/providers/xai/key") && init?.method === "PUT"
+        ? Promise.resolve(Response.json({ message: "fixture-secret" }, { status: 503 }))
+        : stub.fetch(url, init),
+    );
     await render(createElement(ProviderSettings));
     await change("#key-gemini", "fixture-secret");
     await submit("form:first-of-type");
     expect(container.querySelector<HTMLInputElement>("#key-gemini")!.value).toBe("");
     expect(container.innerHTML).not.toContain("fixture-secret");
     expect(container.textContent).toContain("Configured");
-    stub.fail = true;
     await change("#key-xai", "fixture-secret");
     await submit("form:last-of-type");
-    expect(container.textContent).toContain("Key was not saved");
+    expect(container.textContent).toContain("The service is unavailable. Retry when it is ready.");
+    expect(container.querySelector<HTMLInputElement>("#key-xai")!.value).toBe("");
     expect(container.innerHTML).not.toContain("fixture-secret");
   });
   it("renders registry health without provider probes and handles an unavailable service", async () => {
