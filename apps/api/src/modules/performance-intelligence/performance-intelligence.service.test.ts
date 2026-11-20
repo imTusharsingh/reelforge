@@ -4,8 +4,17 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
-import type { LatestMetricSnapshot, PerformanceDimensionSummary } from "@reelforge/contracts";
-import { describe, expect, it, vi } from "vitest";
+import type {
+  LatestMetricSnapshot,
+  PerformanceDimensionSummary,
+  PerformanceInsightReport,
+} from "@reelforge/contracts";
+import { describe, expect, it, vi, type Mock } from "vitest";
+import type { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import type {
+  InsightNarrativeResult,
+  InsightReportLlmPort,
+} from "./performance-intelligence.ports.js";
 import { PerformanceIntelligenceService } from "./performance-intelligence.service.js";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
@@ -244,15 +253,18 @@ function database(): MockDatabase {
   return db;
 }
 
-function paidUsage(): { reservePaidCall: MockMethod; finishPaidCall: MockMethod } {
+function paidUsage(): {
+  reservePaidCall: Mock<UsageBudgetService["reservePaidCall"]>;
+  finishPaidCall: Mock<UsageBudgetService["finishPaidCall"]>;
+} {
   return {
-    reservePaidCall: vi.fn().mockResolvedValue({
+    reservePaidCall: vi.fn<UsageBudgetService["reservePaidCall"]>().mockResolvedValue({
       workspaceId,
       reservationId: "reservation-a",
       currency: "USD",
       estimateMinor: 1,
     }),
-    finishPaidCall: vi.fn().mockResolvedValue(undefined),
+    finishPaidCall: vi.fn<UsageBudgetService["finishPaidCall"]>().mockResolvedValue(undefined),
   };
 }
 
@@ -288,7 +300,7 @@ function publishing(
 function llm(
   configured = false,
   fail = false,
-): { capability: Record<string, unknown>; isConfigured: () => boolean; generate: MockMethod } {
+): InsightReportLlmPort & { generate: Mock<InsightReportLlmPort["generate"]> } {
   return {
     capability: {
       providerId: "fixture-llm",
@@ -303,28 +315,18 @@ function llm(
       costModel: { currency: "USD", unit: "request" as const, amount: 0.01 },
     },
     isConfigured: (): boolean => configured,
-    generate: vi.fn(
-      async (): Promise<{
-        narrative: string;
+    generate: vi.fn<InsightReportLlmPort["generate"]>(async (): Promise<InsightNarrativeResult> => {
+      if (fail) throw new Error("provider unavailable");
+      return {
+        narrative: "Short-form AI tool demos over-perform on this channel.",
         provenance: {
-          modelVersion: string;
-          promptVersion: string;
-          cost: number;
-          currency: string;
-        };
-      }> => {
-        if (fail) throw new Error("provider unavailable");
-        return {
-          narrative: "Short-form AI tool demos over-perform on this channel.",
-          provenance: {
-            modelVersion: "fixture-model-1",
-            promptVersion: "insight-v1",
-            cost: 0.01,
-            currency: "USD",
-          },
-        };
-      },
-    ),
+          modelVersion: "fixture-model-1",
+          promptVersion: "insight-v1",
+          cost: 0.01,
+          currency: "USD",
+        },
+      };
+    }),
   };
 }
 
@@ -393,11 +395,48 @@ function reportRecord(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+const insightWindow = {
+  channelId,
+  socialAccountId: accountId,
+  startDate: "2026-11-01",
+  endDate: "2026-11-03",
+};
+
+function paidInsightFixture(): {
+  db: MockDatabase;
+  insightLlm: ReturnType<typeof llm>;
+  usage: ReturnType<typeof paidUsage>;
+  generate: (correlationId?: string) => Promise<PerformanceInsightReport>;
+} {
+  const db = database(),
+    insightLlm = llm(true),
+    usage = paidUsage();
+  const reports = service(
+    db,
+    analytics(
+      channelSnapshots(["2026-11-01", "2026-11-02", "2026-11-03"], 1, workspaceId),
+      channelSnapshots(["2026-10-29", "2026-10-30", "2026-10-31"], 1, otherWorkspaceId),
+    ),
+    publishing(),
+    insightLlm,
+    usage,
+  );
+  return {
+    db,
+    insightLlm,
+    usage,
+    generate: (correlationId?: string): Promise<PerformanceInsightReport> =>
+      reports.generateInsightReport(ownerContext, {
+        ...insightWindow,
+        ...(correlationId === undefined ? {} : { correlationId }),
+      }),
+  };
+}
+
 describe("PerformanceIntelligenceService", () => {
   it("reserves before the insight provider and charges a dispatched failure at estimate", async () => {
-    const db = database();
+    const { db, insightLlm, usage, generate } = paidInsightFixture();
     const events: string[] = [];
-    const usage = paidUsage();
     usage.reservePaidCall.mockImplementation(async () => {
       events.push("reserve");
       return { workspaceId, reservationId: "reservation-a", currency: "USD", estimateMinor: 1 };
@@ -405,42 +444,57 @@ describe("PerformanceIntelligenceService", () => {
     db.providerRequest.create.mockImplementation(async () => {
       events.push("ledger");
     });
-    const insightLlm = llm(true, true);
     insightLlm.generate.mockImplementation(async () => {
       events.push("dispatch");
       throw new Error("provider failed");
     });
-    await expect(
-      service(
-        db,
-        analytics(
-          channelSnapshots(
-            ["2026-11-01", "2026-11-02", "2026-11-03"],
-            1,
-            "11111111-1111-4111-8111-111111111111",
-          ),
-          channelSnapshots(
-            ["2026-10-29", "2026-10-30", "2026-10-31"],
-            1,
-            "22222222-2222-4222-8222-222222222222",
-          ),
-          videoSnapshots(),
-        ),
-        publishing(),
-        insightLlm,
-        usage,
-      ).generateInsightReport(ownerContext, {
-        channelId,
-        socialAccountId: accountId,
-        startDate: "2026-11-01",
-        endDate: "2026-11-03",
-      }),
-    ).resolves.toMatchObject({ aiStatus: "NOT_GENERATED" });
+    await expect(generate()).resolves.toMatchObject({ aiStatus: "NOT_GENERATED" });
     expect(events).toEqual(["reserve", "ledger", "dispatch"]);
     expect(usage.finishPaidCall).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ dispatched: true, actualCost: null }),
     );
+  });
+
+  it.each(["unconfigured", "exhausted"])("falls back when the budget is %s", async (budget) => {
+    const { db, usage, insightLlm, generate } = paidInsightFixture();
+    if (budget === "unconfigured") usage.reservePaidCall.mockResolvedValue(null);
+    else usage.reservePaidCall.mockRejectedValue(new ConflictException("Budget exceeded"));
+    await expect(generate()).resolves.toMatchObject({ status: "GENERATED", narrative: null });
+    expect(db.providerRequest.create).not.toHaveBeenCalled();
+    expect(insightLlm.generate).not.toHaveBeenCalled();
+    expect(usage.finishPaidCall).not.toHaveBeenCalled();
+  });
+
+  it("releases the hold if the ledger insert fails before dispatch", async () => {
+    const { db, usage, insightLlm, generate } = paidInsightFixture();
+    db.providerRequest.create.mockRejectedValueOnce(new Error("Ledger unavailable"));
+    await expect(generate()).resolves.toMatchObject({ aiStatus: "NOT_GENERATED" });
+    expect(insightLlm.generate).not.toHaveBeenCalled();
+    expect(usage.finishPaidCall).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+      dispatched: false,
+      actualCost: null,
+    });
+  });
+
+  it("uses fresh keys for the same window and refuses an explicit replay", async () => {
+    const { db, usage, insightLlm, generate } = paidInsightFixture();
+    await expect(generate()).resolves.toMatchObject({ aiStatus: "GENERATED" });
+    await expect(generate()).resolves.toMatchObject({ aiStatus: "GENERATED" });
+    const [first, second] = usage.reservePaidCall.mock.calls.map(([input]) => input.correlationId);
+    if (!first || !second) throw new Error("Expected two budget reservations");
+    expect(first).not.toBe(second);
+    expect(insightLlm.generate.mock.calls.map(([input]) => input.correlationId)).toEqual([
+      first,
+      second,
+    ]);
+    usage.reservePaidCall.mockRejectedValueOnce(
+      new ConflictException({ code: "PAID_CALL_REPLAYED" }),
+    );
+    await expect(generate(first)).rejects.toMatchObject({ status: 409 });
+    expect(usage.reservePaidCall.mock.lastCall?.[0].correlationId).toBe(first);
+    expect(insightLlm.generate).toHaveBeenCalledTimes(2);
+    expect(db.performanceInsightReport.create).toHaveBeenCalledTimes(2);
   });
 
   it("exposes every KPI with comparison windows and minimum sample rules", () => {
