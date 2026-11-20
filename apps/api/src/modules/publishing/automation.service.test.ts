@@ -56,6 +56,20 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     f.run.pauseReason = "GATE_FAILED";
     await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("approval");
   });
+  it("marks a dry-run result on both the schedule and the review run", async () => {
+    const f = automationFixture();
+    const post = await f.publishing.getScheduledPost(context, f.run.id);
+    f.publishing.publishNow.mockResolvedValueOnce({
+      ...post,
+      dryRun: true,
+      destinations: [{ ...post.destinations[0]!, status: "PUBLISHED", remotePostId: null }],
+    });
+    await f.service.dispatch(context, f.run.id);
+    expect(f.slot.status).toBe("DRY_RUN");
+    expect(f.run).toMatchObject({ state: "PUBLISHED", pauseReason: "PUBLISH_DRY_RUN" });
+    await f.service.dispatch(context, f.run.id);
+    expect(f.publishing.publishNow).toHaveBeenCalledOnce();
+  });
   it("reconciles a partial upload before resuming and records public publication", async () => {
     const f = automationFixture();
     await f.service.dispatch(context, f.run.id);

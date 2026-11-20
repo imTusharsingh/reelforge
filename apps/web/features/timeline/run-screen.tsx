@@ -10,6 +10,7 @@ import { AutonomyPanel } from "./autonomy-panel";
 import { ProgressStream } from "./progress-stream";
 import { Storyboard } from "./storyboard";
 import { useRun } from "./use-run";
+import { RunCost } from "./run-cost";
 import { runRequest } from "./client";
 import { dollars, pauseLabel, runMetadata, stateLabel } from "./view-model";
 import { ApprovalPanel, CriticSummary } from "../approvals/approval-panel";
@@ -85,7 +86,7 @@ function useRunActions(
     setNotice("");
     try {
       await runRequest(`runs/${id}/${path}`, workspaceId, {});
-      setNotice(path === "approve" ? "Stage approved." : "Shot redo request submitted.");
+      setNotice(path === "approve" ? "Stage approved." : "Run updated.");
       refresh();
     } catch (e) {
       setActionError(String(e));
@@ -132,10 +133,13 @@ function RunContent({
         </Alert>
       )}
       {notice && <Toast>{notice}</Toast>}
-      {detail.run.pauseReason && (
+      {detail.run.pauseReason && detail.run.pauseReason !== "PUBLISH_DRY_RUN" && (
         <Alert tone="warning" title="Run status">
           {pauseLabel(detail.run.pauseReason)}
         </Alert>
+      )}
+      {editable && !["LEARNING", "FAILED", "CANCELED"].includes(detail.run.state) && (
+        <RunOperatorControls detail={detail} controls={controls} />
       )}
       {review ? (
         <ApprovalPanel
@@ -160,6 +164,45 @@ function RunContent({
   );
 }
 
+function RunOperatorControls({
+  detail,
+  controls,
+}: Pick<RunContentProps, "detail" | "controls">): JSX.Element {
+  const { action, busy } = controls;
+  const cancelable = !["PUBLISHED", "LEARNING", "FAILED", "CANCELED"].includes(detail.run.state);
+  return (
+    <div className="rf-actions">
+      {cancelable && (
+        <Button tone="danger" disabled={busy} onClick={() => void action("cancel")}>
+          Cancel run
+        </Button>
+      )}
+      {(detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+        detail.run.pauseReason === "OPERATOR_ABANDONED") &&
+        detail.steps
+          .filter(
+            (step) =>
+              step.state === "RUNNING" &&
+              (step.key.startsWith("media:") || step.key.startsWith("shot-")),
+          )
+          .map((step) => (
+            <Button
+              key={step.id}
+              disabled={busy}
+              onClick={() => void action(`steps/${step.id}/abandon`)}
+            >
+              Abandon {step.key}
+            </Button>
+          ))}
+      {detail.run.pauseReason === "OPERATOR_ABANDONED" && (
+        <Button disabled={busy} onClick={() => void action("resume")}>
+          Resume run
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function RunHeading({ detail, review }: { detail: RunDetailView; review: boolean }): JSX.Element {
   const href = `/runs/${detail.run.id}`;
   const reviewHref = href + "/review";
@@ -168,7 +211,9 @@ function RunHeading({ detail, review }: { detail: RunDetailView; review: boolean
     <>
       <header className="rf-page-heading rf-toolbar">
         <h1>{review ? "Review Short" : title}</h1>
-        <Badge tone="info">{stateLabel(detail.run.state)}</Badge>
+        <Badge tone="info">
+          {detail.run.pauseReason === "PUBLISH_DRY_RUN" ? "Dry run" : stateLabel(detail.run.state)}
+        </Badge>
       </header>
       <Tabs
         label="Run views"
@@ -208,6 +253,8 @@ function LiveRun({
       <div className="rf-stack">
         <Card>
           <h2>Run budget</h2>
+          <RunCost workspaceId={workspaceId} id={detail.run.id} revision={detail} />
+          <a href="/runs/usage">Run usage</a>
           {detail.envelope ? (
             <Budget envelope={detail.envelope} />
           ) : (

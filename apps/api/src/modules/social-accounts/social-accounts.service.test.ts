@@ -24,7 +24,7 @@ const ownerContext = {
 };
 const viewerContext = { ...ownerContext, role: "VIEWER" as const };
 const encryptionKey = Buffer.alloc(32, 9).toString("base64url");
-const callbackUrl = "http://localhost:3001/social-accounts/oauth/YOUTUBE/callback";
+const callbackUrl = "http://localhost:3001/api/v1/social-accounts/oauth/YOUTUBE/callback";
 const channelId = "00000000-0000-4000-8000-000000000003";
 
 type FakeState = {

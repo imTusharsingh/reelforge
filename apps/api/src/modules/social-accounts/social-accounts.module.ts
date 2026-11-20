@@ -7,6 +7,7 @@ import {
   SocialOAuthCallbackController,
 } from "./social-accounts.controller.js";
 import { SocialAccountsService } from "./social-accounts.service.js";
+import { requireYouTubeCallbackUrl } from "./social-accounts.validation.js";
 import { TokenVault } from "./token-vault.js";
 
 @Module({
@@ -19,9 +20,7 @@ import { TokenVault } from "./token-vault.js";
       useFactory: (): YouTubeConnector => {
         const clientId = process.env.YOUTUBE_OAUTH_CLIENT_ID;
         const clientSecret = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
-        return new YouTubeConnector(
-          clientId === undefined || clientSecret === undefined ? null : { clientId, clientSecret },
-        );
+        return new YouTubeConnector(clientId && clientSecret ? { clientId, clientSecret } : null);
       },
     },
     {
@@ -34,7 +33,12 @@ import { TokenVault } from "./token-vault.js";
     },
     {
       provide: "YOUTUBE_OAUTH_CALLBACK_URL",
-      useFactory: (): string | undefined => process.env.YOUTUBE_OAUTH_CALLBACK_URL,
+      useFactory: (): string | undefined => {
+        const callback = process.env.YOUTUBE_OAUTH_CALLBACK_URL;
+        if (process.env.YOUTUBE_OAUTH_CLIENT_ID && process.env.YOUTUBE_OAUTH_CLIENT_SECRET)
+          return requireYouTubeCallbackUrl(callback);
+        return callback;
+      },
     },
   ],
   exports: [SocialAccountsService],

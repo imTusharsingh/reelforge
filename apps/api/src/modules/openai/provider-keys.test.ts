@@ -6,6 +6,7 @@ import { ProviderKeys, parseVendor } from "./provider-keys.js";
 import { ProvidersController } from "./providers.controller.js";
 import type { WorkspaceService } from "../workspace/workspace.service.js";
 import type { AuthenticatedRequest } from "../identity/auth.guard.js";
+const key = "AIza" + "aB1".repeat(12);
 const context: WorkspaceContext = {
   workspaceId: "00000000-0000-4000-8000-000000000001",
   userId: "owner",
@@ -39,13 +40,13 @@ describe("write-only provider credentials", () => {
   it("encrypts at rest, never echoes keys and binds AAD to workspace/provider", async () => {
     const { keys, delegate } = setup();
     const logger = vi.spyOn(console, "log");
-    const result = await keys.write(context, "gemini", { key: "secret-value" });
+    const result = await keys.write(context, "gemini", { key: key });
     expect(result).toEqual({ configured: true });
-    expect(JSON.stringify(delegate.upsert.mock.calls)).not.toContain("secret-value");
+    expect(JSON.stringify(delegate.upsert.mock.calls)).not.toContain(key);
     const encrypted = delegate.upsert.mock.calls[0]![0].create;
     delegate.findUnique.mockResolvedValue(encrypted);
     vi.stubEnv("NODE_ENV", "production");
-    expect(await keys.resolve(context, "gemini")).toBe("secret-value");
+    expect(await keys.resolve(context, "gemini")).toBe(key);
     await expect(keys.resolve({ ...context, workspaceId: "other" }, "gemini")).rejects.toThrow();
     await expect(keys.resolve(context, "xai")).rejects.toThrow();
     expect(logger).not.toHaveBeenCalled();
@@ -71,7 +72,7 @@ describe("write-only provider credentials", () => {
       new ProviderKeys(
         { providerKey: delegate } as unknown as Database,
         new TokenVault(undefined),
-      ).write(context, "gemini", { key: "secret" }),
+      ).write(context, "gemini", { key }),
     ).rejects.toThrow();
     expect(delegate.upsert).not.toHaveBeenCalled();
     expect(() => parseVendor("openai")).toThrow();
@@ -83,6 +84,16 @@ describe("write-only provider credentials", () => {
     delegate.findUnique.mockResolvedValue({ keyVersion: "future" });
     await expect(keys.resolve(context, "gemini")).rejects.toThrow("version");
   });
+  it("rejects malformed keys before encryption and storage", async () => {
+    const { keys, delegate } = setup();
+    await expect(keys.write(context, "gemini", { key: ` ${key}` })).rejects.toMatchObject({
+      response: { code: "INVALID_KEY" },
+    });
+    await expect(keys.write(context, "xai", { key })).rejects.toMatchObject({
+      response: { code: "INVALID_KEY" },
+    });
+    expect(delegate.upsert).not.toHaveBeenCalled();
+  });
   it("authenticates every API action and makes health entirely offline", async () => {
     const { keys } = setup();
     const workspaces = { context: vi.fn().mockResolvedValue(context) };
@@ -92,9 +103,9 @@ describe("write-only provider credentials", () => {
       vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());
     vi.stubEnv("XAI_VIDEO_MODEL", "fallback");
     const fetcher = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("live forbidden"));
-    expect(
-      await controller.write(request, context.workspaceId, "gemini", { key: "secret" }),
-    ).toEqual({ configured: true });
+    expect(await controller.write(request, context.workspaceId, "gemini", { key })).toEqual({
+      configured: true,
+    });
     await controller.remove(request, context.workspaceId, "gemini");
     const health = await controller.health(request, context.workspaceId);
     expect(health).toHaveLength(6);

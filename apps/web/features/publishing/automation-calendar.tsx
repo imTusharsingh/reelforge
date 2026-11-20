@@ -113,7 +113,9 @@ function ScheduleSlot({ slot }: { slot: AutoSlotView }): JSX.Element {
           </p>
         )}
       </div>
-      <Badge tone={slot.lastError ? "warning" : "neutral"}>{stateLabel(slot.status)}</Badge>
+      <Badge tone={slot.lastError ? "warning" : "neutral"}>
+        {slot.status === "DRY_RUN" ? "Dry run" : stateLabel(slot.status)}
+      </Badge>
     </Card>
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ArtifactStore } from "./ports.js";
 import { ProviderHttp } from "./http.js";
+
 import { Interactions } from "./interactions.js";
 import { OmniVideo, GrokVideo } from "./video.js";
 import { NanoBanana, GeminiTts, LyriaMusic } from "./media.js";
@@ -17,7 +18,10 @@ function fixture(): {
   return {
     fetcher,
     store,
-    client: new Interactions(new ProviderHttp("secret", "gemini", fetcher, 5), store),
+    client: new Interactions(
+      new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher, 5),
+      store,
+    ),
   };
 }
 describe("Gemini media fake-fetch contracts", () => {
@@ -131,7 +135,7 @@ describe("xAI fake-fetch contract", () => {
   it("submits by request_id, polls, fetches, refuses and times out", async () => {
     const { fetcher, store } = fixture();
     const port = new GrokVideo(
-      new ProviderHttp("xai-secret", "xai", fetcher, 5),
+      new ProviderHttp("xai-" + "bC2".repeat(12), "xai", fetcher, 5),
       store,
       catalog[5]!,
       { resolve: async (): Promise<[]> => [] },
@@ -223,5 +227,39 @@ describe("Gemini structured multimodal text", () => {
     await expect(port.submit({ ...spec, prompt: "" }, "key")).rejects.toMatchObject({
       dispatched: false,
     });
+  });
+});
+
+describe("provider HTTP key validation", () => {
+  it.each([
+    ["gemini", "AIza"],
+    ["gemini", "AQ."],
+    ["xai", "xai-"],
+  ] as const)("validates %s credentials before fetch for %s keys", async (vendor, prefix) => {
+    const key = prefix + "aB1".repeat(12);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "fixture-job" }));
+    for (const malformed of [
+      " ",
+      ` ${key}`,
+      `${key}\n`,
+      prefix + "aB1 ".repeat(12),
+      prefix + "fake" + key,
+      prefix + "placeholder".repeat(3),
+      prefix + "your-key".repeat(3),
+      prefix + "xxx".repeat(10),
+      prefix + "changeme".repeat(4),
+      prefix + "0".repeat(36),
+      "wrong-" + key,
+      prefix + "short",
+    ]) {
+      await expect(
+        new ProviderHttp(malformed, vendor, fetcher).json("fixture", {}),
+      ).rejects.toMatchObject({ kind: "INVALID_KEY", dispatched: false });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(new ProviderHttp(key, vendor, fetcher).json("fixture", {})).resolves.toEqual({
+      id: "fixture-job",
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

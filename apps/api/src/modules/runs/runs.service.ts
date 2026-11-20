@@ -87,6 +87,12 @@ export class RunsService {
     return run;
   }
   public async enqueue(context: Context, run: Run): Promise<void> {
+    if (
+      run.state === "CANCELED" ||
+      run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+      run.pauseReason === "OPERATOR_ABANDONED"
+    )
+      return;
     await this.queue?.enqueue(
       { workspaceId: context.workspaceId, userId: context.userId, runId: run.id },
       run.revision,

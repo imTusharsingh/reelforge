@@ -24,13 +24,14 @@ describe.skipIf(!url)("workspace provider key persistence", () => {
   it("isolates encrypted provider keys by workspace and rejects viewer writes", async () => {
     if (!db) throw new Error("Postgres required");
     const keys = new ProviderKeys(db, new TokenVault(randomBytes(32).toString("base64url")));
-    expect(await keys.write(context, "gemini", { key: "fixture-provider-secret" })).toEqual({
+    const key = "AIza" + "aB1".repeat(12);
+    expect(await keys.write(context, "gemini", { key })).toEqual({
       configured: true,
     });
     const row = await db.providerKey.findUniqueOrThrow({
       where: { workspaceId_providerId: { workspaceId: first, providerId: "gemini" } },
     });
-    expect(row.ciphertext).not.toContain("fixture-provider-secret");
+    expect(row.ciphertext).not.toContain(key);
     expect(row.schemaVersion).toBe("1.0");
     expect(await keys.configured({ ...context, workspaceId: second })).toEqual({
       gemini: false,

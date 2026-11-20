@@ -22,9 +22,17 @@ export class MediaAccounts {
       context,
       run.id,
       "media_intent",
-      async (db) => {
-        const previous = await db.videoRunStep.findFirst({ where: { runId: run.id, key } });
-        if (previous) return { value: previous, payload: { replay: true } };
+      async (db, current) => {
+        this.requireDispatchable(run, current);
+        const previous = await db.videoRunStep.findFirst({
+          where: { runId: run.id, key },
+          orderBy: { attempt: "desc" },
+        });
+        if (previous && !this.abandoned(previous))
+          return {
+            value: previous,
+            payload: { replay: true },
+          };
         const steps = await db.videoRunStep.findMany({ where: { runId: run.id } });
         const pending = steps
           .filter((s) => !["SKIPPED", "CANCELLED"].includes(s.state))
@@ -32,16 +40,17 @@ export class MediaAccounts {
         if (pending + cost > 800) throw new ConflictException("BUDGET_CAP");
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
         if (budget && !envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
+        const attempt = (previous?.attempt ?? 0) + 1;
         const step = await db.videoRunStep.create({
           data: {
             workspaceId: context.workspaceId,
             runId: run.id,
             key,
-            attempt: 1,
+            attempt,
             state: "RUNNING",
             costMinor: cost,
             providerId: "gemini",
-            idempotencyKey: `${run.id}:${key}:1`,
+            idempotencyKey: `${run.id}:${key}:${attempt}`,
             input: json({ spec: input, modelId }),
             startedAt: new Date(),
           },
@@ -55,9 +64,27 @@ export class MediaAccounts {
       },
     );
     await this.access.runs.events?.publish(result.event);
-    if ((result.event.payload as { replay?: boolean }).replay)
-      throw new ConflictException("RECONCILE_REQUIRED: media intent already claimed");
+    this.assertNewIntent(result.event.payload, result.value);
+
     return result.value;
+  }
+  private requireDispatchable(run: Run, current: Run): void {
+    if (
+      current.state !== run.state ||
+      current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+      current.pauseReason === "OPERATOR_ABANDONED"
+    )
+      throw new ConflictException("Run is not accepting media dispatch");
+  }
+  private assertNewIntent(payload: unknown, step: Step): void {
+    if (this.record(payload).replay)
+      throw new ConflictException(`RECONCILE_REQUIRED: media intent already claimed (${step.id})`);
+  }
+  public abandoned(step: Step): boolean {
+    return step.state === "CANCELLED" && this.record(step.output).closedBy === "OPERATOR_ABANDONED";
+  }
+  public async dispatch<T>(context: Context, step: Step, call: () => Promise<T>): Promise<T> {
+    return this.access.paid.dispatch(context, step, call);
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     await this.access.paid.reserve(context, run, step, step.costMinor ?? 0);
@@ -110,7 +137,7 @@ export class MediaAccounts {
       },
     });
     throw new ConflictException(
-      "RECONCILE_REQUIRED: media paid intent requires ledger reconciliation",
+      `RECONCILE_REQUIRED: media paid intent requires ledger reconciliation (${step.id})`,
     );
   }
   private async reservationEvidence(
@@ -144,7 +171,11 @@ export class MediaAccounts {
     const current = await this.access.runs.store
       .scoped(context)
       .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-    if (current.state === "CANCELLED") return;
+    if (current.state === "CANCELLED") {
+      if (this.record(current.output).closedBy === "RUN_CANCELED")
+        await this.access.paid.finish(context, step, false, 0);
+      return;
+    }
     if (current.state !== "RUNNING" || current.providerJobId)
       throw new ConflictException("Dispatched media cannot be cancelled as unsubmitted");
     await this.access.paid.finish(context, step, false, 0);

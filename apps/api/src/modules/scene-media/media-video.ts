@@ -26,10 +26,14 @@ export class RoutedMediaVideo implements VideoGenPort {
     private readonly options: VideoOptions = {},
     private readonly limiter: ProviderLimiter = new ProviderLimiter(),
     private readonly trim?: (body: Buffer, from: number) => Promise<Buffer>,
+    private readonly validateKey?: () => void,
   ) {
     void _run;
     this.providerId = native.capabilities().providerId;
     this.modelId = native.capabilities().modelId;
+  }
+  public assertKey(): void {
+    this.validateKey?.();
   }
   public estimate(shot: ShotSpec): number {
     const estimate = this.native.estimate(shot);

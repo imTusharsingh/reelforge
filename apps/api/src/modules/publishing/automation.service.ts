@@ -88,7 +88,11 @@ export class PublishingAutomation {
     let slot: AutoSlot | null = null;
     try {
       slot = await this.prepare(context, id);
-      if (!slot.scheduledPostId || slot.status === "COMPLETE" || slot.status === "NEEDS_HUMAN")
+      if (
+        !slot.scheduledPostId ||
+        ["COMPLETE", "DRY_RUN"].includes(slot.status) ||
+        slot.status === "NEEDS_HUMAN"
+      )
         return;
       const post = await this.publishing.getScheduledPost(context, slot.scheduledPostId);
       const destination = post.destinations[0];
@@ -100,6 +104,10 @@ export class PublishingAutomation {
       if (attempted && result.destinations[0]?.status === "FAILED_RETRYABLE")
         result = await this.publishing.retry(context, destination.id);
       const published = result.destinations[0]?.status === "PUBLISHED";
+      if (published && result.dryRun) {
+        await this.recordDryRun(context, id, slot.id);
+        return;
+      }
       await this.db.v9PublishSlot.updateMany({
         where: { workspaceId: context.workspaceId, id: slot.id },
         data: { status: published ? "COMPLETE" : "WAITING", lastError: null },
@@ -112,6 +120,21 @@ export class PublishingAutomation {
     } catch (error) {
       await this.failure(context, id, slot, error);
     }
+  }
+  private async recordDryRun(context: Context, id: string, slotId: string): Promise<void> {
+    await this.runs.mutate(context, id, "publish_dry_run", async (db, current, tx) => {
+      if (current.state === "SCHEDULED") {
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { state: "PUBLISHED", pauseReason: "PUBLISH_DRY_RUN" },
+        });
+      }
+      await tx.v9PublishSlot.updateMany({
+        where: { workspaceId: context.workspaceId, id: slotId },
+        data: { status: "DRY_RUN", lastError: null },
+      });
+      return { value: null, payload: { dryRun: true } };
+    });
   }
   private async failure(
     context: Context,

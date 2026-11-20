@@ -51,8 +51,15 @@ describe("V7 HTTP ports", () => {
     const json = vi.fn(() => {
       throw new Error("must not read key response");
     });
-    const client = new BriefClient(workspaceId, vi.fn().mockResolvedValue({ ok: true, json }));
-    await client.saveKey("gemini", "fixture-secret");
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json });
+    const client = new BriefClient(workspaceId, fetcher);
+    await client.saveKey("gemini", " fixture-secret ");
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: JSON.stringify({ key: " fixture-secret " }),
+      }),
+    );
     expect(json).not.toHaveBeenCalled();
     await expect(client.saveKey("xai", " ")).rejects.toThrow("Enter");
     expect(log).not.toHaveBeenCalled();
@@ -70,6 +77,17 @@ describe("V7 HTTP ports", () => {
       Response.json({ message: "fixture-secret" }, { status }),
     );
     await expect(client.saveKey("gemini", "fixture-secret")).rejects.not.toThrow("fixture-secret");
+  });
+  it("surfaces a safe INVALID_KEY message without reading a secret-bearing body text", async () => {
+    const client = new BriefClient(workspaceId, async () =>
+      Response.json(
+        { code: "INVALID_KEY", message: "Enter a valid provider key" },
+        { status: 400 },
+      ),
+    );
+    await expect(client.saveKey("gemini", "fixture-secret")).rejects.toThrow(
+      "Enter a valid provider key",
+    );
   });
   it("rejects malformed and cross-workspace responses", async () => {
     const value = (data: unknown): BriefClient =>

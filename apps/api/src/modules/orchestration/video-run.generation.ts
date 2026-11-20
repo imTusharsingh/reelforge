@@ -37,7 +37,8 @@ export class RunGeneration {
     let step = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!step) throw new ConflictException("Step not found in run");
     if (["SUCCEEDED", "SKIPPED", "CANCELLED"].includes(step.state)) return null;
-    if (run.state !== "GENERATING") return 12000;
+    if (run.state === "CANCELED" && !step.providerJobId) return null;
+    if (run.state !== "GENERATING" && run.state !== "CANCELED") return 12000;
     await this.boundary.check(context, run);
     const ports = this.resolvePorts
       ? await this.resolvePorts(context, run, ShotSpecSchema.parse(step.input))
@@ -91,7 +92,7 @@ export class RunGeneration {
         "CLIENT",
       );
       if (!recovered)
-        throw new ConflictException("Submission outcome unknown; no paid resubmission");
+        throw new ConflictException(`RECONCILE_REQUIRED: submission outcome unknown (${step.id})`);
       return this.saveJob(context, run, step, recovered.providerJobId);
     }
     const shot = ShotSpecSchema.parse(step.input);
@@ -99,6 +100,7 @@ export class RunGeneration {
       .scoped(context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
     const selected = envelope.route === "FALLBACK" ? ports.fallback : ports.primary;
+    selected.assertKey?.();
     const amount = selected.estimate(shot, envelope.route === "FALLBACK");
     await this.claim(context, run, step, amount, selected.providerId);
     try {
@@ -118,15 +120,18 @@ export class RunGeneration {
         dispatchedPrompt: "V5 immutable ShotSpec on VideoRunStep",
       },
     });
-    await this.boundary.check(context, await this.runs.store.get(context, run.id));
-    const result = await withSpan(
-      "run.provider.submit",
-      () =>
-        (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).submit(
-          shot,
-          step.idempotencyKey,
-        ),
-      "CLIENT",
+    const currentRun = await this.runs.store.get(context, run.id);
+    if (currentRun.state !== "CANCELED") await this.boundary.check(context, currentRun);
+    const result = await this.paid.dispatch(context, step, () =>
+      withSpan(
+        "run.provider.submit",
+        () =>
+          (envelope.route === "FALLBACK" ? ports.fallback : ports.primary).submit(
+            shot,
+            step.idempotencyKey,
+          ),
+        "CLIENT",
+      ),
     );
     return this.saveJob(context, run, step, result.providerJobId);
   }

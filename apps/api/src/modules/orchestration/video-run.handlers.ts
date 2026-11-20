@@ -28,6 +28,7 @@ export function stubShots(run: Run, brief: ChannelBrief): ShotSpec[] {
 export interface VideoGenPort {
   readonly providerId: string;
   readonly modelId?: string;
+  assertKey?(): void;
   estimate(shot: ShotSpec, fallback: boolean): number;
   submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;

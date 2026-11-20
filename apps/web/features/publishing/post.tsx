@@ -57,7 +57,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
         <>
           <Panel>
             <h2>
-              <Badge tone={statusTone(post.status)}>{post.status}</Badge>{" "}
+              <Badge tone={statusTone(post.status)}>{post.dryRun ? "Dry run" : post.status}</Badge>{" "}
               {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "Unscheduled draft"}
             </h2>
             <p>
@@ -73,7 +73,11 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
               <Panel key={destination.id}>
                 <h2>
                   {destination.platform} ·{" "}
-                  <Badge tone={statusTone(destination.status)}>{destination.status}</Badge>
+                  <Badge tone={statusTone(destination.status)}>
+                    {destination.lastErrorCode === "PUBLISH_DRY_RUN"
+                      ? "Dry run"
+                      : destination.status}
+                  </Badge>
                 </h2>
                 {destination.remotePostId && <p>Platform post ID: {destination.remotePostId}</p>}
                 {destination.publishedAt && (

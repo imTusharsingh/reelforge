@@ -11,7 +11,13 @@ describe("registered provider runtime", () => {
     for (const name of ["VIDEO", "IMAGE", "TEXT", "TTS", "MUSIC"])
       vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());
     vi.stubEnv("XAI_VIDEO_MODEL", "fallback");
-    const keys = { resolve: vi.fn().mockResolvedValue("fixture-secret") };
+    const keys = {
+      resolve: vi
+        .fn()
+        .mockImplementation(async (_context, vendor: string) =>
+          vendor === "gemini" ? "AIza" + "aB1".repeat(12) : "xai-" + "bC2".repeat(12),
+        ),
+    };
     const ledger = {
       submit: vi.fn().mockResolvedValue({ providerJobId: "job" }),
       finish: vi.fn().mockResolvedValue(undefined),
@@ -25,7 +31,15 @@ describe("registered provider runtime", () => {
     const refs = { resolve: vi.fn().mockResolvedValue([]) };
     const fetcher = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("live forbidden"));
     const ports = await runtime.ports(context, refs);
-    expect(Object.keys(ports)).toEqual(["omni", "grok", "image", "text", "tts", "music"]);
+    expect(Object.keys(ports)).toEqual([
+      "assertKey",
+      "omni",
+      "grok",
+      "image",
+      "text",
+      "tts",
+      "music",
+    ]);
     expect(fetcher).not.toHaveBeenCalled();
     const allow = vi.fn().mockResolvedValue(undefined);
     const router = await runtime.router(context, null, refs, async (spec) => spec, allow);
@@ -52,6 +66,15 @@ describe("registered provider runtime", () => {
       ports.omni,
       artifact,
     );
+    keys.resolve.mockResolvedValue("placeholder");
+    ledger.submit.mockClear();
+    const invalid = await runtime.router(context, null, refs, async (spec) => spec, allow);
+    await expect(invalid.submit(shot, "run:shot:3", ["gemini", "xai"])).rejects.toMatchObject({
+      kind: "INVALID_KEY",
+      dispatched: false,
+    });
+    expect(ledger.submit).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
     fetcher.mockRestore();
   });
 });

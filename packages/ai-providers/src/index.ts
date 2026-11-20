@@ -102,6 +102,7 @@ export interface TtsProviderPort {
 }
 export type ProviderErrorCode =
   | "NOT_CONFIGURED"
+  | "INVALID_KEY"
   | "CAPABILITY_NOT_REGISTERED"
   | "INVALID_REQUEST"
   | "BUDGET_EXCEEDED"

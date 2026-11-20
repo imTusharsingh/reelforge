@@ -54,6 +54,7 @@ export function automationFixture(): {
     schemaVersion: "1.0",
   } as AutoSlot;
   const scoped = scopedFake(run);
+  const db = databaseFake(slot);
   const runs = {
     get: vi.fn(async () => run),
     scoped: vi.fn(() => scoped),
@@ -62,14 +63,14 @@ export function automationFixture(): {
         _c: Context,
         _id: string,
         _type: string,
-        work: (d: Scoped, r: Run) => Promise<{ payload: Json }>,
-      ) => work(scoped as unknown as Scoped, run),
+        work: (d: Scoped, r: Run, tx: typeof db) => Promise<{ payload: Json }>,
+      ) => work(scoped as unknown as Scoped, run, db),
     ),
     transition: vi.fn(async () => {
       run.state = "PUBLISHED";
     }),
   } as unknown as RunsStore;
-  const db = databaseFake(slot);
+
   const publishing = publishingFake();
   const slots = { reserve: vi.fn(async () => slot) } as unknown as AutomationSlots;
   return {

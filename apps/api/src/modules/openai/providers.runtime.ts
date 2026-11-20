@@ -21,7 +21,7 @@ import type { ShotSpec } from "@reelforge/contracts";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import { ProviderArtifacts } from "./provider-artifacts.js";
-import { ProviderKeys } from "./provider-keys.js";
+import { ProviderKeys, type Vendor } from "./provider-keys.js";
 import { ProviderLedger } from "./provider-ledger.js";
 
 @Injectable()
@@ -36,6 +36,7 @@ export class ProvidersRuntime {
     context: WorkspaceContext,
     references: ReferenceResolver,
   ): Promise<{
+    assertKey: (vendor: Vendor) => void;
     omni: OmniVideo;
     grok: GrokVideo;
     image: NanoBanana;
@@ -51,10 +52,15 @@ export class ProvidersRuntime {
       xai: !!xai,
     });
     const store = new ProviderArtifacts(this.storage, context.workspaceId);
-    const client = new Interactions(new ProviderHttp(gemini ?? "", "gemini"), store);
+    const http = {
+      gemini: new ProviderHttp(gemini ?? "", "gemini"),
+      xai: new ProviderHttp(xai ?? "", "xai"),
+    };
+    const client = new Interactions(http.gemini, store);
     return {
+      assertKey: (vendor): void => http[vendor].assertKey(),
       omni: new OmniVideo(client, catalog[0]!, references),
-      grok: new GrokVideo(new ProviderHttp(xai ?? "", "xai"), store, catalog[5]!, references),
+      grok: new GrokVideo(http.xai, store, catalog[5]!, references),
       image: new NanoBanana(client, models.image),
       text: new GeminiText(client, models.text),
       tts: new GeminiTts(client, models.tts),
@@ -78,6 +84,7 @@ export class ProvidersRuntime {
         submit: async (port, spec, key): Promise<{ providerJobId: string }> => {
           if (spec.workspaceId !== context.workspaceId)
             throw new Error("Cross-workspace provider dispatch rejected");
+          ports.assertKey(port === ports.omni ? "gemini" : "xai");
           return this.limiter(port).run(
             port.estimate(spec),
             () => this.ledger.submit(port, spec, correlation(key), channelId, key),

@@ -1,4 +1,4 @@
-import { ProviderError, type ProviderProvenance } from "@reelforge/ai-providers";
+import { ProviderError, providerKeyIssue, type ProviderProvenance } from "@reelforge/ai-providers";
 type JsonRecord = Record<string, unknown>;
 type FetchImplementation = typeof fetch;
 type OpenAiHttpResult = Readonly<{ body: JsonRecord; requestId: string | null }>;
@@ -33,6 +33,8 @@ export async function requestJson(
   timeoutMs: number,
   correlationId: string,
 ): Promise<OpenAiHttpResult> {
+  const issue = providerKeyIssue("openai", apiKey);
+  if (issue) throw notSent(issue, "OpenAI key is missing or malformed", correlationId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

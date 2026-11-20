@@ -74,6 +74,7 @@ describe("OAuth callback HTTP response", () => {
       providers: [{ provide: SocialAccountsService, useValue: { completeOAuth } }],
     }).compile();
     app = module.createNestApplication();
+    app.setGlobalPrefix("api/v1");
     await app.init();
   });
   afterAll(async () => {
@@ -89,7 +90,7 @@ describe("OAuth callback HTTP response", () => {
     process.env.WEB_APP_ORIGIN = "https://studio.example";
     completeOAuth.mockRejectedValueOnce(new OAuthReturnError(code, secret));
     const response = await request(app.getHttpServer() as never)
-      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .get(`/api/v1/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
       .expect(302);
     expect(response.headers.location).toBe(
       `https://studio.example/publishing/accounts?oauthError=${code}`,
@@ -101,13 +102,13 @@ describe("OAuth callback HTTP response", () => {
     process.env.WEB_APP_ORIGIN = "https://studio.example";
     completeOAuth.mockResolvedValueOnce({ id: "account-id" });
     await request(app.getHttpServer() as never)
-      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .get(`/api/v1/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
       .expect(302)
       .expect("Location", "https://studio.example/publishing/accounts?connected=account-id");
     delete process.env.WEB_APP_ORIGIN;
     completeOAuth.mockResolvedValueOnce({ id: "account-id" });
     const json = await request(app.getHttpServer() as never)
-      .get(`/social-accounts/oauth/YOUTUBE/callback?state=${state}&code=${secret}`)
+      .get(`/api/v1/social-accounts/oauth/youtube/callback?state=${state}&code=${secret}`)
       .expect(200);
     expect(json.body).toEqual({ id: "account-id" });
   });

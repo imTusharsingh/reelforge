@@ -13,14 +13,8 @@ describe("V9 insert dispatch fence on fake YouTube client", () => {
       authenticatedClient: vi.fn(),
     };
     let claimed = false;
-    const db = {
-      v9PublishSlot: {
-        findFirst: vi.fn(async () => ({
-          id: id(7),
-          scheduledAt: new Date("2027-03-14T07:00:00Z"),
-        })),
-        count: vi.fn(async () => 1),
-      },
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: id(3) }]),
       v9InsertLease: {
         updateMany: vi.fn(async () => {
           const count = claimed ? 0 : 1;
@@ -28,6 +22,17 @@ describe("V9 insert dispatch fence on fake YouTube client", () => {
           return { count };
         }),
       },
+    };
+    const db = {
+      v9PublishSlot: {
+        findFirst: vi.fn(async () => ({
+          id: id(7),
+          runId: id(3),
+          scheduledAt: new Date("2027-03-14T07:00:00Z"),
+        })),
+        count: vi.fn(async () => 1),
+      },
+      $transaction: vi.fn(async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx)),
     };
     const client = await publishingClient(
       db as unknown as PrismaClient,
@@ -42,6 +47,11 @@ describe("V9 insert dispatch fence on fake YouTube client", () => {
       privacyStatus: "private" as const,
       selfDeclaredMadeForKids: false,
     };
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    await expect(client.startVideoUpload(metadata, 1, "video/mp4")).rejects.toThrow(
+      "no longer scheduled",
+    );
+    expect(startVideoUpload).not.toHaveBeenCalled();
     await client.startVideoUpload(metadata, 1, "video/mp4");
     await expect(client.startVideoUpload(metadata, 1, "video/mp4")).rejects.toThrow(
       "already dispatched",

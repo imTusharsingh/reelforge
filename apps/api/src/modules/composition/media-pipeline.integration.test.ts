@@ -119,7 +119,9 @@ describe.skipIf(
       jobs = new MediaJobs(access, accounts, t.storage);
     const ports = new MediaPorts(
       access,
-      { ports: async () => native } as unknown as ProvidersRuntime,
+      {
+        ports: async () => ({ ...native, assertKey: (): void => {} }),
+      } as unknown as ProvidersRuntime,
       jobs,
     );
     const frames = new MediaFrames(access, jobs, ports, new SpawnProcessRunner()),

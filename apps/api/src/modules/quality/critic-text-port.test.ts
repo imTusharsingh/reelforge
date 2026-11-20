@@ -43,6 +43,12 @@ function fixture(
         calls.push("intent");
         return { id: "step", idempotencyKey: "idem" };
       },
+      abandoned: (): boolean => false,
+      dispatch: async (
+        _context: unknown,
+        _step: unknown,
+        call: () => Promise<unknown>,
+      ): Promise<unknown> => call(),
       prepare: async () => {
         calls.push("reserve");
       },
@@ -67,7 +73,10 @@ describe("V6 paid text boundary", () => {
       providerJobId: "job",
     });
     expect(t.calls).toEqual(["intent", "reserve", "dispatch", "persist-job", "settle"]);
-    expect(t.findFirst).toHaveBeenCalledWith({ where: { runId: "r", key: "media:text:critic:2" } });
+    expect(t.findFirst).toHaveBeenCalledWith({
+      where: { runId: "r", key: "media:text:critic:2" },
+      orderBy: { attempt: "desc" },
+    });
   });
   it("reuses a completed result and refuses an uncertain submission", async () => {
     const input = {

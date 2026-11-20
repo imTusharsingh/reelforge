@@ -112,9 +112,11 @@ function fixture(
     providerJobId: "job",
     usage: {},
   }));
+  const dispatch: MediaAccounts["dispatch"] = (_context, _step, call) => call();
   const accounts = {
     begin: async () => ({ id: "paid", idempotencyKey: "idem" }),
     prepare: async () => undefined,
+    dispatch,
     complete: async () => undefined,
   } as unknown as MediaAccounts;
   const ports = { get: async () => ({ text: { complete: native } }) } as unknown as MediaPorts;

@@ -55,7 +55,10 @@ export function criticTextPort(deps: {
       const key = `media:text:critic:${attempt}`;
       const fingerprint = inputFingerprint(spec);
       const db = access.runs.store.scoped(context);
-      const previous = await db.videoRunStep.findFirst({ where: { runId: run.id, key } });
+      const previous = await db.videoRunStep.findFirst({
+        where: { runId: run.id, key },
+        orderBy: { attempt: "desc" },
+      });
       if (previous) {
         const savedInput = z
           .object({ spec: z.object({ fingerprint: z.string() }) })
@@ -67,8 +70,10 @@ export function criticTextPort(deps: {
         const saved = savedResult.parse(previous.output).result;
         return { ...saved, output: spec.parse(saved.output) };
       }
-      if (previous)
-        throw new ConflictException("RECONCILE_REQUIRED: critic submission outcome unknown");
+      if (previous && !accounts.abandoned(previous))
+        throw new ConflictException(
+          `RECONCILE_REQUIRED: critic submission outcome unknown (${previous.id})`,
+        );
       const modelId = process.env.GEMINI_TEXT_MODEL?.trim();
       if (!modelId) throw new ConflictException("Critic text model is not configured");
       const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
@@ -77,7 +82,9 @@ export function criticTextPort(deps: {
       const cost = criticReservationCents();
       const step = await accounts.begin(context, run, key, { fingerprint }, cost, modelId);
       await accounts.prepare(context, run, step, modelId);
-      const result = await native.text.complete(spec, step.idempotencyKey);
+      const result = await accounts.dispatch(context, step, () =>
+        native.text.complete(spec, step.idempotencyKey),
+      );
       await db.videoRunStep.updateMany({
         where: { id: step.id },
         data: { providerJobId: result.providerJobId },

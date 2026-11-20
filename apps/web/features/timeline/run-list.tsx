@@ -79,6 +79,7 @@ function RunGallery({
               : "Track your Shorts from the first idea to the published video."}
           </p>
         </div>
+        {!inbox && <StudioLink href="/runs/usage">Run usage</StudioLink>}
         {!inbox && editable && <NewShort />}
       </header>
       {error && (

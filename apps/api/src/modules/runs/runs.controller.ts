@@ -99,6 +99,27 @@ export class RunsController {
   ): Promise<void> {
     await this.control.resume(await this.context(request, workspaceId), this.id(id));
   }
+  @Post(":id/cancel")
+  public async cancel(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Query("workspaceId") workspaceId: string,
+  ): Promise<void> {
+    await this.control.cancel(await this.context(request, workspaceId), this.id(id));
+  }
+  @Post(":id/steps/:stepId/abandon")
+  public async abandon(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("stepId") stepId: string,
+    @Query("workspaceId") workspaceId: string,
+  ): Promise<void> {
+    await this.control.abandon(
+      await this.context(request, workspaceId),
+      this.id(id),
+      this.id(stepId),
+    );
+  }
   @Post(":id/reshoot/:ordinal")
   public async reshoot(
     @Req() request: AuthenticatedRequest,

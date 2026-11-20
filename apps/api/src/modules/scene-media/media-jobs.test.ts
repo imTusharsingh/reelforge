@@ -57,6 +57,12 @@ function harness(): {
     },
   } as unknown as MediaAccess;
   const account = {
+    abandoned: (): boolean => false,
+    dispatch: async (
+      _context: unknown,
+      _step: unknown,
+      call: () => Promise<unknown>,
+    ): Promise<unknown> => call(),
     begin: vi.fn(async () => {
       state.step = {
         id: "step",
