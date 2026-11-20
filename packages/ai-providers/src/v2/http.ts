@@ -1,6 +1,14 @@
+import { providerKeyIssue } from "./config.js";
+
 export type Json = Record<string, unknown>;
 export type FailureKind =
-  "OUTAGE" | "REFUSAL" | "RATE_LIMIT" | "INVALID" | "NOT_CONFIGURED" | "NEEDS_HUMAN";
+  | "OUTAGE"
+  | "REFUSAL"
+  | "RATE_LIMIT"
+  | "INVALID"
+  | "NOT_CONFIGURED"
+  | "INVALID_KEY"
+  | "NEEDS_HUMAN";
 export class ProviderFailure extends Error {
   public constructor(
     public readonly kind: FailureKind,
@@ -26,6 +34,10 @@ export class ProviderHttp {
     private readonly fetcher: typeof fetch = fetch,
     private readonly timeoutMs = 30000,
   ) {}
+  public assertKey(): void {
+    const issue = providerKeyIssue(this.vendor, this.key);
+    if (issue) throw new ProviderFailure(issue, false);
+  }
   public json(path: string, body?: Json, idemKey?: string): Promise<Json> {
     return this.request(
       path,
@@ -53,7 +65,7 @@ export class ProviderHttp {
     body?: Json,
     idemKey?: string,
   ): Promise<T> {
-    if (!this.key.trim()) throw new ProviderFailure("NOT_CONFIGURED", false);
+    this.assertKey();
     const base =
       this.vendor === "gemini"
         ? "https://generativelanguage.googleapis.com/v1beta/"

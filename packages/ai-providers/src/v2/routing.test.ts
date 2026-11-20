@@ -195,7 +195,7 @@ describe("exact catalog and money", () => {
     expect(providerModels(env)).toEqual(models);
     expect(() => providerModels({})).toThrow();
     expect(providerKey("gemini", { NODE_ENV: "test", GEMINI_API_KEY: "secret" })).toBeUndefined();
-    expect(providerKey("gemini", { GEMINI_API_KEY: "secret" })).toBe("secret");
+    expect(providerKey("gemini", { GEMINI_API_KEY: " secret " })).toBe(" secret ");
     expect(providerKey("xai", { XAI_API_KEY: "secret" })).toBe("secret");
     expect(providerKey("xai", {})).toBeUndefined();
   });
@@ -203,7 +203,7 @@ describe("exact catalog and money", () => {
 describe("HTTP failure boundary", () => {
   it("redacts errors, distinguishes status and rejects unsafe downloads", async () => {
     const fetcher = vi.fn<typeof fetch>();
-    const http = new ProviderHttp("secret", "gemini", fetcher);
+    const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
     for (const [status, kind] of [
       [500, "OUTAGE"],
       [408, "OUTAGE"],

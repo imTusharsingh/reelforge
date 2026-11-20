@@ -40,8 +40,8 @@ export async function geminiLegacyText(
 function legacyFailure(error: unknown, correlationId: string): ProviderError {
   const failure = error instanceof ProviderFailure ? error : new ProviderFailure("INVALID", true);
   return new ProviderError(
-    failure.kind === "NOT_CONFIGURED"
-      ? "NOT_CONFIGURED"
+    failure.kind === "NOT_CONFIGURED" || failure.kind === "INVALID_KEY"
+      ? failure.kind
       : failure.kind === "OUTAGE" || failure.kind === "RATE_LIMIT"
         ? "PROVIDER_UNAVAILABLE"
         : "PROVIDER_REJECTED",

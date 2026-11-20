@@ -48,26 +48,21 @@ export class MediaBindings {
       const options = await this.frames.prepare(context, run, shot);
       if (!options) return null;
       const ports = await this.ports.get(context, shot);
-      return {
-        primary: new RoutedMediaVideo(
-          ports.omni,
+      const routed = (
+        port: typeof ports.omni | typeof ports.grok,
+        vendor: Parameters<typeof ports.assertKey>[0],
+      ): RoutedMediaVideo =>
+        new RoutedMediaVideo(
+          port,
           this.jobs,
           context,
           run,
           options,
-          this.ports.limiter(context.workspaceId, ports.omni.capabilities().providerId),
+          this.ports.limiter(context.workspaceId, vendor),
           (body, from) => this.frames.extensionTail(body, from),
-        ),
-        fallback: new RoutedMediaVideo(
-          ports.grok,
-          this.jobs,
-          context,
-          run,
-          options,
-          this.ports.limiter(context.workspaceId, ports.grok.capabilities().providerId),
-          (body, from) => this.frames.extensionTail(body, from),
-        ),
-      };
+          () => ports.assertKey(vendor),
+        );
+      return { primary: routed(ports.omni, "gemini"), fallback: routed(ports.grok, "xai") };
     };
     const planning = module.get(RunPlanning, { strict: false });
     planning.handlers = {

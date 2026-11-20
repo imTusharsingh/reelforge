@@ -113,7 +113,7 @@ export class BriefClient implements SetupPorts {
   }
   public async saveKey(provider: "gemini" | "xai", key: string): Promise<void> {
     if (!key.trim()) throw new Error("Enter a provider key.");
-    await this.response(`${this.root()}/providers/${provider}/key`, "PUT", { key: key.trim() });
+    await this.response(`${this.root()}/providers/${provider}/key`, "PUT", { key });
   }
   public async capabilities(): Promise<ProviderCapability[]> {
     const data = await this.json(`${this.root()}/providers/health`);

@@ -1,5 +1,7 @@
 import {
   ProviderError,
+  providerKey,
+  providerKeyIssue,
   type CapabilityMetadata,
   type LlmRequest,
   type LlmResponse,
@@ -44,7 +46,7 @@ class OpenAiTextClient {
   }
 
   protected async completeJson(request: LlmRequest, systemPrompt: string): Promise<LlmResponse> {
-    if (!this.modelId.trim() || !this.apiKey.trim())
+    if (!this.modelId.trim())
       throw notSent("NOT_CONFIGURED", "Text model and key are required", request.correlationId);
     if (this.apiKey === process.env.GEMINI_API_KEY && process.env.NODE_ENV !== "test")
       return geminiLegacyText(this.apiKey, this.modelId, this.fetcher, request, systemPrompt);
@@ -83,7 +85,10 @@ export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightR
   }
 
   public isConfigured(): boolean {
-    return true;
+    return !providerKeyIssue(
+      this.capability.providerId === "gemini" ? "gemini" : "openai",
+      this.apiKey,
+    );
   }
 
   public async generate(input: InsightNarrativeInput): Promise<InsightNarrativeResult> {
@@ -114,7 +119,7 @@ export type OpenAiRuntimeConfig = Readonly<{
   ttsModel: string;
 }>;
 export function openAiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenAiRuntimeConfig {
-  const gemini = env.NODE_ENV === "test" ? undefined : env.GEMINI_API_KEY?.trim() || undefined;
+  const gemini = providerKey("gemini", env);
   return {
     key: gemini ?? (env.OPENAI_TEXT_FALLBACK_ENABLED === "true" ? openAiKey(env) : undefined),
     textModel: gemini ? env.GEMINI_TEXT_MODEL?.trim() || "" : openAiTextModel(env),
@@ -125,7 +130,7 @@ export function openAiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenA
   };
 }
 export function openAiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return env.NODE_ENV === "test" ? undefined : env.OPENAI_API_KEY?.trim() || undefined;
+  return env.NODE_ENV === "test" ? undefined : env.OPENAI_API_KEY || undefined;
 }
 export function openAiTextModel(env: NodeJS.ProcessEnv = process.env): string {
   return env.OPENAI_TEXT_MODEL?.trim() || "";

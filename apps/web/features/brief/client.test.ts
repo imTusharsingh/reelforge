@@ -51,8 +51,15 @@ describe("V7 HTTP ports", () => {
     const json = vi.fn(() => {
       throw new Error("must not read key response");
     });
-    const client = new BriefClient(workspaceId, vi.fn().mockResolvedValue({ ok: true, json }));
-    await client.saveKey("gemini", "fixture-secret");
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json });
+    const client = new BriefClient(workspaceId, fetcher);
+    await client.saveKey("gemini", " fixture-secret ");
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: JSON.stringify({ key: " fixture-secret " }),
+      }),
+    );
     expect(json).not.toHaveBeenCalled();
     await expect(client.saveKey("xai", " ")).rejects.toThrow("Enter");
     expect(log).not.toHaveBeenCalled();

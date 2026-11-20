@@ -100,6 +100,7 @@ export class RunGeneration {
       .scoped(context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
     const selected = envelope.route === "FALLBACK" ? ports.fallback : ports.primary;
+    selected.assertKey?.();
     const amount = selected.estimate(shot, envelope.route === "FALLBACK");
     await this.claim(context, run, step, amount, selected.providerId);
     try {

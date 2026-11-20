@@ -66,8 +66,7 @@ export class MediaPorts {
       },
     };
     const ports = await this.providers.ports(context, references);
-    if (ports.omni.capabilities().health === "NOT_CONFIGURED")
-      throw new Error("Gemini media credentials are not configured");
+    if (!videoShot) ports.assertKey("gemini");
     return ports;
   }
 }

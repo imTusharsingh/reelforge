@@ -2,10 +2,10 @@ import { BadRequestException, ForbiddenException, Inject, Injectable } from "@ne
 import { z } from "zod";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { TokenVault } from "../social-accounts/token-vault.js";
-import { providerKey } from "@reelforge/ai-providers";
+import { providerKey, providerKeyIssue } from "@reelforge/ai-providers";
 
 const vendorSchema = z.enum(["gemini", "xai"]);
-const keySchema = z.object({ key: z.string().trim().min(1).max(4096) }).strict();
+const keySchema = z.object({ key: z.string().max(4096) }).strict();
 export type Vendor = z.infer<typeof vendorSchema>;
 export function parseVendor(value: string): Vendor {
   const parsed = vendorSchema.safeParse(value);
@@ -27,6 +27,9 @@ export class ProviderKeys {
     this.guard(context, true);
     const parsed = keySchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException("A provider key is required");
+    const issue = providerKeyIssue(providerId, parsed.data.key);
+    if (issue)
+      throw new BadRequestException({ code: issue, message: "Enter a valid provider key" });
     const encrypted = this.vault.encrypt(parsed.data.key, `${context.workspaceId}:${providerId}`);
     await this.db.providerKey.upsert({
       where: { workspaceId_providerId: { workspaceId: context.workspaceId, providerId } },

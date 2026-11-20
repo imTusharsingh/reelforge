@@ -4,6 +4,7 @@ import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
+import { ProviderHttp } from "@reelforge/ai-providers";
 import { ArtifactSchema } from "./runs.types.js";
 
 const suite = describe.skipIf(!process.env.DATABASE_URL);
@@ -50,6 +51,8 @@ suite("V3 approval, caps and retention", () => {
     const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
       where: { runId: t.run.id, key: "shot-0" },
     });
+    const fetcher = vi.fn<typeof fetch>();
+    const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
     const preparing = Promise.withResolvers<void>();
     const prepared = Promise.withResolvers<void>();
     t.generation.resolvePorts = async (): ReturnType<
@@ -57,15 +60,54 @@ suite("V3 approval, caps and retention", () => {
     > => {
       preparing.resolve();
       await prepared.promise;
-      return { primary: t.generation.provider, fallback: t.generation.fallbackProvider };
+      return {
+        primary: Object.assign(t.generation.provider, { assertKey: (): void => http.assertKey() }),
+        fallback: t.generation.fallbackProvider,
+      };
     };
-    const submit = vi.spyOn(t.generation.provider, "submit");
+    const submit = vi.spyOn(t.generation.provider, "submit").mockImplementation(async () => {
+      await http.json("interactions", {});
+      return { providerJobId: "fixture-job" };
+    });
     const queued = t.engine.process(t.runs.job(t.context, t.run.id, step.id));
     await preparing.promise;
     await t.control.cancel(t.context, t.run.id);
     prepared.resolve();
     await expect(queued).rejects.toThrow("Run is not generating");
     expect(submit).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("rejects the selected provider key before reserving a shot", async () => {
+    const t = await fixture.tenant();
+    const run = await generating(t);
+    const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "shot-0" },
+    });
+    const fetcher = vi.fn<typeof fetch>();
+    const http = new ProviderHttp("placeholder", "gemini", fetcher);
+    const primary = Object.assign(t.generation.provider, {
+      assertKey: (): void => http.assertKey(),
+    });
+    const submit = vi.spyOn(primary, "submit");
+    t.generation.resolvePorts = async (): ReturnType<
+      NonNullable<typeof t.generation.resolvePorts>
+    > => ({
+      primary,
+      fallback: t.generation.fallbackProvider,
+    });
+
+    await expect(t.generation.process(t.context, run, step.id)).rejects.toMatchObject({
+      kind: "INVALID_KEY",
+      dispatched: false,
+    });
+    expect(await t.db.providerRequest.count({ where: { correlationId: step.id } })).toBe(0);
+    expect(
+      await t.db.usageReservation.count({
+        where: { workspaceId: t.context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+      }),
+    ).toBe(0);
+    expect(submit).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
   });
   it("settles a call admitted before cancel and rejects a subsequent dispatch", async () => {
     const t = await fixture.tenant();
