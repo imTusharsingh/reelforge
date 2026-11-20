@@ -133,6 +133,8 @@ describe.skipIf(!process.env.DATABASE_URL)("durable video router admission", () 
   it("blocks same-key replay before xAI authorization with an open circuit and after restart", async () => {
     const t = await fixture.tenant();
     vi.stubEnv("GEMINI_VIDEO_MODEL", "omni-fixture");
+    for (const name of ["IMAGE", "TEXT", "TTS", "MUSIC"])
+      vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());
     vi.stubEnv("XAI_VIDEO_MODEL", "xai-fixture");
     const keys = {
       resolve: async (_context: unknown, vendor: string): Promise<string> =>

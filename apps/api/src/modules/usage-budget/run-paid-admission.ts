@@ -23,16 +23,16 @@ export async function rollbackAdmission(
     });
     if (request && request.errorCode !== "PENDING" && request.errorCode !== "ADMISSION_ROLLED_BACK")
       return { value: null, payload: { replay: true } };
+    const shot = step.key.startsWith("shot-");
     await releaseReservation(tx, usage, context, step);
     await tx.providerRequest.updateMany({
       where: { ...where, errorCode: "PENDING" },
       data: {
-        errorCode: "ADMISSION_ROLLED_BACK",
+        errorCode: shot ? "ADMISSION_ROLLED_BACK" : "NOT_DISPATCHED",
         actualCost: 0,
         responseMetadata: { dispatched: false, costKnown: true },
       },
     });
-    const shot = step.key.startsWith("shot-");
     await db.videoRunStep.updateMany({
       where: { id: step.id },
       data: shot

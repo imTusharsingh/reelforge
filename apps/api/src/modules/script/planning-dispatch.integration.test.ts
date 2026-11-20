@@ -257,10 +257,25 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
       spentMinor: 0,
     });
     expect(
-      await t.db.usageReservation.findFirst({ where: { correlationId: step.id } }),
-    ).toMatchObject({ status: "RELEASED" });
-    expect(
-      await t.db.providerRequest.findFirst({ where: { correlationId: step.id } }),
-    ).toMatchObject({ errorCode: "NOT_DISPATCHED" });
+      await t.db.usageReservation.findUnique({
+        where: {
+          workspaceId_idempotencyKey: {
+            workspaceId: t.context.workspaceId,
+            idempotencyKey: `m08:${step.idempotencyKey}`,
+          },
+        },
+      }),
+    ).toMatchObject({ status: "RELEASED", committedMinor: null, releaseReason: "NOT_DISPATCHED" });
+    const request = await t.db.providerRequest.findUniqueOrThrow({
+      where: {
+        workspaceId_correlationId: { workspaceId: t.context.workspaceId, correlationId: step.id },
+      },
+    });
+    expect(request).toMatchObject({
+      status: "FAILED",
+      errorCode: "NOT_DISPATCHED",
+      responseMetadata: { dispatched: false, costKnown: true },
+    });
+    expect(request.actualCost?.toNumber()).toBe(0);
   });
 });
