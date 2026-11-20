@@ -2,7 +2,7 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
-import type { Context } from "./runs.types.js";
+import { json, type Context, type Scoped, type Step, type Transaction } from "./runs.types.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
 @Injectable()
@@ -63,10 +63,150 @@ export class RunsControl {
     await this.runs.events?.publish(result.event);
     await this.runs.enqueue(context, await this.runs.store.get(context, id));
   }
+  public async cancel(context: Context, id: string): Promise<void> {
+    this.runs.editor(context);
+    const result = await this.runs.store.mutate(context, id, "transition", async (db, run, tx) => {
+      if (["LEARNING", "FAILED", "CANCELED"].includes(run.state))
+        throw new ConflictException("Run is terminal");
+      const steps = await db.videoRunStep.findMany({
+        where: {
+          runId: id,
+          state: { in: ["RUNNING", "PENDING", "QUEUED", "WAITING_APPROVAL", "PAUSED"] },
+          providerJobId: null,
+        },
+      });
+      const active = await tx.providerRequest.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          correlationId: { in: steps.map((step) => step.id) },
+          errorCode: "VIDEO_RUN_DISPATCHING",
+        },
+        select: { correlationId: true },
+      });
+      const dispatched = new Set(active.map((request) => request.correlationId));
+      await this.closeSteps(
+        context,
+        db,
+        tx,
+        id,
+        steps.filter((step) => !dispatched.has(step.id)),
+        "RUN_CANCELED",
+      );
+      await db.videoRun.updateMany({
+        where: { id },
+        data: { state: "CANCELED", pauseReason: null },
+      });
+      return { value: null, payload: { from: run.state, to: "CANCELED" } };
+    });
+    await this.runs.events?.publish(result.event);
+  }
+  public async abandon(context: Context, id: string, stepId: string): Promise<void> {
+    this.runs.editor(context);
+    const result = await this.runs.store.mutate(
+      context,
+      id,
+      "step_abandoned",
+      async (db, run, tx) => {
+        if (!(
+          run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+          run.pauseReason === "OPERATOR_ABANDONED"
+        ))
+          throw new ConflictException("Run is not awaiting reconciliation");
+        const step = await db.videoRunStep.findFirst({
+          where: {
+            id: stepId,
+            runId: id,
+            state: "RUNNING",
+            providerJobId: null,
+            OR: [{ key: { startsWith: "media:" } }, { key: { startsWith: "shot-" } }],
+          },
+        });
+        if (!step) throw new ConflictException("Step has no unknown submission to abandon");
+        const active = await tx.providerRequest.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            correlationId: step.id,
+            errorCode: "VIDEO_RUN_DISPATCHING",
+          },
+        });
+        if (active && !run.pauseReason?.includes(step.id))
+          throw new ConflictException("Provider attempt may still be active");
+        await this.closeSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
+        if (step.key.startsWith("shot-")) {
+          await db.videoRunStep.create({
+            data: {
+              workspaceId: context.workspaceId,
+              runId: id,
+              key: step.key,
+              attempt: step.attempt + 1,
+              idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
+              input: json(step.input),
+            },
+          });
+        }
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { pauseReason: "OPERATOR_ABANDONED" },
+        });
+        return { value: null, payload: { key: step.key }, stepId };
+      },
+    );
+    await this.runs.events?.publish(result.event);
+  }
+  private async closeSteps(
+    context: Context,
+    db: Scoped,
+    tx: Transaction,
+    runId: string,
+    steps: Step[],
+    reason: string,
+  ): Promise<void> {
+    const ids = steps.map((step) => step.id);
+    await tx.usageReservation.updateMany({
+      where: { workspaceId: context.workspaceId, correlationId: { in: ids }, status: "RESERVED" },
+      data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
+    });
+    await tx.providerRequest.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: { in: ids },
+        status: "FAILED",
+        actualCost: null,
+      },
+      data: { errorCode: reason },
+    });
+    await db.videoRunStep.updateMany({
+      where: { runId, id: { in: ids } },
+      data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
+    });
+    const refunded = steps
+      .filter((step) => step.state === "RUNNING")
+      .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
+    if (refunded) {
+      await db.budgetEnvelope.updateMany({
+        where: { runId, reservedMinor: { gte: refunded } },
+        data: { reservedMinor: { decrement: refunded }, revision: { increment: 1 } },
+      });
+    }
+  }
   public async resume(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
     await this.boundary.check(context, run);
+    if (run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+      throw new ConflictException("Abandon the unknown attempt before resuming");
+    if (run.pauseReason === "OPERATOR_ABANDONED") {
+      const result = await this.runs.store.mutate(context, id, "resumed", async (db, current) => {
+        if (current.pauseReason !== "OPERATOR_ABANDONED")
+          throw new ConflictException("Run changed");
+        const state = current.state === "PAUSED_BUDGET" ? "GENERATING" : current.state;
+        await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
+        return { value: null, payload: { from: current.state, to: state } };
+      });
+      await this.runs.events?.publish(result.event);
+      await this.runs.enqueue(context, await this.runs.store.get(context, id));
+      return;
+    }
     if (!["PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state))
       throw new ConflictException("Run cannot resume");
     await this.runs.move(context, run, "GENERATING");

@@ -71,6 +71,11 @@ function harness(): {
       state.request = { id: "request" };
     }),
     finish: vi.fn(),
+    dispatch: async (
+      _context: unknown,
+      _step: unknown,
+      call: () => Promise<unknown>,
+    ): Promise<unknown> => call(),
   };
   const boundary = { check: vi.fn() };
   const access = {
@@ -86,9 +91,9 @@ function harness(): {
           _context: unknown,
           _runId: string,
           _event: string,
-          work: (value: typeof db) => Promise<{ value: unknown; payload: unknown }>,
+          work: (value: typeof db, current: Run) => Promise<{ value: unknown; payload: unknown }>,
         ): Promise<{ value: unknown; payload: unknown; event: { payload: unknown } }> => {
-          const result = await work(db);
+          const result = await work(db, run);
           return { ...result, event: { payload: result.payload } };
         },
       },

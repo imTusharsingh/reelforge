@@ -146,6 +146,7 @@ type CostLineView = Readonly<{
 }>;
 
 export type CostBreakdownView = Readonly<{
+  videoRunId?: string;
   workspaceId: string;
   scriptId: string | null;
   workflowRunId: string | null;
@@ -801,7 +802,7 @@ export class UsageBudgetService {
       where: { workspaceId: context.workspaceId, id: runId },
       select: { id: true, channelId: true },
     });
-    if (!run) throw new NotFoundException("Workflow run not found");
+    if (!run) return this.videoRunBreakdown(context, runId);
     const now = this.clock();
     const rows = await this.ledger(this.db, {
       workspaceId: context.workspaceId,
@@ -820,6 +821,39 @@ export class UsageBudgetService {
       reservations: reservations as ReservationRecord[],
       renderJobs: [],
     });
+  }
+
+  private async videoRunBreakdown(
+    context: WorkspaceContext,
+    runId: string,
+  ): Promise<CostBreakdownView> {
+    const { workspaceId } = context;
+    const run = await this.db.videoRun.findFirst({
+      where: { workspaceId, id: runId },
+      select: { channelId: true },
+    });
+    if (!run) throw new NotFoundException("Run not found");
+    const now = this.clock();
+    const steps = await this.db.videoRunStep.findMany({
+      where: { workspaceId, runId },
+      select: { id: true },
+    });
+    const [rows, reservations] = await Promise.all([
+      this.ledger(this.db, { workspaceId, now, videoRunId: runId }),
+      this.db.usageReservation.findMany({
+        where: { workspaceId, correlationId: { in: steps.map((step) => step.id) } },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+    const result = await this.breakdown(workspaceId, now, {
+      scriptId: null,
+      workflowRunId: null,
+      channelId: run.channelId,
+      rows,
+      reservations,
+      renderJobs: [],
+    });
+    return { ...result, videoRunId: runId };
   }
 
   // ------------------------------------------------------------------------------------ internals

@@ -141,9 +141,13 @@ export class MediaPlanning {
   ): Promise<unknown> {
     const db = this.access.runs.store.scoped(context),
       key = `media:text:${input.promptVersion.role}`;
-    const previous = await db.videoRunStep.findFirst({ where: { runId: run.id, key } });
+    const previous = await db.videoRunStep.findFirst({
+      where: { runId: run.id, key },
+      orderBy: { attempt: "desc" },
+    });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
-    if (previous) throw new Error("RECONCILE_REQUIRED: text submission outcome unknown");
+    if (previous && !this.accounts.abandoned(previous))
+      throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${previous.id})`);
     const cost = reservationCents({
       currency: "USD",
       microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
@@ -159,20 +163,17 @@ export class MediaPlanning {
       modelId,
     );
     await this.accounts.prepare(context, run, step, modelId);
-    const result = await native.text.complete(
-      {
-        prompt: input.prompt,
-        jsonSchema: z.toJSONSchema(input.schema),
-        parse: (value): unknown => input.schema.parse(value),
-      },
-      step.idempotencyKey,
+    const result = await this.accounts.dispatch(context, step, () =>
+      native.text.complete(
+        {
+          prompt: input.prompt,
+          jsonSchema: z.toJSONSchema(input.schema),
+          parse: (value): unknown => input.schema.parse(value),
+        },
+        step.idempotencyKey,
+      ),
     );
-    if (input.promptVersion.role === "director") {
-      const shots = z.array(ShotSpecSchema).parse(result.output);
-      if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
-        throw new Error("Omni requires integer-second shots");
-      runEstimate(shots);
-    }
+    this.validatePlan(input.promptVersion.role, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
@@ -192,6 +193,14 @@ export class MediaPlanning {
       promptVersion: input.promptVersion,
     });
     return result.output;
+  }
+  private validatePlan(role: string, output: unknown): void {
+    if (role === "director") {
+      const shots = z.array(ShotSpecSchema).parse(output);
+      if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
+        throw new Error("Omni requires integer-second shots");
+      runEstimate(shots);
+    }
   }
   private async textReceipt(
     context: Context,

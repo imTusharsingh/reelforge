@@ -34,13 +34,40 @@ export class VideoRunEngine {
         withSpan(
           `run.step.${job.stepId ? "GENERATING" : run.state}`,
           async () => {
+            if (run.state === "CANCELED") {
+              return job.stepId ? this.shot(context, run, job.stepId) : null;
+            }
+            if (
+              run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+              run.pauseReason === "OPERATOR_ABANDONED"
+            )
+              return null;
             await this.boundary.check(context, run);
             if (job.stepId) return this.shot(context, run, job.stepId);
-            return this.advance(context, run);
+            try {
+              return await this.advance(context, run);
+            } catch (error) {
+              if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
+                await this.hold(context, run, error.message);
+              throw error;
+            }
           },
           "CONSUMER",
         ),
     );
+  }
+  private async hold(context: Context, run: Run, reason: string): Promise<void> {
+    const result = await this.runs.store.mutate(
+      context,
+      run.id,
+      "reconcile_required",
+      async (db, current) => {
+        if (current.state === run.state && current.pauseReason === null)
+          await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
+        return { value: null, payload: { reason } };
+      },
+    );
+    await this.runs.events?.publish(result.event);
   }
   private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
     try {
@@ -49,7 +76,9 @@ export class VideoRunEngine {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
       const current = await this.runs.store.get(context, run.id);
-      if (current.state === "GENERATING")
+      if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
+        await this.hold(context, run, error.message);
+      else if (current.state === "GENERATING")
         await this.runs.move(
           context,
           current,
@@ -96,6 +125,8 @@ export class VideoRunEngine {
         state: { notIn: ["SUCCEEDED", "SKIPPED", "CANCELLED"] },
       },
     });
+    const current = await this.runs.store.get(context, run.id);
+    if (current.state !== "GENERATING" || current.pauseReason) return null;
     if (steps.length) {
       await this.runs.queue?.fanout(
         this.runs.job(context, run.id),

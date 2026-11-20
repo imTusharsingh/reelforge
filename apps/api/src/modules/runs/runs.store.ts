@@ -20,7 +20,11 @@ export class RunsStore {
     context: Context,
     id: string,
     type: string,
-    work: (db: Scoped, run: Run) => Promise<{ value: T; payload: Json; stepId?: string }>,
+    work: (
+      db: Scoped,
+      run: Run,
+      tx: Transaction,
+    ) => Promise<{ value: T; payload: Json; stepId?: string }>,
   ): Promise<{ value: T; event: Event }> {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -39,7 +43,11 @@ export class RunsStore {
     context: Context,
     id: string,
     type: string,
-    work: (db: Scoped, run: Run) => Promise<{ value: T; payload: Json; stepId?: string }>,
+    work: (
+      db: Scoped,
+      run: Run,
+      tx: Transaction,
+    ) => Promise<{ value: T; payload: Json; stepId?: string }>,
   ): Promise<{ value: T; event: Event }> {
     return this.db.$transaction(async (tx) => {
       const db = this.scoped(context, tx);
@@ -50,7 +58,7 @@ export class RunsStore {
         data: { revision: run.revision + 1 },
       });
       if (updated.count !== 1) throw new ConflictException("Run revision conflict");
-      const result = await work(db, run);
+      const result = await work(db, run, tx);
       const event = await db.runEvent.create({
         data: {
           workspaceId: context.workspaceId,

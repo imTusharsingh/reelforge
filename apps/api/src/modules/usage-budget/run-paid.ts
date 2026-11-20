@@ -41,7 +41,7 @@ export class RunPaidCalls {
         currency: "USD",
         latencyMs: 0,
         dispatchedPrompt: "V3 deterministic stub",
-        responseMetadata: { dispatched: true, costKnown: false },
+        responseMetadata: { dispatched: false, costKnown: false },
         errorCode: "PENDING",
       },
     });
@@ -51,6 +51,45 @@ export class RunPaidCalls {
       currency: "USD",
       estimateMinor: amount,
     };
+  }
+  public async dispatch<T>(context: Context, step: Step, call: () => Promise<T>): Promise<T> {
+    try {
+      await this.store.mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
+        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+        if (
+          run.state === "CANCELED" ||
+          current.state !== "RUNNING" ||
+          run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+        )
+          throw new ConflictException("Paid dispatch is closed");
+        const marked = await tx.providerRequest.updateMany({
+          where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
+          data: {
+            errorCode: "VIDEO_RUN_DISPATCHING",
+            responseMetadata: { dispatched: true, costKnown: false },
+          },
+        });
+        if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
+        return { value: null, payload: {}, stepId: step.id };
+      });
+    } catch (error) {
+      const run = await this.store.get(context, step.runId);
+      if (run.state === "CANCELED") await this.finish(context, step, false, 0);
+      throw error;
+    }
+    try {
+      return await call();
+    } catch (error) {
+      await this.store.db.providerRequest.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          correlationId: step.id,
+          errorCode: "VIDEO_RUN_DISPATCHING",
+        },
+        data: { errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN" },
+      });
+      throw error;
+    }
   }
   public async finish(
     context: Context,

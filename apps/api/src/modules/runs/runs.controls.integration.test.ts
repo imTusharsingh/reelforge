@@ -1,11 +1,99 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
+import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { ArtifactSchema } from "./runs.types.js";
 
 const suite = describe.skipIf(!process.env.DATABASE_URL);
 suite("V3 approval, caps and retention", () => {
   const fixture = runsFixture();
   afterEach(() => vi.unstubAllEnvs());
+  it.each(["SCRIPTING", "GENERATING"] as const)(
+    "cancels from %s and skips queued work",
+    async (state) => {
+      const t = await fixture.tenant();
+      if (state === "SCRIPTING") await t.engine.process(t.runs.job(t.context, t.run.id));
+      else await generating(t);
+      const db = t.store.scoped(t.context);
+      expect((await t.store.get(t.context, t.run.id)).state).toBe(state);
+      const step = await db.videoRunStep.create({
+        data: {
+          workspaceId: t.context.workspaceId,
+          runId: t.run.id,
+          key: "media:text:fixture",
+          state: "RUNNING",
+          costMinor: 10,
+          idempotencyKey: `${t.run.id}:text:1`,
+          input: {},
+        },
+      });
+      const usage = new UsageBudgetService(t.db, () => new Date());
+      const paid = new RunPaidCalls(usage, t.store);
+      await paid.reserve(t.context, t.run, step, 10);
+      const submit = vi.spyOn(t.generation.provider, "submit");
+      await t.control.cancel(t.context, t.run.id);
+      await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).resolves.toBeNull();
+      expect(submit).not.toHaveBeenCalled();
+      const breakdown = await usage.runBreakdown(t.context, t.run.id);
+      expect(breakdown.reservations).toEqual([
+        expect.objectContaining({ status: "RELEASED", committedMinor: null }),
+      ]);
+      await expect(t.control.cancel(t.context, t.run.id)).rejects.toMatchObject({ status: 409 });
+      expect((await t.store.get(t.context, t.run.id)).state).toBe("CANCELED");
+    },
+  );
+  it("releases an unknown text attempt and resumes the same stage", async () => {
+    const t = await fixture.tenant();
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    const db = t.store.scoped(t.context);
+    const step = await db.videoRunStep.create({
+      data: {
+        workspaceId: t.context.workspaceId,
+        runId: t.run.id,
+        key: "media:text:fixture",
+        state: "RUNNING",
+        costMinor: 12,
+        idempotencyKey: `${t.run.id}:text:1`,
+        input: {},
+      },
+    });
+    const usage = new UsageBudgetService(t.db, () => new Date());
+    const paid = new RunPaidCalls(usage, t.store);
+    await paid.reserve(t.context, t.run, step, 12);
+    await db.videoRun.updateMany({
+      where: { id: t.run.id },
+      data: { pauseReason: "RECONCILE_REQUIRED: text submission outcome unknown" },
+    });
+    await expect(t.control.resume(t.context, t.run.id)).rejects.toMatchObject({ status: 409 });
+    await t.control.abandon(t.context, t.run.id, step.id);
+    expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
+      reservedMinor: 0,
+      committedMinor: 0,
+    });
+    await t.control.resume(t.context, t.run.id);
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: "SCRIPTING",
+      pauseReason: null,
+    });
+  });
+  it("reports reserved and committed VideoRun costs", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0" },
+    });
+    const usage = new UsageBudgetService(t.db, () => new Date());
+    const paid = new RunPaidCalls(usage, t.store);
+    await paid.reserve(t.context, t.run, step, 25);
+    expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
+      reservedMinor: 25,
+      committedMinor: 0,
+    });
+    await paid.finish(t.context, step, true, 20);
+    const result = await usage.runBreakdown(t.context, t.run.id);
+    expect(result.videoRunId).toBe(t.run.id);
+    expect(result.totals.currencies[0]).toMatchObject({ reservedMinor: 0, committedMinor: 20 });
+  });
   it("limits full re-edits to one and shot reshoots to two", async () => {
     const t = await fixture.tenant();
     await generating(t);

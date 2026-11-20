@@ -50,6 +50,7 @@ export type LedgerFilter = Readonly<{
   to?: Date;
   scriptId?: string;
   workflowRunId?: string;
+  videoRunId?: string;
 }>;
 
 type RawLedgerRow = {
@@ -74,7 +75,7 @@ export type LedgerReader = {
   $queryRaw<T = unknown>(query: Prisma.Sql): Promise<T>;
 };
 
-export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Promise<LedgerRow[]> {
+function ledgerConditions(filter: LedgerFilter): Prisma.Sql {
   const conditions: Prisma.Sql[] = [];
   if (filter.channelId !== undefined && filter.channelId !== null)
     conditions.push(Prisma.sql`ledger.channel_id = ${filter.channelId}`);
@@ -84,8 +85,17 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
     conditions.push(Prisma.sql`ledger.script_id = ${filter.scriptId}`);
   if (filter.workflowRunId !== undefined)
     conditions.push(Prisma.sql`ledger.workflow_run_id = ${filter.workflowRunId}`);
-  const where =
-    conditions.length === 0 ? Prisma.empty : Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`;
+  if (filter.videoRunId !== undefined)
+    conditions.push(
+      Prisma.sql`EXISTS (SELECT 1 FROM video_run_steps step WHERE step.workspace_id::text = ${filter.workspaceId} AND step.run_id::text = ${filter.videoRunId} AND step.id::text = ledger.correlation_id)`,
+    );
+  return conditions.length === 0
+    ? Prisma.empty
+    : Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`;
+}
+
+export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Promise<LedgerRow[]> {
+  const where = ledgerConditions(filter);
   const rows = await db.$queryRaw<RawLedgerRow[]>(Prisma.sql`
     WITH ledger AS (
       SELECT pr.id::text AS id,
@@ -213,6 +223,8 @@ export function classifyCost(
     PRE_DISPATCH_ERROR_CODES.includes(row.errorCode)
   )
     return { kind: "NOT_DISPATCHED", amountMinor: null, currency };
+  if (row.errorCode === "OPERATOR_ABANDONED" || row.errorCode === "RUN_CANCELED")
+    return { kind: "UNKNOWN", amountMinor: null, currency };
   if (row.estimatedCost === null) return { kind: "UNKNOWN", amountMinor: null, currency };
   const pending = row.status === "FAILED" && row.errorCode === "PENDING";
   return {
