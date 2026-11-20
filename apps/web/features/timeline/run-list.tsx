@@ -6,6 +6,7 @@ import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge } from "../../components/ui/primitives";
 import { EmptyState, Skeleton, VideoPlayer } from "../../components/ui/studio";
+import { NewShort } from "./new-short";
 import { runClient } from "./client";
 import { dollars, finalMedia, pauseLabel, runMetadata, stateLabel } from "./view-model";
 
@@ -52,7 +53,7 @@ function RunGallery({ workspaceId, inbox, editable }: { workspaceId: string; inb
           <h1>{inbox ? "Review queue" : "Creator studio"}</h1>
           <p>{inbox ? "Open a Short to check its preview and make a decision." : "Track your Shorts from the first idea to the published video."}</p>
         </div>
-        {!inbox && editable && <StudioLink className="rf-button" href="/onboarding">＋ New channel</StudioLink>}
+        {!inbox && editable && <NewShort />}
       </header>
       {error && <Alert tone="danger" title="Runs unavailable">{error}</Alert>}
       {!runs && !error && <Skeleton label="Loading runs…" />}
