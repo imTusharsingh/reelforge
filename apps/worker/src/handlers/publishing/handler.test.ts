@@ -26,12 +26,8 @@ describe("V9 worker lifecycle on fake runtime", () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(tick).toHaveBeenCalledTimes(1);
   });
-  it("does not initialize runtime when disabled or under tests", async () => {
-    vi.stubEnv("PIPELINE_V2", "false");
+  it("does not initialize runtime under tests", async () => {
     const close = vi.fn(async () => undefined);
-    await startPublishingWorker({ close });
-    expect(close).not.toHaveBeenCalled();
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.stubEnv("NODE_ENV", "test");
     await startPublishingWorker({ close });
     expect(close).not.toHaveBeenCalled();

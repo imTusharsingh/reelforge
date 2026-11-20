@@ -1,8 +1,8 @@
 vi.mock("@nestjs/core", () => ({ NestFactory: { createApplicationContext: vi.fn() } }));
 import { NestFactory } from "@nestjs/core";
-vi.mock("@reelforge/api/app-module", () => ({ AppModule: class AppModule {} }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DiscoveryWorkerHandler, startDiscoveryWorker } from "./handler.js";
+vi.mock("@reelforge/api/app-module", () => ({ AppModule: class AppModule {} }));
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -40,15 +40,11 @@ describe("V10 discovery worker", () => {
     await vi.advanceTimersByTimeAsync(120000);
     expect(scheduledTick).toHaveBeenCalledTimes(2);
     await handler.stop();
-    vi.stubEnv("PIPELINE_V2", "false");
-    await startDiscoveryWorker({ close: async (): Promise<void> => {} });
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.stubEnv("NODE_ENV", "test");
     await startDiscoveryWorker({ close: async (): Promise<void> => {} });
   });
   it("starts the gated runtime with no immediate dispatch and joins host shutdown", async () => {
     vi.useFakeTimers();
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.stubEnv("NODE_ENV", "development");
     const scheduledTick = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined),

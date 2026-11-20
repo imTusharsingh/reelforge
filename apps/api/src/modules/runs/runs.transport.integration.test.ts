@@ -1,7 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { firstValueFrom, take, toArray, timeout } from "rxjs";
 import { DelayedError, Queue, Worker } from "bullmq";
-import { parseRedisConnection } from "../orchestration/orchestration.bullmq.js";
+import { parseRedisConnection } from "./redis-connection.js";
 import { runsFixture, generating } from "./runs.fixture.js";
 import { RunsEvents } from "./runs.events.js";
 import { RunsQueue, RUN_QUEUE } from "./runs.queue.js";
@@ -10,7 +10,6 @@ import type { RunJob } from "./runs.types.js";
 const enabled = !!process.env.DATABASE_URL && !!process.env.REDIS_URL;
 describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
   const fixture = runsFixture();
-  beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
   afterEach(() => vi.unstubAllEnvs());
   it("replays ordered transitions including reconnect and messages committed during subscription", async () => {
     const t = await fixture.tenant();
@@ -112,9 +111,6 @@ describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
     try {
       await t.engine.recover();
       expect(await inspect.getJob(`${t.run.id}-${t.run.revision}`)).toBeTruthy();
-      vi.stubEnv("PIPELINE_V2", "false");
-      expect(await t.engine.process(t.runs.job(t.context, t.run.id))).toBe(12000);
-      await t.engine.recover();
     } finally {
       await inspect.obliterate({ force: true });
       await queue.close();

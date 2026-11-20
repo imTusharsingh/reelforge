@@ -33,16 +33,8 @@ import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js
 import { CompositionService } from "../composition/composition.service.js";
 import type { RenderManifest } from "../composition/composition.manifest.js";
 import { QualityService } from "../quality/quality.service.js";
-import {
-  currentQualityReviewFilter,
-  currentQualityReviewOrder,
-} from "../quality/quality.current-review.js";
 import { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
-import {
-  CalendarRangeSchema,
-  CreateScheduledPostSchema,
-  UpdateScheduledPostSchema,
-} from "./publishing.validation.js";
+import { CreateScheduledPostSchema } from "./publishing.validation.js";
 import {
   PUBLISHING_BUDGET_PORT,
   PUBLISHING_SCHEDULE_PORT,
@@ -55,8 +47,6 @@ import {
   type EncryptedPublishingSession,
 } from "./publishing-session-vault.js";
 import type {
-  EligibleRenderPage,
-  EligibleRenderView,
   PublishingDestinationView,
   PublishingPlatformView,
   PublishingPreflightGate,
@@ -288,154 +278,6 @@ export class PublishingService {
     ];
   }
 
-  public async eligibleRenders(
-    context: WorkspaceContext,
-    query: { channelId?: string; cursor?: string; limit?: string },
-  ): Promise<EligibleRenderPage> {
-    const limit = parseEligibleLimit(query.limit);
-    const channelId = query.channelId?.trim() || null;
-    if (channelId !== null && !z.uuid().safeParse(channelId).success)
-      throw new BadRequestException("channelId must be a valid UUID");
-    if (channelId !== null) {
-      const channel = await this.db.channel.findUnique({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: channelId } },
-        select: { id: true },
-      });
-      if (!channel) throw new NotFoundException("Channel not found");
-    }
-    const cursor = query.cursor === undefined ? null : decodeEligibleCursor(query.cursor);
-    const now = new Date();
-    const videoArtifact = {
-      kind: "VIDEO",
-      asset: { status: "PUBLISHED", byteSize: { gt: 0 }, checksumSha256: { not: null } },
-      OR: [{ retainedUntil: null }, { retainedUntil: { gt: now } }],
-    } satisfies Prisma.RenderArtifactWhereInput;
-    const rows = await this.db.renderJob.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        status: "SUCCEEDED",
-        expiredAt: null,
-        sceneMediaJob: { channelId: channelId ?? { not: null } },
-        artifacts: { some: videoArtifact },
-        qualityReviewRuns: {
-          some: {
-            workspaceId: context.workspaceId,
-            ...currentQualityReviewFilter,
-            status: { in: ["APPROVED", "AUTO_APPROVED"] },
-          },
-        },
-        ...(cursor === null
-          ? {}
-          : {
-              OR: [
-                { updatedAt: { lt: cursor.at } },
-                { updatedAt: cursor.at, id: { lt: cursor.id } },
-              ],
-            }),
-      },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-      take: limit + 1,
-      select: {
-        id: true,
-        updatedAt: true,
-        input: true,
-        sceneMediaJob: { select: { channelId: true, scriptId: true } },
-        artifacts: {
-          where: videoArtifact,
-          take: 1,
-          orderBy: { createdAt: "asc" },
-          select: { id: true, createdAt: true },
-        },
-        qualityReviewRuns: {
-          where: {
-            workspaceId: context.workspaceId,
-            ...currentQualityReviewFilter,
-          },
-          orderBy: currentQualityReviewOrder,
-          take: 1,
-          select: {
-            id: true,
-            status: true,
-            createdAt: true,
-            decisions: {
-              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-              take: 1,
-              select: { createdAt: true },
-            },
-          },
-        },
-      },
-    });
-    const page = rows.slice(0, limit);
-    const items: EligibleRenderView[] = [];
-    for (const row of page) {
-      const run = row.qualityReviewRuns[0] ?? null;
-      const details = eligibleRenderDetails(row.input);
-      const rowChannelId = row.sceneMediaJob.channelId;
-      if (
-        run === null ||
-        (run.status !== "APPROVED" && run.status !== "AUTO_APPROVED") ||
-        details === null ||
-        rowChannelId === null ||
-        row.artifacts.length === 0
-      )
-        continue;
-      items.push({
-        renderJobId: row.id,
-        channelId: rowChannelId,
-        scriptId: row.sceneMediaJob.scriptId,
-        title: details.title,
-        durationMs: details.durationMs,
-        completedAt: row.artifacts[0]!.createdAt.toISOString(),
-        qualityReviewRunId: run.id,
-        reviewStatus: run.status,
-        reviewedAt: (run.decisions?.[0]?.createdAt ?? run.createdAt).toISOString(),
-      });
-    }
-    return {
-      items,
-      nextCursor: rows.length > limit ? encodeEligibleCursor(rows[limit - 1]!) : null,
-    };
-  }
-
-  public async drafts(
-    context: WorkspaceContext,
-    cursor?: string,
-  ): Promise<{ items: ScheduledPostView[]; nextCursor: string | null }> {
-    if (cursor !== undefined && !z.uuid().safeParse(cursor).success)
-      throw new BadRequestException("Invalid cursor");
-    const rows = await this.db.scheduledPost.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        status: "DRAFT",
-        ...(cursor ? { id: { gt: cursor } } : {}),
-      },
-      orderBy: { id: "asc" },
-      take: 51,
-      include: postInclude,
-    });
-    const items = rows.slice(0, 50).map((row) => this.presentPost(row));
-    return { items, nextCursor: rows.length > 50 ? (rows[49]?.id ?? null) : null };
-  }
-
-  public async listCalendar(
-    context: WorkspaceContext,
-    from: string,
-    to: string,
-  ): Promise<ScheduledPostView[]> {
-    const range = this.parseCalendarRange(from, to);
-    const posts = await this.db.scheduledPost.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        scheduledAt: { gte: range.from, lt: range.to },
-        status: { not: "CANCELED" },
-      },
-      include: postInclude,
-      orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
-    });
-    return posts.map((post) => this.presentPost(post));
-  }
-
   public async getScheduledPost(
     context: WorkspaceContext,
     scheduledPostId: string,
@@ -446,78 +288,6 @@ export class PublishingService {
     });
     if (!post) throw new NotFoundException("Scheduled post not found");
     return this.presentPost(post);
-  }
-
-  public async updateScheduledPost(
-    context: WorkspaceContext,
-    scheduledPostId: string,
-    body: unknown,
-  ): Promise<ScheduledPostView> {
-    this.requireEditor(context);
-    const parsed = UpdateScheduledPostSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    const post = await this.requirePost(context.workspaceId, scheduledPostId);
-    await this.requireEditableBeforePublish(post);
-    const scheduledAt =
-      parsed.data.scheduledAt === undefined
-        ? post.scheduledAt
-        : parsed.data.scheduledAt === null
-          ? null
-          : new Date(parsed.data.scheduledAt);
-    const disclosure =
-      parsed.data.disclosure === undefined
-        ? null
-        : DisclosureDecisionSchema.parse(parsed.data.disclosure);
-    await this.db.$transaction(async (tx) => {
-      await tx.scheduledPost.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: scheduledPostId } },
-        data: {
-          scheduledAt,
-          status: scheduledAt === null ? "DRAFT" : "SCHEDULED",
-          ...(disclosure === null
-            ? {}
-            : {
-                disclosureDecision: disclosure.decision,
-                disclosureText:
-                  disclosure.decision === "DISCLOSE" ? disclosure.disclosureText : null,
-                disclosureReason: disclosure.reason,
-              }),
-        },
-      });
-      await tx.publishingDestination.updateMany({
-        where: { workspaceId: context.workspaceId, scheduledPostId },
-        data: { status: scheduledAt === null ? "DRAFT" : "SCHEDULED" },
-      });
-      await tx.publishJob.updateMany({
-        where: { workspaceId: context.workspaceId, destination: { scheduledPostId } },
-        data: { status: scheduledAt === null ? "DRAFT" : "SCHEDULED" },
-      });
-    });
-    return this.getScheduledPost(context, scheduledPostId);
-  }
-
-  public async cancelScheduledPost(
-    context: WorkspaceContext,
-    scheduledPostId: string,
-  ): Promise<ScheduledPostView> {
-    this.requireEditor(context);
-    const post = await this.requirePost(context.workspaceId, scheduledPostId);
-    await this.requireEditableBeforePublish(post);
-    await this.db.$transaction(async (tx) => {
-      await tx.scheduledPost.update({
-        where: { workspaceId_id: { workspaceId: context.workspaceId, id: scheduledPostId } },
-        data: { status: "CANCELED" },
-      });
-      await tx.publishingDestination.updateMany({
-        where: { workspaceId: context.workspaceId, scheduledPostId },
-        data: { status: "CANCELED" },
-      });
-      await tx.publishJob.updateMany({
-        where: { workspaceId: context.workspaceId, destination: { scheduledPostId } },
-        data: { status: "CANCELED", canceledAt: new Date() },
-      });
-    });
-    return this.getScheduledPost(context, scheduledPostId);
   }
 
   public async preflight(
@@ -831,14 +601,6 @@ export class PublishingService {
         throw error;
     }
     return this.getScheduledPost(context, destination.scheduledPostId);
-  }
-
-  public async reschedule(
-    context: WorkspaceContext,
-    scheduledPostId: string,
-    scheduledAt: string | null,
-  ): Promise<ScheduledPostView> {
-    return this.updateScheduledPost(context, scheduledPostId, { scheduledAt });
   }
 
   public async listPublishedRecords(
@@ -1745,18 +1507,6 @@ export class PublishingService {
     return { render, manifest, video };
   }
 
-  private async requirePost(
-    workspaceId: string,
-    scheduledPostId: string,
-  ): Promise<ScheduledPostRecord> {
-    const post = await this.db.scheduledPost.findUnique({
-      where: { workspaceId_id: { workspaceId, id: scheduledPostId } },
-      include: postInclude,
-    });
-    if (!post) throw new NotFoundException("Scheduled post not found");
-    return post;
-  }
-
   private async requireDestination(
     workspaceId: string,
     destinationId: string,
@@ -1767,16 +1517,6 @@ export class PublishingService {
     });
     if (!destination) throw new NotFoundException("Publishing destination not found");
     return destination;
-  }
-
-  private async requireEditableBeforePublish(post: ScheduledPostRecord): Promise<void> {
-    if (
-      !post.destinations.every(
-        (destination) => destination.status === "DRAFT" || destination.status === "SCHEDULED",
-      ) ||
-      post.destinations.some((destination) => (destination.publishJob?.attempts.length ?? 0) > 0)
-    )
-      throw new ConflictException("A publish attempt exists; metadata and schedule are immutable");
   }
 
   private parseDestinationMetadata(
@@ -1832,12 +1572,6 @@ export class PublishingService {
 
   private sessionContext(workspaceId: string, jobId: string, attemptId: string): string {
     return `${workspaceId}:${jobId}:${attemptId}:youtube-upload-session`;
-  }
-
-  private parseCalendarRange(from: string, to: string): { from: Date; to: Date } {
-    const parsed = CalendarRangeSchema.safeParse({ from, to });
-    if (!parsed.success) throw new BadRequestException(parsed.error.issues);
-    return { from: new Date(parsed.data.from), to: new Date(parsed.data.to) };
   }
 
   private requirePassingPreflight(preflight: PublishingPreflightView): void {
@@ -1916,58 +1650,6 @@ function gate(
   evidence: string,
 ): PublishingPreflightGate {
   return { id, passed, evidence: [evidence] };
-}
-
-function parseEligibleLimit(value: string | undefined): number {
-  if (value === undefined) return 25;
-  if (!/^\d+$/.test(value)) throw new BadRequestException("limit must be an integer");
-  const limit = Number(value);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
-    throw new BadRequestException("limit must be between 1 and 100");
-  return limit;
-}
-
-function encodeEligibleCursor(row: { updatedAt: Date; id: string }): string {
-  return Buffer.from(
-    JSON.stringify({ at: row.updatedAt.toISOString(), id: row.id }),
-    "utf8",
-  ).toString("base64url");
-}
-
-function decodeEligibleCursor(value: string): { at: Date; id: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-  } catch {
-    throw new BadRequestException("Invalid cursor");
-  }
-  if (
-    !isRecord(parsed) ||
-    typeof parsed["at"] !== "string" ||
-    typeof parsed["id"] !== "string" ||
-    !z.uuid().safeParse(parsed["id"]).success
-  )
-    throw new BadRequestException("Invalid cursor");
-  const at = new Date(parsed["at"]);
-  if (Number.isNaN(at.getTime())) throw new BadRequestException("Invalid cursor");
-  return { at, id: parsed["id"] };
-}
-
-function eligibleRenderDetails(
-  input: Prisma.JsonValue,
-): { title: string; durationMs: number } | null {
-  if (!isRecord(input)) return null;
-  const title = input["title"];
-  const durationSeconds = renderDurationSeconds(input);
-  if (typeof title !== "string" || title.trim().length === 0 || durationSeconds === null)
-    return null;
-  const durationMs = Math.round(durationSeconds * 1000);
-  if (!Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
-  return { title, durationMs };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function renderDurationSeconds(input: Prisma.JsonValue): number | null {

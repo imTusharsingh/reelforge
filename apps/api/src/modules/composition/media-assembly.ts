@@ -24,7 +24,6 @@ export class MediaAssembly {
     private readonly renderer: MediaRenderer,
   ) {}
   public async execute(context: Context, run: Run, brief: ChannelBrief): Promise<Artifact[]> {
-    this.access.gate();
     const existing = await this.artifacts(context, run);
     if (existing.length) return existing;
     const plan = await this.planning.saved(context, run, brief);

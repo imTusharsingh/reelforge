@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
 import { StubVideoGenPort } from "../scene-media/media-provider.fixture.js";
 import { ProviderOutage } from "../orchestration/video-run.generation.js";
@@ -7,7 +7,6 @@ import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
   const fixture = runsFixture();
-  beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
   afterEach(() => vi.unstubAllEnvs());
   it("runs deterministic stages without a media call in create, then awaits final approval", async () => {
     const t = await fixture.tenant("L3");

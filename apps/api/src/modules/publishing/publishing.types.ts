@@ -77,20 +77,3 @@ export type PublishingPlatformView = Readonly<{
   reasonCode:
     "PLATFORM_NOT_CONFIGURED" | "PUBLISHING_NOT_CONFIGURED" | "INSTAGRAM_NOT_VERIFIED" | null;
 }>;
-
-export type EligibleRenderView = Readonly<{
-  renderJobId: string;
-  channelId: string;
-  scriptId: string;
-  title: string;
-  durationMs: number;
-  completedAt: string;
-  qualityReviewRunId: string;
-  reviewStatus: "APPROVED" | "AUTO_APPROVED";
-  reviewedAt: string;
-}>;
-
-export type EligibleRenderPage = Readonly<{
-  items: readonly EligibleRenderView[];
-  nextCursor: string | null;
-}>;

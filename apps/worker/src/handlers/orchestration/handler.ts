@@ -10,42 +10,17 @@ export class OrchestrationWorkerHandler {
     private readonly runtime: OrchestrationRuntime,
     private readonly options: {
       readonly tickIntervalMs?: number;
-      readonly now?: () => Date;
       readonly onError?: (error: unknown) => void;
     } = {},
   ) {}
 
-  /**
-   * One tick with the injected clock: stale-lease recovery, the scheduler, then the recovery
-   * sweep that re-enqueues stalled QUEUED/RETRY_WAIT/WAITING_EXTERNAL/PENDING work (lost Redis
-   * jobs, enqueue failures, crashes between completion and the next enqueue).
-   */
   public async tick(): Promise<void> {
     await this.runtime.videoRuns?.recover();
-    const now = (this.options.now ?? ((): Date => new Date()))();
-    await this.runtime.service.recoverStaleLeases(now);
-    await this.runtime.service.runSchedulerTick(now);
-    await this.runtime.service.reconcileStalledWork(now);
   }
 
   public async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    if (this.runtime.consumer) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          this.runtime.consumer.worker.waitUntilReady(),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              reject(new Error("Orchestration BullMQ worker did not become ready within 10 s"));
-            }, 10_000);
-          }),
-        ]);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    }
     while (this.running) {
       const active = this.tick();
       this.active = active.then(

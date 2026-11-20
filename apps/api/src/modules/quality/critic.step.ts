@@ -1,6 +1,5 @@
 import { ConflictException } from "@nestjs/common";
 import type { ModuleRef } from "@nestjs/core";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { RunCriticReportSchema, type ChannelBrief } from "@reelforge/contracts";
 import type { StepHandler } from "../orchestration/video-run.handlers.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
@@ -19,13 +18,11 @@ export class CriticStep implements StepHandler {
   ) {}
 
   public onModuleInit(): void {
-    if (!pipelineV2Enabled()) return;
     const planning = this.modules.get(RunPlanning, { strict: false });
     planning.handlers = { ...planning.handlers, CRITIC: this };
   }
 
   public async execute(run: Run, brief: ChannelBrief, step: Step): Promise<Json> {
-    if (!pipelineV2Enabled()) throw new ConflictException("pipeline.v2 is disabled");
     const runs = this.modules.get(RunsService, { strict: false });
     const context = await this.context(runs, run);
     const db = runs.store.scoped(context);

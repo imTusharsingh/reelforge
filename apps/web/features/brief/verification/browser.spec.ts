@@ -1,7 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { capability, stubRun } from "../setup.fixture";
-import type { ChannelBrief } from "../../../../../packages/contracts/src/foundations";
+import { capability } from "../setup.fixture";
 async function accessible(page: Page): Promise<void> {
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 }
@@ -21,29 +20,27 @@ test("sign-up, five inputs, queued run, immutable Brief and accessible settings"
     channelId = "",
     runCalls = 0;
   const configured = { gemini: false, xai: false };
-  await page.route("**/api/v1/runs", async (route) => {
-    runCalls++;
-    const body = route.request().postDataJSON() as {
-      workspaceId: string;
-      channelId: string;
-      idempotencyKey: string;
-    };
+  page.on("response", (response) => {
+    if (response.status() !== 202 || !response.url().endsWith("/api/v1/runs")) return;
+    const body = response.request().postDataJSON() as { workspaceId: string };
     workspaceId = body.workspaceId;
-    channelId = body.channelId;
-    const response = await page.request.get(
-      `http://127.0.0.1:3301/api/v1/workspaces/${workspaceId}/channels/${channelId}/briefs`,
-    );
-    const briefs = (await response.json()) as ChannelBrief[];
-    await route.fulfill({ status: 201, json: stubRun(briefs[0]!, body.idempotencyKey) });
+    runCalls++;
   });
-  await page.route("**/api/v1/workspaces/*/provider-keys**", async (route) => {
-    const provider = route.request().url().split("/").at(-1);
+  page.on("response", (response) => {
+    if (response.request().method() !== "POST" || !response.url().endsWith("/briefs")) return;
+    channelId = response.url().split("/").at(-2) ?? "";
+  });
+  await page.route("**/api/v1/workspaces/*/providers/keys", (route) =>
+    route.fulfill({ json: configured }),
+  );
+  await page.route("**/api/v1/workspaces/*/providers/*/key", async (route) => {
+    const provider = route.request().url().split("/").at(-2);
     if (route.request().method() === "PUT" && (provider === "gemini" || provider === "xai")) {
       configured[provider] = true;
       await route.fulfill({ status: 204, body: "" });
     } else await route.fulfill({ json: configured });
   });
-  await page.route("**/api/v1/workspaces/*/providers/capabilities", (route) =>
+  await page.route("**/api/v1/workspaces/*/providers/health", (route) =>
     route.fulfill({ json: [{ ...capability, workspaceId }] }),
   );
   await register(page);

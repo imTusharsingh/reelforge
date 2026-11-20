@@ -303,28 +303,6 @@ describe.skipIf(databaseUrl === undefined)("M27 persisted publishing behavior", 
     await db.user.deleteMany({ where: { id: { in: [userId, viewerId] } } });
     await db.$disconnect();
   });
-  it("returns 201 on creation, 200 on replay, and 409 for a different payload", async () => {
-    const path = `/workspaces/${own.workspaceId}/publishing/posts`;
-    const body = createBody(own, output);
-    const first = await request(app.getHttpServer() as never)
-      .post(path)
-      .set("Authorization", `Bearer ${token}`)
-      .send(body)
-      .expect(201);
-    const replay = await request(app.getHttpServer() as never)
-      .post(path)
-      .set("Authorization", `Bearer ${token}`)
-      .send(body)
-      .expect(200);
-    expect(replay.body.id).toBe(first.body.id);
-    await request(app.getHttpServer() as never)
-      .post(path)
-      .set("Authorization", `Bearer ${token}`)
-      .send({ ...body, scheduledAt: "2026-11-30T10:00:00Z" })
-      .expect(409)
-      .expect(({ body }) => expect(body.code).toBe("IDEMPOTENCY_KEY_CONFLICT"));
-    expect(assertPublishable).toHaveBeenCalled();
-  });
   it("re-reads the original row on a real concurrent unique-insert race", async () => {
     if (!db) return;
     const key = randomUUID();
@@ -360,7 +338,7 @@ describe.skipIf(databaseUrl === undefined)("M27 persisted publishing behavior", 
       assertPublishable.mockResolvedValue([]);
     }
   });
-  it("lets viewers read platforms/drafts and isolates the draft workspace", async () => {
+  it("lets viewers read platform availability", async () => {
     const platforms = await request(app.getHttpServer() as never)
       .get(`/workspaces/${own.workspaceId}/publishing/platforms`)
       .set("Authorization", `Bearer ${viewerToken}`)
@@ -371,74 +349,5 @@ describe.skipIf(databaseUrl === undefined)("M27 persisted publishing behavior", 
       publishable: false,
       reasonCode: "INSTAGRAM_NOT_VERIFIED",
     });
-    const drafts = await publishing.drafts({
-      workspaceId: own.workspaceId,
-      userId,
-      role: "VIEWER",
-    });
-    expect(drafts.items.length).toBeGreaterThan(0);
-    expect(
-      (await publishing.drafts({ workspaceId: foreign.workspaceId, userId, role: "VIEWER" })).items,
-    ).toEqual([]);
-  });
-  it("excludes pending, rejected, superseded and replaced approvals with stable paging", async () => {
-    if (!db) return;
-    const auto = await render(db, own, "AUTO_APPROVED");
-    await render(db, own, "REVIEW_REQUIRED");
-    await render(db, own, "REJECTED");
-    const superseded = await render(db, own);
-    await db.qualityReviewRun.update({
-      where: { id: superseded.qualityReviewRunId },
-      data: { supersededAt: new Date() },
-    });
-    const replaced = await render(db, own);
-    await db.qualityReviewRun.create({
-      data: {
-        workspaceId: own.workspaceId,
-        renderJobId: replaced.renderJobId,
-        renderFamilyId: replaced.renderJobId,
-        createdByUserId: userId,
-        status: "REVIEW_REQUIRED",
-        gateSummary: [],
-        policySnapshot: {},
-        disclosures: [],
-        limitations: [],
-        createdAt: new Date(Date.now() + 1000),
-      },
-    });
-    const foreignOutput = await render(db, foreign);
-    const context: WorkspaceContext = { workspaceId: own.workspaceId, userId, role: "VIEWER" };
-    const ids: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await publishing.eligibleRenders(context, {
-        channelId: own.channelId,
-        limit: "1",
-        ...(cursor ? { cursor } : {}),
-      });
-      ids.push(...page.items.map((item) => item.renderJobId));
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    expect(ids.sort()).toEqual([output.renderJobId, auto.renderJobId].sort());
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).not.toContain(foreignOutput.renderJobId);
-    await expect(
-      publishing.eligibleRenders(context, { channelId: foreign.channelId }),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(
-      (
-        await publishing.eligibleRenders({ ...context, workspaceId: foreign.workspaceId }, {})
-      ).items.map((item) => item.renderJobId),
-    ).toEqual([foreignOutput.renderJobId]);
-  });
-  it("does not discover renders whose artifact asset is no longer ready", async () => {
-    if (!db) return;
-    const context: WorkspaceContext = { workspaceId: own.workspaceId, userId, role: "VIEWER" };
-    await db.asset.update({ where: { id: own.assetId }, data: { status: "ARCHIVED" } });
-    try {
-      expect((await publishing.eligibleRenders(context, {})).items).toEqual([]);
-    } finally {
-      await db.asset.update({ where: { id: own.assetId }, data: { status: "PUBLISHED" } });
-    }
   });
 });

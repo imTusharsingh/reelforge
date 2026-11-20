@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
 import { HookSchema, CtaSchema, scriptWordBudget } from "@reelforge/contracts";
 import type { ScriptDocument } from "./script.types.js";
@@ -37,29 +37,6 @@ export const scriptDocumentSchema = z
     claims: z.array(z.object({ text: z.string().min(1), sourceUrl: z.string().url() })).optional(),
   })
   .refine(scriptWordBudget, "Script words exceed the duration budget (210 words/minute)");
-export function parseScriptDocument(value: unknown): ScriptDocument {
-  const result = scriptDocumentSchema.safeParse(value);
-  if (!result.success) throw new BadRequestException(result.error.issues);
-  return result.data as ScriptDocument;
-}
-/** V4 stops writing per-scene character assignments while V5 can still read old history. */
-export function parseScriptWriteDocument(value: unknown): ScriptDocument {
-  const document = parseScriptDocument(value);
-  if (document.scenes.some((item) => item.characterRefs.length > 0))
-    throw new BadRequestException(
-      "Per-scene character assignment was removed; use channel references",
-    );
-  return document;
-}
-export function validateScript(document: ScriptDocument, toleranceSeconds = 1): void {
-  const total = document.scenes.reduce((sum, item) => sum + item.durationSeconds, 0);
-  if (Math.abs(total - document.metadata.targetDurationSeconds) > toleranceSeconds)
-    throw new BadRequestException("Scene duration does not match target duration");
-  const ids = new Set(document.scenes.map((item) => item.id));
-  if (ids.size !== document.scenes.length)
-    throw new BadRequestException("Scene IDs must be unique");
-}
-
 export function validateGenrePolicy(
   document: ScriptDocument,
   policy: { safetyProfile: unknown },

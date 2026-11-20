@@ -2,12 +2,11 @@ type Route = { prefix?: string; exact?: string; label: string };
 
 export const breadcrumbRoutes: readonly Route[] = [
   { prefix: "/publishing", label: "Publishing" },
-  { prefix: "/review", label: "Review" },
-  { prefix: "/production", label: "Production" },
-  { prefix: "/planning", label: "Planning" },
+  { prefix: "/runs", label: "Run timeline" },
+  { prefix: "/approvals", label: "Approval inbox" },
+  { prefix: "/usage", label: "Usage" },
   { prefix: "/channels", label: "Channels" },
   { prefix: "/insights", label: "Insights" },
-  { exact: "/operations", label: "Operations" },
   { prefix: "/account", label: "Account" },
 ];
 

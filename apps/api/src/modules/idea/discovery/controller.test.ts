@@ -4,7 +4,6 @@ import { channelId, context } from "./discovery.fixture.js";
 afterEach(() => vi.unstubAllEnvs());
 describe("V10 learned changes endpoint", () => {
   it("resolves verified membership before reading workspace-scoped learning", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const changes = vi.fn().mockResolvedValue([]),
       membership = vi.fn().mockResolvedValue(context);
     const controller = new DiscoveryController(
@@ -31,21 +30,5 @@ describe("V10 learned changes endpoint", () => {
         channelId,
       ),
     ).rejects.toThrow("no membership");
-  });
-  it("returns no v2 data when disabled", async () => {
-    vi.stubEnv("PIPELINE_V2", "false");
-    const changes = vi.fn();
-    const controller = new DiscoveryController(
-      { changes } as never,
-      { context: vi.fn().mockResolvedValue(context) } as never,
-    );
-    expect(
-      await controller.changes(
-        { principal: { userId: context.userId } } as never,
-        context.workspaceId,
-        channelId,
-      ),
-    ).toEqual([]);
-    expect(changes).not.toHaveBeenCalled();
   });
 });

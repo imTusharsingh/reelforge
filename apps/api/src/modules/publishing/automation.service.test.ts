@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { UnauthorizedException } from "@nestjs/common";
 import { automationFixture, context } from "./automation.fixture.js";
-beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("V9 approved-run publishing with fake M13/YouTube", () => {
   it("creates one cadence post with disclosure and never uploads twice", async () => {
@@ -56,10 +55,6 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     );
     f.run.pauseReason = "GATE_FAILED";
     await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("approval");
-    vi.stubEnv("PIPELINE_V2", "false");
-    await expect(f.service.prepare(context, f.run.id)).rejects.toThrow("disabled");
-    await f.service.tick(new Date());
-    expect(f.db.workspace.findMany).not.toHaveBeenCalled();
   });
   it("reconciles a partial upload before resuming and records public publication", async () => {
     const f = automationFixture();

@@ -1,7 +1,7 @@
 # V10 discovery and learning (#126)
 
 The worker wakes once a minute and claims one durable scan per channel/local day.
-It does not dispatch on boot. `PIPELINE_V2=true` gates scheduled work. It consumes
+It does not dispatch on boot. It consumes
 the latest V7 Channel Brief through the existing workspace guard and uses V2's
 `ProvidersRuntime` grounded `TextPort`; there is no alternate text adapter.
 

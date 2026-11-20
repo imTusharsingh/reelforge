@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
 import { BadRequestException } from "@nestjs/common";
 import { canonicalRenderFingerprint } from "@reelforge/media";
-import { duration } from "./composition.validation.js";
 import type { RenderArtifactView, RenderCompositionInput } from "./composition.types.js";
-import type { RenderedArtifact } from "./composition.engine.js";
 
 export interface RenderManifest {
   schemaVersion: "1.0";
@@ -30,66 +28,6 @@ export interface RenderManifest {
     byteSize: number;
     selectedFrame: RenderCompositionInput["coverFrames"][number];
   }>[];
-}
-
-export function validateEngineManifest(
-  bytes: Buffer,
-  input: RenderCompositionInput,
-  jobId: string,
-  video: RenderedArtifact,
-  covers: readonly RenderedArtifact[],
-): RenderManifest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(bytes.toString("utf8"));
-  } catch (error) {
-    throw new BadRequestException("Render manifest is not valid JSON", { cause: error });
-  }
-  if (typeof parsed !== "object" || parsed === null)
-    throw new BadRequestException("Render manifest must be an object");
-  const value = parsed as Partial<RenderManifest>;
-  if (
-    value.schemaVersion !== "1.0" ||
-    value.jobId !== jobId ||
-    value.title !== input.title ||
-    value.renderSeed !== input.renderSeed ||
-    canonicalRenderFingerprint(value.renderProfile) !== canonicalRenderFingerprint(input.profile) ||
-    canonicalRenderFingerprint(value.sourceMediaPackage) !==
-      canonicalRenderFingerprint(input.sourceMediaPackage) ||
-    canonicalRenderFingerprint(value.pinnedInputs) !==
-      canonicalRenderFingerprint({
-        scenes: input.scenes,
-        audio: input.audio,
-        coverFrames: input.coverFrames,
-      })
-  )
-    throw new BadRequestException("Render manifest does not match the pinned job and input");
-  const media = value.video;
-  if (
-    !media ||
-    media.filename !== "final.mp4" ||
-    media.mediaType !== "video/mp4" ||
-    media.byteSize !== video.body.length ||
-    media.checksumSha256 !== createHash("sha256").update(video.body).digest("hex") ||
-    media.durationMs !== video.durationMs ||
-    Math.abs(media.durationMs - duration(input)) >= 51
-  )
-    throw new BadRequestException(
-      "Render manifest does not match validated video bytes and duration",
-    );
-  if (
-    canonicalRenderFingerprint(value.artifactOrder) !==
-    canonicalRenderFingerprint(["VIDEO", ...input.coverFrames.map(() => "COVER"), "MANIFEST"])
-  )
-    throw new BadRequestException("Render manifest artifact order is invalid");
-  covers.forEach((cover, index) => {
-    if (
-      canonicalRenderFingerprint(cover.selectedFrame) !==
-      canonicalRenderFingerprint(input.coverFrames[index])
-    )
-      throw new BadRequestException("Cover artifact does not match its pinned selected frame");
-  });
-  return value as RenderManifest;
 }
 
 export function validateStoredManifest(

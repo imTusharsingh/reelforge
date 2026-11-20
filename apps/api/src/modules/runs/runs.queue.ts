@@ -1,7 +1,9 @@
 import { FlowProducer, Queue } from "bullmq";
 import { createHash } from "node:crypto";
-import { parseRedisConnection } from "../orchestration/orchestration.bullmq.js";
+import { parseRedisConnection } from "./redis-connection.js";
 import type { RunJob } from "./runs.types.js";
+
+export type RunQueueHealth = "NOT_CONFIGURED" | "CONFIGURED" | "UNREACHABLE";
 
 export const RUN_QUEUE = "video-runs-v3";
 export class RunsQueue {
@@ -13,6 +15,22 @@ export class RunsQueue {
     this.flows = new FlowProducer({ connection });
     this.queue.on("error", () => undefined);
     this.flows.on("error", () => undefined);
+  }
+  public async health(): Promise<RunQueueHealth> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.queue.getJobCounts("waiting"),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Redis health check timed out")), 5000);
+        }),
+      ]);
+      return "CONFIGURED";
+    } catch {
+      return "UNREACHABLE";
+    } finally {
+      clearTimeout(timer);
+    }
   }
   public async enqueue(data: RunJob, revision: number, delay = 0): Promise<void> {
     const jobId = `${data.runId}-${revision}`;

@@ -1,14 +1,14 @@
+import type { RunQueueHealth } from "./modules/runs/runs.queue.js";
+import { RunsService } from "./modules/runs/runs.service.js";
 import { Controller, Get, Inject, Query, Res } from "@nestjs/common";
 import type { Response } from "express";
 import type { Database } from "./modules/identity/identity.types.js";
-import { OrchestrationService } from "./modules/orchestration/orchestration.service.js";
-import type { WorkflowQueueHealth } from "./modules/orchestration/orchestration.types.js";
 
 export type DatabaseHealth = "OK" | "UNREACHABLE";
 
 export type HealthResponse = Readonly<{
   status: "ok" | "degraded";
-  queue: WorkflowQueueHealth;
+  queue: RunQueueHealth;
   database: DatabaseHealth;
 }>;
 
@@ -32,7 +32,7 @@ const DATABASE_TIMEOUT_MS = 2_000;
 @Controller("health")
 export class HealthController {
   public constructor(
-    private readonly orchestration: OrchestrationService,
+    private readonly runs: RunsService,
     @Inject("DATABASE") private readonly db: Pick<Database, "$queryRaw">,
   ) {}
 
@@ -47,10 +47,7 @@ export class HealthController {
       if (database !== "OK") response?.status(503);
       return { probe: "readiness", status: database === "OK" ? "ok" : "unavailable", database };
     }
-    const [queue, database] = await Promise.all([
-      this.orchestration.queueHealth(),
-      this.databaseHealth(),
-    ]);
+    const [queue, database] = await Promise.all([this.runs.queueHealth(), this.databaseHealth()]);
     return {
       status: queue === "UNREACHABLE" || database !== "OK" ? "degraded" : "ok",
       queue,

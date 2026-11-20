@@ -11,8 +11,6 @@ import { AppModule } from "../../app.module.js";
 import { AuditService } from "../admin/audit.service.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { NotificationIntakeSources } from "../notifications/notifications.sources.js";
-import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
-import { WORKFLOW_QUEUE_PORT } from "../orchestration/orchestration.types.js";
 
 /**
  * M20 release gate (T02 cross-module contracts, T06 tenant isolation and no-live-call checks).
@@ -59,6 +57,14 @@ const REVIEWED_UNSCOPED_ROUTES: readonly string[] = [
   "GET /health",
   "GET /ops/metrics",
   "GET /social-accounts/oauth/:platform/callback",
+  "GET /runs/:id",
+  "GET /runs/:id/events",
+  "GET /runs/:id/artifacts/:stepId/:checksum",
+  "POST /runs",
+  "POST /runs/:id/approve",
+  "POST /runs/:id/reedit",
+  "POST /runs/:id/reshoot/:ordinal",
+  "POST /runs/:id/resume",
   "GET /workspaces",
   "PATCH /auth/me",
   "POST /auth/login",
@@ -176,8 +182,6 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider("DATABASE")
       .useValue(db)
-      .overrideProvider(WORKFLOW_QUEUE_PORT)
-      .useValue(new NotConfiguredWorkflowQueue())
       .overrideProvider(AuditService)
       .useValue(auditSink)
       .compile();
@@ -282,7 +286,7 @@ suite("M20 release gate: tenant isolation, no live calls, and event contracts ov
       .map((route) => `${route.method} ${route.path}`)
       .sort();
     // A new route outside `/workspaces/:workspaceId` must be reviewed and added here on purpose.
-    expect(unscoped).toEqual(REVIEWED_UNSCOPED_ROUTES);
+    expect(unscoped).toEqual(REVIEWED_UNSCOPED_ROUTES.toSorted());
     // C5 account routes are user-scoped and require the existing auth guard.
     await request(server()).get(`${PREFIX}/auth/me`).expect(401);
     await request(server()).patch(`${PREFIX}/auth/me`).send({ displayName: "Creator" }).expect(401);

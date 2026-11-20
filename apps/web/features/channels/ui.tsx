@@ -15,7 +15,6 @@ import {
   Button,
   Field,
   Panel,
-  SelectField,
   StateMessage,
   TextAreaField,
 } from "../../components/ui/primitives";
@@ -33,17 +32,13 @@ import {
   formPayload,
   initialFormValues,
   pretty,
-  text,
   type FieldSpec,
   type ApiObject,
   type Role,
 } from "./model";
 
-export const ClientContext = createContext<ChannelsClient | null>(null);
+const ClientContext = createContext<ChannelsClient | null>(null);
 const RefreshContext = createContext({ revision: 0, invalidate: (): void => {} });
-export function useRefreshResources(): () => void {
-  return useContext(RefreshContext).invalidate;
-}
 export function ChannelsScope({
   workspaceId,
   role,
@@ -158,7 +153,7 @@ export function useResource(
   }, [client, path, list, shape, revision, refresh.revision, resourceKey]);
   return state.key === resourceKey ? state : { data: [], error: "", loading: true };
 }
-export function failure(e: unknown): string {
+function failure(e: unknown): string {
   return e instanceof Error ? e.message : "The request failed. Please try again.";
 }
 export function ResourceState({
@@ -180,7 +175,7 @@ export function ResourceState({
   if (empty) return <StateMessage kind="empty" description="No saved items yet." />;
   return null;
 }
-export function SavedData({
+function SavedData({
   value,
   label = "Saved details",
 }: {
@@ -192,54 +187,6 @@ export function SavedData({
       <summary>{label}</summary>
       <pre>{pretty(value)}</pre>
     </details>
-  );
-}
-export function RecordList({ items }: { items: ApiObject[] }): JSX.Element {
-  return (
-    <ul className="rf-record-list">
-      {items.map((item, index) => (
-        <li key={text(item.id, String(index))}>
-          <strong>
-            {text(item.name, text(item.filename, `Version ${String(item.version ?? index + 1)}`))}
-          </strong>
-          {typeof item.status === "string" && <span> · {item.status}</span>}
-          <SavedData value={item} />
-        </li>
-      ))}
-    </ul>
-  );
-}
-export function Picker({
-  label,
-  items,
-  value,
-  onChange,
-  allowEmpty = true,
-}: {
-  label: string;
-  items: ApiObject[];
-  value: string;
-  onChange: (value: string) => void;
-  allowEmpty?: boolean;
-}): JSX.Element {
-  const id = useId();
-  return (
-    <SelectField
-      id={id}
-      label={label}
-      value={value}
-      onChange={(e) => {
-        if (!requestNavigationIntent("selection")) return;
-        onChange(e.target.value);
-      }}
-    >
-      {allowEmpty && <option value="">Choose an item</option>}
-      {items.map((item) => (
-        <option key={String(item.id)} value={String(item.id)}>
-          {text(item.name, text(item.filename, `Version ${String(item.version)}`))}
-        </option>
-      ))}
-    </SelectField>
   );
 }
 type ActionFormProps = {
@@ -284,7 +231,7 @@ function ActionEditor({
   const [result, setResult] = useState<ApiObject | ApiObject[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const invalidate = useRefreshResources();
+  const { invalidate } = useContext(RefreshContext);
   useEffect(() => {
     if (!dirty) return;
     return registerDraft(base, () => {
@@ -409,30 +356,6 @@ function ActionEditor({
           </div>
         )}
       </form>
-    </Panel>
-  );
-}
-export function ReadCollection({
-  title,
-  path,
-  shape = "named",
-}: {
-  title: string;
-  path: string;
-  shape?: Shape;
-}): JSX.Element {
-  const [revision, setRevision] = useState(0);
-  const state = useResource(path, true, shape, revision);
-  return (
-    <Panel>
-      <div className="rf-section-header">
-        <h3>{title}</h3>
-        <Button tone="ghost" onClick={() => setRevision((v) => v + 1)}>
-          Refresh {title.toLowerCase()}
-        </Button>
-      </div>
-      <ResourceState {...state} empty={state.data.length === 0} />
-      {!state.error && <RecordList items={state.data} />}
     </Panel>
   );
 }

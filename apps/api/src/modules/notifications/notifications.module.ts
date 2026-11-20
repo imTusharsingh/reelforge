@@ -2,10 +2,8 @@ import { Module } from "@nestjs/common";
 import { AnalyticsModule } from "../analytics/analytics.module.js";
 import { ChannelModule } from "../channel/channel.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
-import { OrchestrationModule } from "../orchestration/orchestration.module.js";
 import { PerformanceIntelligenceModule } from "../performance-intelligence/performance-intelligence.module.js";
 import { PublishingModule } from "../publishing/publishing.module.js";
-import { QualityModule } from "../quality/quality.module.js";
 import { SocialAccountsModule } from "../social-accounts/social-accounts.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { ChannelReportsController, NotificationsController } from "./notifications.controller.js";
@@ -25,12 +23,10 @@ import { ChannelReportsService } from "./reports.service.js";
     IdentityModule,
     WorkspaceModule,
     ChannelModule,
-    QualityModule,
     PublishingModule,
     SocialAccountsModule,
     AnalyticsModule,
     PerformanceIntelligenceModule,
-    OrchestrationModule,
   ],
   controllers: [NotificationsController, ChannelReportsController],
   providers: [

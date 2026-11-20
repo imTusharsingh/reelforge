@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Queue, Worker } from "bullmq";
-import { parseRedisConnection } from "../orchestration/orchestration.bullmq.js";
+import { parseRedisConnection } from "./redis-connection.js";
 import { runsFixture, generating } from "./runs.fixture.js";
 import type { RunJob } from "./runs.types.js";
 
@@ -11,7 +11,6 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.REDIS_URL)(
   "V3 worker SIGKILL recovery",
   () => {
     const fixture = runsFixture();
-    beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
     afterEach(() => vi.unstubAllEnvs());
     it("reclaims a killed worker's job without another submit or reservation", async () => {
       const t = await fixture.tenant();

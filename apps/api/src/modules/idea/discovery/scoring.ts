@@ -7,7 +7,7 @@ import {
   type LearningState,
 } from "@reelforge/contracts";
 
-export const DEFAULT_WEIGHTS: DiscoveryWeights = {
+const DEFAULT_WEIGHTS: DiscoveryWeights = {
   novelty: 0.2,
   trendVelocity: 0.15,
   briefFit: 0.25,

@@ -46,18 +46,6 @@ const resolveShape = {
   promptTemplateRefs: z.array(PromptTemplateReferenceSchema).max(20).optional(),
 };
 
-export const ResolveConfigRequestSchema = z
-  .object(resolveShape)
-  .strict()
-  .superRefine(refineWorkspaceOptions);
-
-export const WorkspaceConfigSaveRequestSchema = z
-  .object({
-    values: LayerValuesSchema,
-    lockedFields: z.array(LockPathSchema).max(200).default([]),
-  })
-  .strict();
-
 export const PromptCompileRequestSchema = z
   .object({
     ...resolveShape,
@@ -68,37 +56,8 @@ export const PromptCompileRequestSchema = z
   .strict()
   .superRefine(refineWorkspaceOptions);
 
-export const CreatePromptTemplateRequestSchema = z
-  .object({
-    key: z
-      .string()
-      .trim()
-      .regex(/^[a-z][a-z0-9-]{0,63}$/, "must be a lowercase key using letters, digits, and dashes"),
-    name: z.string().trim().min(1).max(200),
-    description: z.string().trim().max(2000).nullable().optional(),
-  })
-  .strict();
-
-export const UpdatePromptTemplateRequestSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200).optional(),
-    description: z.string().trim().max(2000).nullable().optional(),
-  })
-  .strict();
-
-export const RollbackPromptTemplateRequestSchema = z
-  .object({
-    versionId: z.uuid().optional(),
-  })
-  .strict();
-
-export type ResolveConfigRequest = z.infer<typeof ResolveConfigRequestSchema>;
-export type WorkspaceConfigSaveRequest = z.infer<typeof WorkspaceConfigSaveRequestSchema>;
+export type ResolveConfigRequest = z.infer<z.ZodObject<typeof resolveShape>>;
 export type PromptCompileRequest = z.infer<typeof PromptCompileRequestSchema>;
-export type CreatePromptTemplateRequest = z.infer<typeof CreatePromptTemplateRequestSchema>;
-export type UpdatePromptTemplateRequest = z.infer<typeof UpdatePromptTemplateRequestSchema>;
-export type RollbackPromptTemplateRequest = z.infer<typeof RollbackPromptTemplateRequestSchema>;
-
 export type ResolvedConfigSources = Readonly<{
   workspaceConfigSnapshotId: string | null;
   channelId: string | null;

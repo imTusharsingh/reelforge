@@ -1,5 +1,4 @@
 import { ConflictException } from "@nestjs/common";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import type { PrismaClient } from "@reelforge/database";
 import type { AuthenticatedPlatformClient } from "@reelforge/social-providers";
 import type { WorkspaceContext } from "../identity/identity.types.js";
@@ -11,11 +10,9 @@ export async function publishingClient(
   context: WorkspaceContext,
   destination: { socialAccountId: string; scheduledPostId: string },
 ): Promise<AuthenticatedPlatformClient> {
-  const slot = pipelineV2Enabled()
-    ? await db.v9PublishSlot.findFirst({
-        where: { workspaceId: context.workspaceId, scheduledPostId: destination.scheduledPostId },
-      })
-    : null;
+  const slot = await db.v9PublishSlot.findFirst({
+    where: { workspaceId: context.workspaceId, scheduledPostId: destination.scheduledPostId },
+  });
   if (!slot) return social.authenticatedClient(context, destination.socialAccountId);
   const client = await social.scheduledClient(
     context,
@@ -42,10 +39,7 @@ export async function isScheduledAutomation(
   workspaceId: string,
   scheduledPostId: string,
 ): Promise<boolean> {
-  return (
-    pipelineV2Enabled() &&
-    (await db.v9PublishSlot.count({ where: { workspaceId, scheduledPostId } })) > 0
-  );
+  return (await db.v9PublishSlot.count({ where: { workspaceId, scheduledPostId } })) > 0;
 }
 
 export function reconnectRequired(error: unknown): boolean {

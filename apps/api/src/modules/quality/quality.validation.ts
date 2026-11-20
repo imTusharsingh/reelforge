@@ -103,23 +103,6 @@ export const approvalPolicySchema = z.object({
     .default({}),
 });
 
-export const decisionSchema = z
-  .object({
-    action: z.enum(["APPROVE", "REJECT", "REQUEST_CHANGES"]),
-    reason: z.string().trim().min(1).max(4000),
-    overrideReason: z.string().trim().min(1).max(1000).optional(),
-    regeneration: z
-      .discriminatedUnion("stage", [
-        z
-          .object({ stage: z.literal("SCENE"), sceneId: z.string().trim().min(1).max(200) })
-          .strict(),
-        z.object({ stage: z.literal("SCRIPT") }).strict(),
-        z.object({ stage: z.literal("RENDER") }).strict(),
-      ])
-      .optional(),
-  })
-  .strict();
-
 export function parseApprovalPolicy(value: unknown): ApprovalPolicy {
   if (value === null || value === undefined)
     return { mode: "MANUAL", scoreThreshold: 80, criterionThresholds: {} };

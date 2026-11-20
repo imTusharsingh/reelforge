@@ -49,7 +49,6 @@ afterEach(() => {
 });
 describe("V10 autonomous scheduled discovery", () => {
   it("scheduled tick produces ranked sourced ideas from a versioned Brief without user input", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const { service, store, scout } = fixture();
     await service.scheduledTick(now);
     expect(scout.discover).toHaveBeenCalledOnce();
@@ -63,17 +62,7 @@ describe("V10 autonomous scheduled discovery", () => {
     expect(ideas[0]!.sources).toHaveLength(1);
     expect(store.finish).toHaveBeenCalledWith(context, briefFixture(), "2026-11-16", ideas, now);
   });
-  it("v2 off touches neither database nor providers", async () => {
-    vi.stubEnv("PIPELINE_V2", "false");
-    const { service, store, scout, db } = fixture();
-    expect(await service.tick(context, channelId, now)).toEqual([]);
-    await service.scheduledTick(now);
-    expect(db.channel.findMany).not.toHaveBeenCalled();
-    expect(store.brief).not.toHaveBeenCalled();
-    expect(scout.discover).not.toHaveBeenCalled();
-  });
   it("dedupes schedule claims and topics inside cooldown before persistence", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const { service, store, scout } = fixture();
     store.claim!.mockResolvedValueOnce(false);
     expect(await service.tick(context, channelId, now)).toEqual([]);
@@ -83,7 +72,6 @@ describe("V10 autonomous scheduled discovery", () => {
     expect(ranked.map((row) => row.topic)).toEqual(["What makes stars shine"]);
   });
   it("audits failures, avoids replaying paid calls, and isolates failed channels", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { service, store, scout, db } = fixture();
     scout.discover.mockRejectedValue(new Error("provider down"));

@@ -10,12 +10,14 @@ import { CriticEvidence } from "./critic-evidence.js";
 import { CriticStep } from "./critic.step.js";
 import { CriticPipeline } from "./critic.pipeline.js";
 import { MediaProbe } from "./media-probe.js";
-import { QualityModule } from "./quality.module.js";
+import { SpawnProcessRunner } from "../composition/composition.engine.js";
 import { RunCritic } from "./run-critic.js";
 
 @Module({
-  imports: [QualityModule],
   providers: [
+    CriticPipeline,
+    MediaProbe,
+    SpawnProcessRunner,
     {
       provide: CriticStep,
       inject: [ModuleRef, CriticPipeline, MediaProbe],

@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { foundationWorkspaceGuard, type PrismaClient, type Prisma } from "@reelforge/database";
 import type {
   PublishingPolicyContext,
@@ -26,11 +25,6 @@ export class AutomationPolicy {
       : null;
   }
   public async check(context: PublishingPolicyContext): Promise<BudgetCheck> {
-    if (!pipelineV2Enabled())
-      return {
-        allowed: false,
-        reason: "Publishing policy is not configured for the legacy pipeline",
-      };
     const slot = await this.slot(context);
     if (!slot) return { allowed: false, reason: "No approved VideoRun publishing slot" };
     const db = foundationWorkspaceGuard(this.db, {

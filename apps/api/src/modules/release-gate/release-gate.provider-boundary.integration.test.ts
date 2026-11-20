@@ -1,18 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import {
-  IDEA_PROPOSAL_LLM,
-  IMAGE_PROVIDER,
-  PROVIDER_REGISTRY,
-  ProviderRegistry,
-  QUALITY_REVIEW_PORT,
-  SCRIPT_LLM,
-  TTS_PROVIDER,
-  VIDEO_PROVIDER,
-} from "@reelforge/ai-providers";
+import { IMAGE_PROVIDER, TTS_PROVIDER, VIDEO_PROVIDER } from "@reelforge/ai-providers";
 import { createDatabaseClient } from "@reelforge/database";
-import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../../app.module.js";
 import { ProvidersRuntime } from "../openai/providers.runtime.js";
@@ -20,8 +10,6 @@ import { planningFixture, shotsFixture } from "../script/planning.fixture.js";
 import { AuditService } from "../admin/audit.service.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { NOTIFICATION_EMAIL_PORT } from "../notifications/notifications.ports.js";
-import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
-import { WORKFLOW_QUEUE_PORT } from "../orchestration/orchestration.types.js";
 import { INSIGHT_REPORT_LLM } from "../performance-intelligence/performance-intelligence.tokens.js";
 import { BILLING_PROVIDER } from "../usage-budget/usage-budget.types.js";
 
@@ -52,7 +40,6 @@ class CapturingAuditService {
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
-const PREFIX = "/api/v1";
 const ownerId = randomUUID();
 const workspaceId = randomUUID();
 const channelId = randomUUID();
@@ -110,8 +97,6 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider("DATABASE")
       .useValue(db)
-      .overrideProvider(WORKFLOW_QUEUE_PORT)
-      .useValue(new NotConfiguredWorkflowQueue())
       .overrideProvider(AuditService)
       .useValue(auditSink)
       .compile();
@@ -132,29 +117,11 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
     await db.$disconnect();
   });
 
-  it("rejects retired media tokens and unconfigured legacy/V2 AI dispatch without network or charge", async () => {
+  it("rejects retired media tokens and unconfigured VideoRun AI dispatch without network or charge", async () => {
     if (!db) return;
-    const registry = port<ProviderRegistry>(PROVIDER_REGISTRY);
-    expect(registry).toBeInstanceOf(ProviderRegistry);
-    expect(registry.list()).toEqual([]);
 
     for (const retired of [IMAGE_PROVIDER, VIDEO_PROVIDER, TTS_PROVIDER])
       expect(() => port(retired)).toThrow();
-    for (const adapter of [port(SCRIPT_LLM), port(INSIGHT_REPORT_LLM)]) {
-      const capability = adapter["capability"] as {
-        providerId: string;
-        capabilityId: string;
-        costModel: { amount: number | null };
-      };
-      expect(capability.providerId).toBe("unconfigured");
-      // A null cost model means the M08/M18 budget preflight can never dispatch a paid call.
-      expect(capability.costModel.amount).toBeNull();
-      // The registry has nothing registered, so readiness fails before any reservation.
-      expect(() => registry.assertReady(capability as never, "development")).toThrow();
-    }
-
-    const script = port(SCRIPT_LLM);
-    expect(await rejects(() => (script["complete"] as () => unknown)())).toBeInstanceOf(Error);
     const context = { workspaceId, userId: ownerId, role: "OWNER" as const };
     const runtime = port<ProvidersRuntime>(ProvidersRuntime);
     const native = await runtime.ports(context, { resolve: async (): Promise<never[]> => [] });
@@ -186,13 +153,6 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
       await expect(call()).rejects.toMatchObject({ kind: "NOT_CONFIGURED", dispatched: false });
     expect(await db.providerRequest.count({ where: { workspaceId } })).toBe(0);
     expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(0);
-    const idea = port(IDEA_PROPOSAL_LLM);
-    expect(await rejects(() => (idea["proposeIdea"] as () => unknown)())).toBeInstanceOf(Error);
-    const quality = port(QUALITY_REVIEW_PORT);
-    const qualityError = (await rejects(() =>
-      (quality["review"] as (input: unknown) => unknown)({ correlationId: randomUUID() }),
-    )) as { code?: string };
-    expect(qualityError.code).toBe("NOT_CONFIGURED");
     const insight = port(INSIGHT_REPORT_LLM);
     expect((insight["isConfigured"] as () => boolean)()).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -214,21 +174,6 @@ suite("M20 release gate: provider boundaries fail clearly with no charge and no 
     const instagram = port("INSTAGRAM_CONNECTOR");
     expect((instagram["isConfigured"] as () => boolean)()).toBe(false);
     await rejects(() => (instagram["authorizationUrl"] as () => unknown)());
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("refuses an AI idea proposal over HTTP without creating data, a ledger row or a charge (T04)", async () => {
-    if (!db) return;
-    const response = await request(app!.getHttpServer() as never)
-      .post(`${PREFIX}/workspaces/${workspaceId}/ideas/propose`)
-      .set("authorization", `Bearer ${token}`)
-      .send({ prompt: "M20 fixture prompt: offline boundary check only", channelId });
-    // The unconfigured adapter must never produce a 2xx (no fake success).
-    expect(response.status).toBeGreaterThanOrEqual(400);
-    console.info(`M20 provider boundary: idea propose -> HTTP ${response.status}`);
-    expect(await db.idea.count({ where: { workspaceId } })).toBe(0);
-    expect(await db.providerRequest.count({ where: { workspaceId } })).toBe(0);
-    expect(await db.usageReservation.count({ where: { workspaceId } })).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,6 @@ vi.mock("@reelforge/database", async (original) => ({
   foundationWorkspaceGuard: vi.fn((db: { foundation: unknown }) => db.foundation),
 }));
 beforeEach(() => {
-  vi.stubEnv("PIPELINE_V2", "true");
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-11-17T09:00:00Z"));
 });
@@ -140,8 +139,6 @@ describe("V9 project-wide insert leases and hard policy", () => {
       reservedMinor: 0,
       hardCapMinor: 800,
     });
-    expect((await f.policy.check(policyContext)).allowed).toBe(false);
-    vi.stubEnv("PIPELINE_V2", "false");
     expect((await f.policy.check(policyContext)).allowed).toBe(false);
   });
 });

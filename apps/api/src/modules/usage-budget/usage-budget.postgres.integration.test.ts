@@ -1,19 +1,9 @@
+import { WorkspaceService } from "../workspace/workspace.service.js";
+import { WorkspaceRepository } from "../workspace/workspace.repository.js";
 import { randomUUID } from "node:crypto";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { createDatabaseClient, Prisma } from "@reelforge/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ChannelService } from "../channel/channel.service.js";
-import { WorkflowLimitsService } from "../orchestration/orchestration.limits.js";
-import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
-import { OrchestrationService } from "../orchestration/orchestration.service.js";
-import {
-  DEFAULT_WORKFLOW_LIMIT_CONFIG,
-  type WorkflowStepDispatchInput,
-  type WorkflowStepDispatchResult,
-} from "../orchestration/orchestration.types.js";
-import { WorkspaceRepository } from "../workspace/workspace.repository.js";
-import { WorkspaceService } from "../workspace/workspace.service.js";
-import { UsageBudgetPolicy } from "./usage-budget.policy.js";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import { BudgetExhaustedError } from "./usage-budget.types.js";
 
@@ -631,143 +621,6 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
         amountMinor: 20,
       }),
     ).resolves.toMatchObject({ decision: "RESERVED" });
-  });
-
-  it("marks a scheduled slot SKIPPED with BUDGET_POLICY_ERROR when the budget policy throws", async () => {
-    if (!db) return;
-    const t = await tenant("UTC", {
-      time: "09:00",
-      frequency: "DAILY",
-      input: { ideaId: randomUUID() },
-    });
-    const channels = new ChannelService(db as never);
-    const all = channels.listSchedulerCandidates.bind(channels);
-    channels.listSchedulerCandidates = async (): ReturnType<typeof all> =>
-      (await all()).filter((channel) => channel.workspaceId === t.workspaceId);
-    const orchestration = new OrchestrationService(
-      db as never,
-      new NotConfiguredWorkflowQueue(),
-      { dispatchStep: (): Promise<never> => Promise.reject(new Error("not expected")) },
-      { evaluate: (): Promise<never> => Promise.reject(new Error("budget store unavailable")) },
-      new WorkflowLimitsService(db as never, DEFAULT_WORKFLOW_LIMIT_CONFIG),
-      channels,
-      { get: () => Promise.resolve({ status: "REVIEW_REQUIRED" }) } as never,
-      clock,
-    );
-    try {
-      clockMs = Date.parse("2026-11-10T09:01:00.000Z");
-      await expect(orchestration.runSchedulerTick(clock())).resolves.toMatchObject({
-        startedRuns: 0,
-      });
-      await expect(
-        db.workflowScheduleSlot.findFirst({
-          where: { channelId: t.channelId, slotKey: "GENERATION:2026-11-10T09:00" },
-        }),
-      ).resolves.toMatchObject({ status: "SKIPPED", reason: "BUDGET_POLICY_ERROR" });
-      expect(await db.workflowRun.count({ where: { workspaceId: t.workspaceId } })).toBe(0);
-    } finally {
-      clockMs = Date.parse("2026-11-10T08:00:00.000Z");
-    }
-  });
-
-  it("blocks scheduled M16 runs when unconfigured and allows them under budget", async () => {
-    if (!db) return;
-    const ideaId = randomUUID();
-    const t = await tenant("Asia/Kolkata", {
-      time: "09:00",
-      frequency: "DAILY",
-      input: { ideaId },
-    });
-    const usage = service();
-    const channels = new ChannelService(db as never);
-    const all = channels.listSchedulerCandidates.bind(channels);
-    channels.listSchedulerCandidates = async (): ReturnType<typeof all> =>
-      (await all()).filter((channel) => channel.workspaceId === t.workspaceId);
-    const dispatcher = {
-      dispatchStep: (input: WorkflowStepDispatchInput): Promise<WorkflowStepDispatchResult> =>
-        Promise.resolve({ resultRef: input.stepKey, resultType: input.stepKey }),
-    };
-    const orchestration = new OrchestrationService(
-      db as never,
-      new NotConfiguredWorkflowQueue(),
-      dispatcher,
-      new UsageBudgetPolicy(usage),
-      new WorkflowLimitsService(db as never, DEFAULT_WORKFLOW_LIMIT_CONFIG),
-      channels,
-      { get: () => Promise.resolve({ status: "REVIEW_REQUIRED" }) } as never,
-      clock,
-    );
-    const slot = (date: string): Promise<unknown> =>
-      db.workflowScheduleSlot.findFirst({
-        where: { channelId: t.channelId, slotKey: `GENERATION:${date}T09:00` },
-      });
-    try {
-      // 09:00 IST = 03:30Z.
-      clockMs = Date.parse("2026-11-10T03:31:00.000Z");
-      await expect(orchestration.runSchedulerTick(clock())).resolves.toMatchObject({
-        startedRuns: 0,
-      });
-      await expect(slot("2026-11-10")).resolves.toMatchObject({
-        status: "SKIPPED",
-        reason: "BUDGET_POLICY_UNAVAILABLE",
-      });
-      // Manual runs keep M16's rule: allowed while NOT_CONFIGURED.
-      await expect(
-        orchestration.startManualRun(t.editor, {
-          definitionKey: "GENERATION",
-          channelId: t.channelId,
-          ideaId,
-        }),
-      ).resolves.toMatchObject({ budgetDecision: "NOT_CONFIGURED" });
-
-      await usage.upsertBudget(t.owner, {
-        channelId: t.channelId,
-        currency: "INR",
-        dailyLimitMinor: 50_000,
-        reason: "enable autonomy",
-      });
-      clockMs = Date.parse("2026-11-11T03:31:00.000Z");
-      await expect(orchestration.runSchedulerTick(clock())).resolves.toMatchObject({
-        startedRuns: 1,
-      });
-      await expect(slot("2026-11-11")).resolves.toMatchObject({ status: "STARTED" });
-      const scheduled = await db.workflowRun.findFirst({
-        where: { workspaceId: t.workspaceId, trigger: "SCHEDULED" },
-      });
-      expect(scheduled).toMatchObject({ budgetDecision: "ALLOWED" });
-
-      // Exhausted budget: hard stop for both triggers.
-      clockMs = Date.parse("2026-11-12T03:00:00.000Z");
-      await usage.createAdjustment(t.owner, {
-        channelId: t.channelId,
-        kind: "DEBIT",
-        currency: "INR",
-        amountMinor: 50_000,
-        reason: "spent elsewhere",
-      });
-      clockMs = Date.parse("2026-11-12T03:31:00.000Z");
-      await expect(orchestration.runSchedulerTick(clock())).resolves.toMatchObject({
-        startedRuns: 0,
-      });
-      await expect(slot("2026-11-12")).resolves.toMatchObject({
-        status: "SKIPPED",
-        reason: "BUDGET_EXHAUSTED",
-      });
-      await expect(
-        orchestration.startManualRun(t.editor, {
-          definitionKey: "GENERATION",
-          channelId: t.channelId,
-          ideaId,
-        }),
-      ).rejects.toThrow(/BUDGET_EXHAUSTED/);
-    } finally {
-      // Keep these runs out of other suites' recovery sweeps.
-      await db.workflowRun.updateMany({
-        where: { workspaceId: t.workspaceId },
-        data: { state: "CANCELED" },
-      });
-      clockMs = Date.parse("2026-11-10T08:00:00.000Z");
-    }
   });
 
   async function videoFixture(t: Tenant): Promise<{

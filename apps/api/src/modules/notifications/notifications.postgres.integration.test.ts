@@ -9,7 +9,6 @@ import { createDatabaseClient } from "@reelforge/database";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChannelService } from "../channel/channel.service.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
-import { OrchestrationService } from "../orchestration/orchestration.service.js";
 import { PerformanceIntelligenceService } from "../performance-intelligence/performance-intelligence.service.js";
 import { WorkspaceRepository } from "../workspace/workspace.repository.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -74,11 +73,6 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
     return new WorkspaceService(db as never, new WorkspaceRepository(db as never));
   }
 
-  function orchestration(): OrchestrationService {
-    const none = undefined as never;
-    return new OrchestrationService(db as never, none, none, none, none, none, none, clock);
-  }
-
   function performance(): PerformanceIntelligenceService {
     const none = undefined as never;
     return new PerformanceIntelligenceService(db as never, none, none, none);
@@ -87,8 +81,6 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
   function sources(): NotificationIntakeSources {
     return new NotificationIntakeSources(
       db as never,
-      orchestration(),
-      { listReviewRequestsAfter: async () => [], listDecisionsAfter: async () => [] } as never,
       { listReconciliationRequiredAfter: async () => [] } as never,
       performance(),
     );
@@ -112,7 +104,6 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
       { list: async () => [] } as never,
       { listLatestSnapshots: async () => [] } as never,
       performance(),
-      orchestration(),
       service,
       clock,
       DEFAULT_NOTIFICATIONS_CONFIG,
@@ -207,30 +198,8 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
     const earlier = new Date(clockNow.getTime() - 5 * 60_000);
     const published = await outbox(workspaceId, channelId, "PostPublished", earlier);
     const failed = await outbox(workspaceId, channelId, "PublishFailed", earlier);
+    const additional = await outbox(workspaceId, channelId, "PublishFailed", earlier);
     const foreign = await outbox(otherWorkspaceId, otherChannelId, "PublishFailed", earlier);
-    const runId = randomUUID();
-    await db.workflowRun.create({
-      data: {
-        id: runId,
-        workspaceId,
-        channelId,
-        correlationId: randomUUID(),
-        idempotencyKey: `m17-${runId}`,
-        state: "FAILED",
-      },
-    });
-    const runEventId = randomUUID();
-    await db.workflowEvent.create({
-      data: {
-        id: runEventId,
-        workspaceId,
-        runId,
-        eventType: "WORKFLOW_STEP_FAILED",
-        correlationId: randomUUID(),
-        payload: { stepKey: "RENDER", code: "RENDER_FAILED", deadLetter: true },
-        occurredAt: earlier,
-      },
-    });
     // Too recent: inside the settle window, so it is not consumed yet.
     const settling = await outbox(workspaceId, channelId, "PostPublished", clockNow);
 
@@ -249,16 +218,10 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
         `m13:outbox:${published}`,
         `m13:outbox:${failed}`,
         `m13:outbox:${foreign}`,
-        `m16:event:${runEventId}`,
+        `m13:outbox:${additional}`,
       ].sort(),
     );
     expect(first).not.toContain(`m13:outbox:${settling}`);
-    const runEvent = await db.notificationEvent.findFirstOrThrow({
-      where: { workspaceId, sourceKey: `m16:event:${runEventId}` },
-    });
-    expect(runEvent.eventType).toBe("RUN_FAILED");
-    expect(runEvent.link).toBe(`/workspaces/${workspaceId}/orchestration/runs/${runId}`);
-
     // Same tick again, then a full redelivery from scratch (cursors reset): nothing new.
     await service.runIntake(clockNow);
     await db.notificationIntakeCursor.deleteMany({});
@@ -276,7 +239,7 @@ suite("M17 notifications and reports (PostgreSQL)", () => {
     expect(foreignInApp[0]?.recipientMemberId).toBe(
       await membershipId(outsiderId, otherWorkspaceId),
     );
-    // PUBLISH_FAILED and RUN_FAILED default to email: 2 events x 3 members.
+    // Both PUBLISH_FAILED events default to email: 2 events x 3 members.
     expect(await db.notificationDelivery.count({ where: { workspaceId } })).toBe(6);
 
     // Force a re-fan-out of every event: unique dedupe keys keep it a no-op.

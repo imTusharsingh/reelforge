@@ -8,7 +8,6 @@ import { automationFixture, context } from "./automation.fixture.js";
 afterEach(() => vi.unstubAllEnvs());
 describe("V9 tenant-scoped automation HTTP", () => {
   it("uses verified tenant membership for reads and editor check for retry", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const f = automationFixture();
     const db = {
       v9PublishSlot: {
@@ -33,11 +32,5 @@ describe("V9 tenant-scoped automation HTTP", () => {
     await expect(controller.list(req, context.workspaceId)).rejects.toThrow("Workspace");
     verify.mockResolvedValueOnce({ ...context, role: "VIEWER" });
     await expect(controller.retry(req, context.workspaceId, f.run.id)).rejects.toThrow("Editor");
-    vi.stubEnv("PIPELINE_V2", "false");
-    expect(await controller.list(req, context.workspaceId)).toEqual([]);
-    verify.mockRejectedValueOnce(new Error("Workspace access denied"));
-    await expect(controller.list(req, context.workspaceId)).rejects.toThrow(
-      "Workspace access denied",
-    );
   });
 });

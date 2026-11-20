@@ -4,7 +4,6 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { NotConfiguredBillingProvider } from "./usage-budget.billing.js";
 import { UsageBudgetController } from "./usage-budget.controller.js";
-import { UsageBudgetPolicy } from "./usage-budget.policy.js";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import { BILLING_PROVIDER, USAGE_CLOCK } from "./usage-budget.types.js";
 
@@ -13,10 +12,9 @@ import { BILLING_PROVIDER, USAGE_CLOCK } from "./usage-budget.types.js";
   controllers: [UsageBudgetController],
   providers: [
     UsageBudgetService,
-    UsageBudgetPolicy,
     { provide: USAGE_CLOCK, useValue: (): Date => new Date() },
     { provide: BILLING_PROVIDER, useClass: NotConfiguredBillingProvider },
   ],
-  exports: [UsageBudgetService, UsageBudgetPolicy],
+  exports: [UsageBudgetService],
 })
 export class UsageBudgetModule {}

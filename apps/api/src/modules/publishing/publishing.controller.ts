@@ -1,27 +1,9 @@
-import {
-  Body,
-  BadRequestException,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  Post,
-  Query,
-  Req,
-  Res,
-  UseGuards,
-} from "@nestjs/common";
-import type { Response } from "express";
+import { Controller, Get, Param, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { PublishingService } from "./publishing.service.js";
-import type {
-  EligibleRenderPage,
-  PublishingPreflightView,
-  PublishedPostExport,
-  ScheduledPostView,
-} from "./publishing.types.js";
+import type { PublishedPostExport, ScheduledPostView } from "./publishing.types.js";
 
 @Controller("workspaces/:workspaceId/publishing")
 @UseGuards(AuthGuard)
@@ -30,18 +12,6 @@ export class PublishingController {
     private readonly publishing: PublishingService,
     private readonly workspaces: WorkspaceService,
   ) {}
-
-  @Post("posts")
-  public async create(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Body() body: unknown,
-    @Res({ passthrough: true }) response: Response,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.createScheduledPost(await this.context(request, workspaceId), body, () =>
-      response.status(200),
-    );
-  }
 
   @Get("platforms")
   public async platforms(
@@ -52,43 +22,6 @@ export class PublishingController {
     return this.publishing.platforms();
   }
 
-  @Get("eligible-renders")
-  public async eligibleRenders(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Query("channelId") channelId?: string,
-    @Query("cursor") cursor?: string,
-    @Query("limit") limit?: string,
-  ): Promise<EligibleRenderPage> {
-    return this.publishing.eligibleRenders(await this.context(request, workspaceId), {
-      ...(channelId === undefined ? {} : { channelId }),
-      ...(cursor === undefined ? {} : { cursor }),
-      ...(limit === undefined ? {} : { limit }),
-    });
-  }
-
-  @Get("posts")
-  public async drafts(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Query("status") status: string,
-    @Query("cursor") cursor?: string,
-  ): ReturnType<PublishingService["drafts"]> {
-    const context = await this.context(request, workspaceId);
-    if (status !== "DRAFT") throw new BadRequestException("Only DRAFT is supported");
-    return this.publishing.drafts(context, cursor);
-  }
-
-  @Get("calendar")
-  public async calendar(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Query("from") from: string,
-    @Query("to") to: string,
-  ): Promise<ScheduledPostView[]> {
-    return this.publishing.listCalendar(await this.context(request, workspaceId), from, to);
-  }
-
   @Get("posts/:postId")
   public async get(
     @Req() request: AuthenticatedRequest,
@@ -96,85 +29,6 @@ export class PublishingController {
     @Param("postId") postId: string,
   ): Promise<ScheduledPostView> {
     return this.publishing.getScheduledPost(await this.context(request, workspaceId), postId);
-  }
-
-  @Patch("posts/:postId")
-  public async update(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("postId") postId: string,
-    @Body() body: unknown,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.updateScheduledPost(
-      await this.context(request, workspaceId),
-      postId,
-      body,
-    );
-  }
-
-  @Post("posts/:postId/cancel")
-  public async cancel(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("postId") postId: string,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.cancelScheduledPost(await this.context(request, workspaceId), postId);
-  }
-
-  @Get("destinations/:destinationId/preflight")
-  public async preflight(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("destinationId") destinationId: string,
-  ): Promise<PublishingPreflightView> {
-    return this.publishing.preflight(await this.context(request, workspaceId), destinationId);
-  }
-
-  @Post("destinations/:destinationId/publish")
-  public async publishNow(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("destinationId") destinationId: string,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.publishNow(await this.context(request, workspaceId), destinationId);
-  }
-
-  @Post("destinations/:destinationId/retry")
-  public async retry(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("destinationId") destinationId: string,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.retry(await this.context(request, workspaceId), destinationId);
-  }
-
-  @Post("destinations/:destinationId/reconcile")
-  public async reconcile(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("destinationId") destinationId: string,
-  ): Promise<ScheduledPostView> {
-    return this.publishing.reconcile(await this.context(request, workspaceId), destinationId);
-  }
-
-  @Post("posts/:postId/reschedule")
-  public async reschedule(
-    @Req() request: AuthenticatedRequest,
-    @Param("workspaceId") workspaceId: string,
-    @Param("postId") postId: string,
-    @Body() body: unknown,
-  ): Promise<ScheduledPostView> {
-    const scheduledAt =
-      typeof body === "object" && body !== null && "scheduledAt" in body
-        ? body.scheduledAt
-        : undefined;
-    if (scheduledAt === undefined || (scheduledAt !== null && typeof scheduledAt !== "string"))
-      throw new BadRequestException("scheduledAt must be an ISO timestamp or null");
-    return this.publishing.reschedule(
-      await this.context(request, workspaceId),
-      postId,
-      scheduledAt,
-    );
   }
 
   @Get("published-records")

@@ -1,32 +1,3 @@
-export type IdeaProposal = Readonly<{
-  title: string;
-  topic: string;
-  hook: string;
-  angle: string;
-  audience: string;
-  references: string[];
-  expectedFormat: string;
-}>;
-
-export type LlmCompletionMetadata = Readonly<{
-  modelVersion: string;
-  promptVersion: string;
-  cost: number | null;
-  currency?: string;
-}>;
-
-export type IdeaProposalResult = Readonly<{
-  proposal: IdeaProposal;
-  metadata: LlmCompletionMetadata;
-}>;
-
-export interface IdeaProposalLlmPort {
-  proposeIdea(
-    input: Readonly<{ prompt: string; context?: string; correlationId: string }>,
-  ): Promise<IdeaProposalResult>;
-}
-
-export const IDEA_PROPOSAL_LLM = Symbol("IDEA_PROPOSAL_LLM");
 export type ProviderKind = "llm" | "image" | "video" | "tts";
 export type ProviderEnvironment = "development" | "test" | "staging" | "production";
 export type CostModel = Readonly<{
@@ -76,7 +47,6 @@ export interface LlmProviderPort<T = unknown> {
   readonly capability: CapabilityMetadata;
   complete(request: LlmRequest): Promise<LlmResponse<T>>;
 }
-export const QUALITY_REVIEW_PORT = Symbol("QUALITY_REVIEW_PORT");
 export type QualityReviewCriterion =
   "FACTUALITY" | "CLARITY" | "COHERENCE" | "ENGAGEMENT" | "GENRE_FIT";
 export type QualityReviewCriterionResult = Readonly<{
@@ -84,35 +54,6 @@ export type QualityReviewCriterionResult = Readonly<{
   evidence: ReadonlyArray<string>;
   limitations: ReadonlyArray<string>;
 }>;
-export type QualityReviewResult = Readonly<{
-  criteria: Readonly<Record<QualityReviewCriterion, QualityReviewCriterionResult>>;
-  metadata: ProviderProvenance;
-}>;
-export type QualityReviewRequest = Readonly<{
-  correlationId: string;
-  title: string;
-  hook: string;
-  dialogue: string;
-  narration: string;
-  callToAction: string;
-  genre: string;
-  allowedTopics: ReadonlyArray<string>;
-  blockedTopics: ReadonlyArray<string>;
-  claims: ReadonlyArray<Readonly<{ text: string; sourceUrl: string }>>;
-  scenes: ReadonlyArray<
-    Readonly<{
-      id: string;
-      dialogue: string;
-      narration: string;
-      visualDescription: string;
-      captions: ReadonlyArray<string>;
-    }>
-  >;
-  requiredDisclosures: ReadonlyArray<string>;
-}>;
-export interface QualityReviewPort {
-  review(request: QualityReviewRequest): Promise<QualityReviewResult>;
-}
 export type ImageRequest = Readonly<{
   prompt: string;
   referenceImageIds?: ReadonlyArray<string>;
@@ -293,7 +234,6 @@ export class SpendGuard {
       throw new ProviderError("BUDGET_EXCEEDED", "Daily spend limit would be exceeded", "budget");
   }
 }
-export const SCRIPT_LLM = Symbol("SCRIPT_LLM");
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 export const IMAGE_PROVIDER = Symbol("IMAGE_PROVIDER");
 export const VIDEO_PROVIDER = Symbol("VIDEO_PROVIDER");

@@ -7,8 +7,6 @@ import { MediaAccess } from "./media-access.js";
 import type { MediaAccounts } from "./media-accounts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import type { Context, Run } from "../runs/runs.types.js";
-import { MediaBindings } from "./media-pipeline.module.js";
-import type { ModuleRef } from "@nestjs/core";
 const context: Context = {
   workspaceId: "11111111-1111-4111-8111-111111111111",
   userId: "user",
@@ -163,24 +161,5 @@ describe("V5 durable async media jobs", () => {
     await expect(
       h.jobs.bytes(context, { objectKey: "fixture", checksumSha256: "0".repeat(64) }),
     ).rejects.toThrow("checksum");
-  });
-  it("keeps all v2 entry points closed while the flag is disabled", () => {
-    vi.stubEnv("PIPELINE_V2", "false");
-    const access = new MediaAccess({ get: vi.fn() } as unknown as ModuleRef);
-    expect(() => access.gate()).toThrow("disabled");
-    expect(() => access.runs).toThrow("disabled");
-    expect(() => access.paid).toThrow("disabled");
-    expect(() => access.artifacts).toThrow("disabled");
-    expect(() => access.boundary).toThrow("disabled");
-    const binding = new MediaBindings(
-      access,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-    );
-    expect(() => binding.onModuleInit()).not.toThrow();
   });
 });

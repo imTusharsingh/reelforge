@@ -183,7 +183,6 @@ describe("V6 worker critic", () => {
     expect(t.review).toHaveBeenCalledOnce();
   });
   it("runs the real V6 pipeline with a fake V2 provider", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
     try {
       const t = fixture(undefined, true, true);
@@ -197,7 +196,6 @@ describe("V6 worker critic", () => {
     }
   });
   it("records a targeted reshoot when measured clip evidence fails", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
     try {
       const t = fixture(undefined, true, true, true);

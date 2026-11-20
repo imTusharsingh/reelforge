@@ -1,9 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { Database } from "../identity/identity.types.js";
-import { OrchestrationService } from "../orchestration/orchestration.service.js";
 import { PerformanceIntelligenceService } from "../performance-intelligence/performance-intelligence.service.js";
 import { PublishingService } from "../publishing/publishing.service.js";
-import { QualityService } from "../quality/quality.service.js";
 import type { NotificationEventType } from "./notifications.catalog.js";
 import { buildNotificationLink } from "./notifications.links.js";
 
@@ -34,13 +32,6 @@ export type NotificationIntakeSource = Readonly<{
   key: string;
   read: (after: IntakeCursor | null, until: Date, limit: number) => Promise<IntakeItem[]>;
 }>;
-
-const runEventTypes: Readonly<Record<string, NotificationEventType>> = {
-  WORKFLOW_STEP_FAILED: "RUN_FAILED",
-  WORKFLOW_STEP_RECONCILIATION_REQUIRED: "RUN_RECONCILIATION_REQUIRED",
-  WORKFLOW_APPROVAL_REQUESTED: "RUN_WAITING_APPROVAL",
-  WORKFLOW_RUN_SUCCEEDED: "RUN_SUCCEEDED",
-};
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -75,8 +66,6 @@ function pick(
 export class NotificationIntakeSources {
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
-    private readonly orchestration: OrchestrationService,
-    private readonly quality: QualityService,
     private readonly publishing: PublishingService,
     private readonly performance: PerformanceIntelligenceService,
   ) {}
@@ -87,15 +76,6 @@ export class NotificationIntakeSources {
       {
         key: "m13.reconciliation",
         read: (after, until, limit) => this.publishReconciliation(after, until, limit),
-      },
-      { key: "m16.run-events", read: (after, until, limit) => this.runEvents(after, until, limit) },
-      {
-        key: "m11.review-requests",
-        read: (after, until, limit) => this.reviewRequests(after, until, limit),
-      },
-      {
-        key: "m11.review-decisions",
-        read: (after, until, limit) => this.reviewDecisions(after, until, limit),
       },
       {
         key: "m15.insight-reports",
@@ -186,101 +166,6 @@ export class NotificationIntakeSources {
           ...(row.lastErrorCode === null ? {} : { errorCode: row.lastErrorCode }),
         },
         occurredAt: row.updatedAt,
-      },
-    }));
-  }
-
-  private async runEvents(
-    after: IntakeCursor | null,
-    until: Date,
-    limit: number,
-  ): Promise<IntakeItem[]> {
-    const rows = await this.orchestration.listEventsAfter({
-      eventTypes: Object.keys(runEventTypes),
-      after,
-      until,
-      limit,
-    });
-    return rows.map((row) => {
-      const eventType = runEventTypes[row.eventType];
-      if (eventType === undefined)
-        return { cursor: { at: row.occurredAt, id: row.id }, event: null };
-      return {
-        cursor: { at: row.occurredAt, id: row.id },
-        event: {
-          workspaceId: row.workspaceId,
-          channelId: row.channelId,
-          eventType,
-          sourceModule: "M16",
-          // A run succeeds once; failures and waits can recur after a retry, so key by event id.
-          sourceKey:
-            eventType === "RUN_SUCCEEDED"
-              ? `m16:run-succeeded:${row.runId}`
-              : `m16:event:${row.id}`,
-          correlationId: row.correlationId,
-          subjectType: "workflow_run",
-          subjectId: row.runId,
-          link: buildNotificationLink("workflowRun", {
-            workspaceId: row.workspaceId,
-            runId: row.runId,
-          }),
-          payload: { runId: row.runId, ...pick(row.payload, ["stepKey", "code", "deadLetter"]) },
-          occurredAt: row.occurredAt,
-        },
-      };
-    });
-  }
-
-  private async reviewRequests(
-    after: IntakeCursor | null,
-    until: Date,
-    limit: number,
-  ): Promise<IntakeItem[]> {
-    const rows = await this.quality.listReviewRequestsAfter({ after, until, limit });
-    return rows.map((row) => ({
-      cursor: { at: row.createdAt, id: row.id },
-      event: {
-        workspaceId: row.workspaceId,
-        channelId: row.channelId,
-        eventType: "REVIEW_NEEDED",
-        sourceModule: "M11",
-        sourceKey: `m11:review-needed:${row.id}`,
-        correlationId: null,
-        subjectType: "quality_review_run",
-        subjectId: row.id,
-        link: buildNotificationLink("reviewItem", {
-          workspaceId: row.workspaceId,
-          reviewRunId: row.id,
-        }),
-        payload: { reviewRunId: row.id, renderJobId: row.renderJobId, reviewStatus: row.status },
-        occurredAt: row.createdAt,
-      },
-    }));
-  }
-
-  private async reviewDecisions(
-    after: IntakeCursor | null,
-    until: Date,
-    limit: number,
-  ): Promise<IntakeItem[]> {
-    const rows = await this.quality.listDecisionsAfter({ after, until, limit });
-    return rows.map((row) => ({
-      cursor: { at: row.createdAt, id: row.id },
-      event: {
-        workspaceId: row.workspaceId,
-        channelId: row.channelId,
-        eventType: row.action === "APPROVE" ? "REVIEW_APPROVED" : "REVIEW_REJECTED",
-        sourceModule: "M11",
-        sourceKey: `m11:decision:${row.id}`,
-        correlationId: null,
-        subjectType: "quality_review_run",
-        subjectId: row.reviewRunId,
-        link: buildNotificationLink("reviewItem", {
-          workspaceId: row.workspaceId,
-          reviewRunId: row.reviewRunId,
-        }),
-        payload: { reviewRunId: row.reviewRunId, decisionId: row.id, action: row.action },
-        occurredAt: row.createdAt,
       },
     }));
   }

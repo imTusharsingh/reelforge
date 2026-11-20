@@ -8,7 +8,7 @@ export const canEdit = (role: Role): boolean => role === "OWNER" || role === "ED
 export function isRecord(value: unknown): value is ApiObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-export function text(value: unknown, fallback = "Not set"): string {
+function text(value: unknown, fallback = "Not set"): string {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 export const pretty = (value: unknown): string => JSON.stringify(value ?? null, null, 2);

@@ -39,7 +39,6 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_FILENAME_LENGTH = 200;
 
 export const IMMUTABLE_ASSET_CACHE_CONTROL = "private, max-age=31536000, immutable";
-export const EXPIRING_ARTIFACT_CACHE_CONTROL = "private, no-store";
 
 /** Returns the normalized persisted media type only when it is safe to deliver. */
 export function deliverableMediaType(value: string): string | undefined {

@@ -48,7 +48,6 @@ export class MediaPorts {
     );
   }
   public async get(context: Context): Promise<Awaited<ReturnType<ProvidersRuntime["ports"]>>> {
-    this.access.gate();
     const references: ReferenceResolver = {
       resolve: (shot): Promise<MediaInput[]> => this.references(context, shot),
     };

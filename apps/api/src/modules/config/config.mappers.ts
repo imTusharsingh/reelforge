@@ -244,16 +244,6 @@ export function workspaceLayerFromSnapshot(row: WorkspaceSnapshotRow): ConfigLay
   });
 }
 
-export function workspaceLayerFromRequest(
-  values: LayerValues,
-  lockedFields: readonly string[],
-): ConfigLayer {
-  return layer("workspace", "request-workspace", values, {
-    sourceRefs: ["request"],
-    lockedFields,
-  });
-}
-
 export function videoLayerFromRequest(
   video: LayerValues["video"],
   promptRefs: readonly PromptTemplateReference[] | undefined,
@@ -264,4 +254,13 @@ export function videoLayerFromRequest(
     values.prompt = { templateRefs: [...promptRefs] };
   if (Object.keys(values).length === 0) return null;
   return layer("video", "request-video", values, { sourceRefs: ["request"] });
+}
+export function workspaceLayerFromRequest(
+  values: LayerValues,
+  lockedFields: readonly string[],
+): ConfigLayer {
+  return layer("workspace", "request-workspace", values, {
+    sourceRefs: ["request"],
+    lockedFields,
+  });
 }

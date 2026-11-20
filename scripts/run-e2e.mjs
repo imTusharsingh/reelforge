@@ -75,7 +75,18 @@ try {
   };
   await run("pnpm", ["db:generate"], env);
   await run("pnpm", ["db:migrate:deploy"], env);
-  await run("pnpm", ["exec", "playwright", "test", ...process.argv.slice(2)], env);
+  await run(
+    "pnpm",
+    [
+      "exec",
+      "playwright",
+      "test",
+      "--config",
+      "apps/web/features/brief/verification/playwright.config.ts",
+      ...process.argv.slice(2),
+    ],
+    env,
+  );
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

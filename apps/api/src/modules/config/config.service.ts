@@ -6,14 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import {
-  assertValidLockPaths,
-  jsonFingerprint,
-  resolveConfig,
-  type ConfigLayer,
-  type JsonValue,
-  type ResolvedConfig,
-} from "@reelforge/config-engine";
+import { resolveConfig, type ConfigLayer } from "@reelforge/config-engine";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import {
   channelLayerFromSnapshot,
@@ -26,46 +19,15 @@ import {
   type SeriesRow,
 } from "./config.mappers.js";
 import {
-  ResolveConfigRequestSchema,
-  WorkspaceConfigSaveRequestSchema,
-  type ConfigSnapshotRow,
-  type ResolvedConfigSources,
   type ResolvedConfigWithSources,
   type ResolveConfigRequest,
   type WorkspaceSnapshotRow,
 } from "./config.types.js";
 import { translateConfigError } from "./errors.js";
-import { parseRequest, requireUuid } from "./validation.js";
-
-const editableRoles = new Set(["OWNER", "EDITOR"]);
-const SNAPSHOT_WRITE_ATTEMPTS = 3;
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002"
-  );
-}
 
 @Injectable()
 export class ConfigService {
   public constructor(@Inject("DATABASE") private readonly db: Database) {}
-
-  private assertCanMutate(context: WorkspaceContext): void {
-    if (!editableRoles.has(context.role))
-      throw new ForbiddenException("Configuration mutation requires owner or editor access");
-  }
-
-  public async resolve(
-    context: WorkspaceContext,
-    request: ResolveConfigRequest,
-  ): Promise<ResolvedConfig> {
-    return (await this.resolveWithSources(context, request)).resolved;
-  }
-
-  public async resolveUnknown(context: WorkspaceContext, body: unknown): Promise<ResolvedConfig> {
-    const request = parseRequest(ResolveConfigRequestSchema, body, "Configuration resolve request");
-    return this.resolve(context, request);
-  }
 
   public async resolveWithSources(
     context: WorkspaceContext,
@@ -173,165 +135,6 @@ export class ConfigService {
     } catch (error) {
       translateConfigError(error);
     }
-  }
-
-  public async getWorkspaceConfig(context: WorkspaceContext): Promise<unknown> {
-    const activeSnapshot = await this.workspaceSnapshotFor(context, {});
-    const { resolved, sources } = await this.resolveWithSources(context, {});
-    return {
-      activeSnapshot,
-      config: resolved.config,
-      configSha256: resolved.configSha256,
-      resolutionSha256: resolved.resolutionSha256,
-      layers: resolved.layers,
-      locks: resolved.locks,
-      sources,
-    };
-  }
-
-  public async saveWorkspaceSnapshot(
-    context: WorkspaceContext,
-    body: unknown,
-  ): Promise<WorkspaceSnapshotRow> {
-    this.assertCanMutate(context);
-    const input = parseRequest(
-      WorkspaceConfigSaveRequestSchema,
-      body,
-      "Workspace configuration snapshot",
-    );
-    try {
-      assertValidLockPaths(input.lockedFields);
-    } catch (error) {
-      translateConfigError(error);
-    }
-    const values = input.values as unknown as JsonValue;
-    const lockedFields = input.lockedFields as unknown as JsonValue;
-    const fingerprintSha256 = jsonFingerprint({ values, lockedFields });
-
-    let lastError: unknown;
-    for (let attempt = 0; attempt < SNAPSHOT_WRITE_ATTEMPTS; attempt += 1) {
-      try {
-        return (await this.db.$transaction(async (tx) => {
-          const latest = await tx.workspaceConfigSnapshot.findFirst({
-            where: { workspaceId: context.workspaceId },
-            orderBy: { version: "desc" },
-            select: { version: true },
-          });
-          const created = await tx.workspaceConfigSnapshot.create({
-            data: {
-              workspaceId: context.workspaceId,
-              version: (latest?.version ?? 0) + 1,
-              values: values as never,
-              lockedFields: lockedFields as never,
-              fingerprintSha256,
-              createdByUserId: context.userId,
-            },
-          });
-          await tx.workspace.update({
-            where: { id: context.workspaceId },
-            data: { activeConfigSnapshotId: created.id },
-          });
-          return created;
-        })) as WorkspaceSnapshotRow;
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
-        lastError = error;
-      }
-    }
-    throw new ConflictException(
-      lastError instanceof Error
-        ? `Could not allocate the next workspace configuration snapshot version: ${lastError.message}`
-        : "Could not allocate the next workspace configuration snapshot version",
-    );
-  }
-
-  public async listWorkspaceSnapshots(context: WorkspaceContext): Promise<WorkspaceSnapshotRow[]> {
-    return (await this.db.workspaceConfigSnapshot.findMany({
-      where: { workspaceId: context.workspaceId },
-      orderBy: { version: "desc" },
-      take: 100,
-    })) as WorkspaceSnapshotRow[];
-  }
-
-  public async activateWorkspaceSnapshot(
-    context: WorkspaceContext,
-    snapshotId: string,
-  ): Promise<WorkspaceSnapshotRow> {
-    this.assertCanMutate(context);
-    requireUuid(snapshotId, "snapshotId");
-    const snapshot = await this.workspaceConfigSnapshot(context, snapshotId);
-    await this.db.workspace.update({
-      where: { id: context.workspaceId },
-      data: { activeConfigSnapshotId: snapshot.id },
-    });
-    return snapshot;
-  }
-
-  public async persistConfigSnapshot(
-    context: WorkspaceContext,
-    resolved: ResolvedConfig,
-    sources: ResolvedConfigSources,
-  ): Promise<ConfigSnapshotRow> {
-    const config = resolved.config as unknown as JsonValue;
-    const layers = resolved.layers as unknown as JsonValue;
-    const lockedFields = resolved.lockedFields as unknown as JsonValue;
-
-    let lastError: unknown;
-    for (let attempt = 0; attempt < SNAPSHOT_WRITE_ATTEMPTS; attempt += 1) {
-      try {
-        return (await this.db.$transaction(async (tx) => {
-          const latest = await tx.configSnapshot.findFirst({
-            where: { workspaceId: context.workspaceId },
-            orderBy: { version: "desc" },
-            select: { version: true },
-          });
-          return tx.configSnapshot.create({
-            data: {
-              workspaceId: context.workspaceId,
-              version: (latest?.version ?? 0) + 1,
-              workspaceConfigSnapshotId: sources.workspaceConfigSnapshotId,
-              channelId: sources.channelId,
-              genreId: sources.genreId,
-              seriesId: sources.seriesId,
-              config: config as never,
-              fingerprintSha256: resolved.configSha256,
-              resolutionSha256: resolved.resolutionSha256,
-              layers: layers as never,
-              lockedFields: lockedFields as never,
-              createdByUserId: context.userId,
-            },
-          });
-        })) as ConfigSnapshotRow;
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
-        lastError = error;
-      }
-    }
-    throw new ConflictException(
-      lastError instanceof Error
-        ? `Could not allocate the next generation configuration snapshot version: ${lastError.message}`
-        : "Could not allocate the next generation configuration snapshot version",
-    );
-  }
-
-  public async getConfigSnapshot(
-    context: WorkspaceContext,
-    snapshotId: string,
-  ): Promise<ConfigSnapshotRow> {
-    requireUuid(snapshotId, "snapshotId");
-    const snapshot = await this.db.configSnapshot.findFirst({
-      where: { workspaceId: context.workspaceId, id: snapshotId },
-    });
-    if (!snapshot) throw new NotFoundException("Generation configuration snapshot not found");
-    return snapshot as ConfigSnapshotRow;
-  }
-
-  public async listConfigSnapshots(context: WorkspaceContext): Promise<ConfigSnapshotRow[]> {
-    return (await this.db.configSnapshot.findMany({
-      where: { workspaceId: context.workspaceId },
-      orderBy: { version: "desc" },
-      take: 100,
-    })) as ConfigSnapshotRow[];
   }
 
   private async workspaceSnapshotFor(

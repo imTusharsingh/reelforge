@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { createContext, runWithContext, withSpan, metrics } from "@reelforge/observability";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { z } from "zod";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
@@ -22,7 +21,6 @@ export class VideoRunEngine {
   ) {}
   /** A return value delays this SAME BullMQ child; it must not release the assembly dependency. */
   public async process(payload: unknown): Promise<number | null> {
-    if (!pipelineV2Enabled()) return 12000;
     const job = RunJobSchema.parse(payload);
     const context = await this.context(job);
     const run = await this.runs.store.get(context, job.runId);
@@ -129,7 +127,6 @@ export class VideoRunEngine {
     return { workspaceId: job.workspaceId, userId: job.userId, role: membership.role };
   }
   public async recover(): Promise<void> {
-    if (!pipelineV2Enabled()) return;
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.
     const workspaces = await this.runs.store.db.workspace.findMany({ where: { archivedAt: null } });
     for (const workspace of workspaces) {

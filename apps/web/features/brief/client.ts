@@ -1,10 +1,8 @@
 import {
   ChannelBriefSchema,
   ProviderCapabilitySchema,
-  VideoRunSchema,
   type ChannelBrief,
   type ProviderCapability,
-  type VideoRun,
 } from "../../../../packages/contracts/src/foundations";
 import {
   BriefInputSchema,
@@ -18,7 +16,7 @@ export interface SetupPorts {
   keys(): Promise<KeyStatus>;
   saveKey(provider: "gemini" | "xai", key: string): Promise<void>;
   capabilities(): Promise<ProviderCapability[]>;
-  queue(brief: ChannelBrief, idempotencyKey: string): Promise<VideoRun>;
+  queue(brief: ChannelBrief, idempotencyKey: string): Promise<{ id: string }>;
 }
 /** V2/V3 HTTP boundary. Tests supply a stub transport; production never fabricates success. */
 export class BriefClient implements SetupPorts {
@@ -100,7 +98,7 @@ export class BriefClient implements SetupPorts {
     return data.id;
   }
   public async keys(): Promise<KeyStatus> {
-    const data = await this.json(`${this.root()}/provider-keys`);
+    const data = await this.json(`${this.root()}/providers/keys`);
     if (
       typeof data !== "object" ||
       data === null ||
@@ -115,10 +113,10 @@ export class BriefClient implements SetupPorts {
   }
   public async saveKey(provider: "gemini" | "xai", key: string): Promise<void> {
     if (!key.trim()) throw new Error("Enter a provider key.");
-    await this.response(`${this.root()}/provider-keys/${provider}`, "PUT", { key: key.trim() });
+    await this.response(`${this.root()}/providers/${provider}/key`, "PUT", { key: key.trim() });
   }
   public async capabilities(): Promise<ProviderCapability[]> {
-    const data = await this.json(`${this.root()}/providers/capabilities`);
+    const data = await this.json(`${this.root()}/providers/health`);
     if (!Array.isArray(data)) throw new Error("Invalid provider response.");
     return data.map((item) => {
       const capability = ProviderCapabilitySchema.parse(item);
@@ -126,23 +124,20 @@ export class BriefClient implements SetupPorts {
       return capability;
     });
   }
-  public async queue(brief: ChannelBrief, idempotencyKey: string): Promise<VideoRun> {
-    const run = VideoRunSchema.parse(
-      await this.json("/runs", "POST", {
-        workspaceId: this.workspaceId,
-        channelId: brief.channelId,
-        channelBriefId: brief.id,
-        channelBriefVersion: brief.version,
-        idempotencyKey,
-      }),
-    );
+  public async queue(brief: ChannelBrief, idempotencyKey: string): Promise<{ id: string }> {
+    const run = await this.json("/runs", "POST", {
+      workspaceId: this.workspaceId,
+      channelBriefId: brief.id,
+      idempotencyKey,
+    });
     if (
-      run.workspaceId !== this.workspaceId ||
-      run.channelId !== brief.channelId ||
-      run.channelBriefId !== brief.id ||
-      run.channelBriefVersion !== brief.version
+      typeof run !== "object" ||
+      run === null ||
+      !("id" in run) ||
+      typeof run.id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(run.id)
     )
-      throw new Error("Invalid run scope.");
-    return run;
+      throw new Error("Invalid run response.");
+    return { id: run.id };
   }
 }

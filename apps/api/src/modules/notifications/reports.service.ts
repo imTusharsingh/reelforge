@@ -10,7 +10,6 @@ import { Prisma } from "@reelforge/database";
 import { AnalyticsService } from "../analytics/analytics.service.js";
 import { ChannelService } from "../channel/channel.service.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
-import { OrchestrationService } from "../orchestration/orchestration.service.js";
 import { PerformanceIntelligenceService } from "../performance-intelligence/performance-intelligence.service.js";
 import { PublishingService } from "../publishing/publishing.service.js";
 import { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
@@ -197,7 +196,6 @@ export class ChannelReportsService {
     private readonly socialAccounts: SocialAccountsService,
     private readonly analytics: AnalyticsService,
     private readonly performance: PerformanceIntelligenceService,
-    private readonly orchestration: OrchestrationService,
     private readonly notifications: NotificationsService,
     @Inject(NOTIFICATIONS_CLOCK) private readonly clock: () => Date,
     @Inject(NOTIFICATIONS_CONFIG) private readonly config: NotificationsConfig,
@@ -313,7 +311,7 @@ export class ChannelReportsService {
           "M13 PublishFailed outbox events",
           "M14 latest metric snapshots (CHANNEL granularity)",
           "M15 insight reports and recommendations",
-          "M16 workflow run outcomes",
+          "VideoRun outcomes",
         ],
         publishing,
         metrics,
@@ -685,21 +683,28 @@ export class ChannelReportsService {
     missing: MissingDataItem[],
   ): Promise<ChannelReportData["workflow"]> {
     try {
-      const outcomes = await this.orchestration.countRunOutcomes(
-        context,
-        channel.id,
-        period.start,
-        period.end,
-      );
-      const completedRuns = Object.values(outcomes.byState).reduce((sum, count) => sum + count, 0);
+      const rows = await this.db.videoRun.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          channelId: channel.id,
+          state: { in: ["PUBLISHED", "FAILED", "CANCELED"] },
+          updatedAt: { gte: period.start, lt: period.end },
+        },
+        select: { id: true, state: true },
+      });
+      const byState: Record<string, number> = {};
+      for (const row of rows) byState[row.state] = (byState[row.state] ?? 0) + 1;
+      const completedRuns = rows.length;
       return {
         status: completedRuns > 0 ? "AVAILABLE" : "NO_DATA",
         completedRuns,
-        byState: outcomes.byState,
-        failedRuns: outcomes.failedRunIds.map((runId) => ({
-          runId,
-          link: buildNotificationLink("workflowRun", { workspaceId: channel.workspaceId, runId }),
-        })),
+        byState,
+        failedRuns: rows
+          .filter((row) => row.state === "FAILED")
+          .map(({ id: runId }) => ({
+            runId,
+            link: `/runs/${runId}`,
+          })),
       };
     } catch (error) {
       missing.push({

@@ -1,9 +1,9 @@
+import type { RunQueueHealth } from "../runs/runs.queue.js";
+import { RunsService } from "../runs/runs.service.js";
 import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { redactString } from "@reelforge/observability";
 import { z } from "zod";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
-import { OrchestrationService } from "../orchestration/orchestration.service.js";
-import type { WorkflowQueueHealth } from "../orchestration/orchestration.types.js";
 import { toAuditView } from "./audit.service.js";
 import type { AuditEventView } from "./audit.types.js";
 
@@ -33,7 +33,7 @@ export type FailedJobsView = Readonly<{
 
 export type QueueView = Readonly<{
   generatedAt: string;
-  adapter: WorkflowQueueHealth;
+  adapter: RunQueueHealth;
   scope: "WORKSPACE";
   depth: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }>;
@@ -106,7 +106,7 @@ function countMap(
 export class AdminService {
   public constructor(
     @Inject("DATABASE") private readonly db: Database,
-    private readonly orchestration: OrchestrationService,
+    private readonly runs: RunsService,
   ) {}
 
   public async failedJobs(context: WorkspaceContext, query: unknown): Promise<FailedJobsView> {
@@ -308,7 +308,7 @@ export class AdminService {
     const workspaceId = context.workspaceId;
     const [adapter, steps, jobs, renders, metricJobs, deliveries, destinations] = await Promise.all(
       [
-        this.orchestration.queueHealth(),
+        this.runs.queueHealth(),
         this.db.workflowStep.groupBy({
           by: ["status"],
           where: { workspaceId },

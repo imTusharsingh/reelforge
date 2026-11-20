@@ -4,8 +4,7 @@ import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { createDatabaseClient } from "@reelforge/database";
-import { COMPOSITION_ENGINE } from "../composition/composition.types.js";
-import { CompositionModule } from "../composition/composition.module.js";
+import { AssetModule } from "./asset.module.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { sha256Hex } from "./storage/checksum.js";
 import { StorageObjectNotFoundError, STORAGE_PORT } from "./storage/storage.port.js";
@@ -27,68 +26,15 @@ const foreignAssetId = randomUUID();
 const corruptAssetId = randomUUID();
 const missingAssetId = randomUUID();
 
-const sceneMediaJobId = randomUUID();
-const sceneGenerationId = randomUUID();
-const scriptId = randomUUID();
-const channelId = randomUUID();
-const configId = randomUUID();
-const templateId = randomUUID();
-const templateVersionId = randomUUID();
-const promptId = randomUUID();
-const ideaId = randomUUID();
-const approvalId = randomUUID();
-
-const foreignSceneMediaJobId = randomUUID();
-const foreignSceneGenerationId = randomUUID();
-const foreignScriptId = randomUUID();
-const foreignChannelId = randomUUID();
-const foreignConfigId = randomUUID();
-const foreignTemplateId = randomUUID();
-const foreignTemplateVersionId = randomUUID();
-const foreignPromptId = randomUUID();
-const foreignIdeaId = randomUUID();
-const foreignApprovalId = randomUUID();
-
-const jobId = randomUUID();
-const failedJobId = randomUUID();
-const expiredJobId = randomUUID();
-const expiredArtifactJobId = randomUUID();
-const corruptArtifactJobId = randomUUID();
-const missingArtifactJobId = randomUUID();
-const foreignJobId = randomUUID();
-
-const videoAssetId = randomUUID();
-const expiredArtifactAssetId = randomUUID();
-const corruptArtifactAssetId = randomUUID();
-const missingArtifactAssetId = randomUUID();
-const foreignVideoAssetId = randomUUID();
-const videoArtifactId = randomUUID();
-const expiredArtifactId = randomUUID();
-const corruptArtifactId = randomUUID();
-const missingArtifactId = randomUUID();
-const foreignArtifactId = randomUUID();
-
 const assetV1Body = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
 const assetV2Body = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02]);
 const foreignAssetBody = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x03]);
 const corruptAssetBody = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x04]);
-const videoBody = Buffer.from("verified render artifact video bytes");
-const expiredVideoBody = Buffer.from("expired render artifact video bytes");
-const corruptVideoBody = Buffer.from("corrupt render artifact video bytes");
-const missingVideoBody = Buffer.from("missing render artifact video bytes");
-const foreignVideoBody = Buffer.from("foreign render artifact video bytes");
-
 const assetV1Key = `assets/${assetRootId}/v1/one.png`;
 const assetV2Key = `assets/${assetRootId}/v2/two.png`;
 const foreignAssetKey = `assets/${foreignAssetId}/v1/foreign.png`;
 const corruptAssetKey = `assets/${corruptAssetId}/v1/corrupt.png`;
 const missingAssetKey = `assets/${missingAssetId}/v1/missing.png`;
-const videoKey = `render/${jobId}/lease/final.mp4`;
-const expiredVideoKey = `render/${expiredArtifactJobId}/lease/final.mp4`;
-const corruptVideoKey = `render/${corruptArtifactJobId}/lease/final.mp4`;
-const missingVideoKey = `render/${missingArtifactJobId}/lease/final.mp4`;
-const foreignVideoKey = `render/${foreignJobId}/lease/final.mp4`;
-
 class MemoryStorage implements StoragePort {
   public readonly objects = new Map<string, Buffer>();
 
@@ -180,271 +126,6 @@ suite("authorized media delivery HTTP contract", () => {
       string,
     ];
 
-    await db.channel.create({ data: { id: channelId, workspaceId, name: "m59-fixture" } });
-    await db.idea.create({
-      data: {
-        id: ideaId,
-        workspaceId,
-        channelId,
-        origin: "USER",
-        status: "APPROVED",
-        title: "M59 fixture",
-        normalizedTitle: "m59 fixture",
-        topic: "fixture",
-        hook: "hook",
-        angle: "angle",
-        audience: "all",
-        references: [],
-        expectedFormat: "short",
-        createdByUserId: ownerId,
-      },
-    });
-    await db.ideaApprovalSnapshot.create({
-      data: {
-        id: approvalId,
-        workspaceId,
-        ideaId,
-        channelId,
-        topic: "fixture",
-        hook: "hook",
-        angle: "angle",
-        audience: "all",
-        references: [],
-        expectedFormat: "short",
-        checksumSha256: "b".repeat(64),
-      },
-    });
-    await db.configSnapshot.create({
-      data: {
-        id: configId,
-        workspaceId,
-        version: 1,
-        config: {},
-        fingerprintSha256: "c".repeat(64),
-        resolutionSha256: "d".repeat(64),
-        layers: [],
-        lockedFields: [],
-      },
-    });
-    await db.promptTemplate.create({
-      data: { id: templateId, workspaceId, key: "m59", name: "M59" },
-    });
-    await db.promptTemplateVersion.create({
-      data: {
-        id: templateVersionId,
-        workspaceId,
-        templateId,
-        version: 1,
-        status: "PUBLISHED",
-        body: { sections: { instructions: "fixture" }, variables: [], allowedAdditionSections: [] },
-        checksumSha256: "e".repeat(64),
-      },
-    });
-    await db.promptBundleSnapshot.create({
-      data: {
-        id: promptId,
-        workspaceId,
-        version: 1,
-        configSnapshotId: configId,
-        templateId,
-        templateVersionId,
-        bundle: {
-          schemaVersion: "1.0",
-          renderedText: "fixture",
-          fingerprintSha256: "f".repeat(64),
-        },
-        fingerprintSha256: "f".repeat(64),
-      },
-    });
-    await db.script.create({
-      data: {
-        id: scriptId,
-        workspaceId,
-        channelId,
-        approvedIdeaSnapshotId: approvalId,
-        approvedIdeaChecksum: "b".repeat(64),
-        status: "APPROVED",
-        currentRevision: 1,
-        approvedAt: new Date(),
-        createdByUserId: ownerId,
-        revisions: {
-          create: {
-            revision: 1,
-            document: {},
-            configSnapshotId: configId,
-            promptSnapshotId: promptId,
-            promptText: "fixture",
-            createdByUserId: ownerId,
-          },
-        },
-      },
-    });
-    await db.sceneMediaJob.create({
-      data: {
-        id: sceneMediaJobId,
-        workspaceId,
-        scriptId,
-        scriptRevision: 1,
-        channelId,
-        configSnapshotId: configId,
-        promptSnapshotId: promptId,
-        idempotencyKey: "m59-integration",
-        requestedOutputs: { image: true, video: false, narration: false, dialogue: false },
-        status: "SUCCEEDED",
-        schemaVersion: "1.0",
-        createdByUserId: ownerId,
-        scenes: {
-          create: {
-            id: sceneGenerationId,
-            sceneId: "scene-one",
-            ordinal: 0,
-            sceneVersion: 1,
-            status: "SUCCEEDED",
-            idempotencyKey: "m59-integration-scene",
-            resolvedPrompt: "fixture",
-            sourceRefs: {},
-            activeSlot: 1,
-          },
-        },
-      },
-    });
-
-    await db.channel.create({
-      data: { id: foreignChannelId, workspaceId: foreignWorkspaceId, name: "m59-foreign-fixture" },
-    });
-    await db.idea.create({
-      data: {
-        id: foreignIdeaId,
-        workspaceId: foreignWorkspaceId,
-        channelId: foreignChannelId,
-        origin: "USER",
-        status: "APPROVED",
-        title: "M59 foreign fixture",
-        normalizedTitle: "m59 foreign fixture",
-        topic: "fixture",
-        hook: "hook",
-        angle: "angle",
-        audience: "all",
-        references: [],
-        expectedFormat: "short",
-        createdByUserId: foreignOwnerId,
-      },
-    });
-    await db.ideaApprovalSnapshot.create({
-      data: {
-        id: foreignApprovalId,
-        workspaceId: foreignWorkspaceId,
-        ideaId: foreignIdeaId,
-        channelId: foreignChannelId,
-        topic: "fixture",
-        hook: "hook",
-        angle: "angle",
-        audience: "all",
-        references: [],
-        expectedFormat: "short",
-        checksumSha256: "b".repeat(64),
-      },
-    });
-    await db.configSnapshot.create({
-      data: {
-        id: foreignConfigId,
-        workspaceId: foreignWorkspaceId,
-        version: 1,
-        config: {},
-        fingerprintSha256: "c".repeat(64),
-        resolutionSha256: "d".repeat(64),
-        layers: [],
-        lockedFields: [],
-      },
-    });
-    await db.promptTemplate.create({
-      data: {
-        id: foreignTemplateId,
-        workspaceId: foreignWorkspaceId,
-        key: "m59-foreign",
-        name: "M59",
-      },
-    });
-    await db.promptTemplateVersion.create({
-      data: {
-        id: foreignTemplateVersionId,
-        workspaceId: foreignWorkspaceId,
-        templateId: foreignTemplateId,
-        version: 1,
-        status: "PUBLISHED",
-        body: { sections: { instructions: "fixture" }, variables: [], allowedAdditionSections: [] },
-        checksumSha256: "e".repeat(64),
-      },
-    });
-    await db.promptBundleSnapshot.create({
-      data: {
-        id: foreignPromptId,
-        workspaceId: foreignWorkspaceId,
-        version: 1,
-        configSnapshotId: foreignConfigId,
-        templateId: foreignTemplateId,
-        templateVersionId: foreignTemplateVersionId,
-        bundle: {
-          schemaVersion: "1.0",
-          renderedText: "fixture",
-          fingerprintSha256: "f".repeat(64),
-        },
-        fingerprintSha256: "f".repeat(64),
-      },
-    });
-    await db.script.create({
-      data: {
-        id: foreignScriptId,
-        workspaceId: foreignWorkspaceId,
-        channelId: foreignChannelId,
-        approvedIdeaSnapshotId: foreignApprovalId,
-        approvedIdeaChecksum: "b".repeat(64),
-        status: "APPROVED",
-        currentRevision: 1,
-        approvedAt: new Date(),
-        createdByUserId: foreignOwnerId,
-        revisions: {
-          create: {
-            revision: 1,
-            document: {},
-            configSnapshotId: foreignConfigId,
-            promptSnapshotId: foreignPromptId,
-            promptText: "fixture",
-            createdByUserId: foreignOwnerId,
-          },
-        },
-      },
-    });
-    await db.sceneMediaJob.create({
-      data: {
-        id: foreignSceneMediaJobId,
-        workspaceId: foreignWorkspaceId,
-        scriptId: foreignScriptId,
-        scriptRevision: 1,
-        channelId: foreignChannelId,
-        configSnapshotId: foreignConfigId,
-        promptSnapshotId: foreignPromptId,
-        idempotencyKey: "m59-foreign-integration",
-        requestedOutputs: { image: true, video: false, narration: false, dialogue: false },
-        status: "SUCCEEDED",
-        schemaVersion: "1.0",
-        createdByUserId: foreignOwnerId,
-        scenes: {
-          create: {
-            id: foreignSceneGenerationId,
-            sceneId: "scene-one",
-            ordinal: 0,
-            sceneVersion: 1,
-            status: "SUCCEEDED",
-            idempotencyKey: "m59-foreign-integration-scene",
-            resolvedPrompt: "fixture",
-            sourceRefs: {},
-            activeSlot: 1,
-          },
-        },
-      },
-    });
-
     const assetData = (input: {
       id: string;
       rootAssetId?: string;
@@ -513,178 +194,6 @@ suite("authorized media delivery HTTP contract", () => {
       }),
     });
 
-    const renderAsset = async (input: {
-      id: string;
-      objectKey: string;
-      body: Buffer;
-      workspace?: string;
-    }): Promise<void> => {
-      await db.asset.create({
-        data: {
-          id: input.id,
-          workspaceId: input.workspace ?? workspaceId,
-          objectKey: input.objectKey,
-          mediaType: "video/mp4",
-          filename: "final.mp4",
-          byteSize: input.body.byteLength,
-          checksumSha256: sha256Hex(input.body),
-          version: 1,
-          rootAssetId: input.id,
-          ownership: "SYSTEM_GENERATED",
-          status: "PUBLISHED",
-          licenseType: "generated",
-          rightsHolder: "ReelForge",
-          createdByUserId: ownerId,
-        },
-      });
-    };
-    await renderAsset({ id: videoAssetId, objectKey: videoKey, body: videoBody });
-    await renderAsset({
-      id: expiredArtifactAssetId,
-      objectKey: expiredVideoKey,
-      body: expiredVideoBody,
-    });
-    await renderAsset({
-      id: corruptArtifactAssetId,
-      objectKey: corruptVideoKey,
-      body: corruptVideoBody,
-    });
-    await renderAsset({
-      id: missingArtifactAssetId,
-      objectKey: missingVideoKey,
-      body: missingVideoBody,
-    });
-    await renderAsset({
-      id: foreignVideoAssetId,
-      objectKey: foreignVideoKey,
-      body: foreignVideoBody,
-      workspace: foreignWorkspaceId,
-    });
-
-    const createJob = async (input: {
-      id: string;
-      status: string;
-      workspace?: string;
-      sceneMediaJobId?: string;
-      createdByUserId?: string;
-      expiredAt?: Date;
-      idempotencyKey: string;
-    }): Promise<void> => {
-      await db.renderJob.create({
-        data: {
-          id: input.id,
-          workspaceId: input.workspace ?? workspaceId,
-          sceneMediaJobId: input.sceneMediaJobId ?? sceneMediaJobId,
-          idempotencyKey: input.idempotencyKey,
-          status: input.status as "SUCCEEDED" | "FAILED_FINAL",
-          input: {},
-          inputFingerprint: "a".repeat(64),
-          retentionDays: 30,
-          createdByUserId: input.createdByUserId ?? ownerId,
-          ...(input.expiredAt === undefined ? {} : { expiredAt: input.expiredAt }),
-        },
-      });
-    };
-    await createJob({ id: jobId, status: "SUCCEEDED", idempotencyKey: "m59-success" });
-    await createJob({ id: failedJobId, status: "FAILED_FINAL", idempotencyKey: "m59-failed" });
-    await createJob({
-      id: expiredJobId,
-      status: "SUCCEEDED",
-      idempotencyKey: "m59-expired-job",
-      expiredAt: new Date(Date.now() - 1000),
-    });
-    await createJob({
-      id: expiredArtifactJobId,
-      status: "SUCCEEDED",
-      idempotencyKey: "m59-expired-artifact",
-    });
-    await createJob({
-      id: corruptArtifactJobId,
-      status: "SUCCEEDED",
-      idempotencyKey: "m59-corrupt-artifact",
-    });
-    await createJob({
-      id: missingArtifactJobId,
-      status: "SUCCEEDED",
-      idempotencyKey: "m59-missing-artifact",
-    });
-    await createJob({
-      id: foreignJobId,
-      status: "SUCCEEDED",
-      idempotencyKey: "m59-foreign",
-      workspace: foreignWorkspaceId,
-      sceneMediaJobId: foreignSceneMediaJobId,
-      createdByUserId: foreignOwnerId,
-    });
-
-    const artifact = async (input: {
-      id: string;
-      jobId: string;
-      assetId: string;
-      objectKey: string;
-      body: Buffer;
-      workspace?: string;
-      retainedUntil: Date | null;
-    }): Promise<void> => {
-      await db.renderArtifact.create({
-        data: {
-          id: input.id,
-          workspaceId: input.workspace ?? workspaceId,
-          renderJobId: input.jobId,
-          kind: "VIDEO",
-          assetId: input.assetId,
-          assetVersion: 1,
-          objectKey: input.objectKey,
-          mediaType: "video/mp4",
-          byteSize: input.body.byteLength,
-          checksumSha256: sha256Hex(input.body),
-          retainedUntil: input.retainedUntil,
-        },
-      });
-    };
-    const retainedUntil = new Date(Date.now() + 60_000);
-    await artifact({
-      id: videoArtifactId,
-      jobId,
-      assetId: videoAssetId,
-      objectKey: videoKey,
-      body: videoBody,
-      retainedUntil,
-    });
-    await artifact({
-      id: expiredArtifactId,
-      jobId: expiredArtifactJobId,
-      assetId: expiredArtifactAssetId,
-      objectKey: expiredVideoKey,
-      body: expiredVideoBody,
-      retainedUntil: new Date(Date.now() - 1000),
-    });
-    await artifact({
-      id: corruptArtifactId,
-      jobId: corruptArtifactJobId,
-      assetId: corruptArtifactAssetId,
-      objectKey: corruptVideoKey,
-      body: corruptVideoBody,
-      retainedUntil,
-    });
-    await artifact({
-      id: missingArtifactId,
-      jobId: missingArtifactJobId,
-      assetId: missingArtifactAssetId,
-      objectKey: missingVideoKey,
-      body: missingVideoBody,
-      retainedUntil,
-    });
-    await artifact({
-      id: foreignArtifactId,
-      jobId: foreignJobId,
-      assetId: foreignVideoAssetId,
-      objectKey: foreignVideoKey,
-      body: foreignVideoBody,
-      workspace: foreignWorkspaceId,
-      retainedUntil,
-    });
-
     storage.objects.set(`${workspaceId}/${assetV1Key}`, assetV1Body);
     storage.objects.set(`${workspaceId}/${assetV2Key}`, assetV2Body);
     storage.objects.set(`${foreignWorkspaceId}/${foreignAssetKey}`, foreignAssetBody);
@@ -693,23 +202,11 @@ suite("authorized media delivery HTTP contract", () => {
       Buffer.from("not the persisted bytes"),
     );
     // missingAssetKey intentionally has no stored object.
-    storage.objects.set(`${workspaceId}/${videoKey}`, videoBody);
-    storage.objects.set(`${workspaceId}/${expiredVideoKey}`, expiredVideoBody);
-    storage.objects.set(`${workspaceId}/${corruptVideoKey}`, Buffer.from("corrupt artifact bytes"));
-    // missingVideoKey intentionally has no stored object.
-    storage.objects.set(`${foreignWorkspaceId}/${foreignVideoKey}`, foreignVideoBody);
-
-    const module = await Test.createTestingModule({ imports: [CompositionModule] })
+    const module = await Test.createTestingModule({ imports: [AssetModule] })
       .overrideProvider("DATABASE")
       .useValue(db)
       .overrideProvider(STORAGE_PORT)
       .useValue(storage)
-      .overrideProvider(COMPOSITION_ENGINE)
-      .useValue({
-        execute: async () => {
-          throw new Error("engine must not run for media delivery");
-        },
-      })
       .compile();
     app = module.createNestApplication();
     await app.init();
@@ -718,55 +215,10 @@ suite("authorized media delivery HTTP contract", () => {
   afterAll(async () => {
     await app?.close();
     if (db) {
-      await db.renderArtifact.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.renderPendingObject.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.renderJob.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.sceneGenerationOutput.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.sceneGeneration.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.sceneMediaJob.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
       await db.assetUsageReference.deleteMany({
         where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
       });
       await db.asset.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.scriptRevision.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.script.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.promptBundleSnapshot.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.configSnapshot.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.promptTemplateVersion.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.promptTemplate.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.ideaApprovalSnapshot.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.idea.deleteMany({
-        where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
-      });
-      await db.channel.deleteMany({
         where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } },
       });
       await db.workspace.deleteMany({
@@ -901,8 +353,6 @@ suite("authorized media delivery HTTP contract", () => {
     expect((await get(server, assetUrl, viewerToken)).status).toBe(400);
     const missingAssetUrl = `/workspaces/${workspaceId}/assets/${missingAssetId}/versions/1/content?download=1`;
     expect((await get(server, missingAssetUrl, viewerToken)).status).toBe(400);
-    const artifactUrl = `/workspaces/${workspaceId}/composition/jobs/${jobId}/artifacts/${videoArtifactId}/content?download=yes`;
-    expect((await get(server, artifactUrl, viewerToken)).status).toBe(400);
   });
 
   it("reports missing asset bytes as not found and corrupt bytes as a conflict", async () => {
@@ -926,52 +376,5 @@ suite("authorized media delivery HTTP contract", () => {
         )
       ).status,
     ).toBe(409);
-  });
-
-  it("delivers a succeeded render artifact to a viewer with range and no-store caching", async () => {
-    if (!app) return;
-    const url = `/workspaces/${workspaceId}/composition/jobs/${jobId}/artifacts/${videoArtifactId}/content`;
-    const server = app.getHttpServer();
-    const full = await get(server, url, viewerToken);
-    expect(full.status).toBe(200);
-    expect(full.body).toEqual(videoBody);
-    expect(full.headers["content-type"]).toBe("video/mp4");
-    expect(full.headers["cache-control"]).toBe("private, no-store");
-    expect(full.headers["content-disposition"]).toContain("inline");
-    expect(full.headers["accept-ranges"]).toBe("bytes");
-
-    const partial = await get(server, url, viewerToken, { Range: "bytes=0-7" });
-    expect(partial.status).toBe(206);
-    expect(partial.body).toEqual(videoBody.subarray(0, 8));
-    expect(partial.headers["content-range"]).toBe(`bytes 0-7/${videoBody.byteLength}`);
-
-    const download = await get(server, `${url}?download=true`, viewerToken);
-    expect(download.headers["content-disposition"]).toContain("attachment");
-  });
-
-  it("denies cross-tenant, failed, expired, missing, and corrupt render artifacts", async () => {
-    if (!app) return;
-    const server = app.getHttpServer();
-    const artifactUrl = (id: string, artifactId: string): string =>
-      `/workspaces/${workspaceId}/composition/jobs/${id}/artifacts/${artifactId}/content`;
-    expect(
-      (await get(server, artifactUrl(foreignJobId, foreignArtifactId), ownerToken)).status,
-    ).toBe(404);
-    expect((await get(server, artifactUrl(failedJobId, videoArtifactId), ownerToken)).status).toBe(
-      409,
-    );
-    expect((await get(server, artifactUrl(expiredJobId, videoArtifactId), ownerToken)).status).toBe(
-      410,
-    );
-    expect(
-      (await get(server, artifactUrl(expiredArtifactJobId, expiredArtifactId), ownerToken)).status,
-    ).toBe(410);
-    expect((await get(server, artifactUrl(jobId, randomUUID()), ownerToken)).status).toBe(404);
-    expect(
-      (await get(server, artifactUrl(corruptArtifactJobId, corruptArtifactId), ownerToken)).status,
-    ).toBe(409);
-    expect(
-      (await get(server, artifactUrl(missingArtifactJobId, missingArtifactId), ownerToken)).status,
-    ).toBe(404);
   });
 });

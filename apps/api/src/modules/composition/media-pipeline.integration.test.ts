@@ -38,7 +38,6 @@ describe.skipIf(
 )("V5 real offline video assembly on fake providers", () => {
   const fixture = runsFixture();
   beforeEach(() => {
-    vi.stubEnv("PIPELINE_V2", "true");
     for (const key of ["VIDEO", "IMAGE", "TEXT", "TTS", "MUSIC"])
       vi.stubEnv(`GEMINI_${key}_MODEL`, `fixture-${key}`);
     vi.stubEnv("XAI_VIDEO_MODEL", "fixture-fallback");
@@ -178,7 +177,5 @@ describe.skipIf(
         (artifact) => artifact.checksumSha256,
       ),
     ).toEqual(artifacts.map((artifact) => artifact.checksumSha256));
-    vi.stubEnv("PIPELINE_V2", "false");
-    expect(() => access.gate()).toThrow("disabled");
   }, 180000);
 });

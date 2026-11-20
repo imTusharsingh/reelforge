@@ -58,6 +58,16 @@ function service(options: {
   insightQueries?: InsightsQuery[];
 }): ChannelReportsService {
   const db = {
+    videoRun: {
+      findMany: async (): Promise<{ id: string; state: string }[]> => {
+        if (options.failRuns) throw new Error("db down");
+        return [
+          { id: crypto.randomUUID(), state: "PUBLISHED" },
+          { id: crypto.randomUUID(), state: "PUBLISHED" },
+          { id: channelId, state: "FAILED" },
+        ];
+      },
+    },
     outboxEvent: {
       findMany: async (args: { take: number }): Promise<unknown[]> =>
         Array.from({ length: Math.min(options.failures?.rows ?? 0, args.take) }, (_, index) =>
@@ -100,12 +110,6 @@ function service(options: {
           ),
           recommendationTotal: insights.recTotal,
         };
-      },
-    } as never,
-    {
-      countRunOutcomes: async () => {
-        if (options.failRuns) throw new Error("db down");
-        return { byState: { SUCCEEDED: 2, FAILED: 1 }, failedRunIds: [channelId] };
       },
     } as never,
     {} as never,
