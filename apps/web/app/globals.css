@@ -127,3 +127,6 @@ meter { width: 100%; accent-color: var(--rf-accent); }
 @media (max-width: 620px) {
   .rf-schedule-slot { grid-template-columns: 1fr; }
 }
+
+.rf-ideas { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%, 290px),1fr)); gap: var(--rf-space-4); }
+#studio-channel { max-width: 28rem; }

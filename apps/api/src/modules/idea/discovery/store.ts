@@ -4,6 +4,7 @@ import {
   ChannelBriefSchema,
   LearnedChangeSchema,
   LearningStateSchema,
+  RankedIdeaSchema,
   type ChannelBrief,
   type LearnedChange,
   type LearningState,
@@ -147,6 +148,15 @@ export class DiscoveryStore {
       take: 52,
     });
     return rows.map((row) => LearnedChangeSchema.parse(row.document));
+  }
+  public async latestIdeas(context: WorkspaceContext, channelId: string): Promise<RankedIdea[]> {
+    await this.assertChannel(context, channelId);
+    const row = await this.db.discoveryRecord.findFirst({
+      where: { workspaceId: context.workspaceId, channelId, kind: "RESULT" },
+      orderBy: [{ createdAt: "desc" }, { key: "desc" }],
+      select: { document: true },
+    });
+    return row ? RankedIdeaSchema.array().parse(row.document) : [];
   }
   public async finish(
     context: WorkspaceContext,
