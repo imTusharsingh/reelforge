@@ -4,7 +4,9 @@ import {
   humanGatesPass,
   type RunDetailView,
 } from "../../../../packages/contracts/src/run-experience";
-import { latestCritic, pauseLabel } from "../timeline/view-model";
+import { finalMedia, latestCritic, runMetadata } from "../timeline/view-model";
+import { Badge, Button, Card, Alert } from "../../components/ui/primitives";
+import { Toast, VideoPlayer } from "../../components/ui/studio";
 import { runRequest } from "../timeline/client";
 
 export function ApprovalPanel({
@@ -24,34 +26,49 @@ export function ApprovalPanel({
     detail.run.state === "AWAITING_APPROVAL" &&
     detail.run.pauseReason !== "HUMAN_REJECTED" &&
     !saved;
+  const media = finalMedia(detail);
   return (
-    <section aria-label="Critic report and approval">
-      <h2>Critic report</h2>
-      <CriticSummary detail={detail} />
-      {detail.run.pauseReason && <p role="status">{pauseLabel(detail.run.pauseReason)}</p>}
-      {pending && editable && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button
-            className="rf-button"
-            style={{ minHeight: 48 }}
-            disabled={busy || !humanGatesPass(report) || detail.run.pauseReason !== null}
-            onClick={() => void decide("APPROVE")}
-          >
-            Approve Short
-          </button>
-          <button
-            className="rf-button rf-button--secondary"
-            style={{ minHeight: 48 }}
-            disabled={busy}
-            onClick={() => void decide("REJECT")}
-          >
-            Reject Short
-          </button>
-        </div>
-      )}
-      {saved && <p role="status">{saved}</p>}
-      {error && <p role="alert">{error}</p>}
+    <section className="rf-review" aria-label="Review Short">
+      <div className="rf-player-card">
+        <VideoPlayer src={media.video} poster={media.poster} label={media.video ? "Final Short preview" : "Final video not available"} />
+      </div>
+      <div className="rf-stack">
+        <ReviewMetadata detail={detail} poster={media.poster} />
+        <Card>
+          <h2>Approval</h2>
+          <p>The first 10 Shorts require human approval before publishing. This run started with {detail.run.approvedShortsAtStart} approved Shorts for its channel.</p>
+          <CriticSummary detail={detail} />
+          {pending && editable && (
+            <div className="rf-actions">
+              <Button disabled={busy || !humanGatesPass(report) || detail.run.pauseReason !== null} onClick={() => void decide("APPROVE")}>Approve Short</Button>
+              <Button tone="danger" disabled={busy} onClick={() => void decide("REJECT")}>Reject Short</Button>
+            </div>
+          )}
+          {detail.run.state === "CRITIC" && editable && <a href="#storyboard">Redo a shot</a>}
+          {detail.run.state === "AWAITING_APPROVAL" && <p>Shot redo is available during Critic review.</p>}
+          {saved && <Toast>{saved}</Toast>}
+          {error && <Alert tone="danger" title="Decision failed">{error}</Alert>}
+        </Card>
+      </div>
     </section>
+  );
+}
+
+function ReviewMetadata({ detail, poster }: { detail: RunDetailView; poster: string | undefined }): JSX.Element {
+  const metadata = runMetadata(detail);
+  return (
+    <Card>
+      <h2>Publishing details</h2>
+      {metadata ? (
+        <dl className="rf-metadata">
+          <dt>Title</dt><dd>{metadata.title}</dd>
+          <dt>Description</dt><dd>{metadata.description || "No description"}</dd>
+          <dt>Tags</dt><dd className="rf-cluster">{metadata.tags.length ? metadata.tags.map((tag, index) => <Badge key={`${tag}:${index}`}>{tag}</Badge>) : "No tags"}</dd>
+        </dl>
+      ) : <p>Publishing details are unavailable for this run.</p>}
+      <h3>Thumbnail</h3>
+      {poster ? <img className="rf-cover" src={poster} alt="Short thumbnail" /> : <p>Thumbnail unavailable.</p>}
+    </Card>
   );
 }
 
@@ -91,38 +108,16 @@ function useDecision(
 
 export function CriticSummary({ detail }: { detail: RunDetailView }): JSX.Element {
   const report = latestCritic(detail);
+  if (!report) return <p>Critic evidence is unavailable. Approval requires all hard gates.</p>;
   return (
-    <>
-      {" "}
-      {detail.artifactUrls
-        .flatMap((a) => a.artifacts)
-        .filter((a) => a.kind === "final" && a.contentType === "video/mp4")
-        .map((a) => (
-          <video
-            key={a.url}
-            src={a.url}
-            controls
-            preload="metadata"
-            style={{ maxWidth: "100%", maxHeight: 400 }}
-          />
+    <div className="rf-stack">
+      <Badge tone={report.recommendation === "APPROVE" ? "success" : "warning"}>{report.recommendation === "APPROVE" ? "Recommend approval" : "Recommend rejection"}</Badge>
+      <p>{report.summary}</p>
+      <ul className="rf-verdicts">
+        {Object.entries(report.gates).map(([gate, pass]) => (
+          <li key={gate}><span>{gate}</span><Badge tone={pass ? "success" : "warning"}>{pass ? "Pass" : "Needs attention"}</Badge></li>
         ))}
-      {report ? (
-        <>
-          <p>{report.summary}</p>
-          <p>Recommendation: {report.recommendation}</p>
-          <ul>
-            {Object.entries(report.gates).map(([gate, pass]) => (
-              <li key={gate}>
-                {gate}: {pass ? "Pass" : "Needs attention"}
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <p>
-          Critic evidence is unavailable. Approval is blocked until all hard gates are verified.
-        </p>
-      )}
-    </>
+      </ul>
+    </div>
   );
 }

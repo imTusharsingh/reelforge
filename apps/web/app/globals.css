@@ -106,3 +106,16 @@ ul, ol { padding-inline-start: var(--rf-space-5); }
 .rf-step-log { max-height: 280px; overflow: auto; overflow-wrap: anywhere; color: var(--rf-muted); }
 .rf-shot { padding: var(--rf-space-3); }
 meter { width: 100%; accent-color: var(--rf-accent); }
+
+.rf-review { display: grid; grid-template-columns: minmax(220px, 410px) minmax(0, 1fr); gap: var(--rf-space-5); align-items: start; }
+.rf-player-card { padding: var(--rf-space-3); border: 1px solid var(--rf-border); border-radius: var(--rf-radius); background: var(--rf-sidebar); }
+.rf-player-card .rf-frame { width: min(100%, 370px); margin-inline: auto; }
+.rf-verdicts { list-style: none; padding: 0; display: grid; gap: var(--rf-space-2); }
+.rf-verdicts li { display: flex; justify-content: space-between; gap: var(--rf-space-2); text-transform: capitalize; border-bottom: 1px solid var(--rf-border); padding-block: var(--rf-space-1); }
+.rf-verdicts .rf-badge { text-transform: none; }
+.rf-metadata dt { color: var(--rf-muted); font-size: var(--rf-type-sm); font-weight: 650; }
+.rf-metadata dd { margin: 4px 0 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rf-cover { width: 120px; height: auto; border-radius: var(--rf-radius-sm); }
+@media (max-width: 700px) {
+  .rf-review { grid-template-columns: minmax(0,1fr); }
+}

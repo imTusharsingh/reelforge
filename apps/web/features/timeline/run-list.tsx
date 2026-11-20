@@ -7,7 +7,7 @@ import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge } from "../../components/ui/primitives";
 import { EmptyState, Skeleton, VideoPlayer } from "../../components/ui/studio";
 import { runClient } from "./client";
-import { dollars, finalMedia, pauseLabel, stateLabel } from "./view-model";
+import { dollars, finalMedia, pauseLabel, runMetadata, stateLabel } from "./view-model";
 
 function useRuns(workspaceId: string): { runs: RunSummary[] | null; error: string } {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
@@ -99,10 +99,10 @@ function RunTile({ run, workspaceId, inbox }: { run: RunSummary; workspaceId: st
   const target = useRef<HTMLLIElement>(null);
   const { detail, unavailable } = useTileDetail(workspaceId, run, target);
   const media = detail ? finalMedia(detail) : {};
-  const title = `Short ${run.id.slice(0, 8)}`;
+  const title = (detail && runMetadata(detail)?.title) || `Short ${run.id.slice(0, 8)}`;
   return (
     <li ref={target} className="rf-run-tile">
-      <StudioLink className="rf-run-link" href={`/runs/${run.id}${inbox ? "?view=review" : ""}`}>
+      <StudioLink className="rf-run-link" href={`/runs/${run.id}${inbox ? "/review" : ""}`}>
         <VideoPlayer preview src={media.poster ? undefined : media.video} poster={media.poster} label={media.poster ? `Thumbnail for ${title}` : media.video ? `Preview of ${title}` : unavailable ? "Preview unavailable" : "No preview available"} />
         <div className="rf-run-caption">
           <strong>{title}</strong>

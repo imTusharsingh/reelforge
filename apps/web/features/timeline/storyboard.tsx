@@ -18,7 +18,7 @@ export function Storyboard({ detail, onRedo, busy }: {
   }
   const shots = [...latest.values()].sort((a, b) => a.key.localeCompare(b.key, "en", { numeric: true }));
   return (
-    <section className="rf-stack">
+    <section id="storyboard" className="rf-stack" tabIndex={-1}>
       <h2>Storyboard</h2>
       {shots.length === 0 && <EmptyState title="No shots yet"><p>Shot previews appear after planning.</p></EmptyState>}
       <div className="rf-grid">{shots.map((step) => (
