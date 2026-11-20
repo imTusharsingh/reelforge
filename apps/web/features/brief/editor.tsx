@@ -7,6 +7,7 @@ import {
 } from "../../../../packages/contracts/src/channel-brief";
 import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
+import { ensureCsrfToken } from "../../lib/csrf";
 import { BriefClient } from "./client";
 import { IdentityFields, JsonField, ScheduleBudget, StyleFields } from "./fields";
 
@@ -77,6 +78,7 @@ function useEditorState({
     setError("");
     setMessage("");
     try {
+      await ensureCsrfToken();
       const saved = await new BriefClient(workspaceId).save(
         channelId,
         BriefInputSchema.parse(value),
@@ -119,7 +121,7 @@ function EditorView({
 }: ReturnType<typeof useEditorState>): JSX.Element {
   return (
     <Panel>
-      <h1>Channel Brief</h1>
+      <h2>Channel Brief</h2>
       <p>Version {version}. Edits create a new immutable version.</p>
       {error && (
         <Alert tone="danger" title="Brief needs attention">
@@ -127,9 +129,9 @@ function EditorView({
         </Alert>
       )}
       {message && <StateMessage kind="success" description={message} />}
-      {!loaded ? (
+      {!loaded && !error ? (
         <StateMessage kind="loading" description="Loading Brief…" />
-      ) : (
+      ) : loaded ? (
         <form onSubmit={submit} className="rf-form">
           <fieldset disabled={!editable || busy}>
             <legend>{editable ? "Edit your Brief" : "Read-only Brief"}</legend>
@@ -142,7 +144,7 @@ function EditorView({
             </Button>
           </fieldset>
         </form>
-      )}
+      ) : null}
     </Panel>
   );
 }

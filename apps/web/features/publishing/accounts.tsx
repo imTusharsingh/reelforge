@@ -19,7 +19,7 @@ export function Accounts(): JSX.Element {
   const [available, setAvailable] = useState<PlatformAvailability[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channel, setChannel] = useState("");
-  const [platform, setPlatform] = useState("");
+  const platform = "YOUTUBE";
   const [remoteAccountId, setRemoteAccountId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,7 +33,7 @@ export function Accounts(): JSX.Element {
     setBusy(true);
     setError("");
     try {
-      setItems(await api.reconcileAccounts());
+      setItems((await api.reconcileAccounts()).filter((item) => item.platform === platform));
       setInspected(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to refresh accounts.");
@@ -57,8 +57,8 @@ export function Accounts(): JSX.Element {
       api.platforms(),
       api.channels(),
     ]);
-    setItems(nextAccounts);
-    setAvailable(nextPlatforms);
+    setItems(nextAccounts.filter((item) => item.platform === platform));
+    setAvailable(nextPlatforms.filter((item) => item.platform === platform));
     setChannels(nextChannels.filter((item) => item.status !== "ARCHIVED"));
   }, [api]);
 
@@ -126,13 +126,11 @@ export function Accounts(): JSX.Element {
   };
 
   return (
-    <section>
+    <section className="rf-stack">
       <header className="rf-page-heading">
-        <p className="rf-eyebrow">Studio / Publishing</p>
-        <h1>Social accounts</h1>
+          <h2>YouTube connection</h2>
         <p>
-          Connect accounts and check publishing availability. Unverified platforms remain
-          unavailable.
+          Connect a YouTube account to publish approved Shorts.
         </p>
       </header>
       {!editable && (
@@ -164,8 +162,8 @@ export function Accounts(): JSX.Element {
         </Alert>
       )}
       <Panel>
-        <h2>Platform availability</h2>
-        {available.length === 0 ? (
+        <h3>Publishing availability</h3>
+        {loading ? <p role="status">Checking YouTube availability…</p> : available.length === 0 ? (
           <p>No platform capabilities are configured.</p>
         ) : (
           <ul>
@@ -186,7 +184,7 @@ export function Accounts(): JSX.Element {
       </Panel>
       {editable && (
         <Panel>
-          <h2>Connect account</h2>
+          <h3>Connect YouTube</h3>
           <SelectField
             id="publish-channel"
             label="Channel"
@@ -197,20 +195,6 @@ export function Accounts(): JSX.Element {
             {channels.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
-              </option>
-            ))}
-          </SelectField>
-          <SelectField
-            id="publish-platform"
-            label="Platform"
-            value={platform}
-            onChange={(event) => setPlatform(event.target.value)}
-          >
-            <option value="">Choose a platform</option>
-            {available.map((item) => (
-              <option key={item.platform} value={item.platform} disabled={!item.connectable}>
-                {item.platform}
-                {item.connectable ? "" : " — unavailable"}
               </option>
             ))}
           </SelectField>
@@ -237,7 +221,7 @@ export function Accounts(): JSX.Element {
         </Panel>
       )}
       <Panel>
-        <h2>Connected accounts</h2>
+        <h3>Connected accounts</h3>
         {loading ? (
           <p role="status">Loading accounts…</p>
         ) : items.length === 0 ? (

@@ -130,3 +130,11 @@ meter { width: 100%; accent-color: var(--rf-accent); }
 
 .rf-ideas { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%, 290px),1fr)); gap: var(--rf-space-4); }
 #studio-channel { max-width: 28rem; }
+
+.rf-account-list { list-style: none; padding: 0; display: grid; gap: var(--rf-space-3); }
+.rf-account-card { border: 1px solid var(--rf-border); border-radius: var(--rf-radius-sm); padding: var(--rf-space-4); }
+.rf-account-card > * + * { margin-block-start: var(--rf-space-2); }
+.rf-table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: start; font-size: var(--rf-type-sm); }
+caption { text-align: start; }
+th, td { padding: var(--rf-space-2); text-align: start; border-bottom: 1px solid var(--rf-border); }
