@@ -16,3 +16,6 @@
 Use `createDatabaseClient(connectionString)` with a configured connection string. Importing the package or generating Prisma Client does not connect to a database. Repositories must receive verified workspace context and include that workspace key in every user-owned query. Never expose raw cross-domain database access as a module contract.
 
 The baseline models cover identity membership, workspaces, channels, content series, assets, videos, posts, workflow runs, and an event outbox. Domain-specific tables and states remain owned by their assigned work packages.
+
+Knip excludes generated Prisma source. The database workspace explicitly retains
+`@prisma/client` because the generated client imports its runtime.
