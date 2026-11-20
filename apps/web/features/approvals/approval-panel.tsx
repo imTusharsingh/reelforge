@@ -89,7 +89,7 @@ function useDecision(
   return { busy, error, saved, decide };
 }
 
-function CriticSummary({ detail }: { detail: RunDetailView }): JSX.Element {
+export function CriticSummary({ detail }: { detail: RunDetailView }): JSX.Element {
   const report = latestCritic(detail);
   return (
     <>

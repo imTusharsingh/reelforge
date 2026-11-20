@@ -1,75 +1,39 @@
 "use client";
+
 import { useState, type JSX } from "react";
-import { ShotSpecSchema } from "../../../../packages/contracts/src/foundations";
 import type { RunDetailView } from "../../../../packages/contracts/src/run-experience";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
-import { ApprovalPanel } from "../approvals/approval-panel";
+import { Alert, Badge, Button, Card } from "../../components/ui/primitives";
+import { Skeleton, Toast } from "../../components/ui/studio";
+import { Tabs } from "../../components/ui/tabs";
 import { AutonomyPanel } from "./autonomy-panel";
+import { ProgressStream } from "./progress-stream";
+import { Storyboard } from "./storyboard";
 import { useRun } from "./use-run";
 import { runRequest } from "./client";
-import { dollars } from "./view-model";
+import { dollars, pauseLabel, stateLabel } from "./view-model";
+import { ApprovalPanel, CriticSummary } from "../approvals/approval-panel";
 
-function Storyboard({
-  detail,
-  reshoot,
-  busy,
-  editable,
-}: {
-  detail: RunDetailView;
-  reshoot: (ordinal: number) => void;
-  busy: boolean;
-  editable: boolean;
-}): JSX.Element {
-  const shots = detail.steps.filter((s) => s.key.startsWith("shot-"));
-  return (
-    <section>
-      <h2>Storyboard and shot previews</h2>
-      {!shots.length && <p>Shot planning has not completed.</p>}
-      {shots.map((step) => {
-        const shot = ShotSpecSchema.safeParse(step.input);
-        const media = detail.artifactUrls.find((a) => a.stepId === step.id)?.artifacts ?? [];
-        return (
-          <article key={step.id}>
-            <h3>
-              {step.key} · attempt {step.attempt}
-            </h3>
-            <p>
-              {step.state} · {dollars(step.costMinor ?? 0)}
-            </p>
-            {shot.success && (
-              <>
-                <p>{shot.data.keyframePrompt}</p>
-                <p>{shot.data.motionPrompt}</p>
-                <p>{shot.data.voLine}</p>
-              </>
-            )}
-            <ShotMedia media={media} />
-            {editable && detail.run.state === "CRITIC" && shot.success && (
-              <button
-                className="rf-button rf-button--secondary"
-                disabled={busy}
-                onClick={() => reshoot(shot.data.ordinal)}
-              >
-                Reshoot this shot
-              </button>
-            )}
-          </article>
-        );
-      })}
-    </section>
-  );
-}
-export function RunScreen({ id }: { id: string }): JSX.Element {
+export function RunScreen({ id, review = false }: { id: string; review?: boolean }): JSX.Element {
   const workspace = useActiveWorkspace();
-  const { detail, error, connection, refresh } = useRun(workspace.id, id);
+  return <RunWorkspace key={`${workspace.id}:${id}`} id={id} workspaceId={workspace.id} editable={workspace.role !== "VIEWER"} review={review} />;
+}
+
+function RunWorkspace({ id, workspaceId, editable, review }: {
+  id: string; workspaceId: string; editable: boolean; review: boolean;
+}): JSX.Element {
+  const { detail, error, connection, refresh } = useRun(workspaceId, id);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
-  const editable = workspace.role !== "VIEWER";
+  const [notice, setNotice] = useState("");
   const action = async (path: string): Promise<void> => {
+    if (busy) return;
     setBusy(true);
     setActionError("");
+    setNotice("");
     try {
-      await runRequest(`runs/${id}/${path}`, workspace.id, {});
+      await runRequest(`runs/${id}/${path}`, workspaceId, {});
+      setNotice(path === "approve" ? "Stage approved." : "Shot redo request submitted.");
       refresh();
     } catch (e) {
       setActionError(String(e));
@@ -77,80 +41,53 @@ export function RunScreen({ id }: { id: string }): JSX.Element {
       setBusy(false);
     }
   };
-  if (!detail) return <p role={error ? "alert" : "status"}>{error || "Loading run…"}</p>;
-  const stageWaiting =
-    detail.steps.some((s) => s.state === "WAITING_APPROVAL") &&
-    detail.run.effectiveAutonomy === "L1";
+  if (!detail) return error ? <Alert tone="danger" title="Run unavailable">{error} <Button tone="secondary" onClick={refresh}>Retry</Button></Alert> : <Skeleton label="Loading run…" />;
+  const href = `/runs/${id}`;
+  const redo = editable && detail.run.state === "CRITIC" ? (ordinal: number): void => { void action(`reshoot/${ordinal}`); } : undefined;
   return (
-    <section>
-      <h1>Short {id.slice(0, 8)}</h1>
-      <p role="status">
-        {connection} · {detail.run.state} · Cost so far {dollars(detail.envelope?.spentMinor ?? 0)}
-      </p>
-      {(error || actionError) && <p role="alert">{error || actionError}</p>}
-      <RunSteps detail={detail} />
-      {stageWaiting && editable && (
-        <button className="rf-button" disabled={busy} onClick={() => void action("approve")}>
-          Approve stage
-        </button>
-      )}
-      <ApprovalPanel
-        detail={detail}
-        workspaceId={workspace.id}
-        editable={editable}
-        refresh={refresh}
-      />
-      <AutonomyPanel
-        workspaceId={workspace.id}
-        run={detail.run}
-        editable={editable}
-        refresh={refresh}
-      />
-      <Storyboard
-        detail={detail}
-        reshoot={(ordinal) => void action(`reshoot/${ordinal}`)}
-        busy={busy}
-        editable={editable}
-      />
+    <section className="rf-stack">
+      <header className="rf-page-heading rf-toolbar">
+        <h1>{review ? "Review Short" : `Short ${id.slice(0, 8)}`}</h1>
+        <Badge tone="info">{stateLabel(detail.run.state)}</Badge>
+      </header>
+      <Tabs label="Run views" items={[{ href, label: "Live run" }, { href: href + "/review", label: "Review" }]} current={review ? href + "/review" : href} />
+      {(error || actionError) && <Alert tone="danger" title="Run needs attention">{actionError || error}</Alert>}
+      {notice && <Toast>{notice}</Toast>}
+      {detail.run.pauseReason && <Alert tone="warning" title="Run status">{pauseLabel(detail.run.pauseReason)}</Alert>}
+      {review ? <ApprovalPanel detail={detail} workspaceId={workspaceId} editable={editable} refresh={refresh} /> :
+        <LiveRun detail={detail} connection={connection} workspaceId={workspaceId} editable={editable} busy={busy} refresh={refresh} approve={() => void action("approve")} />}
+      <Storyboard detail={detail} onRedo={redo} busy={busy} />
     </section>
   );
 }
 
-function RunSteps({ detail }: { detail: RunDetailView }): JSX.Element {
+function LiveRun({ detail, connection, workspaceId, editable, busy, refresh, approve }: {
+  detail: RunDetailView; connection: string; workspaceId: string; editable: boolean;
+  busy: boolean; refresh: () => void; approve: () => void;
+}): JSX.Element {
+  const waiting = detail.run.effectiveAutonomy === "L1" && detail.steps.some((step) => step.state === "WAITING_APPROVAL");
   return (
-    <ol aria-label="Live run steps">
-      {detail.steps.map((s) => (
-        <li key={s.id}>
-          {s.key} · {s.state} · attempt {s.attempt}
-        </li>
-      ))}
-    </ol>
+    <div className="rf-columns">
+      <ProgressStream detail={detail} connection={connection} />
+      <div className="rf-stack">
+        <Card>
+          <h2>Run budget</h2>
+          {detail.envelope ? <Budget envelope={detail.envelope} /> : <p>Budget envelope unavailable.</p>}
+        </Card>
+        {waiting && editable && <Button loading={busy} onClick={approve}>Approve stage</Button>}
+        <Card><h2>Critic verdict</h2><CriticSummary detail={detail} /></Card>
+        <Card><AutonomyPanel workspaceId={workspaceId} run={detail.run} editable={editable} refresh={refresh} /></Card>
+      </div>
+    </div>
   );
 }
 
-function ShotMedia({
-  media,
-}: {
-  media: RunDetailView["artifactUrls"][number]["artifacts"];
-}): JSX.Element {
+function Budget({ envelope }: { envelope: NonNullable<RunDetailView["envelope"]> }): JSX.Element {
+  const { spentMinor, hardCapMinor } = envelope;
   return (
     <>
-      {" "}
-      {media.map((a) =>
-        a.contentType === "video/mp4" ? (
-          <video
-            key={a.url}
-            src={a.url}
-            controls
-            preload="metadata"
-            style={{ maxWidth: "100%", maxHeight: 400 }}
-          />
-        ) : (
-          <a key={a.url} href={a.url}>
-            Open {a.kind}
-          </a>
-        ),
-      )}
+      <p><strong>{dollars(spentMinor)}</strong> used of {dollars(hardCapMinor)} cap</p>
+      {hardCapMinor > 0 && <meter aria-label="Run budget used" min={0} max={hardCapMinor} value={Math.min(hardCapMinor, spentMinor)} />}
     </>
   );
 }

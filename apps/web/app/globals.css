@@ -95,3 +95,14 @@ ul, ol { padding-inline-start: var(--rf-space-5); }
 .rf-run-link:hover { background: var(--rf-raised); }
 .rf-run-caption { display: grid; gap: var(--rf-space-2); padding: var(--rf-space-3) var(--rf-space-2); font-size: var(--rf-type-sm); }
 .rf-run-caption .rf-cluster { justify-content: space-between; color: var(--rf-muted); }
+
+.rf-tab { display: inline-flex; min-height: 44px; align-items: center; padding-inline: var(--rf-space-4); color: var(--rf-muted); text-decoration: none; border-bottom: 2px solid var(--rf-border); font-weight: 650; }
+.rf-tab[aria-current], .rf-tab:hover { color: var(--rf-accent); border-color: var(--rf-accent); }
+.rf-timeline { list-style: none; padding: 0; margin-bottom: 0; }
+.rf-timeline li { position: relative; padding: 5px 0 5px var(--rf-space-5); color: var(--rf-muted); font-size: var(--rf-type-sm); }
+.rf-timeline li::before { content: ""; position: absolute; top: 13px; left: 3px; width: 8px; height: 8px; border: 1px solid var(--rf-muted); border-radius: 50%; }
+.rf-timeline li[aria-current] { color: var(--rf-accent); font-weight: 750; }
+.rf-timeline li[aria-current]::before { background: var(--rf-accent); border-color: var(--rf-accent); }
+.rf-step-log { max-height: 280px; overflow: auto; overflow-wrap: anywhere; color: var(--rf-muted); }
+.rf-shot { padding: var(--rf-space-3); }
+meter { width: 100%; accent-color: var(--rf-accent); }
