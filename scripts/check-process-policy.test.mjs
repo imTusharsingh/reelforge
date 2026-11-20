@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -84,6 +85,16 @@ function packet() {
 
 test("valid independently authorized exact-head packet", () =>
   assert.equal(validatePacket(packet()), true));
+test("previous trusted-base authorization digests remain valid", () => {
+  const value = packet();
+  value.metadata.authorizationComment = 123;
+  value.approval.metadataDigest = createHash("sha256")
+    .update(JSON.stringify(value.metadata))
+    .digest("hex");
+  assert.equal(validatePacket(value), true);
+  value.metadata.scope = "changed";
+  assert.throws(() => validatePacket(value), /Authorization metadata digest mismatch/);
+});
 const mutations = {
   "author self approval": (p) => {
     p.approver.id = p.pr.user.id;
@@ -779,5 +790,22 @@ test("the reliability matrix is manual and read-only", async () => {
   const flow = await inspectYaml(content);
   assert.equal(inspectWorkflow(flow, policy, path), true);
   flow.on.pull_request_target = {};
-  assert.throws(() => inspectWorkflow(flow, policy, path), /read-only manual matrix/);
+  assert.throws(
+    () => inspectWorkflow(flow, policy, path),
+    /Unsupported reliability workflow topology/,
+  );
+});
+
+test("CI build accepts the established and reviewed loopback configurations", () => {
+  const flow = structuredClone(submittedCi);
+  const step = flow.jobs.build.steps.find(({ run }) => run === "pnpm build");
+  delete step.env;
+  assert.equal(inspectWorkflow(flow, policy, ciPath), true);
+  step.env = { REELFORGE_API_ORIGIN: "http://127.0.0.1:3001" };
+  assert.equal(inspectWorkflow(flow, policy, ciPath), true);
+  step.env.REELFORGE_API_ORIGIN = "https://different.example";
+  assert.throws(
+    () => inspectWorkflow(flow, policy, ciPath),
+    /CI unconditional command topology: build/,
+  );
 });

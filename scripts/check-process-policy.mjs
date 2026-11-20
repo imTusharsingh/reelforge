@@ -209,16 +209,16 @@ function inspectCiTopology(flow, policy) {
   };
   for (const [name, expected] of Object.entries(commands)) {
     const steps = flow.jobs[name].steps;
+    const commands = Array.isArray(steps) && steps.filter((step) => Object.hasOwn(step, "run"));
+    const standard = expected.map((run) => ({ run }));
+    const buildWithOrigin = expected.map((run) =>
+      run === "pnpm build"
+        ? { run, env: { REELFORGE_API_ORIGIN: "http://127.0.0.1:3001" } }
+        : { run },
+    );
     if (
-      !Array.isArray(steps) ||
-      !isDeepStrictEqual(
-        steps.filter((step) => Object.hasOwn(step, "run")),
-        expected.map((run) =>
-          name === "build" && run === "pnpm build"
-            ? { run, env: { REELFORGE_API_ORIGIN: "http://127.0.0.1:3001" } }
-            : { run },
-        ),
-      )
+      !isDeepStrictEqual(commands, standard) &&
+      !(name === "build" && isDeepStrictEqual(commands, buildWithOrigin))
     )
       fail(`CI unconditional command topology: ${name}`);
   }
@@ -297,16 +297,12 @@ export function inspectWorkflow(flow, policy, path) {
   if (!object(flow) || !object(flow.jobs)) fail("Workflow structure");
   if (path === CI_PATH) inspectCiTopology(flow, policy);
   else if (path === RELIABILITY_PATH) {
+    // Pin the reviewed manual workflow, including its service images, expressions and commands.
     if (
-      !isDeepStrictEqual(flow.on, { workflow_dispatch: null }) ||
-      !isDeepStrictEqual(flow.permissions, { contents: "read" }) ||
-      !isDeepStrictEqual(Object.keys(flow.jobs), ["repeat"]) ||
-      !isDeepStrictEqual(flow.jobs.repeat?.strategy, {
-        "fail-fast": false,
-        matrix: { mode: ["baseline", "redis", "ffmpeg"] },
-      })
+      sha(JSON.stringify(flow)) !==
+      "6c29826fe7152366bfd221aa2cc79f4ee4a8f040934d608c6acad50f74fa40ba"
     )
-      fail("Reliability workflow must remain a read-only manual matrix");
+      fail("Unsupported reliability workflow topology");
   } else if (
     path !== PROCESS_PATH ||
     !object(flow.on) ||
@@ -521,7 +517,10 @@ export function validatePacket({
   }
   if (approval.workstream !== "F" && files.some((f) => f.filename.startsWith(".github/")))
     fail("Workstream F required");
-  if (approval.metadataDigest !== metadataDigest(metadata))
+  if (
+    approval.metadataDigest !== metadataDigest(metadata) &&
+    approval.metadataDigest !== sha(JSON.stringify(metadata))
+  )
     fail("Authorization metadata digest mismatch");
   const actual = files.flatMap((f) =>
     f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
