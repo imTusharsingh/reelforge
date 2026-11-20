@@ -1,9 +1,11 @@
 import {
   ADMISSION_ORDERING,
-  SubmissionOutcomeUnknown,
-  rollbackAdmission,
-} from "./run-paid-admission.js";
-import { z } from "zod";
+  DISPATCHING,
+  OUTCOME_UNKNOWN,
+  jobIdFromAdmission,
+  readAdmission,
+} from "./run-admission-state.js";
+import { SubmissionOutcomeUnknown, rollbackAdmission } from "./run-paid-admission.js";
 import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
@@ -12,8 +14,7 @@ import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 import {
-  DISPATCHING,
-  OUTCOME_UNKNOWN,
+  submissionHold,
   PLANNING_MANIFEST_KEY,
   failSettledGeneration,
   clearResolvedSubmissionHold,
@@ -37,6 +38,11 @@ export class RunPaidCalls {
     amount: number,
     transaction?: Transaction,
   ): Promise<PaidCallReservation> {
+    if (!transaction)
+      return this.store.db.$transaction((tx) => this.reserve(context, run, step, amount, tx));
+    const admission = await readAdmission(transaction, context.workspaceId, step);
+    if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
+      throw new ConflictException(submissionHold(step.id));
     const result = await this.usage.reserve(
       context.workspaceId,
       {
@@ -56,7 +62,14 @@ export class RunPaidCalls {
         message: "Budget policy unavailable",
       });
     if (result.replayed) throw new ConflictException("Paid dispatch requires reconciliation");
-    await this.recordReservation(transaction ?? this.store.db, context, run, step, amount);
+    await this.recordReservation(
+      transaction,
+      context,
+      run,
+      step,
+      amount,
+      admission.evidence === "rolled-back",
+    );
     return {
       workspaceId: context.workspaceId,
       reservationId: result.reservation.id,
@@ -70,6 +83,7 @@ export class RunPaidCalls {
     run: Run,
     step: Step,
     amount: number,
+    rearm: boolean,
   ): Promise<void> {
     const request = {
       providerId: step.providerId ?? "v3-stub",
@@ -86,17 +100,13 @@ export class RunPaidCalls {
       errorCode: "PENDING",
     };
     const where = { workspaceId: context.workspaceId, correlationId: step.id };
-    const rearmed = await db.providerRequest.updateMany({
-      where: {
-        ...where,
-        errorCode: "ADMISSION_ROLLED_BACK",
-        responseMetadata: { path: ["admissionOrdering"], equals: ADMISSION_ORDERING },
-      },
-      data: request,
-    });
-    if (rearmed.count) return;
-    if (await db.providerRequest.findUnique({ where: { workspaceId_correlationId: where } }))
-      throw new ConflictException(`RECONCILE_REQUIRED: existing provider request (${step.id})`);
+    if (rearm) {
+      await db.providerRequest.update({
+        where: { workspaceId_correlationId: where, errorCode: "ADMISSION_ROLLED_BACK" },
+        data: request,
+      });
+      return;
+    }
     await db.providerRequest.create({
       data: { ...where, channelId: run.channelId, ...request },
     });
@@ -118,15 +128,10 @@ export class RunPaidCalls {
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
           throw new DispatchAdmissionError("Paid dispatch is closed");
-        const reservation = await tx.usageReservation.findFirst({
-          where: {
-            workspaceId: context.workspaceId,
-            idempotencyKey: `m08:${step.idempotencyKey}`,
-            status: "RESERVED",
-            expiresAt: { gt: new Date() },
-          },
-        });
-        if (!reservation) throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
+        const { reservation, evidence } = await readAdmission(tx, context.workspaceId, current);
+        if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
+          throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
+        if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
         const marked = await tx.providerRequest.updateMany({
           where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
           data: {
@@ -156,15 +161,7 @@ export class RunPaidCalls {
   }
 
   public async jobReceipt(context: Context, step: Step): Promise<string | null> {
-    const request = await this.store.db.providerRequest.findUnique({
-      where: {
-        workspaceId_correlationId: { workspaceId: context.workspaceId, correlationId: step.id },
-      },
-    });
-    const receipt = z
-      .object({ providerJobId: z.string().min(1) })
-      .safeParse(request?.responseMetadata);
-    return receipt.success ? receipt.data.providerJobId : null;
+    return jobIdFromAdmission(await readAdmission(this.store.db, context.workspaceId, step));
   }
 
   public async recordJob(context: Context, step: Step, providerJobId: string): Promise<void> {
@@ -176,12 +173,12 @@ export class RunPaidCalls {
       throw new ConflictException("Provider job receipt could not be recorded");
   }
 
-  public rollbackAdmission(context: Context, step: Step): Promise<void> {
-    return rollbackAdmission(this.store, this.usage, context, step);
+  public rollbackAdmission(context: Context, step: Step, budgetDenied = false): Promise<void> {
+    return rollbackAdmission(this.store, this.usage, context, step, budgetDenied);
   }
 
   private async holdUnknown(context: Context, step: Step, cause: unknown): Promise<never> {
-    const reason = `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`;
+    const reason = submissionHold(step.id);
     await this.store.mutate(context, step.runId, "reconcile_required", async (db, run, tx) => {
       const marked = await tx.providerRequest.updateMany({
         where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: DISPATCHING },
@@ -277,8 +274,8 @@ export class RunPaidCalls {
     step: Step,
     error: { code: string; message: string },
   ): Promise<void> {
+    const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
     if (step.key.startsWith("shot-")) {
-      const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
       await failSettledGeneration(db, { ...run, pauseReason });
     } else if (step.key.startsWith("media:text:") && run.state !== "CANCELED") {
       await db.videoRunStep.updateMany({
@@ -383,16 +380,19 @@ export class RunPaidCalls {
     transaction?: Transaction,
   ): Promise<void> {
     const finish = async (tx: Transaction): Promise<void> => {
-      const reservation = await tx.usageReservation.findFirstOrThrow({
-        where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
-      });
+      const admission = await readAdmission(tx, context.workspaceId, step);
+      const reservation = admission.reservation;
+      if (!reservation) throw new ConflictException("Paid dispatch reservation is inactive");
+      // The media adapter can also explicitly confirm rejection of an admitted dispatch.
+      const releasable = [DISPATCHING, "RUN_CANCELED", "NOT_DISPATCHED"];
+      if (admission.evidence === "pending") releasable.push("PENDING");
       const updated = await tx.providerRequest.updateMany({
         where: {
           workspaceId: context.workspaceId,
           correlationId: step.id,
           ...(dispatched
             ? { OR: [{ errorCode: DISPATCHING }, { status: "SUCCEEDED", errorCode: null }] }
-            : { errorCode: { in: [DISPATCHING, "PENDING", "RUN_CANCELED", "NOT_DISPATCHED"] } }),
+            : { errorCode: { in: releasable } }),
         },
         data: {
           status: dispatched ? "SUCCEEDED" : "FAILED",

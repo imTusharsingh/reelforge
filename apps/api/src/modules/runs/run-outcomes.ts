@@ -1,9 +1,7 @@
+import { canRollback, readAdmissions } from "../usage-budget/run-admission-state.js";
 import type { Run, Scoped, Step, Transaction } from "./runs.types.js";
 
 export const PLANNING_MANIFEST_KEY = "planning:manifest:v1";
-export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
-export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";
-export const PROTECTED_OUTCOMES = [DISPATCHING, OUTCOME_UNKNOWN];
 export const SETTLED_SHOTS = ["SUCCEEDED", "SKIPPED", "CANCELLED", "FAILED"] as const;
 
 export function unsettledShots(runId: string): {
@@ -18,6 +16,24 @@ export function unsettledShots(runId: string): {
   };
 }
 
+export function submissionHold(stepId: string): string {
+  return `RECONCILE_REQUIRED: provider submission outcome unknown (${stepId})`;
+}
+
+export async function remainingSubmissionHold(
+  db: Scoped,
+  tx: Transaction,
+  run: Run,
+): Promise<string | null> {
+  const steps = await db.videoRunStep.findMany({
+    where: { runId: run.id, state: { notIn: [...SETTLED_SHOTS] }, providerJobId: null },
+    select: { id: true, idempotencyKey: true },
+  });
+  const admissions = await readAdmissions(tx, run.workspaceId, steps);
+  const other = admissions.find((admission) => !canRollback(admission));
+  return other ? submissionHold(other.step.id) : null;
+}
+
 export async function clearResolvedSubmissionHold(
   db: Scoped,
   tx: Transaction,
@@ -26,20 +42,7 @@ export async function clearResolvedSubmissionHold(
 ): Promise<string | null> {
   if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED") || !run.pauseReason.includes(stepId))
     return run.pauseReason;
-  const unresolved = await db.videoRunStep.findMany({
-    where: { runId: run.id, id: { not: stepId }, state: "RUNNING", providerJobId: null },
-    select: { id: true },
-  });
-  const other = await tx.providerRequest.findFirst({
-    where: {
-      workspaceId: run.workspaceId,
-      correlationId: { in: unresolved.map(({ id }) => id) },
-      errorCode: { in: PROTECTED_OUTCOMES },
-    },
-  });
-  const pauseReason = other
-    ? `RECONCILE_REQUIRED: provider submission outcome unknown (${other.correlationId})`
-    : null;
+  const pauseReason = await remainingSubmissionHold(db, tx, run);
   await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
   return pauseReason;
 }

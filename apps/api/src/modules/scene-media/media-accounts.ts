@@ -1,3 +1,5 @@
+import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
+import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   BudgetExhaustedError,
@@ -118,17 +120,12 @@ export class MediaAccounts {
     try {
       await this.reserve(context, run, step, modelId);
     } catch (error) {
-      const ledger = await this.reservationEvidence(context, step);
       const denied =
         error instanceof BudgetExhaustedError ||
         error instanceof BudgetUnresolvableError ||
         (error instanceof ServiceUnavailableException &&
           error.message === "Budget policy unavailable");
-      if (denied && !ledger.reservation && !ledger.request) {
-        await this.closeUndispatched(context, step);
-        throw error;
-      }
-      if (await this.recoverUndispatched(context, step)) throw error;
+      if (await this.recoverUndispatched(context, step, denied)) throw error;
       // Any persisted dispatch marker still requires reconciliation.
       await this.reconcilePending(context, step);
     }
@@ -140,17 +137,25 @@ export class MediaAccounts {
       throw error;
     }
   }
-  public async recoverUndispatched(context: Context, step: Step): Promise<boolean> {
+  public async recoverUndispatched(
+    context: Context,
+    step: Step,
+    budgetDenied = false,
+  ): Promise<boolean> {
     if (step.state !== "RUNNING" || step.providerJobId) return false;
-    await this.access.paid.rollbackAdmission(context, step);
+    await this.access.paid.rollbackAdmission(context, step, budgetDenied);
     const current = await this.access.runs.store.scoped(context).videoRunStep.findFirstOrThrow({
       where: { id: step.id },
     });
-    return this.abandoned(current);
+    return this.abandoned(current) || (budgetDenied && current.state === "CANCELLED");
   }
 
   public async reconcilePending(context: Context, step: Step): Promise<never> {
-    const ledger = await this.reservationEvidence(context, step);
+    const ledger = await readAdmission(this.access.runs.store.db, context.workspaceId, step);
+    if (canRollback(ledger)) {
+      await this.access.paid.rollbackAdmission(context, step);
+      throw new ConflictException("Media admission changed before reconciliation");
+    }
     await this.access.runs.store.scoped(context).videoRunStep.updateMany({
       where: { id: step.id, state: "RUNNING", providerJobId: null },
       data: {
@@ -167,47 +172,18 @@ export class MediaAccounts {
       `RECONCILE_REQUIRED: media paid intent requires ledger reconciliation (${step.id})`,
     );
   }
-  private async reservationEvidence(
-    context: Context,
-    step: Step,
-  ): Promise<{
-    reservation: { id: string } | null;
-    request: { id: string } | null;
-  }> {
-    const db = this.access.runs.store.db;
-    const [reservation, request] = await Promise.all([
-      db.usageReservation.findFirst({
-        where: {
-          workspaceId: context.workspaceId,
-          idempotencyKey: `m08:${step.idempotencyKey}`,
-        },
-        select: { id: true },
-      }),
-      db.providerRequest.findFirst({
-        where: {
-          workspaceId: context.workspaceId,
-          correlationId: step.id,
-        },
-        select: { id: true },
-      }),
-    ]);
-    return { reservation, request };
-  }
-  /** A confirmed non-dispatch refunds both ledgers and closes the attempt. */
+  /** The provider explicitly rejected the submission before dispatch. */
   public async cancelUndispatched(context: Context, step: Step): Promise<void> {
-    await this.closeUndispatched(context, step, true);
-  }
-  private async closeUndispatched(context: Context, step: Step, reserved = false): Promise<void> {
     const result = await this.access.runs.store.mutate(
       context,
       step.runId,
       "media_not_dispatched",
-      async (db, _run, tx) => {
+      async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "CANCELLED") return { value: null, payload: { replay: true } };
         if (current.providerJobId || current.state !== "RUNNING")
           throw new ConflictException("Dispatched media cannot be cancelled as unsubmitted");
-        if (reserved) await this.access.paid.finish(context, step, false, 0, tx);
+        await this.access.paid.finish(context, step, false, 0, tx);
         const closed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "RUNNING", providerJobId: null },
           data: { state: "CANCELLED", finishedAt: new Date() },
@@ -222,6 +198,7 @@ export class MediaAccounts {
               revision: budget.revision + 1,
             },
           });
+        await clearResolvedSubmissionHold(db, tx, run, step.id);
         return { value: null, payload: { refundedMinor: step.costMinor }, stepId: step.id };
       },
     );
@@ -232,7 +209,7 @@ export class MediaAccounts {
       context,
       step.runId,
       "media_completed",
-      async (db, _run, tx) => {
+      async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
         await this.access.paid.commitJob(tx, context, current, current.costMinor ?? 0);
@@ -254,6 +231,7 @@ export class MediaAccounts {
             output: json({ result: output, budgetAccounted: !!budget }),
           },
         });
+        await clearResolvedSubmissionHold(db, tx, run, step.id);
         return { value: null, payload: { costMinor: step.costMinor }, stepId: step.id };
       },
     );

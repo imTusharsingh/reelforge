@@ -2,8 +2,16 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
-import { json, type Context, type Scoped, type Step, type Transaction } from "./runs.types.js";
-import { PROTECTED_OUTCOMES } from "./run-outcomes.js";
+import {
+  json,
+  type Context,
+  type Run,
+  type Scoped,
+  type Step,
+  type Transaction,
+} from "./runs.types.js";
+import { remainingSubmissionHold, SETTLED_SHOTS, submissionHold } from "./run-outcomes.js";
+import { canRollback, readAdmission, readAdmissions } from "../usage-budget/run-admission-state.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
 @Injectable()
@@ -72,16 +80,16 @@ export class RunsControl {
       const steps = await db.videoRunStep.findMany({
         where: {
           runId: id,
-          state: { in: ["RUNNING", "PENDING", "QUEUED", "WAITING_APPROVAL", "PAUSED"] },
+          state: { notIn: [...SETTLED_SHOTS] },
           providerJobId: null,
         },
       });
-      await this.closeSteps(context, db, tx, id, steps);
+      const hold = await this.closeSteps(context, db, tx, id, steps);
       await db.videoRun.updateMany({
         where: { id },
         data: {
           state: "CANCELED",
-          pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? run.pauseReason : null,
+          pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? run.pauseReason : hold,
         },
       });
       return { value: null, payload: { from: run.state, to: "CANCELED" } };
@@ -95,11 +103,6 @@ export class RunsControl {
       id,
       "step_abandoned",
       async (db, run, tx) => {
-        if (!(
-          run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-          run.pauseReason === "OPERATOR_ABANDONED"
-        ))
-          throw new ConflictException("Run is not awaiting reconciliation");
         const step = await db.videoRunStep.findFirst({
           where: {
             id: stepId,
@@ -110,15 +113,18 @@ export class RunsControl {
           },
         });
         if (!step) throw new ConflictException("Step has no unknown submission to abandon");
-        const protectedRequest = await tx.providerRequest.findFirst({
-          where: {
-            workspaceId: context.workspaceId,
-            correlationId: step.id,
-            errorCode: { in: PROTECTED_OUTCOMES },
-          },
-        });
-        if (protectedRequest)
-          throw new ConflictException("Reconcile the provider submission before abandoning");
+        const admission = await readAdmission(tx, context.workspaceId, step);
+        if (!canRollback(admission)) {
+          const reason = submissionHold(step.id);
+          if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+            await db.videoRun.updateMany({ where: { id }, data: { pauseReason: reason } });
+          return { value: reason, payload: { reason }, stepId, eventType: "reconcile_required" };
+        }
+        if (!(
+          run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+          run.pauseReason === "OPERATOR_ABANDONED"
+        ))
+          throw new ConflictException("Run is not awaiting reconciliation");
         await this.releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
           await db.videoRunStep.create({
@@ -132,39 +138,19 @@ export class RunsControl {
             },
           });
         }
-        await this.updateAbandonHold(context, db, tx, id, run.state === "CANCELED");
+        await this.updateAbandonHold(db, tx, run);
         return { value: null, payload: { key: step.key }, stepId };
       },
     );
     await this.runs.events?.publish(result.event);
+    if (result.value)
+      throw new ConflictException("Reconcile the provider submission before abandoning");
   }
-  private async updateAbandonHold(
-    context: Context,
-    db: Scoped,
-    tx: Transaction,
-    id: string,
-    canceled: boolean,
-  ): Promise<void> {
-    const remaining = await db.videoRunStep.findMany({
-      where: { runId: id, state: "RUNNING", providerJobId: null },
-      select: { id: true },
-    });
-    const unknown = await tx.providerRequest.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: { in: remaining.map((item) => item.id) },
-        errorCode: { in: PROTECTED_OUTCOMES },
-      },
-    });
+  private async updateAbandonHold(db: Scoped, tx: Transaction, run: Run): Promise<void> {
+    const hold = await remainingSubmissionHold(db, tx, run);
     await db.videoRun.updateMany({
-      where: { id },
-      data: {
-        pauseReason: unknown
-          ? `RECONCILE_REQUIRED: provider submission outcome unknown (${unknown.correlationId})`
-          : canceled
-            ? null
-            : "OPERATOR_ABANDONED",
-      },
+      where: { id: run.id },
+      data: { pauseReason: hold ?? (run.state === "CANCELED" ? null : "OPERATOR_ABANDONED") },
     });
   }
 
@@ -174,24 +160,18 @@ export class RunsControl {
     tx: Transaction,
     runId: string,
     steps: Step[],
-  ): Promise<void> {
-    const protectedRequests = await tx.providerRequest.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: { in: steps.map((step) => step.id) },
-        errorCode: { in: PROTECTED_OUTCOMES },
-      },
-      select: { correlationId: true },
-    });
-    const protectedIds = new Set(protectedRequests.map((request) => request.correlationId));
+  ): Promise<string | null> {
+    const admissions = await readAdmissions(tx, context.workspaceId, steps);
     await this.releaseSteps(
       context,
       db,
       tx,
       runId,
-      steps.filter((step) => !protectedIds.has(step.id)),
+      admissions.filter(canRollback).map(({ step }) => step),
       "RUN_CANCELED",
     );
+    const protectedAttempt = admissions.find((admission) => !canRollback(admission));
+    return protectedAttempt ? submissionHold(protectedAttempt.step.id) : null;
   }
 
   private async releaseSteps(
@@ -204,7 +184,11 @@ export class RunsControl {
   ): Promise<void> {
     const ids = steps.map((step) => step.id);
     await tx.usageReservation.updateMany({
-      where: { workspaceId: context.workspaceId, correlationId: { in: ids }, status: "RESERVED" },
+      where: {
+        workspaceId: context.workspaceId,
+        idempotencyKey: { in: steps.map((step) => `m08:${step.idempotencyKey}`) },
+        status: "RESERVED",
+      },
       data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
     });
     await tx.providerRequest.updateMany({
@@ -243,23 +227,31 @@ export class RunsControl {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
     await this.boundary.check(context, run);
-    if (run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
-      throw new ConflictException("Reconcile the unknown attempt before resuming");
-    if (run.pauseReason === "OPERATOR_ABANDONED") {
-      const result = await this.runs.store.mutate(context, id, "resumed", async (db, current) => {
-        if (current.pauseReason !== "OPERATOR_ABANDONED")
-          throw new ConflictException("Run changed");
-        const state = current.state === "PAUSED_BUDGET" ? "GENERATING" : current.state;
-        await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
-        return { value: null, payload: { from: current.state, to: state } };
-      });
-      await this.runs.events?.publish(result.event);
-      await this.runs.enqueue(context, await this.runs.store.get(context, id));
-      return;
-    }
-    if (!["PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state))
-      throw new ConflictException("Run cannot resume");
-    await this.runs.move(context, run, "GENERATING");
+    const result = await this.runs.store.mutate(context, id, "resumed", async (db, current, tx) => {
+      if (current.revision !== run.revision) throw new ConflictException("Run changed");
+      const hold = await remainingSubmissionHold(db, tx, current);
+      if (hold || current.pauseReason?.startsWith("RECONCILE_REQUIRED")) {
+        if (hold && !current.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+          await db.videoRun.updateMany({ where: { id }, data: { pauseReason: hold } });
+        return {
+          value: false,
+          payload: { reason: hold ?? current.pauseReason },
+          eventType: "reconcile_required",
+        };
+      }
+      const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
+      if (!abandoned && !["PAUSED_BUDGET", "NEEDS_HUMAN"].includes(current.state))
+        throw new ConflictException("Run cannot resume");
+      const state = abandoned && current.state !== "PAUSED_BUDGET" ? current.state : "GENERATING";
+      await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
+      return {
+        value: true,
+        payload: { from: current.state, to: state, reason: null },
+        eventType: abandoned ? "resumed" : "transition",
+      };
+    });
+    await this.runs.events?.publish(result.event);
+    if (!result.value) throw new ConflictException("Reconcile the unknown attempt before resuming");
     await this.runs.enqueue(context, await this.runs.store.get(context, id));
   }
   public async reshoot(context: Context, id: string, ordinal: number): Promise<void> {
@@ -269,6 +261,11 @@ export class RunsControl {
     if (run.state !== "CRITIC")
       throw new ConflictException("Reshoots are selected at the critic boundary");
     const db = this.runs.store.scoped(context);
+    if (
+      run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+      (await remainingSubmissionHold(db, this.runs.store.db, run))
+    )
+      throw new ConflictException("Reconcile the unknown attempt before reshooting");
     const previous = await db.videoRunStep.findFirstOrThrow({
       where: { runId: id, key: `shot-${ordinal}` },
       orderBy: { attempt: "desc" },
@@ -282,7 +279,8 @@ export class RunsControl {
       context,
       id,
       "reshoot_requested",
-      async (scoped) => {
+      async (scoped, current) => {
+        if (current.revision !== run.revision) throw new ConflictException("Run changed");
         const shot = ShotSpecSchema.parse(previous.input);
         await scoped.videoRunStep.create({
           data: {

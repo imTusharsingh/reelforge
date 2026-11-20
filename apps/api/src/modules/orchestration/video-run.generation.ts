@@ -1,4 +1,8 @@
-import { z } from "zod";
+import {
+  canRollback,
+  jobIdFromAdmission,
+  readAdmission,
+} from "../usage-budget/run-admission-state.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
@@ -9,7 +13,6 @@ import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import {
-  DISPATCHING,
   clearResolvedSubmissionHold,
   SETTLED_SHOTS,
   failSettledGeneration,
@@ -155,22 +158,20 @@ export class RunGeneration {
     step: Step,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<Step> {
-    const request = await this.runs.store.db.providerRequest.findUnique({
-      where: {
-        workspaceId_correlationId: { workspaceId: context.workspaceId, correlationId: step.id },
-      },
-    });
-    if (!request || ["PENDING", "ADMISSION_ROLLED_BACK"].includes(request.errorCode ?? "")) {
+    const admission = await readAdmission(this.runs.store.db, context.workspaceId, step);
+    if (canRollback(admission) || admission.evidence === "ambiguous") {
       await this.paid.rollbackAdmission(context, step);
       return this.runs.store
         .scoped(context)
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     }
-    const receipt = z
-      .object({ providerJobId: z.string().min(1) })
-      .safeParse(request.responseMetadata);
-    if (receipt.success) return this.saveJob(context, run, step, receipt.data.providerJobId);
-    if (request.errorCode === DISPATCHING && Date.now() - request.createdAt.getTime() < 120_000)
+    const jobId = jobIdFromAdmission(admission);
+    if (jobId) return this.saveJob(context, run, step, jobId);
+    if (
+      admission.evidence === "dispatching" &&
+      admission.request &&
+      Date.now() - admission.request.createdAt.getTime() < 120_000
+    )
       return step;
     const recovered = await withSpan(
       "run.provider.reconcile",

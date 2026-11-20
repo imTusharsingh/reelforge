@@ -1,19 +1,24 @@
+import {
+  ADMISSION_ORDERING,
+  canRollback,
+  OUTCOME_UNKNOWN,
+  readAdmission,
+} from "./run-admission-state.js";
 import { ConflictException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { OUTCOME_UNKNOWN, clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { clearResolvedSubmissionHold, submissionHold } from "../runs/run-outcomes.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import type { UsageBudgetService } from "./usage-budget.service.js";
 
 export class SubmissionOutcomeUnknown extends ConflictException {}
 
-export const ADMISSION_ORDERING = "v2-commit-before-dispatch";
-
 export async function rollbackAdmission(
   store: RunsStore,
-  usage: UsageBudgetService,
+  usage: Pick<UsageBudgetService, "release">,
   context: Context,
   step: Step,
+  budgetDenied = false,
 ): Promise<void> {
   const result = await store.mutate(
     context,
@@ -26,25 +31,20 @@ export async function rollbackAdmission(
         current.state === "RUNNING" &&
         !current.providerJobId;
       if (!unchanged) return { value: null, payload: { replay: true } };
-      const where = { workspaceId: context.workspaceId, correlationId: step.id };
-      const request = await tx.providerRequest.findUnique({
-        where: { workspaceId_correlationId: where },
-      });
-      if (
-        request &&
-        request.errorCode !== "PENDING" &&
-        request.errorCode !== "ADMISSION_ROLLED_BACK"
-      )
-        return { value: null, payload: { replay: true } };
-      const metadata = request?.responseMetadata;
-      if (
-        !metadata ||
-        typeof metadata !== "object" ||
-        Array.isArray(metadata) ||
-        metadata.admissionOrdering !== ADMISSION_ORDERING
-      )
-        return holdAmbiguousAdmission(db, tx, run, current, request !== null);
-      const amount = await releaseAdmission(db, tx, usage, context, run, current);
+      const admission = await readAdmission(tx, context.workspaceId, current);
+      if (admission.evidence === "ambiguous")
+        return holdAmbiguousAdmission(db, tx, run, current, admission.request !== null);
+      if (!canRollback(admission)) return { value: null, payload: { replay: true } };
+      const amount = await releaseAdmission(
+        db,
+        tx,
+        usage,
+        context,
+        run,
+        current,
+        admission.reservation?.id,
+        budgetDenied && admission.evidence === "never-dispatched",
+      );
       return {
         value: null,
         payload: { amountMinor: amount, reason: "NOT_DISPATCHED" },
@@ -58,14 +58,16 @@ export async function rollbackAdmission(
 async function releaseAdmission(
   db: Scoped,
   tx: Transaction,
-  usage: UsageBudgetService,
+  usage: Pick<UsageBudgetService, "release">,
   context: Context,
   run: Run,
   step: Step,
+  reservationId: string | undefined,
+  budgetDenied: boolean,
 ): Promise<number> {
   const where = { workspaceId: context.workspaceId, correlationId: step.id };
   const shot = step.key.startsWith("shot-");
-  await releaseReservation(tx, usage, context, step);
+  if (reservationId) await releaseReservation(tx, usage, context, reservationId);
   await tx.providerRequest.updateMany({
     where: { ...where, errorCode: "PENDING" },
     data: {
@@ -88,7 +90,11 @@ async function releaseAdmission(
           startedAt: null,
           idempotencyKey: `${step.id}:admission:${randomUUID()}`,
         }
-      : { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: "NOT_DISPATCHED" } },
+      : {
+          state: "CANCELLED",
+          finishedAt: new Date(),
+          ...(budgetDenied ? {} : { output: { closedBy: "NOT_DISPATCHED" } }),
+        },
   });
   const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
   const amount = step.costMinor ?? 0;
@@ -108,7 +114,7 @@ async function holdAmbiguousAdmission(
   step: Step,
   hasRequest: boolean,
 ): Promise<{ value: string; payload: { reason: string }; stepId: string; eventType: string }> {
-  const reason = `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`;
+  const reason = submissionHold(step.id);
   const where = { workspaceId: run.workspaceId, correlationId: step.id };
   if (hasRequest)
     await tx.providerRequest.update({
@@ -134,19 +140,14 @@ async function holdAmbiguousAdmission(
 
 async function releaseReservation(
   tx: Transaction,
-  usage: UsageBudgetService,
+  usage: Pick<UsageBudgetService, "release">,
   context: Context,
-  step: Step,
+  reservationId: string,
 ): Promise<void> {
-  const reservation = await tx.usageReservation.findFirst({
-    where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+  await usage.release(context.workspaceId, reservationId, "NOT_DISPATCHED", tx);
+  // Keep the released reservation while freeing the unique current-attempt correlation.
+  await tx.usageReservation.update({
+    where: { id: reservationId },
+    data: { correlationId: null },
   });
-  if (reservation) {
-    await usage.release(context.workspaceId, reservation.id, "NOT_DISPATCHED", tx);
-    // Keep the released reservation while freeing the unique current-attempt correlation.
-    await tx.usageReservation.update({
-      where: { id: reservation.id },
-      data: { correlationId: null },
-    });
-  }
 }

@@ -63,6 +63,19 @@ function media(t: Tenant): {
     },
   };
 }
+async function createEnvelope(t: Tenant): Promise<void> {
+  await t.db.budgetEnvelope.create({
+    data: {
+      workspaceId: t.context.workspaceId,
+      runId: t.run.id,
+      currency: "USD",
+      baseEstimateMinor: 200,
+      reshootReserveMinor: 100,
+      hardCapMinor: 800,
+      route: "PRIMARY",
+    },
+  });
+}
 function receipt(role: PlanningPromptReceipt["role"]): PlanningPromptReceipt {
   return {
     role,
@@ -181,17 +194,7 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
     const run = await t.store.get(t.context, t.run.id);
     const paid = new RunPaidCalls(t.usage, t.store);
     const release = vi.spyOn(t.usage, "release");
-    await t.db.budgetEnvelope.create({
-      data: {
-        workspaceId: t.context.workspaceId,
-        runId: t.run.id,
-        currency: "USD",
-        baseEstimateMinor: 200,
-        reshootReserveMinor: 100,
-        hardCapMinor: 800,
-        route: "PRIMARY",
-      },
-    });
+    await createEnvelope(t);
     const entered = Promise.withResolvers<void>();
     const blocker = new Client({ connectionString: process.env.DATABASE_URL! });
     await blocker.connect();
@@ -307,17 +310,7 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
   it("holds legacy reference media without resubmitting or releasing either claim", async () => {
     const t = await fixture.tenant("L2", 45, narrator, false);
     const { accounts, jobs, port } = media(t);
-    await t.db.budgetEnvelope.create({
-      data: {
-        workspaceId: t.context.workspaceId,
-        runId: t.run.id,
-        currency: "USD",
-        baseEstimateMinor: 200,
-        reshootReserveMinor: 100,
-        hardCapMinor: 800,
-        route: "PRIMARY",
-      },
-    });
+    await createEnvelope(t);
     const step = await accounts.begin(t.context, t.run, "media:reference:style", {}, 10, "offline");
     await accounts.reserve(t.context, t.run, step, "offline");
     const where = { workspaceId: t.context.workspaceId, correlationId: step.id };
@@ -354,5 +347,50 @@ describe.skipIf(!process.env.DATABASE_URL)("planning ownership and paid dispatch
       state: t.run.state,
       pauseReason: expect.stringContaining("RECONCILE_REQUIRED"),
     });
+  });
+
+  it("releases the planning envelope when the reservation transaction rolls back before dispatch", async () => {
+    const t = await fixture.tenant("L2", 45, narrator, false);
+    const { accounts, jobs, port } = media(t);
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    const run = await t.store.get(t.context, t.run.id);
+    expect(run.state).toBe("SCRIPTING");
+    await createEnvelope(t);
+    const mutate = t.store.mutate.bind(t.store);
+    vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
+      mutate(context, id, type, async (db, current, tx) => {
+        const result = await work(db, current, tx);
+        if (type === "media_reserved") throw new Error("reservation transaction rolled back");
+        return result;
+      }),
+    );
+    await expect(
+      jobs.wait(t.context, run, "reference:style", port, {}, 10, "offline", "art-director:v2"),
+    ).rejects.toThrow("reservation transaction rolled back");
+    const step = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "media:reference:style" },
+    });
+    expect(step).toMatchObject({
+      state: "CANCELLED",
+      providerJobId: null,
+      output: { closedBy: "NOT_DISPATCHED" },
+    });
+    expect(accounts.abandoned(step)).toBe(true);
+    const where = { workspaceId: t.context.workspaceId, correlationId: step.id };
+    expect(
+      await t.db.usageReservation.count({
+        where: { workspaceId: run.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+      }),
+    ).toBe(0);
+    expect(await t.db.providerRequest.count({ where })).toBe(0);
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 0,
+    });
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "SCRIPTING",
+      pauseReason: null,
+    });
+    expect(port.submit).not.toHaveBeenCalled();
   });
 });
