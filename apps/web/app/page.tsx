@@ -1,11 +1,11 @@
 import type { JSX } from "react";
 import { AuthWorkspace } from "../components/auth-workspace";
-import { OverviewScreen } from "../components/overview-screen";
+import { RunList } from "../features/timeline/run-list";
 
 export default function HomePage(): JSX.Element {
   return (
     <AuthWorkspace>
-      <OverviewScreen />
+      <RunList />
     </AuthWorkspace>
   );
 }

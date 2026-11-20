@@ -1,22 +1,23 @@
 "use client";
-import { useEffect, useState, type JSX } from "react";
-import type { RunSummary } from "../../../../packages/contracts/src/run-experience";
+
+import { useEffect, useRef, useState, type JSX } from "react";
+import type { RunDetailView, RunSummary } from "../../../../packages/contracts/src/run-experience";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
+import { Alert, Badge } from "../../components/ui/primitives";
+import { EmptyState, Skeleton, VideoPlayer } from "../../components/ui/studio";
 import { runClient } from "./client";
-import { InboxCard } from "../approvals/inbox-card";
-import { pauseLabel } from "./view-model";
+import { dollars, finalMedia, pauseLabel, stateLabel } from "./view-model";
 
-export function RunList({ inbox = false }: { inbox?: boolean }): JSX.Element {
-  const workspace = useActiveWorkspace();
-  const [runs, setRuns] = useState<RunSummary[]>([]);
+function useRuns(workspaceId: string): { runs: RunSummary[] | null; error: string } {
+  const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout>;
     const load = async (): Promise<void> => {
       try {
-        const data = await runClient.list(workspace.id);
+        const data = await runClient.list(workspaceId);
         if (active) {
           setRuns(data);
           setError("");
@@ -24,76 +25,94 @@ export function RunList({ inbox = false }: { inbox?: boolean }): JSX.Element {
       } catch (e) {
         if (active) setError(String(e));
       } finally {
-        if (active) setLoading(false);
+        if (active) timer = setTimeout(() => void load(), 15000);
       }
     };
     void load();
-    const timer = setInterval(() => void load(), 15000);
     return (): void => {
       active = false;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [workspace.id]);
-  const visible = inbox
-    ? runs.filter(
-        (run) =>
-          ["AWAITING_APPROVAL", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state) &&
-          run.pauseReason !== "HUMAN_REJECTED",
-      )
-    : runs;
+  }, [workspaceId]);
+  return { runs, error };
+}
+
+export function RunList({ inbox = false }: { inbox?: boolean }): JSX.Element {
+  const workspace = useActiveWorkspace();
+  return <RunGallery key={workspace.id} workspaceId={workspace.id} inbox={inbox} editable={workspace.role !== "VIEWER"} />;
+}
+
+function RunGallery({ workspaceId, inbox, editable }: { workspaceId: string; inbox: boolean; editable: boolean }): JSX.Element {
+  const { runs, error } = useRuns(workspaceId);
+  const visible = runs?.filter((run) => !inbox || (["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state) && run.pauseReason !== "HUMAN_REJECTED"));
   return (
-    <section>
-      <h1>{inbox ? "Approval inbox" : "Run timeline"}</h1>
-      <p>{listIntroduction(inbox)}</p>
-      {error && <p role="alert">{error}</p>}
-      {loading && <p role="status">Loading runs…</p>}
-      {!loading && !visible.length && <p>No {inbox ? "Shorts need attention" : "runs yet"}.</p>}
-      <ul>
-        {visible.map((run) => (
-          <li key={run.id}>
-            <RunRow
-              run={run}
-              inbox={inbox}
-              workspaceId={workspace.id}
-              editable={workspace.role !== "VIEWER"}
-            />
-          </li>
-        ))}
-      </ul>
-      <StudioLink href="/usage">View usage</StudioLink>
+    <section className="rf-stack">
+      <header className="rf-page-heading rf-toolbar">
+        <div className="rf-stack">
+          <h1>{inbox ? "Review queue" : "Creator studio"}</h1>
+          <p>{inbox ? "Open a Short to check its preview and make a decision." : "Track your Shorts from the first idea to the published video."}</p>
+        </div>
+        {!inbox && editable && <StudioLink className="rf-button" href="/onboarding">＋ New channel</StudioLink>}
+      </header>
+      {error && <Alert tone="danger" title="Runs unavailable">{error}</Alert>}
+      {!runs && !error && <Skeleton label="Loading runs…" />}
+      {visible?.length === 0 && <EmptyState title={inbox ? "Nothing to review" : "No Shorts yet"}><p>{inbox ? "Shorts that need attention will appear here." : "Create a Channel Brief to queue your first Short."}</p></EmptyState>}
+      {visible && visible.length > 0 && <><h2>{inbox ? "Needs attention" : "Your Shorts"}</h2><ul className="rf-grid rf-gallery">{visible.map((run) => <RunTile key={run.id} run={run} workspaceId={workspaceId} inbox={inbox} />)}</ul></>}
     </section>
   );
 }
 
-function RunRow({
-  run,
-  inbox,
-  workspaceId,
-  editable,
-}: {
-  run: RunSummary;
-  inbox: boolean;
-  workspaceId: string;
-  editable: boolean;
-}): JSX.Element {
-  return (
-    <>
-      {" "}
-      {inbox ? (
-        <InboxCard id={run.id} workspaceId={workspaceId} editable={editable} />
-      ) : (
-        <>
-          <StudioLink href={`/runs/${run.id}`}>Short {run.id.slice(0, 8)}</StudioLink> — {run.state}{" "}
-          · {run.effectiveAutonomy}
-          {run.pauseReason && <p>{pauseLabel(run.pauseReason)}</p>}
-        </>
-      )}
-    </>
-  );
+function useTileDetail(workspaceId: string, run: RunSummary, target: { current: HTMLLIElement | null }): { detail: RunDetailView | null; unavailable: boolean } {
+  const [detail, setDetail] = useState<RunDetailView | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const node = target.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry) setVisible(entry.isIntersecting);
+    });
+    observer.observe(node);
+    return (): void => observer.disconnect();
+  }, [target]);
+  useEffect(() => {
+    if (!visible) return;
+    let active = true;
+    const load = (): void => {
+      void runClient.detail(workspaceId, run.id).then((value) => {
+        if (active) { setDetail(value); setUnavailable(false); }
+      }, () => {
+        if (active) setUnavailable(true);
+      });
+    };
+    load();
+    const timer = setInterval(load, 15000);
+    return (): void => { active = false; clearInterval(timer); };
+  }, [workspaceId, run.id, run.state, visible]);
+  return { detail, unavailable };
 }
 
-function listIntroduction(inbox: boolean): string {
-  return inbox
-    ? "Review the critic report and approve or reject a Short with one tap."
-    : "Watch each Short from planning through publishing.";
+function RunTile({ run, workspaceId, inbox }: { run: RunSummary; workspaceId: string; inbox: boolean }): JSX.Element {
+  const target = useRef<HTMLLIElement>(null);
+  const { detail, unavailable } = useTileDetail(workspaceId, run, target);
+  const media = detail ? finalMedia(detail) : {};
+  const title = `Short ${run.id.slice(0, 8)}`;
+  return (
+    <li ref={target} className="rf-run-tile">
+      <StudioLink className="rf-run-link" href={`/runs/${run.id}${inbox ? "?view=review" : ""}`}>
+        <VideoPlayer preview src={media.poster ? undefined : media.video} poster={media.poster} label={media.poster ? `Thumbnail for ${title}` : media.video ? `Preview of ${title}` : unavailable ? "Preview unavailable" : "No preview available"} />
+        <div className="rf-run-caption">
+          <strong>{title}</strong>
+          <span className="rf-cluster">
+            <Badge tone={run.state === "PUBLISHED" ? "success" : run.state === "AWAITING_APPROVAL" ? "warning" : "neutral"}>{stateLabel(run.state)}</Badge>
+            <span>{detail?.envelope ? dollars(detail.envelope.spentMinor) : "Cost unavailable"}</span>
+          </span>
+          {run.pauseReason && <p>{pauseLabel(run.pauseReason)}</p>}
+        </div>
+      </StudioLink>
+    </li>
+  );
 }

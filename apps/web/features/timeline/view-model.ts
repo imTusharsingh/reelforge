@@ -24,3 +24,14 @@ export function latestCritic(detail: RunDetailView): ReturnType<typeof criticRep
 export function dollars(minor: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(minor / 100);
 }
+
+export function stateLabel(state: string): string {
+  return state.toLowerCase().replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+export function finalMedia(detail: RunDetailView): { video?: string; poster?: string } {
+  const media = detail.artifactUrls.flatMap((entry) => entry.artifacts).reverse();
+  const video = media.find((item) => item.kind === "final" && item.contentType === "video/mp4");
+  const poster = media.find((item) => ["cover", "thumbnail", "poster"].includes(item.kind) && item.contentType.startsWith("image/"));
+  return { ...(video && { video: video.url }), ...(poster && { poster: poster.url }) };
+}

@@ -88,3 +88,10 @@ ul, ol { padding-inline-start: var(--rf-space-5); }
 .rf-wizard-steps { display: flex; flex-wrap: wrap; list-style: none; padding: 0; gap: var(--rf-space-3); color: var(--rf-muted); font-size: var(--rf-type-sm); }
 .rf-wizard-steps li { border-bottom: 2px solid var(--rf-border); padding: var(--rf-space-2) 0; flex: 1; }
 .rf-wizard-steps [aria-current] { border-color: var(--rf-accent); color: var(--rf-accent); }
+
+.rf-gallery { list-style: none; padding: 0; grid-template-columns: repeat(auto-fill,minmax(min(100%, 156px),1fr)); }
+.rf-run-tile { border: 1px solid var(--rf-border); border-radius: var(--rf-radius); background: var(--rf-surface); min-width: 0; }
+.rf-run-link { display: block; padding: var(--rf-space-2); border-radius: inherit; text-decoration: none; color: var(--rf-text); }
+.rf-run-link:hover { background: var(--rf-raised); }
+.rf-run-caption { display: grid; gap: var(--rf-space-2); padding: var(--rf-space-3) var(--rf-space-2); font-size: var(--rf-type-sm); }
+.rf-run-caption .rf-cluster { justify-content: space-between; color: var(--rf-muted); }
