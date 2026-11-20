@@ -17,6 +17,8 @@ pnpm build
 pnpm db:validate
 ```
 
+`pnpm db:check-migrations` needs a local `origin/main` ref. Fetch it with `git fetch origin main:refs/remotes/origin/main`, or set `MIGRATION_BASE_REF` to the correct local mainline ref.
+
 For migration validation against local PostgreSQL, set `DATABASE_URL` to a disposable local database and run `pnpm db:migrate:deploy`. Never point this command at production. Set `NEXT_TELEMETRY_DISABLED=1` when running the web build locally. Do not call AI or social providers from CI, startup, health checks, seeds, migrations, or ordinary tests.
 
 ## Pre-commit hook

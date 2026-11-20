@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from "@nestjs/common";
 import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   ChannelReferenceDefaultsSchema,
@@ -9,6 +15,7 @@ import {
   type ReferencePin,
 } from "@reelforge/contracts";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
+import { defaultPins } from "./reference-selection.js";
 import type { ReferenceLibrary } from "./planning.ports.js";
 
 @Injectable()
@@ -78,6 +85,75 @@ export class ReferenceLibraryService implements ReferenceLibrary {
     });
   }
 
+  public async withInitializationLock<T>(
+    context: WorkspaceContext,
+    channelId: string,
+    initialize: (assertLocked: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    // Keep the lock on a dedicated transaction while provider accounting commits independently.
+    // A contender fails immediately instead of occupying a connection while a provider polls.
+    const key = `reference-init:${context.workspaceId}:${channelId}`;
+    return this.db.$transaction(
+      async (tx) => {
+        const [lock] = await tx.$queryRaw<{ acquired: boolean }[]>`
+        SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired
+      `;
+        if (!lock?.acquired)
+          throw new ConflictException("Channel reference initialization in progress");
+        return initialize(async () => {
+          // A closed or expired transaction must never authorize a subsequent image dispatch.
+          await tx.$queryRaw`SELECT 1`;
+        });
+      },
+      // Allow four image jobs, each with up to 20 minutes of provider polling.
+      { timeout: 90 * 60 * 1000 },
+    );
+  }
+
+  public async initializeDefaults(
+    context: WorkspaceContext,
+    input: Omit<ChannelReferenceDefaults, "revision">,
+    observed: ChannelReferenceDefaults | null,
+  ): Promise<boolean> {
+    const revision = (observed?.revision ?? 0) + 1;
+    const defaults = ChannelReferenceDefaultsSchema.parse({
+      ...input,
+      id: observed?.id ?? input.id,
+      revision,
+    });
+    if (defaults.workspaceId !== context.workspaceId)
+      throw new ForbiddenException("Foreign defaults");
+    if (
+      observed &&
+      (observed.workspaceId !== defaults.workspaceId ||
+        observed.channelId !== defaults.channelId ||
+        defaultPins(observed).length)
+    )
+      throw new Error("Expected empty channel defaults");
+    await this.resolve(context, defaultPins(defaults));
+    const scoped = foundationWorkspaceGuard(this.db, context);
+    const result = observed
+      ? await scoped.channelReferenceDefaults.updateMany({
+          where: {
+            channelId: defaults.channelId,
+            revision: observed.revision,
+            document: { equals: observed },
+          },
+          data: { revision, document: defaults },
+        })
+      : await scoped.channelReferenceDefaults.createMany({
+          data: {
+            id: defaults.id,
+            workspaceId: defaults.workspaceId,
+            channelId: defaults.channelId,
+            revision,
+            document: defaults,
+          },
+          skipDuplicates: true,
+        });
+    return result.count === 1;
+  }
+
   public async setDefaults(
     context: WorkspaceContext,
     input: ChannelReferenceDefaults,
@@ -86,12 +162,7 @@ export class ReferenceLibraryService implements ReferenceLibrary {
     if (defaults.workspaceId !== context.workspaceId)
       throw new ForbiddenException("Foreign defaults");
     const scoped = foundationWorkspaceGuard(this.db, context);
-    await this.resolve(context, [
-      ...defaults.character,
-      ...defaults.scenery,
-      ...defaults.style,
-      ...defaults.prop,
-    ]);
+    await this.resolve(context, defaultPins(defaults));
     await scoped.channelReferenceDefaults.upsert({
       where: {
         workspaceId_channelId: { workspaceId: context.workspaceId, channelId: defaults.channelId },

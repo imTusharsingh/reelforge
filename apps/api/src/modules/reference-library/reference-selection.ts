@@ -1,4 +1,4 @@
-import type { ReferenceAsset, ReferencePin } from "@reelforge/contracts";
+import type { ChannelBrief, ReferenceAsset, ReferencePin } from "@reelforge/contracts";
 
 const order = { CHARACTER: 0, SCENERY: 1, PROP: 2, STYLE: 3 } as const;
 export function selectReferences(assets: readonly ReferenceAsset[]): ReferenceAsset[] {
@@ -14,4 +14,20 @@ export function selectReferences(assets: readonly ReferenceAsset[]): ReferenceAs
 }
 export function referencePins(assets: readonly ReferenceAsset[]): ReferencePin[] {
   return assets.map((asset) => ({ referenceAssetId: asset.referenceId, version: asset.version }));
+}
+
+export function defaultPins(defaults: ChannelBrief["referenceDefaults"]): ReferencePin[] {
+  return defaults
+    ? [...defaults.character, ...defaults.scenery, ...defaults.prop, ...defaults.style]
+    : [];
+}
+
+export function planningReferencePins(
+  defaults: ChannelBrief["referenceDefaults"],
+  brief: ChannelBrief,
+): ReferencePin[] {
+  const storedPins = defaultPins(defaults);
+  if (storedPins.length) return storedPins;
+  const briefPins = defaultPins(brief.referenceDefaults);
+  return briefPins.length ? briefPins : brief.references;
 }

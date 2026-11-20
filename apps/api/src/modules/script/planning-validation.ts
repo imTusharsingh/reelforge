@@ -28,6 +28,8 @@ export function validatePlanningShots(
       shot.fps !== 24
     )
       throw new Error("Invalid shot identity or frame rate");
+    if (shot.width !== 720 || shot.height !== 1280)
+      throw new Error("Planning shots must be 720 × 1280");
     if (shot.dialogue.trim()) throw new Error("Speech must use channel narration TTS");
     if (
       shot.firstFrameFrom &&

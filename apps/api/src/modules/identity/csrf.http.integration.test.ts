@@ -3,7 +3,7 @@ import type { MiddlewareConsumer, NestModule } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { csrfMiddleware } from "./csrf.middleware.js";
 
 @Controller()
@@ -32,14 +32,14 @@ class FixtureModule implements NestModule {
 describe("CSRF HTTP boundary", () => {
   let app: INestApplication;
   beforeAll(async () => {
-    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    vi.stubEnv("WEB_APP_ORIGIN", "https://studio.example");
     const module = await Test.createTestingModule({ imports: [FixtureModule] }).compile();
     app = module.createNestApplication();
     app.setGlobalPrefix("api/v1");
     await app.init();
   });
   afterAll(async () => {
-    delete process.env.WEB_APP_ORIGIN;
+    vi.unstubAllEnvs();
     await app.close();
   });
 

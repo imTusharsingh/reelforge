@@ -37,11 +37,9 @@ describe("V4 planning trust boundaries", () => {
   it("rejects foreign pinning input and supports explicit Brief references", async () => {
     const request = planningFixture();
     const shots = shotsFixture(request);
-    const library: ReferenceLibrary = {
+    const library: Pick<ReferenceLibrary, "defaults" | "resolve"> = {
       defaults: async (): Promise<null> => null,
       resolve: async (): Promise<[]> => [],
-      save: async (): Promise<void> => {},
-      setDefaults: async (): Promise<void> => {},
     };
     expect(await pinPlanningShots(context, request, shots, library)).toHaveLength(6);
     await expect(

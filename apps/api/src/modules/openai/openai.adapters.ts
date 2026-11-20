@@ -92,7 +92,7 @@ export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightR
   }
 
   public async generate(input: InsightNarrativeInput): Promise<InsightNarrativeResult> {
-    const correlationId = input.correlationId ?? "insight-adapter";
+    const { correlationId } = input;
     const result = await this.completeJson(
       { prompt: JSON.stringify(input), correlationId },
       INSIGHT_SYSTEM_PROMPT,

@@ -6,7 +6,7 @@ import type {
 } from "@reelforge/contracts";
 
 export type InsightNarrativeInput = Readonly<{
-  correlationId?: string;
+  correlationId: string;
   channelId: string;
   currentWindow: PerformanceWindow;
   previousWindow: PerformanceWindow;

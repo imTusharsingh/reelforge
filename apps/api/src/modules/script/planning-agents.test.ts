@@ -102,4 +102,16 @@ describe("V4 structured planning", () => {
       ),
     ).rejects.toThrow();
   });
+  it("rejects non-720p storyboard shots before media", async () => {
+    const request = planningFixture();
+    const shots = shotsFixture(request);
+    shots[0] = { ...shots[0]!, width: 1080, height: 1920 };
+    await expect(
+      new DirectorService({ generate: vi.fn().mockResolvedValue(shots) }, prompts).direct(
+        context,
+        request,
+        scriptFixture(),
+      ),
+    ).rejects.toThrow("Planning shots must be 720 × 1280");
+  });
 });

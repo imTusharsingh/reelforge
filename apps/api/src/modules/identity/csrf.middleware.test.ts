@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCsrfToken, csrfMiddleware, originAllowed, validateCsrf } from "./csrf.middleware.js";
 
 function runMiddleware(input: {
@@ -30,8 +30,10 @@ function runMiddleware(input: {
 }
 
 describe("CSRF validation", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("uses a cryptographically random base64url token and accepts matching origin", () => {
-    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    vi.stubEnv("WEB_APP_ORIGIN", "https://studio.example");
     const token = createCsrfToken();
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(() =>
@@ -71,7 +73,7 @@ describe("CSRF validation", () => {
   });
 
   it("checks login and register before a session exists", () => {
-    process.env.WEB_APP_ORIGIN = "https://studio.example";
+    vi.stubEnv("WEB_APP_ORIGIN", "https://studio.example");
     const token = createCsrfToken();
     expect(
       runMiddleware({
@@ -99,8 +101,8 @@ describe("CSRF validation", () => {
     ).toBeUndefined();
   });
 
-  it("only exempts Bearer-only requests and leaves safe/exempt routes untouched", () => {
-    process.env.WEB_APP_ORIGIN = "https://studio.example";
+  it("allows safe methods and Bearer-only requests", () => {
+    vi.stubEnv("WEB_APP_ORIGIN", "https://studio.example");
     const token = createCsrfToken();
     expect(
       runMiddleware({
@@ -127,13 +129,6 @@ describe("CSRF validation", () => {
     expect(
       runMiddleware({
         method: "POST",
-        path: "/api/v1/health",
-        cookie: "reelforge_session=session",
-      }),
-    ).toBeUndefined();
-    expect(
-      runMiddleware({
-        method: "POST",
         path: "/api/v1/workspaces/w1/items",
         cookie: `reelforge_csrf=${token}`,
         token,
@@ -142,8 +137,19 @@ describe("CSRF validation", () => {
     ).toBeUndefined();
   });
 
+  it.each(["/health", "/ops/metrics", "/social-accounts/oauth/youtube/callback"])(
+    "applies CSRF checks to unsafe methods on %s",
+    (path) => {
+      const request = { path: `/api/v1${path}`, cookie: "reelforge_session=session" };
+      expect(runMiddleware({ ...request, method: "GET" })).toBeUndefined();
+      expect(runMiddleware({ ...request, method: "POST" })).toMatchObject({
+        response: { code: "CSRF_TOKEN_INVALID" },
+      });
+    },
+  );
+
   it("fails closed when WEB_APP_ORIGIN is unset", () => {
-    delete process.env.WEB_APP_ORIGIN;
+    vi.stubEnv("WEB_APP_ORIGIN", undefined);
     const token = createCsrfToken();
     expect(
       runMiddleware({

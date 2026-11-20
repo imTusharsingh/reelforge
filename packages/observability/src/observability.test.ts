@@ -47,6 +47,13 @@ afterEach(() => {
 });
 
 describe("redaction (M19-T03)", () => {
+  it("masks standalone OpenAI-shaped credentials in provider messages", () => {
+    const fixture = "sk-proj-" + "A1".repeat(16);
+    expect(redactString(`Provider rejected ${fixture} (sk-short)`)).toBe(
+      "Provider rejected [REDACTED] (sk-short)",
+    );
+  });
+
   it("drops secret-named fields whole", () => {
     const out = redact({
       password: "hunter2-hunter2",

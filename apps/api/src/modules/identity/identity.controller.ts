@@ -104,6 +104,7 @@ export class IdentityController {
       path: "/",
     });
     response.clearCookie(CSRF_COOKIE, {
+      httpOnly: false,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",

@@ -144,4 +144,49 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
         .state,
     ).toBe("SUCCEEDED");
   });
+  it("holds for reconciliation after a dispatch transaction rolls back", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const db = t.store.scoped(t.context);
+    const step = await db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0" },
+    });
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    const reconcile = vi.spyOn(t.generation.provider, "reconcile").mockResolvedValue(null);
+    const job = t.runs.job(t.context, t.run.id, step.id);
+    const mutate = t.store.mutate.bind(t.store);
+    const failure = vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
+      mutate(context, id, type, async (scoped, run, tx) => {
+        const result = await work(scoped, run, tx);
+        if (type === "provider_dispatch") {
+          expect(submit).toHaveBeenCalledTimes(1);
+          throw new Error("simulated dispatch transaction failure");
+        }
+        return result;
+      }),
+    );
+    try {
+      await expect(t.engine.process(job)).rejects.toThrow("simulated dispatch transaction failure");
+    } finally {
+      failure.mockRestore();
+    }
+    expect(await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject({
+      state: "RUNNING",
+      providerJobId: null,
+    });
+    expect(
+      await t.db.providerRequest.findFirstOrThrow({
+        where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+      }),
+    ).toMatchObject({ errorCode: "PENDING" });
+
+    await t.control.resume(t.context, t.run.id);
+    await expect(t.engine.process(job)).rejects.toThrow("RECONCILE_REQUIRED");
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith(step.idempotencyKey);
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      pauseReason: `RECONCILE_REQUIRED: submission outcome unknown (${step.id})`,
+    });
+    await expect(t.engine.process(job)).resolves.toBeNull();
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
 });
