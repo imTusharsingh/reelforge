@@ -54,7 +54,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-describe("authentication and five-input setup boundary", () => {
+describe("authentication and Channel Brief setup", () => {
   it("signs in, toggles visibility, validates registration and reports safe failures", async () => {
     const login = vi.spyOn(api, "login").mockResolvedValue({ userId: "user" });
     const register = vi.spyOn(api, "register").mockResolvedValue({ userId: "user" });
@@ -82,7 +82,7 @@ describe("authentication and five-input setup boundary", () => {
     await click("I already have an account");
     expect(container.querySelector("#display-name")).toBeNull();
   });
-  it("shows five inputs after signup with no workspace and restores selected workspaces", async () => {
+  it("shows Brief audience fields after signup with no workspace and restores selected workspaces", async () => {
     const list = vi.spyOn(api, "listWorkspaces").mockRejectedValue(new ApiError(401, "expired"));
     vi.spyOn(api, "login").mockResolvedValue({ userId: "user" });
     await mount(createElement(AuthWorkspace, null, "Studio content"));
@@ -90,7 +90,11 @@ describe("authentication and five-input setup boundary", () => {
     await fill("email", "creator@example.com");
     await fill("password", "long-password-2026");
     await submit();
-    expect(container.querySelectorAll("form input,form select")).toHaveLength(5);
+    expect([...container.querySelectorAll("form input,form select")].map((el) => el.id)).toEqual([
+      "setup-niche",
+      "setup-audience",
+      "setup-language",
+    ]);
     await act(async () => root.unmount());
     root = createRoot(container);
     const workspace = { id: "workspace", name: "Science", role: "OWNER" as const };
@@ -115,6 +119,10 @@ describe("authentication and five-input setup boundary", () => {
     list.mockResolvedValue([{ id: "workspace", name: "Science", role: "OWNER" }]);
     await click("Retry workspace load");
     await click("Set up a new channel");
-    expect(container.querySelectorAll("form input,form select")).toHaveLength(5);
+    expect([...container.querySelectorAll("form input,form select")].map((el) => el.id)).toEqual([
+      "setup-niche",
+      "setup-audience",
+      "setup-language",
+    ]);
   });
 });
