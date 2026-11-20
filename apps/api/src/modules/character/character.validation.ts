@@ -9,7 +9,6 @@ import type {
   CharacterGroupInput,
   CharacterGroupMemberInput,
   CharacterGroupPatch,
-  CharacterInput,
   CharacterPatch,
   CharacterProfile,
 } from "./character.types.js";
@@ -22,7 +21,7 @@ function bodyObject(body: unknown, label: string): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-export function requireText(value: unknown, field: string, maxLength = 200): string {
+function requireText(value: unknown, field: string, maxLength = 200): string {
   if (typeof value !== "string" || value.trim().length === 0)
     throw new BadRequestException(`${field} must be a non-empty string`);
   const cleaned = value.trim();
@@ -42,7 +41,7 @@ function optionalText(value: unknown, field: string, maxLength = 4000): string |
 }
 
 /** Validates a JSON value and rejects values that cannot round-trip through JSON. */
-export function requireJsonValue(value: unknown, field: string, depth = 0): JsonValue {
+function requireJsonValue(value: unknown, field: string, depth = 0): JsonValue {
   if (depth > 20) throw new BadRequestException(`${field} is nested too deeply`);
   if (value === null) throw new BadRequestException(`${field} must not be null`);
   if (typeof value === "string" || typeof value === "boolean") return value;
@@ -199,18 +198,6 @@ export function validateCharacterPatch(body: unknown): CharacterPatch {
     ...(visualInvariants === undefined ? {} : { visualInvariants }),
     ...(variationRules === undefined ? {} : { variationRules }),
     ...(refs === undefined ? {} : { referenceAssets: refs }),
-  };
-}
-
-export function validateCharacterInput(input: CharacterCreateInput): CharacterInput {
-  return {
-    name: input.name ?? "",
-    ...(input.description === undefined ? {} : { description: input.description }),
-    personality: input.personality ?? {},
-    voicePreference: input.voicePreference ?? {},
-    visualInvariants: input.visualInvariants ?? {},
-    variationRules: input.variationRules ?? {},
-    referenceAssets: input.referenceAssets ?? [],
   };
 }
 

@@ -2,7 +2,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export const platformValues = ["YOUTUBE", "INSTAGRAM"] as const;
+const platformValues = ["YOUTUBE", "INSTAGRAM"] as const;
 type Platform = (typeof platformValues)[number];
 export type Channel = { id: string; workspaceId: string; name: string; status: string };
 export type PlatformAvailability = {
@@ -22,7 +22,7 @@ export type SocialAccount = {
   status: string;
   health: string;
 };
-export type Destination = {
+type Destination = {
   id: string;
   platform: Platform;
   socialAccountId: string;

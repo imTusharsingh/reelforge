@@ -37,27 +37,3 @@ export class AnalyticsConnectorUnavailableError extends Error {
     this.name = "AnalyticsConnectorUnavailableError";
   }
 }
-
-export class NotConfiguredPublishedPostSource implements PublishedPostSource {
-  public isConfigured(): boolean {
-    return false;
-  }
-
-  public listPublishedRecords(): Promise<readonly PublishedPostRecord[]> {
-    return Promise.reject(
-      new AnalyticsConnectorUnavailableError("Published-post source is not configured"),
-    );
-  }
-}
-
-export class NotConfiguredYouTubeAnalyticsClient implements YouTubeAnalyticsClient {
-  public isConfigured(): boolean {
-    return false;
-  }
-
-  public query(): Promise<YouTubeAnalyticsReport> {
-    return Promise.reject(
-      new AnalyticsConnectorUnavailableError("YouTube Analytics client is not configured"),
-    );
-  }
-}

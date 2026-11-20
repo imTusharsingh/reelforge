@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { BadRequestException } from "@nestjs/common";
-import type { AssetMediaType, AssetOwnership, AssetRights } from "./asset.types.js";
+import type { AssetMediaType, AssetRights } from "./asset.types.js";
 import { sha256Hex } from "./storage/checksum.js";
 
-export const DEFAULT_MAX_ASSET_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_ASSET_BYTES = 25 * 1024 * 1024;
 
 export function configuredMaxAssetBytes(env: NodeJS.ProcessEnv = process.env): number {
   const configured = env.ASSET_MAX_BYTES?.trim();
@@ -72,7 +72,7 @@ export function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
 }
 
-export function normalizeMediaType(value: unknown): AssetMediaType | undefined {
+function normalizeMediaType(value: unknown): AssetMediaType | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.split(";")[0]?.trim().toLowerCase();
   if (normalized === undefined) return undefined;
@@ -81,7 +81,7 @@ export function normalizeMediaType(value: unknown): AssetMediaType | undefined {
     : undefined;
 }
 
-export function validateFilename(value: unknown): string {
+function validateFilename(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0)
     throw new BadRequestException("filename must be a non-empty string");
   if (/[\\/]/.test(value) || value.includes(".."))
@@ -160,7 +160,7 @@ export function requireNonEmptyString(value: unknown, field: string): string {
   return value.trim();
 }
 
-export function optionalNonEmptyString(value: unknown, field: string): string | undefined {
+function optionalNonEmptyString(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   return requireNonEmptyString(value, field);
 }
@@ -198,10 +198,4 @@ export function decodeBase64Upload(value: unknown, maxBytes: number): Buffer {
       `Uploaded file is ${body.byteLength} bytes; the maximum allowed size is ${maxBytes} bytes`,
     );
   return body;
-}
-
-export function ownershipFromUnknown(value: unknown): AssetOwnership | undefined {
-  return value === "USER_UPLOADED" || value === "STARTER_LIBRARY" || value === "SYSTEM_GENERATED"
-    ? value
-    : undefined;
 }

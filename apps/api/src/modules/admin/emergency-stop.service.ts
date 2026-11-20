@@ -23,7 +23,7 @@ const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
  * GLOBAL scope is operator-controlled through the environment (no platform-operator role exists;
  * ADR-003 has only OWNER/EDITOR/VIEWER). WORKSPACE and CHANNEL scopes are set by a workspace OWNER.
  */
-export function globalStopFromEnv(
+function globalStopFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): EmergencyStopDecision {
   const flag = env["REELFORGE_EMERGENCY_STOP"]?.trim().toLowerCase();

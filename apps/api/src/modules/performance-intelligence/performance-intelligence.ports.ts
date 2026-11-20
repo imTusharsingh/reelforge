@@ -5,7 +5,7 @@ import type {
   PerformanceWindow,
 } from "@reelforge/contracts";
 
-export type InsightNarrativeInput = Readonly<{
+type InsightNarrativeInput = Readonly<{
   correlationId?: string;
   channelId: string;
   currentWindow: PerformanceWindow;
@@ -14,7 +14,7 @@ export type InsightNarrativeInput = Readonly<{
   dimensions: readonly PerformanceDimensionSummary[];
 }>;
 
-export type InsightNarrativeResult = Readonly<{
+type InsightNarrativeResult = Readonly<{
   narrative: string;
   provenance: ProviderProvenance;
 }>;
@@ -30,7 +30,7 @@ export interface InsightReportLlmPort {
   generate(input: InsightNarrativeInput): Promise<InsightNarrativeResult>;
 }
 
-export class InsightConnectorUnavailableError extends Error {
+class InsightConnectorUnavailableError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "InsightConnectorUnavailableError";

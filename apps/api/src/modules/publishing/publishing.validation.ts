@@ -8,7 +8,7 @@ const InstagramDestinationMetadataSchema = z
   })
   .strict();
 
-export const PublishingDestinationInputSchema = z.discriminatedUnion("platform", [
+const PublishingDestinationInputSchema = z.discriminatedUnion("platform", [
   z
     .object({
       platform: z.literal("YOUTUBE"),
@@ -68,7 +68,3 @@ export const CalendarRangeSchema = z
     message: "Calendar range end must be after its start",
     path: ["to"],
   });
-
-export type CreateScheduledPost = z.infer<typeof CreateScheduledPostSchema>;
-export type UpdateScheduledPost = z.infer<typeof UpdateScheduledPostSchema>;
-export type PublishingDestinationInput = z.infer<typeof PublishingDestinationInputSchema>;

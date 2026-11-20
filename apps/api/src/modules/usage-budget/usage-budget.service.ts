@@ -128,7 +128,7 @@ export type ChannelUsageView = Readonly<{
   >;
 }>;
 
-export type CostLineView = Readonly<{
+type CostLineView = Readonly<{
   source: "LEDGER";
   providerRequestId: string;
   correlationId: string;

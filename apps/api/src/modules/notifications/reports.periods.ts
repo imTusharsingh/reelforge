@@ -50,7 +50,7 @@ export function localDateOf(instant: Date, timeZone: string): string {
 
 const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-export function isValidLocalDate(value: string): boolean {
+function isValidLocalDate(value: string): boolean {
   const match = datePattern.exec(value);
   if (!match) return false;
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));

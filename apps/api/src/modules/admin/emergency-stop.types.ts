@@ -3,7 +3,7 @@ import { ConflictException } from "@nestjs/common";
 /** Injection token for the emergency-stop check used by M16, M18, and M13 adapters (M19-T06). */
 export const EMERGENCY_STOP_PORT = "EMERGENCY_STOP_PORT";
 
-export type EmergencyStopScopeValue = "GLOBAL" | "WORKSPACE" | "CHANNEL";
+type EmergencyStopScopeValue = "GLOBAL" | "WORKSPACE" | "CHANNEL";
 
 export type EmergencyStopDecision = Readonly<{
   stopped: boolean;

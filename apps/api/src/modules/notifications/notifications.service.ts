@@ -38,7 +38,7 @@ import {
   parseUuid,
 } from "./notifications.validation.js";
 
-export const EMAIL_CHANNEL = "EMAIL";
+const EMAIL_CHANNEL = "EMAIL";
 
 export type NotificationView = Readonly<{
   id: string;
