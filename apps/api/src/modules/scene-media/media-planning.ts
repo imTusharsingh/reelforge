@@ -33,7 +33,6 @@ export class MediaPlanning {
     private readonly ports: MediaPorts,
   ) {}
   public async plan(context: Context, run: Run, brief: ChannelBrief): Promise<PlannedMedia> {
-    this.access.gate();
     if (
       !brief.narratorVoice ||
       brief.narratorVoice.providerId !== "gemini" ||

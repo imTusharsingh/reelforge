@@ -100,16 +100,7 @@ function fixture(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("V3 critic registration", () => {
-  it("leaves the registry intact with pipeline.v2 off", async () => {
-    vi.stubEnv("PIPELINE_V2", "false");
-    const { handler, get } = fixture();
-    handler.onModuleInit();
-    await expect(handler.execute(run, brief, step)).rejects.toThrow("disabled");
-    expect(get).not.toHaveBeenCalled();
-  });
-
   it("registers one handler and defers advancement after requesting a V3 reshoot", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const { handler, planning, reshoot } = fixture();
     handler.onModuleInit();
     expect(planning.handlers).toEqual({ ASSEMBLING: {}, CRITIC: handler });
@@ -118,7 +109,6 @@ describe("V3 critic registration", () => {
   });
 
   it("reviews refreshed evidence and stops after two reshoots of a shot", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const { handler, execute, reshoot, assemble } = fixture(
       [3, 2].map((attempt) => ({
         key: "shot-0",
@@ -134,14 +124,12 @@ describe("V3 critic registration", () => {
   });
 
   it("stops when the run cannot afford another shot and review", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const { handler, reshoot } = fixture([], 799);
     await expect(handler.execute(run, brief, step)).resolves.toBeDefined();
     expect(reshoot).not.toHaveBeenCalled();
   });
 
   it("requests one V3 re-edit and respects an existing request", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const first = fixture();
     first.execute.mockReturnValue({ report, redo: { shots: [], reedit: true } });
     await expect(first.handler.execute(run, brief, step)).rejects.toThrow("re-edit");

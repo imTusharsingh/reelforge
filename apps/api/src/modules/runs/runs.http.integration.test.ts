@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
-import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
 import { RunsModule } from "./runs.module.js";
@@ -13,14 +13,12 @@ import { RunsStore } from "./runs.store.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { WorkspaceRepository } from "../workspace/workspace.repository.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
-import { legacyGenerationGate } from "../orchestration/video-run.legacy.js";
 import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
   const fixture = runsFixture();
   let t: Tenant, other: Tenant, app: INestApplication;
   const token = randomUUID();
-  beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
   afterEach(() => vi.unstubAllEnvs());
   beforeAll(async () => {
     t = await fixture.tenant();
@@ -75,7 +73,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
   });
-  it("enforces authentication, workspace membership, UUID and body validation and flag routing", async () => {
+  it("enforces authentication, workspace membership, UUID and body validation", async () => {
     await request(app.getHttpServer() as never)
       .post("/api/v1/runs")
       .send({})
@@ -93,23 +91,6 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .get(`/api/v1/runs/nope?workspaceId=${t.context.workspaceId}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
-    vi.stubEnv("PIPELINE_V2", "false");
-    await request(app.getHttpServer() as never)
-      .get(`/api/v1/runs/${t.run.id}?workspaceId=${t.context.workspaceId}`)
-      .set("Authorization", `Bearer ${token}`)
-      .expect(404);
-  });
-  it("gates the old synchronous API while leaving it available when v2 is off", () => {
-    const next = vi.fn();
-    const req = {
-      method: "POST",
-      originalUrl: `/api/v1/workspaces/${t.context.workspaceId}/scene-media/jobs`,
-    };
-    expect(() => legacyGenerationGate(req as never, {} as never, next)).toThrow();
-    expect(next).not.toHaveBeenCalled();
-    vi.stubEnv("PIPELINE_V2", "false");
-    legacyGenerationGate(req as never, {} as never, next);
-    expect(next).toHaveBeenCalledOnce();
   });
   it("validates SSE cursors and supports read and control controller boundaries", async () => {
     const controller = app.get(RunsController);

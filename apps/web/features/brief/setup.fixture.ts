@@ -2,7 +2,6 @@ import { defaultBrief } from "../../../../packages/contracts/src/channel-brief";
 import type {
   ChannelBrief,
   ProviderCapability,
-  VideoRun,
 } from "../../../../packages/contracts/src/foundations";
 export const workspaceId = "11111111-1111-4111-8111-111111111111";
 export const channelId = "22222222-2222-4222-8222-222222222222";
@@ -48,28 +47,8 @@ export const capability: ProviderCapability = {
   regions: [],
   cost: { currency: "USD", unit: "second", estimateMinor: null },
 };
-export function stubRun(source: ChannelBrief, key: string): VideoRun {
-  return {
-    id: "55555555-5555-4555-8555-555555555555",
-    workspaceId: source.workspaceId,
-    channelId: source.channelId,
-    channelBriefId: source.id,
-    channelBriefVersion: source.version,
-    schemaVersion: "1.0",
-    state: "PLANNING",
-    requestedAutonomy: source.requestedAutonomy,
-    effectiveAutonomy: "L2",
-    idempotencyKey: key,
-    correlationId: "66666666-6666-4666-8666-666666666666",
-    revision: 0,
-    inputSnapshot: {},
-    approvedShortsAtStart: 0,
-    criticAgreementScore: null,
-    pauseReason: null,
-    createdAt: "2026-11-16T00:00:00.000Z",
-    updatedAt: "2026-11-16T00:00:00.000Z",
-  };
-}
+export const runId = "55555555-5555-4555-8555-555555555555";
+
 /** Explicit test-only V2/V3 stub. It stores configuration booleans, never secret values. */
 type SetupStub = {
   fetch: typeof fetch;
@@ -114,24 +93,14 @@ export function setupStub(): SetupStub {
       }
       return Response.json(state.versions);
     }
-    if (path.endsWith("/provider-keys")) return Response.json(state.keys);
-    if (path.includes("/provider-keys/")) {
-      const provider = path.split("/").at(-1);
+    if (path.endsWith("/providers/keys")) return Response.json(state.keys);
+    if (path.endsWith("/key")) {
+      const provider = path.split("/").at(-2);
       if (provider === "gemini" || provider === "xai") state.keys[provider] = true;
       return new Response(null, { status: 204 });
     }
-    if (path.endsWith("/providers/capabilities")) return Response.json([capability]);
-    if (path.endsWith("/runs")) {
-      const body: { channelBriefVersion: number; idempotencyKey: string } = JSON.parse(
-        String(init?.body),
-      );
-      return Response.json(
-        stubRun(
-          state.versions.find((item) => item.version === body.channelBriefVersion)!,
-          body.idempotencyKey,
-        ),
-      );
-    }
+    if (path.endsWith("/providers/health")) return Response.json([capability]);
+    if (path.endsWith("/runs")) return Response.json({ id: runId }, { status: 202 });
     return Response.json({}, { status: 404 });
   };
   return state;

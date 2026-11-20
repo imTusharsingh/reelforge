@@ -58,6 +58,7 @@ type PreflightFixtures = {
   db: {
     publishingDestination: { findUnique: TestMock };
     renderJob: { findUnique: TestMock };
+    v9PublishSlot: { findFirst: TestMock; count: TestMock };
   };
 };
 type PublishHarness = {
@@ -254,6 +255,10 @@ function preflightFixtures(
   const db = {
     publishingDestination: { findUnique: vi.fn().mockResolvedValue(destination) },
     renderJob: { findUnique: vi.fn().mockResolvedValue(render) },
+    v9PublishSlot: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+    },
   };
   return {
     destination,
@@ -339,6 +344,7 @@ function publishHarness(
   const db = {
     publishingDestination: fixtures.db.publishingDestination,
     renderJob: fixtures.db.renderJob,
+    v9PublishSlot: fixtures.db.v9PublishSlot,
     publishAttempt: { update: publishAttemptUpdate },
     scheduledPost: { findUnique: vi.fn().mockResolvedValue(publishedPost) },
     $transaction: transaction,
@@ -358,15 +364,12 @@ function publishHarness(
 }
 
 describe("PublishingService authorization", () => {
-  it("does not allow a viewer to create or mutate scheduled posts", async () => {
+  it("does not allow a viewer to create scheduled posts", async () => {
     const findUnique = vi.fn();
     const publishing = service({ scheduledPost: { findUnique } });
     await expect(publishing.createScheduledPost(context("VIEWER"), {})).rejects.toBeInstanceOf(
       ForbiddenException,
     );
-    await expect(
-      publishing.cancelScheduledPost(context("VIEWER"), scheduledPostId),
-    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(findUnique).not.toHaveBeenCalled();
   });
 
@@ -864,179 +867,5 @@ describe("M27 post creation replay", () => {
     expect(await publishing.createScheduledPost(context(), request, onReplay)).toBe(created);
     expect(create).toHaveBeenCalledOnce();
     expect(onReplay).toHaveBeenCalledOnce();
-  });
-});
-
-describe("M27 draft listing", () => {
-  it("scopes drafts to the workspace and validates cursors", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const publishing = service({ scheduledPost: { findMany } });
-    await expect(publishing.drafts(context("VIEWER"))).resolves.toEqual({
-      items: [],
-      nextCursor: null,
-    });
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ workspaceId, status: "DRAFT" }),
-      }),
-    );
-    await expect(publishing.drafts(context(), "not-a-cursor")).rejects.toThrow("Invalid cursor");
-  });
-});
-
-describe("M27 eligible render discovery", () => {
-  const channelId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  const scriptId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-  const reviewedAt = new Date("2026-11-12T05:00:00.000Z");
-  const input = {
-    schemaVersion: "1.0",
-    title: "Eligible render",
-    profile: { transitionDurationMs: 0 },
-    scenes: [{ durationMs: 5000 }],
-  };
-  function row(
-    id: string,
-    updatedAt: string,
-    run: { id: string; status: string; createdAt: Date } | null,
-    completedAt = updatedAt,
-  ): object {
-    return {
-      id,
-      updatedAt: new Date(updatedAt),
-      input,
-      sceneMediaJob: { channelId, scriptId },
-      artifacts: [{ id: `artifact-${id}`, createdAt: new Date(completedAt) }],
-      qualityReviewRuns: run === null ? [] : [run],
-    };
-  }
-  const approvedRow = row("11111111-1111-4111-8111-111111111111", "2026-11-12T06:00:00.000Z", {
-    id: reviewId,
-    status: "APPROVED",
-    createdAt: reviewedAt,
-  });
-  const autoRow = row(
-    "22222222-2222-4222-8222-222222222222",
-    "2026-11-12T05:30:00.000Z",
-    {
-      id: "99999999-9999-4999-8999-999999999999",
-      status: "AUTO_APPROVED",
-      createdAt: reviewedAt,
-    },
-    "2026-11-12T05:30:00.000Z",
-  );
-  const pendingRow = row("33333333-3333-4333-8333-333333333333", "2026-11-12T05:15:00.000Z", {
-    id: reviewId,
-    status: "REVIEW_REQUIRED",
-    createdAt: reviewedAt,
-  });
-  const rejectedRow = row("44444444-4444-4444-8444-444444444444", "2026-11-12T05:10:00.000Z", {
-    id: reviewId,
-    status: "REJECTED",
-    createdAt: reviewedAt,
-  });
-  const supersededRow = row(
-    "55555555-5555-4555-8555-555555555555",
-    "2026-11-12T05:05:00.000Z",
-    null,
-  );
-
-  it("returns only current approved and auto-approved runs", async () => {
-    const findMany = vi
-      .fn()
-      .mockResolvedValue([approvedRow, autoRow, pendingRow, rejectedRow, supersededRow]);
-    const publishing = service({ renderJob: { findMany } });
-    const page = await publishing.eligibleRenders(context("VIEWER"), {});
-    expect(page.nextCursor).toBeNull();
-    expect(page.items).toEqual([
-      {
-        renderJobId: "11111111-1111-4111-8111-111111111111",
-        channelId,
-        scriptId,
-        title: "Eligible render",
-        durationMs: 5000,
-        completedAt: "2026-11-12T06:00:00.000Z",
-        qualityReviewRunId: reviewId,
-        reviewStatus: "APPROVED",
-        reviewedAt: reviewedAt.toISOString(),
-      },
-      {
-        renderJobId: "22222222-2222-4222-8222-222222222222",
-        channelId,
-        scriptId,
-        title: "Eligible render",
-        durationMs: 5000,
-        completedAt: "2026-11-12T05:30:00.000Z",
-        qualityReviewRunId: "99999999-9999-4999-8999-999999999999",
-        reviewStatus: "AUTO_APPROVED",
-        reviewedAt: reviewedAt.toISOString(),
-      },
-    ]);
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          workspaceId,
-          status: "SUCCEEDED",
-          expiredAt: null,
-          qualityReviewRuns: {
-            some: expect.objectContaining({
-              workspaceId,
-              supersededAt: null,
-              status: { in: ["APPROVED", "AUTO_APPROVED"] },
-            }),
-          },
-        }),
-      }),
-    );
-  });
-
-  it("excludes an older approval once a newer review replaces it", async () => {
-    const replaced = row("66666666-6666-4666-8666-666666666666", "2026-11-12T06:00:00.000Z", {
-      id: reviewId,
-      status: "REJECTED",
-      createdAt: reviewedAt,
-    });
-    const publishing = service({ renderJob: { findMany: vi.fn().mockResolvedValue([replaced]) } });
-    await expect(publishing.eligibleRenders(context(), {})).resolves.toEqual({
-      items: [],
-      nextCursor: null,
-    });
-  });
-
-  it("scopes the optional channel filter and hides another workspace's channel", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const findUnique = vi.fn().mockResolvedValue(null);
-    const publishing = service({ channel: { findUnique }, renderJob: { findMany } });
-    await expect(publishing.eligibleRenders(context(), { channelId })).rejects.toThrow(
-      "Channel not found",
-    );
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { workspaceId_id: { workspaceId, id: channelId } },
-      select: { id: true },
-    });
-    expect(findMany).not.toHaveBeenCalled();
-  });
-
-  it("pages by completed time and id without repeating the boundary", async () => {
-    const findMany = vi.fn().mockResolvedValue([approvedRow, autoRow]);
-    const publishing = service({ renderJob: { findMany } });
-    const first = await publishing.eligibleRenders(context(), { limit: "1" });
-    expect(first.items).toHaveLength(1);
-    expect(first.nextCursor).not.toBeNull();
-    findMany.mockResolvedValue([autoRow]);
-    const second = await publishing.eligibleRenders(context(), {
-      limit: "1",
-      ...(first.nextCursor === null ? {} : { cursor: first.nextCursor }),
-    });
-    expect(second.items).toHaveLength(1);
-    const where = findMany.mock.calls[1]?.[0]?.where as {
-      OR?: Array<Record<string, unknown>>;
-    };
-    expect(where.OR).toEqual([
-      { updatedAt: { lt: new Date("2026-11-12T06:00:00.000Z") } },
-      {
-        updatedAt: new Date("2026-11-12T06:00:00.000Z"),
-        id: { lt: "11111111-1111-4111-8111-111111111111" },
-      },
-    ]);
   });
 });

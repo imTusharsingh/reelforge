@@ -175,4 +175,3 @@ export class ChannelsClient {
     );
   }
 }
-export const segment = (value: unknown): string => encodeURIComponent(String(value));

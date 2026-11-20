@@ -29,7 +29,6 @@ describe("M21 responsive shell source contracts", () => {
   it("keeps navigation helper and active-page semantics", () => {
     expect(shell).toContain("studioDestinations()");
     expect(shell).toContain('pathname.startsWith("/channels/")');
-    expect(shell).toContain('pathname.startsWith("/production/")');
     expect(shell).toContain("aria-current={");
     expect(shell).toContain("shellActions");
   });

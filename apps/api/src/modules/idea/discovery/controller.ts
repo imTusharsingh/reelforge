@@ -20,7 +20,6 @@ export class DiscoveryController {
   ): Promise<LearnedChange[]> {
     if (!z.uuid().safeParse(channelId).success) throw new BadRequestException("Invalid channel id");
     const context = await this.workspaces.context(request.principal.userId, workspaceId);
-    if (process.env.PIPELINE_V2 !== "true") return [];
     return this.store.changes(context, channelId);
   }
 }

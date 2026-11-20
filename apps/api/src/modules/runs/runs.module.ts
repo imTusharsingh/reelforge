@@ -1,6 +1,5 @@
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
-import { Module, RequestMethod } from "@nestjs/common";
-import type { MiddlewareConsumer } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { AssetModule } from "../asset/asset.module.js";
@@ -11,7 +10,6 @@ import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunFallback } from "../orchestration/video-run.fallback.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { VideoRunEngine } from "../orchestration/video-run.engine.js";
-import { legacyGenerationGate } from "../orchestration/video-run.legacy.js";
 import { RunsStore } from "./runs.store.js";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
@@ -38,13 +36,10 @@ import { RunsEvents } from "./runs.events.js";
     VideoRunEngine,
     { provide: "VIDEO_RUN_RUNTIME", useExisting: VideoRunEngine },
   ],
-  exports: ["VIDEO_RUN_RUNTIME"],
+  exports: [RunsService, "VIDEO_RUN_RUNTIME"],
 })
 export class RunsModule {
   public constructor(private readonly runs: RunsService) {}
-  public configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(legacyGenerationGate).forRoutes({ path: "*", method: RequestMethod.ALL });
-  }
   public onModuleInit(): void {
     const url = process.env.REDIS_URL?.trim();
     if (url) {

@@ -1,5 +1,4 @@
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { PublishingPackageSchema, type PublishingPackage } from "@reelforge/contracts";
 import type { PrismaClient } from "@reelforge/database";
 import { RunsStore } from "../runs/runs.store.js";
@@ -17,7 +16,6 @@ export class PublishingAutomation {
     private readonly publishing: PublishingService,
   ) {}
   public async prepare(context: Context, id: string, now = new Date()): Promise<AutoSlot> {
-    this.enabled();
     this.editor(context);
     const run = await this.runs.get(context, id);
     await this.approval(context, run);
@@ -86,7 +84,6 @@ export class PublishingAutomation {
       );
   }
   public async dispatch(context: Context, id: string): Promise<void> {
-    this.enabled();
     this.editor(context);
     let slot: AutoSlot | null = null;
     try {
@@ -149,7 +146,6 @@ export class PublishingAutomation {
     });
   }
   public async retry(context: Context, id: string): Promise<void> {
-    this.enabled();
     this.editor(context);
     await this.runs.mutate(context, id, "publishing_reconnect_acknowledged", async (db, run) => {
       if (run.state !== "NEEDS_HUMAN" || run.pauseReason !== "RECONNECT_YOUTUBE")
@@ -168,7 +164,6 @@ export class PublishingAutomation {
   }
   public async tick(_now: Date): Promise<void> {
     void _now;
-    if (!pipelineV2Enabled()) return;
     const workspaces = await this.db.workspace.findMany({ where: { archivedAt: null } });
     for (const workspace of workspaces) {
       const actor = await this.db.workspaceMembership.findFirst({
@@ -189,9 +184,6 @@ export class PublishingAutomation {
         await this.dispatch(context, run.id);
       }
     }
-  }
-  private enabled(): void {
-    if (!pipelineV2Enabled()) throw new ConflictException("pipeline.v2 is disabled");
   }
   private editor(context: Context): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor required");

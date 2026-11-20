@@ -1,5 +1,10 @@
+import { ConfigService } from "../config/config.service.js";
+import { PromptService } from "../config/prompt.service.js";
+import { PlanningPromptService } from "../config/planning-prompt.service.js";
+import { ReferenceLibraryService } from "../reference-library/reference-library.service.js";
+import { PlanningCharacterService } from "../character/planning-character.service.js";
+import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import { Global, Module, Injectable } from "@nestjs/common";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { ProvidersModule } from "../openai/providers.module.js";
 import { AssetModule } from "../asset/asset.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -32,7 +37,6 @@ export class MediaBindings {
     private readonly assembly: MediaAssembly,
   ) {}
   public onModuleInit(): void {
-    if (!pipelineV2Enabled()) return;
     const module = this.access.modules;
     const generation = module.get(RunGeneration, { strict: false });
     generation.resolvePorts = async (
@@ -111,6 +115,12 @@ export class MediaBindings {
 @Module({
   imports: [ProvidersModule, AssetModule, IdentityModule],
   providers: [
+    ConfigService,
+    PromptService,
+    PlanningPromptService,
+    ReferenceLibraryService,
+    PlanningCharacterService,
+    PlanningReferenceAssetsService,
     MediaAccess,
     MediaAccounts,
     MediaJobs,

@@ -9,11 +9,15 @@ import {
 import { autonomyPolicy, ChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
 import { RunsStore } from "./runs.store.js";
 import { json, type Context, type Run, type RunJob } from "./runs.types.js";
-import type { RunsQueue } from "./runs.queue.js";
+import type { RunQueueHealth, RunsQueue } from "./runs.queue.js";
 import type { RunsEvents } from "./runs.events.js";
 
 @Injectable()
 export class RunsService {
+  public async queueHealth(): Promise<RunQueueHealth> {
+    return this.queue?.health() ?? "NOT_CONFIGURED";
+  }
+
   public queue: RunsQueue | null = null;
   public events: RunsEvents | null = null;
   public constructor(

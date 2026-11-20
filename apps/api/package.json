@@ -32,18 +32,6 @@
     "supertest": "7.1.4"
   },
   "exports": {
-    "./asset-service": {
-      "types": "./dist/modules/asset/asset.service.d.ts",
-      "import": "./dist/modules/asset/asset.service.js"
-    },
-    "./composition-service": {
-      "types": "./dist/modules/composition/composition.service.d.ts",
-      "import": "./dist/modules/composition/composition.service.js"
-    },
-    "./composition-engine": {
-      "types": "./dist/modules/composition/composition.engine.d.ts",
-      "import": "./dist/modules/composition/composition.engine.js"
-    },
     "./social-accounts-service": {
       "types": "./dist/modules/social-accounts/social-accounts.service.d.ts",
       "import": "./dist/modules/social-accounts/social-accounts.service.js"
@@ -52,17 +40,9 @@
       "types": "./dist/modules/publishing/publishing.service.d.ts",
       "import": "./dist/modules/publishing/publishing.service.js"
     },
-    "./storage-factory": {
-      "types": "./dist/modules/asset/storage/storage.factory.d.ts",
-      "import": "./dist/modules/asset/storage/storage.factory.js"
-    },
     "./app-module": {
       "types": "./dist/app-module.d.ts",
       "import": "./dist/app-module.js"
-    },
-    "./orchestration-service": {
-      "types": "./dist/orchestration-service.d.ts",
-      "import": "./dist/orchestration-service.js"
     },
     "./orchestration-queue": {
       "types": "./dist/orchestration-queue.d.ts",

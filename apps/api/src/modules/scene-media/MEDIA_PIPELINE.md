@@ -1,7 +1,7 @@
 # V5 media runtime
 
 The authoritative design is issue #112 (LOCKED v2.0); scope/ownership is #124.
-`MediaPipelineModule` is registered only when `pipeline.v2` is enabled. It binds
+`MediaPipelineModule` binds
 V4 planning and V5 assembly to V3's public handler registry and artifact-writer
 boundary. V3 retains all transitions, SSE, emergency-stop checks, worker boot and
 paid-call reservation/settlement behavior. No new HTTP request waits on media.

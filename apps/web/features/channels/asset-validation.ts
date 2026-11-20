@@ -1,4 +1,4 @@
-export const assetTypes = [
+const assetTypes = [
   "image/png",
   "image/jpeg",
   "image/webp",

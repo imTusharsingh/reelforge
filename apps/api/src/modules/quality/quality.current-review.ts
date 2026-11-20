@@ -4,7 +4,7 @@ import type { Prisma } from "@reelforge/database";
  * The single "current review" predicate used by quality reads and publishing checks.
  * A current review is not superseded and has not had a replacement recorded.
  */
-export const currentQualityReviewFilter = {
+const currentQualityReviewFilter = {
   status: { not: "SUPERSEDED" },
   supersededAt: null,
 } satisfies Prisma.QualityReviewRunWhereInput;

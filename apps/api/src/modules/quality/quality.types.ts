@@ -4,7 +4,7 @@ import type {
   ProviderProvenance,
 } from "@reelforge/ai-providers";
 
-export type HardGateId =
+type HardGateId =
   | "ARTIFACT_INTEGRITY"
   | "ASPECT_RATIO"
   | "DURATION"
@@ -76,10 +76,4 @@ export type QualityRunView = Readonly<{
   >;
   createdAt: string;
   supersededAt: string | null;
-}>;
-
-export type QualityRenderStatusView = Readonly<{
-  renderJobId: string;
-  status: QualityRunStatus | null;
-  gateSummary: ReadonlyArray<HardGateResult> | null;
 }>;

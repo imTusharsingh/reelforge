@@ -1,5 +1,4 @@
 import { ConflictException, Injectable } from "@nestjs/common";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import type { Packaging } from "@reelforge/contracts";
 import type { TextPort } from "@reelforge/ai-providers";
 import { z } from "zod";
@@ -92,7 +91,6 @@ export class CriticPipeline {
       details: CriticResult;
     }>
   > {
-    if (!pipelineV2Enabled()) throw new ConflictException("pipeline.v2 is disabled");
     if (!reviewEvidence.safeParse(input).success)
       throw new ConflictException("V6 review requires measured clips and video evidence");
     const rubric = await multimodalRubric(text, input.critic);

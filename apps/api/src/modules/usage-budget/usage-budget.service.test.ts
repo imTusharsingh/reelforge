@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { NotConfiguredBillingProvider, type BillingProviderPort } from "./usage-budget.billing.js";
 import { categorize, classifyCost, type LedgerRow } from "./usage-budget.ledger.js";
 import { decimalToMinor, minorToNumber, minorUnitExponent } from "./usage-budget.money.js";
-import { UsageBudgetPolicy } from "./usage-budget.policy.js";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import { UsageTotals } from "./usage-budget.totals.js";
 import { BillingNotConfiguredError, BudgetExhaustedError } from "./usage-budget.types.js";
@@ -192,38 +191,6 @@ describe("M18 roles, policy adapter and billing extension point", () => {
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
     }
-  });
-
-  it("maps evaluations onto the M16 BudgetPolicyPort contract and never swallows errors", async () => {
-    const results = [
-      { decision: "NOT_CONFIGURED", reason: "BUDGET_POLICY_UNAVAILABLE", budgets: [] },
-      { decision: "BLOCKED", reason: "BUDGET_EXHAUSTED", budgets: [] },
-      { decision: "ALLOWED", reason: null, budgets: [] },
-    ] as const;
-    for (const result of results) {
-      const policy = new UsageBudgetPolicy({
-        evaluatePolicy: () => Promise.resolve(result),
-      } as never);
-      await expect(
-        policy.evaluate({
-          workspaceId: "w",
-          channelId: null,
-          definitionKey: "GENERATION",
-          trigger: "SCHEDULED",
-        }),
-      ).resolves.toEqual({ decision: result.decision, reason: result.reason });
-    }
-    const failing = new UsageBudgetPolicy({
-      evaluatePolicy: () => Promise.reject(new Error("db down")),
-    } as never);
-    await expect(
-      failing.evaluate({
-        workspaceId: "w",
-        channelId: null,
-        definitionKey: "GENERATION",
-        trigger: "SCHEDULED",
-      }),
-    ).rejects.toThrow("db down");
   });
 
   it("exposes a typed BUDGET_EXHAUSTED error", () => {

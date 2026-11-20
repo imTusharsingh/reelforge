@@ -5,10 +5,13 @@ import type { AutoSlotView } from "../../../../packages/contracts/src/publishing
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
 import { autoSlot, automationRequest } from "./automation-api";
-import { Composer } from "./composer";
 export function PublishingComposer(): JSX.Element {
   const id = useSearchParams().get("autoSlot");
-  return id ? <AutomationComposer id={id} /> : <Composer />;
+  return id ? (
+    <AutomationComposer id={id} />
+  ) : (
+    <p>Select a scheduled run from the publishing calendar.</p>
+  );
 }
 export function AutomationComposer({ id }: { id: string }): JSX.Element {
   const workspace = useActiveWorkspace();

@@ -36,6 +36,14 @@ export class ProvidersController {
       parseVendor(providerId),
     );
   }
+  @Get("keys")
+  public async status(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId") workspaceId: string,
+  ): Promise<{ gemini: boolean; xai: boolean }> {
+    const context = await this.workspaces.context(request.principal.userId, workspaceId);
+    return this.keys.configured(context);
+  }
   @Get("health")
   public async health(
     @Req() request: AuthenticatedRequest,

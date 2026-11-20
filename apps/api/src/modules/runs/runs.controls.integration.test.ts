@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 import { ArtifactSchema } from "./runs.types.js";
 
 const suite = describe.skipIf(!process.env.DATABASE_URL);
 suite("V3 approval, caps and retention", () => {
   const fixture = runsFixture();
-  beforeEach(() => vi.stubEnv("PIPELINE_V2", "true"));
   afterEach(() => vi.unstubAllEnvs());
   it("limits full re-edits to one and shot reshoots to two", async () => {
     const t = await fixture.tenant();

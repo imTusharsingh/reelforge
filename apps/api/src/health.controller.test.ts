@@ -1,10 +1,10 @@
+import type { RunQueueHealth } from "./modules/runs/runs.queue.js";
+import type { RunsService } from "./modules/runs/runs.service.js";
 import { describe, expect, it, vi } from "vitest";
 import { HealthController } from "./health.controller.js";
-import type { OrchestrationService } from "./modules/orchestration/orchestration.service.js";
-import type { WorkflowQueueHealth } from "./modules/orchestration/orchestration.types.js";
 
 function controller(
-  queue: WorkflowQueueHealth,
+  queue: RunQueueHealth,
   database: "up" | "down" = "up",
 ): { health: HealthController; query: ReturnType<typeof vi.fn> } {
   const query = vi.fn(async () => {
@@ -12,14 +12,14 @@ function controller(
     return [{ "?column?": 1 }];
   });
   const health = new HealthController(
-    { queueHealth: async () => queue } as unknown as OrchestrationService,
+    { queueHealth: async () => queue } as unknown as RunsService,
     { $queryRaw: query } as never,
   );
   return { health, query };
 }
 
 describe("HealthController", () => {
-  it("reports the workflow queue status and degrades only when Redis is unreachable", async () => {
+  it("reports the VideoRun queue status and degrades only when Redis is unreachable", async () => {
     await expect(controller("CONFIGURED").health.getHealth()).resolves.toEqual({
       status: "ok",
       queue: "CONFIGURED",
@@ -59,7 +59,7 @@ describe("HealthController", () => {
     const queueHealth = vi.fn();
     const query = vi.fn();
     const health = new HealthController(
-      { queueHealth } as unknown as OrchestrationService,
+      { queueHealth } as unknown as RunsService,
       { $queryRaw: query } as never,
     );
     await expect(health.getHealth("liveness")).resolves.toEqual({

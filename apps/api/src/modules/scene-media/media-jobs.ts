@@ -26,7 +26,6 @@ export class MediaJobs {
     promptVersion: string,
     seconds = 0,
   ): Promise<CompletedMedia | null> {
-    this.access.gate();
     const db = this.access.runs.store.scoped(context);
     let step = await db.videoRunStep.findFirst({ where: { runId: run.id, key: `media:${key}` } });
     if (step?.state === "SUCCEEDED") return this.completed(step.output);

@@ -20,9 +20,6 @@ export function draftEdited(): void {
   approvedUrl = null;
   allowUnload = false;
 }
-export function hasUnsavedChanges(): boolean {
-  return drafts.size > 0;
-}
 export function requestNavigationIntent(intent: NavigationIntent, destination?: string): boolean {
   if (destination && approvedUrl === new URL(destination, window.location.href).href) return true;
   if (!drafts.size) return true;
@@ -38,12 +35,6 @@ export function requestNavigationIntent(intent: NavigationIntent, destination?: 
   for (const draft of [...drafts.values()]) draft.discard();
   if (destination) approvedUrl = new URL(destination, window.location.href).href;
   allowUnload = true;
-  return true;
-}
-/** Call this before a router.push/replace or any other programmatic route transition. */
-export function navigateWithIntent(destination: string, navigate: (href: string) => void): boolean {
-  if (!requestNavigationIntent("route", destination)) return false;
-  navigate(destination);
   return true;
 }
 type NavigationEvent = Event & { destination: { url: string }; navigationType: string };

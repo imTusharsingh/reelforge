@@ -26,9 +26,6 @@ function Navigation({ mobile = false }: { mobile?: boolean }): JSX.Element {
                 aria-current={
                   pathname === href ||
                   (href === "/channels" && pathname.startsWith("/channels/")) ||
-                  (href === "/planning" && pathname.startsWith("/planning/")) ||
-                  (href === "/production" && pathname.startsWith("/production/")) ||
-                  (href === "/review" && pathname.startsWith("/review/")) ||
                   (href === "/publishing" && pathname.startsWith("/publishing/")) ||
                   (href !== "/" && pathname.startsWith(`${href}/`))
                     ? "page"

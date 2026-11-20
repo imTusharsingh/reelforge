@@ -17,7 +17,6 @@ import type { MessageEvent } from "@nestjs/common";
 import type { Observable } from "rxjs";
 import type { Response } from "express";
 import { z } from "zod";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import { NotFoundException } from "@nestjs/common";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -140,7 +139,6 @@ export class RunsController {
     return parsed.data;
   }
   private async context(request: AuthenticatedRequest, workspaceId: unknown): Promise<Context> {
-    if (!pipelineV2Enabled()) throw new NotFoundException("pipeline.v2 is disabled");
     return this.workspaces.context(request.principal.userId, this.id(workspaceId));
   }
 }

@@ -6,7 +6,6 @@ import {
   type BriefInput,
 } from "../../../../packages/contracts/src/channel-brief";
 import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
-import { StudioLink } from "../../components/studio-link";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { BriefClient } from "./client";
 import { IdentityFields, JsonField, ScheduleBudget, StyleFields } from "./fields";
@@ -107,7 +106,6 @@ function useEditorState({
   };
 }
 function EditorView({
-  channelId,
   editable,
   value,
   setValue,
@@ -138,7 +136,7 @@ function EditorView({
             <IdentityFields value={value} onChange={setValue} offerL3={offerL3} />
             <ScheduleBudget value={value} onChange={setValue} />
             <StyleFields value={value} onChange={setValue} />
-            <DetailedFields value={value} onChange={setValue} channelId={channelId} />
+            <DetailedFields value={value} onChange={setValue} />
             <Button type="submit" loading={busy}>
               Save new version
             </Button>
@@ -151,11 +149,9 @@ function EditorView({
 function DetailedFields({
   value,
   onChange,
-  channelId,
 }: {
   value: BriefInput;
   onChange: (value: BriefInput) => void;
-  channelId: string;
 }): JSX.Element {
   const fields = [
     "narratorVoice",
@@ -194,7 +190,7 @@ function DetailedFields({
           })
         }
       />
-      <Advanced value={value} onChange={onChange} channelId={channelId} />
+      <Advanced value={value} onChange={onChange} />
     </>
   );
 }
@@ -202,22 +198,13 @@ function DetailedFields({
 function Advanced({
   value,
   onChange,
-  channelId,
 }: {
   value: BriefInput;
   onChange: (value: BriefInput) => void;
-  channelId: string;
 }): JSX.Element {
   return (
     <details>
       <summary>Advanced</summary>
-      <p>
-        Genre is optional. Series and prompt internals use the legacy Advanced screens until their
-        T2 removal.
-      </p>
-      <StudioLink href={`/channels/${encodeURIComponent(channelId)}/advanced`}>
-        Open legacy channel settings
-      </StudioLink>
       <JsonField
         label="constraints"
         value={value.constraints}

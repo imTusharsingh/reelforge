@@ -30,7 +30,6 @@ export class DiscoveryService {
     channelId: string,
     now = new Date(),
   ): Promise<RankedIdea[]> {
-    if (process.env.PIPELINE_V2 !== "true") return [];
     const brief = await this.store.brief(context, channelId);
     const slot = discoverySlot(now, brief.cadence.timezone);
     if (!(await this.store.claim(context, channelId, slot, now))) return [];
@@ -68,7 +67,6 @@ export class DiscoveryService {
     }
   }
   public async scheduledTick(now = new Date()): Promise<void> {
-    if (process.env.PIPELINE_V2 !== "true") return;
     const channels = await this.db.channel.findMany({
       where: { status: "ACTIVE", channelBriefRows: { some: {} } },
       select: { id: true, workspaceId: true },

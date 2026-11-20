@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Response } from "express";
 import type { AuthenticatedRequest } from "../identity/auth.guard.js";
 import type { WorkspaceService } from "../workspace/workspace.service.js";
 import type { PublishingService } from "./publishing.service.js";
@@ -42,31 +41,5 @@ describe("PublishingController M27 reads", () => {
       },
     ]);
     expect(platforms).toHaveBeenCalledOnce();
-  });
-
-  it("lets a viewer read eligible renders", async () => {
-    const eligibleRenders = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
-    await expect(
-      controller({ eligibleRenders }).eligibleRenders(request, workspaceId),
-    ).resolves.toEqual({ items: [], nextCursor: null });
-    expect(eligibleRenders).toHaveBeenCalledWith(expect.objectContaining({ workspaceId }), {});
-  });
-});
-
-describe("PublishingController idempotent create", () => {
-  it("marks a replayed create as 200 without changing the body", async () => {
-    const view = { id: "33333333-3333-4333-8333-333333333333" };
-    const createScheduledPost = vi.fn(
-      async (_context: unknown, _body: unknown, onReplay?: () => void) => {
-        onReplay?.();
-        return view;
-      },
-    );
-    const status = vi.fn();
-    const response = { status } as unknown as Response;
-    await expect(
-      controller({ createScheduledPost }, "EDITOR").create(request, workspaceId, {}, response),
-    ).resolves.toBe(view);
-    expect(status).toHaveBeenCalledWith(200);
   });
 });

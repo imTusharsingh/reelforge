@@ -7,8 +7,6 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../../app.module.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
-import { NotConfiguredWorkflowQueue } from "../orchestration/orchestration.queue.js";
-import { WORKFLOW_QUEUE_PORT } from "../orchestration/orchestration.types.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = describe.skipIf(databaseUrl === undefined);
@@ -160,8 +158,6 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider("DATABASE")
       .useValue(recordingClient(db, dbCalls))
-      .overrideProvider(WORKFLOW_QUEUE_PORT)
-      .useValue(new NotConfiguredWorkflowQueue())
       .compile();
     app = module.createNestApplication({ logger: false });
     app.setGlobalPrefix("api/v1");
@@ -335,9 +331,8 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
       .send({ status: "ACTIVE" })
       .expect(403);
     await request(server())
-      .post(`${base}/quality/runs/${missing}/decision`)
+      .post(`${PREFIX}/runs/${missing}/approve?workspaceId=${workspaceId}`)
       .set(auth(tokens.owner))
-      .send({ decision: "APPROVE" })
       .expect((response) => expect(response.status).toBeGreaterThanOrEqual(400));
     await request(server())
       .post(`${base}/social-accounts/${missing}/revoke`)
@@ -347,7 +342,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
       .get(`${PREFIX}/social-accounts/oauth/youtube/callback?state=forged&code=4%2F0secret-code`)
       .expect((response) => expect(response.status).toBeGreaterThanOrEqual(300));
     await request(server())
-      .post(`${base}/publishing/destinations/${missing}/publish`)
+      .post(`${base}/publishing/automation/${missing}/retry`)
       .set(auth(tokens.owner))
       .expect((response) => expect(response.status).toBeGreaterThanOrEqual(400));
     const rows = await audits(since);
@@ -418,7 +413,7 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     expect(JSON.stringify(providers.body)).not.toMatch(/token|secret/i);
   });
 
-  it("sets and clears the emergency stop over HTTP and blocks manual runs while active", async () => {
+  it("sets and clears the emergency stop over HTTP", async () => {
     if (!db) return;
     const base = `${PREFIX}/workspaces/${workspaceId}`;
     await db.channel.update({ where: { id: channelId }, data: { status: "ACTIVE" } });
@@ -450,12 +445,6 @@ suite("M19 admin, audit, health and correlation over HTTP (T01-T06)", () => {
     expect(status.body).toMatchObject({
       stops: [{ scope: "WORKSPACE", active: true, reason: "Incident 7" }],
     });
-    const blocked = await request(server())
-      .post(`${base}/orchestration/runs`)
-      .set(auth(tokens.editor))
-      .send({ definitionKey: "GENERATION", channelId, ideaId: randomUUID() })
-      .expect(409);
-    expect(JSON.stringify(blocked.body)).toMatch(/EMERGENCY_STOP/);
     await request(server())
       .put(`${base}/admin/emergency-stop`)
       .set(auth(tokens.owner))

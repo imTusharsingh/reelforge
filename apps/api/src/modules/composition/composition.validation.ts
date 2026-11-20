@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_RENDER_PROFILE } from "@reelforge/media";
 import { BadRequestException } from "@nestjs/common";
-import { RenderJobListQuerySchema, type RenderJobListQuery } from "@reelforge/contracts";
-import type { RenderCompositionInput } from "./composition.types.js";
 const uuid = z.string().uuid();
 const caption = z
   .object({
@@ -70,29 +68,6 @@ export const createRenderSchema = z
     retentionDays: z.int().min(1).max(3650).default(90),
   })
   .strict();
-export const editRenderSchema = z
-  .object({
-    idempotencyKey: z.string().trim().min(1).max(200),
-    retentionDays: z.int().min(1).max(3650).default(90),
-    operation: z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("REPLACE_SCENE"), sceneId: z.string().min(1), scene }).strict(),
-      z.object({ kind: z.literal("REPLACE_AUDIO"), index: z.int().min(0), audio }).strict(),
-      z
-        .object({
-          kind: z.literal("REPLACE_SUBTITLE"),
-          sceneId: z.string().min(1),
-          captions: z.array(caption).max(200),
-        })
-        .strict(),
-      z
-        .object({ kind: z.literal("REPLACE_TITLE"), title: z.string().trim().min(1).max(250) })
-        .strict(),
-      z
-        .object({ kind: z.literal("REPLACE_COVER"), coverFrames: z.array(cover).min(1).max(5) })
-        .strict(),
-    ]),
-  })
-  .strict();
 export function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success)
@@ -100,52 +75,4 @@ export function parse<T>(schema: z.ZodType<T>, value: unknown): T {
       result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
     );
   return result.data;
-}
-export function parseRenderJobListQuery(query: unknown): RenderJobListQuery {
-  return parse(RenderJobListQuerySchema, query);
-}
-export function validateComposition(input: RenderCompositionInput): void {
-  if (
-    input.profile.transition === "FADE" &&
-    (input.scenes.length <= 1 ||
-      duration(input) <= 0 ||
-      input.scenes.some((scene) => scene.durationMs <= input.profile.transitionDurationMs))
-  )
-    throw new BadRequestException("Fade transitions require positive overlap between scenes");
-  const ids = new Set<string>();
-  for (const scene of input.scenes) {
-    if (ids.has(scene.sceneId)) throw new BadRequestException("Scene ids must be unique");
-    ids.add(scene.sceneId);
-    if (scene.narrationAssetId && scene.narrationAssetVersion === undefined)
-      throw new BadRequestException("Narration version must be pinned");
-    if (scene.narrationAssetId === undefined && scene.narrationAssetVersion !== undefined)
-      throw new BadRequestException("Narration asset id must be pinned");
-    for (const caption of scene.captions)
-      if (caption.endMs > scene.durationMs || caption.endMs <= caption.startMs)
-        throw new BadRequestException("Captions must be bounded by their scene duration");
-    for (const interval of scene.captions.slice(1))
-      if (interval.startMs < (scene.captions[scene.captions.indexOf(interval) - 1]?.endMs ?? 0))
-        throw new BadRequestException("Caption intervals must be ordered and non-overlapping");
-  }
-  if (input.profile.transition === "CUT" && input.profile.transitionDurationMs !== 0)
-    throw new BadRequestException("Cut transitions must have zero duration");
-  if (input.profile.transition === "FADE" && input.profile.transitionDurationMs === 0)
-    throw new BadRequestException("Fade transitions must have a duration");
-  for (const cover of input.coverFrames) {
-    if (cover.timestampMs >= duration(input))
-      throw new BadRequestException("Cover timestamp must be inside the video");
-    if (
-      !input.scenes.some(
-        (scene) => scene.assetId === cover.assetId && scene.assetVersion === cover.assetVersion,
-      )
-    )
-      throw new BadRequestException("Cover asset must belong to a composed scene");
-  }
-  if (duration(input) <= 0) throw new BadRequestException("Composition duration must be positive");
-}
-export function duration(input: RenderCompositionInput): number {
-  return (
-    input.scenes.reduce((total, scene) => total + scene.durationMs, 0) -
-    (input.scenes.length - 1) * input.profile.transitionDurationMs
-  );
 }

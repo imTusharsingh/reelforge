@@ -10,7 +10,6 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
-import { pipelineV2Enabled } from "@reelforge/config-engine";
 import type { PrismaClient } from "@reelforge/database";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
@@ -34,7 +33,6 @@ export class AutomationController {
     @Param("workspaceId") workspaceId: string,
   ): Promise<unknown> {
     const context = await this.workspaces.context(req.principal.userId, this.uuid(workspaceId));
-    if (!pipelineV2Enabled()) return [];
     return this.db.v9PublishSlot.findMany({
       where: { workspaceId: context.workspaceId },
       orderBy: { scheduledAt: "asc" },
@@ -47,7 +45,6 @@ export class AutomationController {
     @Param("workspaceId") workspaceId: string,
     @Param("id") id: string,
   ): Promise<unknown> {
-    if (!pipelineV2Enabled()) throw new NotFoundException("pipeline.v2 is disabled");
     const context = await this.workspaces.context(req.principal.userId, this.uuid(workspaceId));
     const slot = await this.db.v9PublishSlot.findFirst({
       where: { workspaceId: context.workspaceId, id: this.uuid(id) },

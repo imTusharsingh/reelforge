@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BriefClient } from "./client";
-import { brief, capability, channelId, setupStub, workspaceId } from "./setup.fixture";
+import { brief, capability, channelId, runId, setupStub, workspaceId } from "./setup.fixture";
 import { BriefInputSchema } from "../../../../packages/contracts/src/channel-brief";
 const input = (): ReturnType<typeof BriefInputSchema.parse> =>
   BriefInputSchema.parse(
@@ -19,7 +19,7 @@ describe("V7 HTTP ports", () => {
     expect((await client.save(channelId, input())).version).toBe(2);
     expect(await client.createChannel("Science")).toBe(channelId);
     expect(await client.capabilities()).toEqual([capability]);
-    expect((await client.queue(brief, "once")).state).toBe("PLANNING");
+    expect(await client.queue(brief, "once")).toEqual({ id: runId });
     expect(await client.eligibility(channelId)).toBe(false);
     stub.approved = 10;
     expect(await client.eligibility(channelId)).toBe(true);
@@ -31,7 +31,7 @@ describe("V7 HTTP ports", () => {
     });
     expect(await new BriefClient(workspaceId).keys()).toEqual({ gemini: false, xai: false });
   });
-  it("sends the run idempotency and pinned Brief version", async () => {
+  it("sends the run idempotency and immutable Brief ID", async () => {
     let sent: RequestInit | undefined;
     const stub = setupStub();
     const client = new BriefClient(workspaceId, async (url, init) => {
@@ -41,9 +41,7 @@ describe("V7 HTTP ports", () => {
     await client.queue(brief, "stable-key");
     expect(JSON.parse(String(sent?.body))).toEqual({
       workspaceId,
-      channelId,
       channelBriefId: brief.id,
-      channelBriefVersion: 1,
       idempotencyKey: "stable-key",
     });
   });

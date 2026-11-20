@@ -1,5 +1,5 @@
 import { DEFAULT_RENDER_PROFILE } from "@reelforge/media";
-export type RenderProfile = typeof DEFAULT_RENDER_PROFILE;
+type RenderProfile = typeof DEFAULT_RENDER_PROFILE;
 export type RenderSceneInput = Readonly<{
   sceneId: string;
   assetId: string;
@@ -57,5 +57,3 @@ export type RenderJobView = Readonly<{
   expiredAt: string | null;
   artifacts: readonly RenderArtifactView[];
 }>;
-
-export const COMPOSITION_ENGINE = "COMPOSITION_ENGINE";

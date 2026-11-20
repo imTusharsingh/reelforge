@@ -97,7 +97,7 @@ describe("V7 mounted screens", () => {
   it("renders registry health without provider probes and handles an unavailable service", async () => {
     await render(createElement(ProviderHealth));
     expect(container.textContent).toContain("gemini-omni");
-    expect(stub.calls.every((call) => call.path.endsWith("/providers/capabilities"))).toBe(true);
+    expect(stub.calls.every((call) => call.path.endsWith("/providers/health"))).toBe(true);
     stub.fail = true;
     await render(createElement(ProviderHealth, { key: "reload" }));
     expect(container.textContent).toContain("Health unavailable");

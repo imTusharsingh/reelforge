@@ -1,13 +1,7 @@
 import { isRecord } from "../channels/model";
 
 export const platformValues = ["YOUTUBE", "INSTAGRAM"] as const;
-export type Platform = (typeof platformValues)[number];
-export const privacyValues = ["private", "unlisted", "public"] as const;
-export type Privacy = (typeof privacyValues)[number];
-export type Disclosure =
-  | { decision: "DISCLOSE"; disclosureText: string; reason: string }
-  | { decision: "NOT_REQUIRED"; reason: string };
-
+type Platform = (typeof platformValues)[number];
 export type Channel = { id: string; workspaceId: string; name: string; status: string };
 export type PlatformAvailability = {
   platform: Platform;
@@ -25,17 +19,6 @@ export type SocialAccount = {
   username: string | null;
   status: string;
   health: string;
-};
-export type EligibleRender = {
-  renderJobId: string;
-  channelId: string;
-  scriptId: string;
-  title: string;
-  durationMs: number;
-  completedAt: string;
-  qualityReviewRunId: string;
-  reviewStatus: "APPROVED" | "AUTO_APPROVED";
-  reviewedAt: string;
 };
 export type Destination = {
   id: string;
@@ -69,13 +52,6 @@ export type Post = {
   updatedAt: string;
   destinations: Destination[];
 };
-export type PreflightGate = { id: string; passed: boolean; evidence: string[] };
-export type Preflight = {
-  scheduledPostId: string;
-  destinationId: string;
-  canPublish: boolean;
-  gates: PreflightGate[];
-};
 export type PublishedRecord = {
   workspaceId: string;
   channelId: string;
@@ -86,39 +62,11 @@ export type PublishedRecord = {
   platformPostId: string;
   publishedAt: string;
 };
-export type CreateDestination = {
-  platform: Platform;
-  socialAccountId: string;
-  metadata:
-    | {
-        platform: "YOUTUBE";
-        title: string;
-        description: string;
-        tags?: string[];
-        privacyStatus: Privacy;
-        selfDeclaredMadeForKids: boolean;
-      }
-    | { platform: "INSTAGRAM"; caption: string };
-};
-export type CreatePostRequest = {
-  clientRequestId: string;
-  channelId: string;
-  renderJobId: string;
-  qualityReviewRunId: string;
-  scheduledAt: string | null;
-  disclosure: Disclosure;
-  destinations: CreateDestination[];
-};
-
 function invalid(message = "The publishing service returned invalid or mismatched data."): never {
   throw new Error(message);
 }
 function text(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) invalid();
-  return value;
-}
-function stringValue(value: unknown): string {
-  if (typeof value !== "string") invalid();
   return value;
 }
 function nullableText(value: unknown): string | null {
@@ -200,105 +148,6 @@ export function parseAccounts(value: unknown, workspaceId: string): SocialAccoun
   });
 }
 
-export function parseEligibleRenders(value: unknown): {
-  items: EligibleRender[];
-  nextCursor: string | null;
-} {
-  const page = record(value);
-  if (!Array.isArray(page.items)) invalid();
-  return {
-    items: page.items.map((item) => {
-      const row = record(item);
-      return {
-        renderJobId: text(row.renderJobId),
-        channelId: text(row.channelId),
-        scriptId: text(row.scriptId),
-        title: text(row.title),
-        durationMs: integer(row.durationMs, 1),
-        completedAt: timestamp(row.completedAt),
-        qualityReviewRunId: text(row.qualityReviewRunId),
-        reviewStatus: oneOf(row.reviewStatus, ["APPROVED", "AUTO_APPROVED"] as const),
-        reviewedAt: timestamp(row.reviewedAt),
-      };
-    }),
-    nextCursor: nullableText(page.nextCursor),
-  };
-}
-
-export function parseCreatePostRequest(
-  value: unknown,
-  expectedClientRequestId?: string,
-): CreatePostRequest {
-  const row = record(value);
-  const clientRequestId = text(row.clientRequestId);
-  if (expectedClientRequestId !== undefined && clientRequestId !== expectedClientRequestId)
-    invalid();
-  if (!Array.isArray(row.destinations) || row.destinations.length === 0) invalid();
-  const disclosureRow = record(row.disclosure);
-  let disclosure: Disclosure;
-  if (disclosureRow.decision === "DISCLOSE") {
-    disclosure = {
-      decision: "DISCLOSE",
-      disclosureText: text(disclosureRow.disclosureText),
-      reason: text(disclosureRow.reason),
-    };
-  } else if (disclosureRow.decision === "NOT_REQUIRED") {
-    disclosure = { decision: "NOT_REQUIRED", reason: text(disclosureRow.reason) };
-  } else {
-    invalid();
-  }
-  return {
-    clientRequestId,
-    channelId: text(row.channelId),
-    renderJobId: text(row.renderJobId),
-    qualityReviewRunId: text(row.qualityReviewRunId),
-    scheduledAt: nullableTimestamp(row.scheduledAt),
-    disclosure,
-    destinations: row.destinations.map((item) => {
-      const destination = record(item);
-      const metadata = record(destination.metadata);
-      if (destination.platform === "YOUTUBE") {
-        if (metadata.platform !== "YOUTUBE") invalid();
-        const title = text(metadata.title);
-        if (title.length > 100) invalid();
-        const description = stringValue(metadata.description);
-        if (description.length > 5000) invalid();
-        const tags =
-          metadata.tags === undefined
-            ? undefined
-            : Array.isArray(metadata.tags) && metadata.tags.every((tag) => typeof tag === "string")
-              ? (metadata.tags as string[])
-              : invalid();
-        if (metadata.categoryId !== undefined && typeof metadata.categoryId !== "string") invalid();
-        return {
-          platform: "YOUTUBE" as const,
-          socialAccountId: text(destination.socialAccountId),
-          metadata: {
-            platform: "YOUTUBE" as const,
-            title,
-            description,
-            ...(tags === undefined ? {} : { tags }),
-            ...(metadata.categoryId === undefined ? {} : { categoryId: metadata.categoryId }),
-            privacyStatus: oneOf(metadata.privacyStatus, privacyValues),
-            selfDeclaredMadeForKids: boolean(metadata.selfDeclaredMadeForKids),
-          },
-        };
-      }
-      if (destination.platform === "INSTAGRAM") {
-        if (metadata.platform !== "INSTAGRAM") invalid();
-        const caption = stringValue(metadata.caption);
-        if (caption.length > 2200) invalid();
-        return {
-          platform: "INSTAGRAM" as const,
-          socialAccountId: text(destination.socialAccountId),
-          metadata: { platform: "INSTAGRAM" as const, caption },
-        };
-      }
-      return invalid();
-    }),
-  };
-}
-
 function parseDestination(value: unknown): Destination {
   const row = record(value);
   const attempt = row.latestAttempt;
@@ -349,43 +198,6 @@ export function parsePost(value: unknown, expectedId?: string): Post {
   };
 }
 
-export function parsePosts(value: unknown): Post[] {
-  if (!Array.isArray(value)) invalid();
-  return value.map((item) => parsePost(item));
-}
-
-export function parsePostPage(value: unknown): { items: Post[]; nextCursor: string | null } {
-  const page = record(value);
-  if (!Array.isArray(page.items)) invalid();
-  return {
-    items: page.items.map((item) => parsePost(item)),
-    nextCursor: nullableText(page.nextCursor),
-  };
-}
-
-export function parsePreflight(value: unknown, destinationId: string): Preflight {
-  const row = record(value);
-  if (row.destinationId !== destinationId || !Array.isArray(row.gates)) invalid();
-  return {
-    scheduledPostId: text(row.scheduledPostId),
-    destinationId,
-    canPublish: boolean(row.canPublish),
-    gates: row.gates.map((item) => {
-      const gate = record(item);
-      if (
-        !Array.isArray(gate.evidence) ||
-        !gate.evidence.every((entry) => typeof entry === "string")
-      )
-        invalid();
-      return {
-        id: text(gate.id),
-        passed: boolean(gate.passed),
-        evidence: gate.evidence as string[],
-      };
-    }),
-  };
-}
-
 export function parseHistory(value: unknown, workspaceId: string): PublishedRecord[] {
   if (!Array.isArray(value)) invalid();
   return value.map((item) => {
@@ -430,10 +242,4 @@ export function parseAuthorizationUrl(value: unknown): string {
   if (url.protocol !== "https:")
     invalid("The connection response did not include a secure authorization URL.");
   return url.href;
-}
-
-export function describeGates(gates: PreflightGate[]): string[] {
-  return gates.map(
-    (gate) => `${gate.id}: ${gate.passed ? "passed" : "failed"} — ${gate.evidence.join("; ")}`,
-  );
 }

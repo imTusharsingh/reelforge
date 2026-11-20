@@ -142,7 +142,6 @@ describe("V6 critic and packaging", () => {
     ).toBe(0);
   });
   it("runs the complete gated V6 pipeline", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const text: TextPort = {
       complete: async <T>(spec: TextSpec<T>) => ({
         output: spec.parse(rubric),
@@ -179,7 +178,6 @@ describe("V6 critic and packaging", () => {
     expect(reshoot).not.toHaveBeenCalled();
   });
   it("rejects missing or invalid evidence before calling the provider", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const complete = vi.fn();
     const text = { complete } as TextPort;
     const input = {

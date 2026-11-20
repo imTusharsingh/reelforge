@@ -6,7 +6,6 @@ import { context, id } from "./automation.fixture.js";
 afterEach(() => vi.unstubAllEnvs());
 describe("V9 insert dispatch fence on fake YouTube client", () => {
   it("starts one upload only; replays fail closed and chunk/reconcile methods are preserved", async () => {
-    vi.stubEnv("PIPELINE_V2", "true");
     const startVideoUpload = vi.fn(async () => "fake-session");
     const checkVideoUpload = vi.fn();
     const social = {
@@ -53,11 +52,10 @@ describe("V9 insert dispatch fence on fake YouTube client", () => {
       await isScheduledAutomation(db as unknown as PrismaClient, context.workspaceId, id(10)),
     ).toBe(true);
   });
-  it("keeps v1 clients unchanged and identifies reconnect holds", async () => {
-    vi.stubEnv("PIPELINE_V2", "false");
+  it("identifies reconnect holds and resolves historical accounts", async () => {
     const authenticatedClient = vi.fn(async () => ({ account: {} }));
     const client = await publishingClient(
-      {} as PrismaClient,
+      { v9PublishSlot: { findFirst: async () => null } } as unknown as PrismaClient,
       { authenticatedClient } as unknown as SocialAccountsService,
       context,
       { socialAccountId: id(8), scheduledPostId: id(10) },

@@ -26,7 +26,7 @@ export class PublishingWorkerHandler {
   }
 }
 export async function startPublishingWorker(host: { close: () => Promise<void> }): Promise<void> {
-  if (process.env.PIPELINE_V2 !== "true" || process.env.NODE_ENV === "test") return;
+  if (process.env.NODE_ENV === "test") return;
   const { AppModule } = await import("@reelforge/api/app-module");
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ["error", "warn"] });
   const handler = new PublishingWorkerHandler(app.get<Runtime>("V9_PUBLISHING"));
