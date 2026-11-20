@@ -145,9 +145,10 @@ describe("V4 Art Director and reference reuse", () => {
     );
     expect(f.images).not.toHaveBeenCalled();
   });
-  it("supports a narrator-only channel with a style reference", async () => {
+  it("treats empty reference defaults as missing when creating a narrator-only style", async () => {
     const f = fixture();
     const request = planningFixture();
+    request.brief.referenceDefaults = { character: [], style: [], scenery: [], prop: [] };
     f.generate.mockResolvedValue({
       character: null,
       styleFrame: "forest",

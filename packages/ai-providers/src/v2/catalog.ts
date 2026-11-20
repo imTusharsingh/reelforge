@@ -48,6 +48,7 @@ function capability(
     enabled,
     pricePerSecond: video
       ? {
+          // Gemini 360p and 1080p are provider-stated token-billing equivalents (V2 spec, Video vendor research).
           "360p": gemini ? 23000 : null,
           "720p": gemini ? 69504 : 140000,
           "1080p": gemini ? 104000 : 250000,

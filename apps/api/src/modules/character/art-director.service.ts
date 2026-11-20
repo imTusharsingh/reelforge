@@ -102,15 +102,17 @@ export class ArtDirectorService implements ArtDirector {
     plan: ArtPlan,
   ): Promise<ReferenceAsset[]> {
     const defaults = await this.library.defaults(context, request.brief.channelId);
-    const pins = defaults ?? request.brief.referenceDefaults;
+    const defaultsForRun = defaults ?? request.brief.referenceDefaults;
+    const pins = defaultsForRun
+      ? [
+          ...defaultsForRun.character,
+          ...defaultsForRun.scenery,
+          ...defaultsForRun.prop,
+          ...defaultsForRun.style,
+        ]
+      : [];
     let references: ReferenceAsset[];
-    if (pins)
-      references = await this.library.resolve(context, [
-        ...pins.character,
-        ...pins.scenery,
-        ...pins.prop,
-        ...pins.style,
-      ]);
+    if (pins.length) references = await this.library.resolve(context, pins);
     else {
       references = [];
       if (plan.character) {
