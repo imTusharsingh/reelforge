@@ -28,7 +28,7 @@ import { RunOutputs } from "../orchestration/video-run.outputs.js";
 import { VideoRunEngine } from "../orchestration/video-run.engine.js";
 import type { Context, Run } from "./runs.types.js";
 
-export function runsFixture(): {
+export function runsFixture(maxConnections?: number): {
   tenant: (
     autonomy?: AutonomyLevel,
     seconds?: number,
@@ -36,7 +36,10 @@ export function runsFixture(): {
     seedShots?: boolean,
   ) => Promise<Tenant>;
 } {
-  const db = createDatabaseClient(process.env.DATABASE_URL ?? "postgresql://unused");
+  const db = createDatabaseClient(
+    process.env.DATABASE_URL ?? "postgresql://unused",
+    maxConnections,
+  );
   const ids: string[] = [],
     users: string[] = [],
     roots: string[] = [];

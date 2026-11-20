@@ -12,6 +12,7 @@ import {
   type Artifact,
 } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
+import { DispatchAdmissionError } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "./media-accounts.js";
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
 @Injectable()
@@ -31,6 +32,7 @@ export class MediaJobs {
     modelId: string,
     promptVersion: string,
     seconds = 0,
+    assertLocked?: () => Promise<void>,
   ): Promise<CompletedMedia | null> {
     const db = this.access.runs.store.scoped(context);
     const previous = await db.videoRunStep.findFirst({
@@ -46,8 +48,11 @@ export class MediaJobs {
       const claimed = await this.accounts.begin(context, run, `media:${key}`, spec, cost, modelId);
       await this.accounts.prepare(context, run, claimed, modelId);
       try {
-        const job = await this.accounts.dispatch(context, claimed, () =>
-          port.submit(spec, claimed.idempotencyKey),
+        const job = await this.accounts.dispatch(
+          context,
+          claimed,
+          () => port.submit(spec, claimed.idempotencyKey),
+          assertLocked,
         );
         await db.videoRunStep.updateMany({
           where: { id: claimed.id },
@@ -55,7 +60,10 @@ export class MediaJobs {
         });
         step = { ...claimed, providerJobId: job.providerJobId };
       } catch (error) {
-        if (error instanceof ProviderFailure && !error.dispatched)
+        if (
+          error instanceof DispatchAdmissionError ||
+          (error instanceof ProviderFailure && !error.dispatched)
+        )
           await this.accounts.cancelUndispatched(context, claimed);
         throw error;
       }
@@ -103,6 +111,7 @@ export class MediaJobs {
     modelId: string,
     promptVersion: string,
     seconds = 0,
+    assertLocked?: () => Promise<void>,
   ): Promise<CompletedMedia> {
     // Only background stage handlers call wait; shot jobs use tick and BullMQ's delayed child.
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -116,6 +125,7 @@ export class MediaJobs {
         modelId,
         promptVersion,
         seconds,
+        assertLocked,
       );
       if (result) return result;
       await new Promise<void>((resolve) => setTimeout(resolve, 12000));

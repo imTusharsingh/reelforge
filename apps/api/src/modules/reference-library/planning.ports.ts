@@ -30,6 +30,7 @@ export interface ImageGenPort {
     idempotencyKey: string;
     prompt: string;
     modelId: string;
+    assertLocked?: () => Promise<void>;
     references: readonly ReferenceAsset[];
   }): Promise<{ body: Buffer; mediaType: "image/png" | "image/jpeg" | "image/webp" }>;
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { foundationWorkspaceGuard } from "@reelforge/database";
@@ -22,6 +23,7 @@ import { ArtDirectorService, type ArtDirector } from "../character/art-director.
 import { REFERENCE_LIBRARY, type ReferenceLibrary } from "../reference-library/planning.ports.js";
 import { pinPlanningShots } from "./planning-shots.js";
 
+import { withSessionLock } from "../runs/session-lock.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
 
 const receiptKey = "planning:manifest:v1";
@@ -80,25 +82,59 @@ export class PlanningService {
     if (!run) throw new Error("Run does not match the pinned Brief");
     // This lock is independent of run revision locks taken by the paid ports.
     // A concurrent retry sees the receipt or returns before any provider work.
-    return this.db.$transaction(
-      async (tx) => {
-        const [lock] = await tx.$queryRaw<{ acquired: boolean }[]>`
-        SELECT pg_try_advisory_xact_lock(hashtextextended(${`planning:${run.id}`}, 0)) AS acquired
-      `;
-        if (!lock?.acquired) throw new ConflictException("Planning is already in progress");
-        const guarded = scopedTransaction(tx, context);
-        const saved = await guarded.videoRunStep.findFirst({
-          where: { runId: run.id, key: receiptKey },
-          select: { output: true },
-        });
-        if (saved) return resultSchema.parse(saved.output);
+    return withSessionLock(
+      `planning:${run.id}`,
+      "run-planning",
+      "Planning is already in progress",
+      "Planning ownership lost",
+      async (assertLocked) => {
+        const claim = randomUUID();
+        const saved = await this.claim(context, request, claim, assertLocked);
+        if (saved) return saved;
         const result = await this.generate(context, request);
-        await this.persist(guarded, context, request, result);
+        await this.db.$transaction(async (tx) => {
+          await assertLocked();
+          await this.persist(scopedTransaction(tx, context), request, claim, result);
+        });
         return result;
       },
-      { timeout: 10 * 60_000 },
     );
   }
+
+  private async claim(
+    context: WorkspaceContext,
+    request: PlanningRequest,
+    claim: string,
+    assertLocked: () => Promise<void>,
+  ): Promise<Result | null> {
+    return this.db.$transaction(async (tx) => {
+      await assertLocked();
+      const scoped = scopedTransaction(tx, context);
+      const where = { runId: request.runId, key: receiptKey, attempt: 1 };
+      const saved = await scoped.videoRunStep.findFirst({ where });
+      if (saved?.state === "SUCCEEDED") return resultSchema.parse(saved.output);
+      const startedAt = new Date();
+      if (saved) {
+        await scoped.videoRunStep.updateMany({
+          where: { id: saved.id },
+          data: { state: "RUNNING", input: { claim }, startedAt },
+        });
+      } else {
+        await scoped.videoRunStep.create({
+          data: {
+            ...where,
+            workspaceId: context.workspaceId,
+            idempotencyKey: `${request.runId}:${receiptKey}`,
+            state: "RUNNING",
+            input: { claim },
+            startedAt,
+          },
+        });
+      }
+      return null;
+    });
+  }
+
   private async generate(context: WorkspaceContext, request: PlanningRequest): Promise<Result> {
     const voice = request.brief.narratorVoice;
     if (!voice) throw new Error("Channel narrator voice required");
@@ -120,26 +156,24 @@ export class PlanningService {
   }
   private async persist(
     scoped: Scoped,
-    context: WorkspaceContext,
     request: PlanningRequest,
+    claim: string,
     result: Result,
   ): Promise<void> {
-    await scoped.videoRunStep.create({
-      data: {
-        workspaceId: context.workspaceId,
+    const changed = await scoped.videoRunStep.updateMany({
+      where: {
         runId: request.runId,
         key: receiptKey,
-        idempotencyKey: `${request.runId}:${receiptKey}`,
-        state: "SUCCEEDED",
-        input: {},
-        output: result,
-        finishedAt: new Date(),
+        state: "RUNNING",
+        input: { equals: { claim } },
       },
+      data: { state: "SUCCEEDED", input: {}, output: result, finishedAt: new Date() },
     });
+    if (changed.count !== 1) throw new ConflictException("Planning claim changed");
     await scoped.shotSpec.createMany({
       data: result.manifest.shots.map((shot) => ({
         id: shot.id,
-        workspaceId: context.workspaceId,
+        workspaceId: request.brief.workspaceId,
         runId: request.runId,
         ordinal: shot.ordinal,
         version: shot.version,

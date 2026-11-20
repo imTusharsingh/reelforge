@@ -83,8 +83,13 @@ export class MediaAccounts {
   public abandoned(step: Step): boolean {
     return step.state === "CANCELLED" && this.record(step.output).closedBy === "OPERATOR_ABANDONED";
   }
-  public async dispatch<T>(context: Context, step: Step, call: () => Promise<T>): Promise<T> {
-    return this.access.paid.dispatch(context, step, call);
+  public async dispatch<T>(
+    context: Context,
+    step: Step,
+    call: () => Promise<T>,
+    assertLocked?: () => Promise<void>,
+  ): Promise<T> {
+    return this.access.paid.dispatch(context, step, call, assertLocked);
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     await this.access.paid.reserve(context, run, step, step.costMinor ?? 0);

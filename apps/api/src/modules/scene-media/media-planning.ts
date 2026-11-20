@@ -90,6 +90,8 @@ export class MediaPlanning {
           reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.imageMicroUsd }),
           process.env.GEMINI_IMAGE_MODEL ?? "",
           "art-director:v2",
+          0,
+          input.assertLocked,
         );
         if (!["image/png", "image/jpeg", "image/webp"].includes(media.receipt.mimeType))
           throw new Error("Expected a reference image");

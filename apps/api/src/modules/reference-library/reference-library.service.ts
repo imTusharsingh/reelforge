@@ -1,11 +1,5 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-} from "@nestjs/common";
-import { Client } from "pg";
+import { Inject, Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
+import { withSessionLock } from "../runs/session-lock.js";
 import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   ChannelReferenceDefaultsSchema,
@@ -92,51 +86,13 @@ export class ReferenceLibraryService implements ReferenceLibrary {
     initialize: (assertLocked: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
     const key = `reference-init:${context.workspaceId}:${channelId}`;
-    // A standalone session keeps the application pool available while providers poll.
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString?.trim()) throw new Error("A database connection string is required.");
-    const client = new Client({
-      connectionString,
-      application_name: "reference-initialization",
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    let disconnected = false;
-    client.on("error", () => {
-      disconnected = true;
-    });
-    try {
-      await client.connect();
-      const {
-        rows: [lock],
-      } = await client.query<{ acquired: boolean }>(
-        "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
-        [key],
-      );
-      if (lock?.acquired !== true)
-        throw new ConflictException("Channel reference initialization in progress");
-
-      return await initialize(async () => {
-        const lost = new ConflictException("Channel reference initialization lock lost");
-        if (disconnected) throw lost;
-        const {
-          rows: [status],
-        } = await client
-          .query<{ held: boolean }>(
-            `SELECT EXISTS (
-             SELECT 1 FROM pg_locks
-             WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted
-           ) AS held`,
-          )
-          .catch(() => {
-            throw lost;
-          });
-        if (disconnected || status?.held !== true) throw lost;
-      });
-    } finally {
-      // Closing this session releases its sole advisory lock, including on failure.
-      await client.end();
-    }
+    return withSessionLock(
+      key,
+      "reference-initialization",
+      "Channel reference initialization in progress",
+      "Channel reference initialization lock lost",
+      initialize,
+    );
   }
 
   public async initializeDefaults(
