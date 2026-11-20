@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { capability } from "../setup.fixture";
+import { reviewAndSchedule } from "./review-and-schedule";
 async function accessible(page: Page): Promise<void> {
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 }
@@ -13,9 +14,7 @@ async function register(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Create account", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Create a Channel Brief" })).toBeVisible();
 }
-test("sign-up, five inputs, queued run, immutable Brief and accessible settings", async ({
-  page,
-}) => {
+test("sign-up, queued run, approval, schedule and accessible settings", async ({ page }) => {
   let workspaceId = "",
     channelId = "",
     runCalls = 0;
@@ -51,7 +50,11 @@ test("sign-up, five inputs, queued run, immutable Brief and accessible settings"
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Narrator voice").selectOption("Puck");
   await page.getByRole("button", { name: "Continue" }).click();
+  const queued = page.waitForResponse(
+    (response) => response.status() === 202 && new URL(response.url()).pathname === "/api/v1/runs",
+  );
   await page.getByRole("button", { name: "Create channel and start first Short" }).click();
+  const { id: runId } = (await (await queued).json()) as { id: string };
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
   expect(runCalls).toBe(1);
   await page.goto(`/channels/${channelId}`);
@@ -61,6 +64,7 @@ test("sign-up, five inputs, queued run, immutable Brief and accessible settings"
   await page.getByLabel("topic", { exact: true }).fill("Space exploration");
   await page.getByRole("button", { name: "Save new version" }).click();
   await expect(page.getByText("Saved immutable Brief version 2.")).toBeVisible();
+  await reviewAndSchedule(page, { workspaceId, channelId, runId }, accessible);
   await settings(page);
 });
 
