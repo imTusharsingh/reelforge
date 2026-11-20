@@ -10,7 +10,7 @@ import { studioDestinations } from "./pipeline-navigation";
 
 function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
   const route = usePathname();
-  const pathname = route === "/account" || route === "/publishing/accounts" ? "/settings" : route === "/runs" || route.startsWith("/runs/") ? "/" : route;
+  const pathname = route === "/account" || route === "/publishing/accounts" || route.startsWith("/channels/") ? "/settings" : route === "/runs" || route.startsWith("/runs/") ? "/" : route;
   return (
     <nav aria-label="Studio navigation">
       <ul className="rf-nav-list">

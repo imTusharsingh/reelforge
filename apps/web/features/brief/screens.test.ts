@@ -62,12 +62,16 @@ describe("V7 mounted screens", () => {
     const completed = vi.fn();
     stub.failRun = true;
     await render(createElement(Onboarding, { onComplete: completed }));
-    expect(container.querySelectorAll("input,select")).toHaveLength(5);
+    expect(container.querySelectorAll("input,select")).toHaveLength(3);
     await change("#setup-niche", "Science");
     await change("#setup-audience", "Adults");
     await change("#setup-language", "Hindi");
+    await submit();
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toBe("Voice & cadence");
     await change("#setup-voice", "Puck");
     await change("#setup-cadence", "17:30");
+    await submit();
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toBe("Confirm");
     await submit();
     expect(container.textContent).toContain("Setup could not finish");
     const before = stub.calls.filter(

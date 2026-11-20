@@ -37,24 +37,6 @@ export function Button({
   );
 }
 
-type IconButtonProps = Omit<ButtonProps, "children"> & {
-  label: string;
-  children: ReactNode;
-};
-
-export function IconButton({
-  label,
-  children,
-  className = "",
-  ...props
-}: IconButtonProps): JSX.Element {
-  return (
-    <Button {...props} className={`rf-icon-button ${className}`.trim()} aria-label={label}>
-      <span aria-hidden="true">{children}</span>
-    </Button>
-  );
-}
-
 type FieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "id"> & {
   id: string;
   label: string;

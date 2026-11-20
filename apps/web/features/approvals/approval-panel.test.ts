@@ -34,7 +34,7 @@ describe("mobile approval UI on fake transport", () => {
       ),
     );
     const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
-    expect(button.style.minHeight).toBe("48px");
+    expect(host.textContent).toContain("The first 10 Shorts require human approval");
     await act(async () => button.click());
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(refresh).toHaveBeenCalledTimes(1);

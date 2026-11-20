@@ -75,6 +75,7 @@ export function setupStub(): SetupStub {
     state.calls.push({ path, method });
     if (state.fail || (state.failRun && path.endsWith("/runs")))
       return Response.json({ message: "unavailable" }, { status: 503 });
+    if (path.endsWith("/auth/csrf")) return new Response(null, { status: 204 });
     if (path.endsWith("/workspaces"))
       return Response.json(
         method === "POST"

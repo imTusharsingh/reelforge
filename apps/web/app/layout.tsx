@@ -5,7 +5,7 @@ import { StudioNavigationGuard } from "../components/studio-link";
 
 export const metadata: Metadata = {
   title: "ReelForge",
-  description: "AI Shorts Channel Controller",
+  description: "Creator studio for producing and publishing Shorts",
   icons: { icon: "/brand/reelforge-mark.svg" },
 };
 
