@@ -36,15 +36,22 @@ Each job publishes the output of all three attempts.
 
 Set `REELFORGE_API_ORIGIN` to the API's explicit HTTP(S) origin for a production
 web build. The manual text smoke also requires an explicit `OPENAI_TEXT_MODEL`.
-Account recovery can use an HTTPS email relay configured through
-`ACCOUNT_EMAIL_RELAY_URL` and `ACCOUNT_EMAIL_RELAY_TOKEN`. The relay accepts an
-authenticated JSON POST containing `to`, `purpose` and a one-time `code`. Deliver
-the code in the email body for the recipient to paste into the account form.
+Account email prefers Resend when both `RESEND_API_KEY` and `ACCOUNT_EMAIL_FROM`
+are usable. Set the sender to a single email address or a `Name <email>` value.
+The Resend test sender delivers only to the verified owner mailbox until you
+verify a sending domain and use a sender on that domain. See [Resend's test sender
+restriction](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
 
-Configure the email relay before enabling account email in a deployment. With
-missing or invalid relay configuration, issuance endpoints return HTTP 503 for
-all callers. Reset requests enter a PostgreSQL queue before account lookup. The
-API worker retries relay outages up to four attempts, expires queued requests
+When either Resend setting is missing or invalid, account email uses the generic
+HTTPS relay if `ACCOUNT_EMAIL_RELAY_URL` and `ACCOUNT_EMAIL_RELAY_TOKEN` are valid.
+The relay accepts an authenticated JSON POST containing `to`, `purpose` and a
+one-time `code`. Deliver the code in the email body for the recipient to paste
+into the account form. Never log codes, API keys, Authorization headers, or raw
+request or response bodies that may contain them.
+
+When neither provider is configured correctly, issuance endpoints return HTTP
+503 for all callers. Reset requests enter a PostgreSQL queue before account lookup. The
+API worker retries delivery failures up to four attempts, expires queued requests
 after ten minutes, and removes the queued code on completion. The relay should
 treat repeated delivery of the same code as a retry. Keep the queue database
 restricted to the same operational access as credential storage. Set
