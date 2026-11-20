@@ -1,4 +1,12 @@
 import { Module } from "@nestjs/common";
+import {
+  ProviderError,
+  QUALITY_REVIEW_PORT,
+  type QualityReviewPort,
+  type QualityReviewRequest,
+  type QualityReviewResult,
+} from "@reelforge/ai-providers";
+import { CompositionModule } from "../composition/composition.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { QualityController } from "./quality.controller.js";
@@ -7,11 +15,25 @@ import { CriticPipeline } from "./critic.pipeline.js";
 import { MediaProbe } from "./media-probe.js";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
 
-/** @deprecated M11 single-pass review replaced and deleted in V6; obsolete DB data removal waits for T2 ADR/migration. See DEPRECATIONS.md. */
+const retiredQualityReviewPort: QualityReviewPort = {
+  async review(request: QualityReviewRequest): Promise<QualityReviewResult> {
+    throw new ProviderError(
+      "NOT_CONFIGURED",
+      "No real AI quality-review adapter is configured",
+      request.correlationId,
+    );
+  },
+};
 @Module({
-  imports: [IdentityModule, WorkspaceModule],
+  imports: [IdentityModule, WorkspaceModule, CompositionModule],
   controllers: [QualityController],
-  providers: [QualityService, CriticPipeline, MediaProbe, SpawnProcessRunner],
-  exports: [QualityService, CriticPipeline, MediaProbe],
+  providers: [
+    QualityService,
+    CriticPipeline,
+    MediaProbe,
+    SpawnProcessRunner,
+    { provide: QUALITY_REVIEW_PORT, useValue: retiredQualityReviewPort },
+  ],
+  exports: [QualityService, CriticPipeline, MediaProbe, QUALITY_REVIEW_PORT],
 })
 export class QualityModule {}
