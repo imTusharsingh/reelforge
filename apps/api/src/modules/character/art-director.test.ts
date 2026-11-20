@@ -14,6 +14,7 @@ function fixture(): {
   refs: ReferenceAsset[];
   library: ReferenceLibrary;
   generate: ReturnType<typeof vi.fn>;
+  setDefaults: (input: ChannelReferenceDefaults) => void;
 } {
   const refs: ReferenceAsset[] = [];
   let defaults: ChannelReferenceDefaults | null = null;
@@ -35,9 +36,24 @@ function fixture(): {
     save: vi.fn(async (unused: unknown, ref: ReferenceAsset): Promise<void> => {
       refs.push(ref);
     }),
-    setDefaults: vi.fn(async (unused: unknown, input: ChannelReferenceDefaults): Promise<void> => {
-      defaults = input;
-    }),
+    withInitializationLock: async <T>(
+      unused: unknown,
+      channelId: string,
+      initialize: (assertLocked: () => Promise<void>) => Promise<T>,
+    ): Promise<T> => initialize(async () => {}),
+    initializeDefaults: async (
+      unused: unknown,
+      input: Omit<ChannelReferenceDefaults, "revision">,
+      observed: ChannelReferenceDefaults | null,
+    ): Promise<boolean> => {
+      if (defaults !== observed) return false;
+      defaults = {
+        ...input,
+        id: observed?.id ?? input.id,
+        revision: (observed?.revision ?? 0) + 1,
+      };
+      return true;
+    },
   };
   const generate = vi.fn().mockResolvedValue({
     character: {
@@ -77,6 +93,9 @@ function fixture(): {
     refs,
     library,
     generate,
+    setDefaults: (input): void => {
+      defaults = input;
+    },
   };
 }
 describe("V4 Art Director and reference reuse", () => {
@@ -122,6 +141,23 @@ describe("V4 Art Director and reference reuse", () => {
       ),
     ).toBe(true);
     expect(f.images).toHaveBeenCalledTimes(4);
+  });
+  it("reuses brief pins behind empty stored defaults through final shot pinning", async () => {
+    const f = fixture();
+    const request = planningFixture();
+    await f.service.design(context, request, shotsFixture(request));
+    const saved = (await f.library.defaults(context, request.brief.channelId))!;
+    const empty = { ...saved, revision: 4, character: [], style: [], scenery: [], prop: [] };
+    f.setDefaults(empty);
+    request.brief.referenceDefaults = { character: [], style: saved.style, scenery: [], prop: [] };
+    f.images.mockClear();
+
+    const result = await f.service.design(context, request, shotsFixture(request));
+    const shots = await pinPlanningShots(context, request, result.shots, f.library);
+    expect(result.references).toEqual(f.refs.filter((ref) => ref.kind === "STYLE"));
+    for (const shot of shots) expect(shot.references).toEqual(saved.style);
+    expect(f.images).not.toHaveBeenCalled();
+    expect(await f.library.defaults(context, request.brief.channelId)).toEqual(empty);
   });
   it("rejects invalid art and unsafe prompts before image spend", async () => {
     const f = fixture();

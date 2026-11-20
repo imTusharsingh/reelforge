@@ -37,7 +37,16 @@ export interface ReferenceLibrary {
   resolve(context: WorkspaceContext, pins: readonly ReferencePin[]): Promise<ReferenceAsset[]>;
   defaults(context: WorkspaceContext, channelId: string): Promise<ChannelReferenceDefaults | null>;
   save(context: WorkspaceContext, asset: ReferenceAsset): Promise<void>;
-  setDefaults(context: WorkspaceContext, defaults: ChannelReferenceDefaults): Promise<void>;
+  withInitializationLock<T>(
+    context: WorkspaceContext,
+    channelId: string,
+    initialize: (assertLocked: () => Promise<void>) => Promise<T>,
+  ): Promise<T>;
+  initializeDefaults(
+    context: WorkspaceContext,
+    defaults: Omit<ChannelReferenceDefaults, "revision">,
+    observed: ChannelReferenceDefaults | null,
+  ): Promise<boolean>;
 }
 /** Fail-closed until V2 bindings are supplied. No fake successful production responses. */
 export class UnconfiguredTextPort implements TextPort {

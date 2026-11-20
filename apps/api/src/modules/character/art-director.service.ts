@@ -24,7 +24,11 @@ import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { planningModels } from "../config/planning-prompts.js";
 import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import type { WorkspaceContext } from "../identity/identity.types.js";
-import { selectReferences, referencePins } from "../reference-library/reference-selection.js";
+import {
+  selectReferences,
+  referencePins,
+  planningReferencePins,
+} from "../reference-library/reference-selection.js";
 
 export interface ArtDirector {
   design(
@@ -101,56 +105,69 @@ export class ArtDirectorService implements ArtDirector {
     request: PlanningRequest,
     plan: ArtPlan,
   ): Promise<ReferenceAsset[]> {
-    const defaults = await this.library.defaults(context, request.brief.channelId);
-    const defaultsForRun = defaults ?? request.brief.referenceDefaults;
-    const pins = defaultsForRun
-      ? [
-          ...defaultsForRun.character,
-          ...defaultsForRun.scenery,
-          ...defaultsForRun.prop,
-          ...defaultsForRun.style,
-        ]
-      : [];
-    let references: ReferenceAsset[];
-    if (pins.length) references = await this.library.resolve(context, pins);
-    else {
-      references = [];
-      if (plan.character) {
-        for (const [view, description] of Object.entries(plan.character))
-          references.push(
-            await this.generate(
-              context,
-              request,
-              "CHARACTER",
-              `${view}: ${description}`,
-              references,
-            ),
-          );
-      }
-      references.push(await this.generate(context, request, "STYLE", plan.styleFrame, references));
-      const characterRefs = references.filter((ref) => ref.kind === "CHARACTER");
-      if (characterRefs.length) {
-        const characterVersionId = await this.characters.publish(
-          context,
-          characterRefs,
-          request.brief.narratorVoice!.voiceId,
-          request.brief.styleBible.visualStyle,
+    const channelId = request.brief.channelId;
+    const defaults = await this.library.defaults(context, channelId);
+    const pins = planningReferencePins(defaults, request.brief);
+    if (pins.length) return this.library.resolve(context, pins);
+
+    return this.library.withInitializationLock(context, channelId, async (assertLocked) => {
+      const observed = await this.library.defaults(context, channelId);
+      const currentPins = planningReferencePins(observed, request.brief);
+      if (currentPins.length) return this.library.resolve(context, currentPins);
+
+      const references = await this.generateReferences(context, request, plan, assertLocked);
+      await assertLocked();
+      const initialized = await this.library.initializeDefaults(
+        context,
+        {
+          id: randomUUID(),
+          schemaVersion: "1.0",
+          workspaceId: context.workspaceId,
+          channelId,
+          character: referencePins(references.filter((ref) => ref.kind === "CHARACTER")),
+          style: referencePins(references.filter((ref) => ref.kind === "STYLE")),
+          scenery: [],
+          prop: [],
+        },
+        observed,
+      );
+      if (initialized) return references;
+
+      const latest = await this.library.defaults(context, channelId);
+      const latestPins = planningReferencePins(latest, request.brief);
+      if (!latestPins.length)
+        throw new Error("Channel reference defaults changed during initialization");
+      return this.library.resolve(context, latestPins);
+    });
+  }
+  private async generateReferences(
+    context: WorkspaceContext,
+    request: PlanningRequest,
+    plan: ArtPlan,
+    assertLocked: () => Promise<void>,
+  ): Promise<ReferenceAsset[]> {
+    const references: ReferenceAsset[] = [];
+    if (plan.character) {
+      for (const [view, description] of Object.entries(plan.character)) {
+        await assertLocked();
+        references.push(
+          await this.generate(context, request, "CHARACTER", `${view}: ${description}`, references),
         );
-        for (const reference of characterRefs) reference.characterVersionId = characterVersionId;
       }
-      for (const reference of references) await this.library.save(context, reference);
-      await this.library.setDefaults(context, {
-        id: randomUUID(),
-        schemaVersion: "1.0",
-        workspaceId: context.workspaceId,
-        channelId: request.brief.channelId,
-        revision: 1,
-        character: referencePins(references.filter((ref) => ref.kind === "CHARACTER")),
-        style: referencePins(references.filter((ref) => ref.kind === "STYLE")),
-        scenery: [],
-        prop: [],
-      });
     }
+    await assertLocked();
+    references.push(await this.generate(context, request, "STYLE", plan.styleFrame, references));
+    const characterRefs = references.filter((ref) => ref.kind === "CHARACTER");
+    if (characterRefs.length) {
+      const characterVersionId = await this.characters.publish(
+        context,
+        characterRefs,
+        request.brief.narratorVoice!.voiceId,
+        request.brief.styleBible.visualStyle,
+      );
+      for (const reference of characterRefs) reference.characterVersionId = characterVersionId;
+    }
+    for (const reference of references) await this.library.save(context, reference);
     return references;
   }
   private async generate(

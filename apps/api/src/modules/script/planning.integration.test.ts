@@ -123,6 +123,18 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
       art,
       library,
     );
+    const empty = {
+      id: randomUUID(),
+      workspaceId: context.workspaceId,
+      channelId: request.brief.channelId,
+      schemaVersion: "1.0" as const,
+      revision: 4,
+      character: [],
+      scenery: [],
+      prop: [],
+      style: [],
+    };
+    await library.setDefaults(context, empty);
     const result = await service.plan(context, request);
     expect(result.manifest.prompts.map((prompt) => prompt.version)).toEqual([2, 2, 2]);
     expect(result.manifest.shots).toHaveLength(6);
@@ -135,6 +147,7 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
       1,
     );
     const defaults = (await library.defaults(context, request.brief.channelId))!;
+    expect(defaults).toMatchObject({ id: empty.id, revision: 5 });
     const refs = await library.resolve(context, [...defaults.character, ...defaults.style]);
     expect(refs).toHaveLength(4);
     expect(refs[0]!.characterVersionId).not.toBeNull();
@@ -153,6 +166,64 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
       "Run does not match",
     );
   });
+  it.each(["absent", "empty"] as const)(
+    "serializes initialization and preserves an edit made during image generation with %s defaults",
+    async (initial) => {
+      const channelId = randomUUID();
+      await db.channel.create({
+        data: { id: channelId, workspaceId: context.workspaceId, name: "Concurrent" },
+      });
+      const existing = (await library.defaults(context, request.brief.channelId))!;
+      const empty = {
+        ...existing,
+        id: randomUUID(),
+        channelId,
+        revision: 7,
+        character: [],
+        style: [],
+      };
+      if (initial === "empty") await library.setDefaults(context, empty);
+      const edited = { ...empty, revision: 8, style: existing.style };
+      const concurrentLibrary = new ReferenceLibraryService(db);
+      const prompts = {
+        capture: vi.fn().mockResolvedValue({ prompt: "offline prompt", receipt: { version: 2 } }),
+      } as unknown as PlanningPromptService;
+      const text = {
+        generate: vi.fn().mockResolvedValue({
+          character: null,
+          styleFrame: "Watercolor forest",
+          keyframePrompts: Array(6).fill("Watercolor leaves"),
+        }),
+      };
+      const run = { ...request, brief: { ...request.brief, channelId } };
+      const characters = new PlanningCharacterService(db);
+      const competingImages = { generate: vi.fn() };
+      const competitor = new ArtDirectorService(
+        text,
+        competingImages,
+        concurrentLibrary,
+        prompts,
+        assets,
+        characters,
+      );
+      const images = {
+        generate: vi.fn(async () => {
+          await expect(competitor.design(context, run, shotsFixture(run))).rejects.toThrow(
+            "Channel reference initialization in progress",
+          );
+          await concurrentLibrary.setDefaults(context, edited);
+          return { body: png, mediaType: "image/png" as const };
+        }),
+      };
+      const art = new ArtDirectorService(text, images, library, prompts, assets, characters);
+
+      const result = await art.design(context, run, shotsFixture(run));
+      expect(images.generate).toHaveBeenCalledTimes(1);
+      expect(competingImages.generate).not.toHaveBeenCalled();
+      expect(await library.defaults(context, channelId)).toEqual(edited);
+      for (const shot of result.shots) expect(shot.references).toEqual(edited.style);
+    },
+  );
   it("verifies stored checksums and reuses content-addressed assets", async () => {
     const first = await assets.store(context, { body: png, mediaType: "image/png" });
     expect(await assets.store(context, { body: png, mediaType: "image/png" })).toEqual(first);
