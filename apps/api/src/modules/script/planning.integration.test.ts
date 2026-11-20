@@ -211,9 +211,10 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
       );
       const images = {
         generate: vi.fn(async () => {
-          await expect(competitor.design(context, run, shotsFixture(run))).rejects.toThrow(
-            "Channel reference initialization in progress",
-          );
+          await expect(competitor.design(context, run, shotsFixture(run))).rejects.toMatchObject({
+            status: 409,
+            message: "Channel reference initialization in progress",
+          });
           await concurrentLibrary.setDefaults(context, edited);
           return { body: png, mediaType: "image/png" as const };
         }),
@@ -227,6 +228,60 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
       for (const shot of result.shots) expect(shot.references).toEqual(edited.style);
     },
   );
+  it("keeps the pool available during image polling and stops dispatch after lock loss", async () => {
+    const channelId = randomUUID();
+    const run = { ...request, brief: { ...request.brief, channelId } };
+    const prompts = {
+      capture: vi.fn().mockResolvedValue({ prompt: "offline prompt", receipt: { version: 2 } }),
+    } as unknown as PlanningPromptService;
+    const text = {
+      generate: vi.fn().mockResolvedValue({
+        character: { front: "Owl front", side: "Owl side", fullBody: "Owl full body" },
+        styleFrame: "Watercolor forest",
+        keyframePrompts: Array(6).fill("Watercolor leaves"),
+      }),
+    };
+    const key = `reference-init:${context.workspaceId}:${channelId}`;
+    const images = {
+      generate: vi.fn(async () => {
+        const [session] = await db.$queryRaw<
+          { pid: number; state: string; inTransaction: boolean; pooledPid: number }[]
+        >`
+          SELECT activity.pid, activity.state, activity.xact_start IS NOT NULL AS "inTransaction",
+            pg_backend_pid() AS "pooledPid"
+          FROM pg_locks AS lock
+          JOIN pg_stat_activity AS activity ON activity.pid = lock.pid
+          WHERE lock.locktype = 'advisory' AND lock.granted AND lock.objsubid = 1
+            AND ((lock.classid::bigint << 32) | lock.objid::bigint) = hashtextextended(${key}, 0)
+        `;
+        expect(session).toMatchObject({ state: "idle", inTransaction: false });
+        if (!session) throw new Error("Expected the reference lock session");
+        expect(session.pid).not.toBe(session.pooledPid);
+        expect(
+          await db.$queryRaw`SELECT pg_terminate_backend(${session.pid}::int, 1000) AS stopped`,
+        ).toEqual([{ stopped: true }]);
+        return { body: png, mediaType: "image/png" as const };
+      }),
+    };
+    const art = new ArtDirectorService(
+      text,
+      images,
+      library,
+      prompts,
+      assets,
+      new PlanningCharacterService(db),
+    );
+    await expect(art.design(context, run, shotsFixture(run))).rejects.toMatchObject({
+      status: 409,
+      message: "Channel reference initialization lock lost",
+    });
+    expect(images.generate).toHaveBeenCalledTimes(1);
+    expect(await library.defaults(context, channelId)).toBeNull();
+    await expect(
+      library.withInitializationLock(context, channelId, (assertLocked) => assertLocked()),
+    ).resolves.toBeUndefined();
+  });
+
   it("verifies stored checksums and reuses content-addressed assets", async () => {
     const first = await assets.store(context, { body: png, mediaType: "image/png" });
     expect(await assets.store(context, { body: png, mediaType: "image/png" })).toEqual(first);

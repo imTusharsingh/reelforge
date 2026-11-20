@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+import { Client } from "pg";
 import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   ChannelReferenceDefaultsSchema,
@@ -90,24 +91,52 @@ export class ReferenceLibraryService implements ReferenceLibrary {
     channelId: string,
     initialize: (assertLocked: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
-    // Keep the lock on a dedicated transaction while provider accounting commits independently.
-    // A contender fails immediately instead of occupying a connection while a provider polls.
     const key = `reference-init:${context.workspaceId}:${channelId}`;
-    return this.db.$transaction(
-      async (tx) => {
-        const [lock] = await tx.$queryRaw<{ acquired: boolean }[]>`
-        SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired
-      `;
-        if (!lock?.acquired)
-          throw new ConflictException("Channel reference initialization in progress");
-        return initialize(async () => {
-          // A closed or expired transaction must never authorize a subsequent image dispatch.
-          await tx.$queryRaw`SELECT 1`;
-        });
-      },
-      // Allow four image jobs, each with up to 20 minutes of provider polling.
-      { timeout: 90 * 60 * 1000 },
-    );
+    // A standalone session keeps the application pool available while providers poll.
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString?.trim()) throw new Error("A database connection string is required.");
+    const client = new Client({
+      connectionString,
+      application_name: "reference-initialization",
+      connectionTimeoutMillis: 5_000,
+      query_timeout: 5_000,
+    });
+    let disconnected = false;
+    client.on("error", () => {
+      disconnected = true;
+    });
+    try {
+      await client.connect();
+      const {
+        rows: [lock],
+      } = await client.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+        [key],
+      );
+      if (lock?.acquired !== true)
+        throw new ConflictException("Channel reference initialization in progress");
+
+      return await initialize(async () => {
+        const lost = new ConflictException("Channel reference initialization lock lost");
+        if (disconnected) throw lost;
+        const {
+          rows: [status],
+        } = await client
+          .query<{ held: boolean }>(
+            `SELECT EXISTS (
+             SELECT 1 FROM pg_locks
+             WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted
+           ) AS held`,
+          )
+          .catch(() => {
+            throw lost;
+          });
+        if (disconnected || status?.held !== true) throw lost;
+      });
+    } finally {
+      // Closing this session releases its sole advisory lock, including on failure.
+      await client.end();
+    }
   }
 
   public async initializeDefaults(
