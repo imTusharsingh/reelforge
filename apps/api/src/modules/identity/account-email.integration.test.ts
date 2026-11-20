@@ -6,7 +6,11 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAccountFixture } from "./account-email.fixture.js";
 import { AccountEmailService } from "./account-email.service.js";
-import { ACCOUNT_EMAIL, accountEmailRelay, type AccountEmailPort } from "./account-email.port.js";
+import {
+  ACCOUNT_EMAIL,
+  createAccountEmailPort,
+  type AccountEmailPort,
+} from "./account-email.port.js";
 import { createSessionToken, hashSessionToken, verifyPassword } from "./auth.crypto.js";
 import { createCsrfToken, csrfMiddleware } from "./csrf.middleware.js";
 import { IdentityModule } from "./identity.module.js";
@@ -147,7 +151,7 @@ describe.skipIf(!databaseUrl)("mounted account email with offline relay", () => 
     });
     expect(await db.accountResetDelivery.count({ where: { email: user.email } })).toBe(0);
 
-    expect(accountEmailRelay({}).available).toBe(false);
+    expect(createAccountEmailPort({}).available).toBe(false);
     relay.available = false;
     try {
       for (const email of [user.email, missing])
@@ -207,7 +211,7 @@ describe.skipIf(!databaseUrl)("mounted account email with offline relay", () => 
         expiresAt: new Date(0),
       },
     });
-    await new AccountEmailService(db, accountEmailRelay({})).processResetDelivery();
+    await new AccountEmailService(db, createAccountEmailPort({})).processResetDelivery();
     expect(await db.accountResetDelivery.findUnique({ where: { id: expired.id } })).toBeNull();
   });
 

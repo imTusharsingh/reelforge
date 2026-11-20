@@ -6,7 +6,11 @@ import { IdentityController } from "./identity.controller.js";
 
 import { AccountEmailController } from "./account-email.controller.js";
 import { AccountEmailService } from "./account-email.service.js";
-import { ACCOUNT_EMAIL, accountEmailRelay, type AccountEmailPort } from "./account-email.port.js";
+import {
+  ACCOUNT_EMAIL,
+  createAccountEmailPort,
+  type AccountEmailPort,
+} from "./account-email.port.js";
 
 const databaseProvider = {
   provide: "DATABASE",
@@ -28,7 +32,10 @@ const databaseProvider = {
     IdentityService,
     AuthGuard,
     AccountEmailService,
-    { provide: ACCOUNT_EMAIL, useFactory: (): AccountEmailPort => accountEmailRelay(process.env) },
+    {
+      provide: ACCOUNT_EMAIL,
+      useFactory: (): AccountEmailPort => createAccountEmailPort(process.env),
+    },
   ],
   exports: [IdentityService, AuthGuard, "DATABASE"],
 })
