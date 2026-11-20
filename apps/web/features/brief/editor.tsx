@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import {
   BriefInputSchema,
   defaultBrief,
@@ -7,6 +7,8 @@ import {
 } from "../../../../packages/contracts/src/channel-brief";
 import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
+import { draftEdited, registerDraft } from "../../components/studio-navigation";
+import { ensureCsrfToken } from "../../lib/csrf";
 import { BriefClient } from "./client";
 import { IdentityFields, JsonField, ScheduleBudget, StyleFields } from "./fields";
 
@@ -63,24 +65,26 @@ function useEditorState({
   channelId: string;
   editable: boolean;
 }): EditorState {
-  const [value, setValue] = useState<BriefInput>(seed);
+  const { value, edit, accept } = useBriefDraft(channelId);
   const [version, setVersion] = useState(0);
   const [offerL3, setOfferL3] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  useEditorLoad(workspaceId, channelId, setValue, setVersion, setOfferL3, setLoaded, setError);
+  useEditorLoad(workspaceId, channelId, accept, setVersion, setOfferL3, setLoaded, setError);
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setBusy(true);
     setError("");
     setMessage("");
     try {
+      await ensureCsrfToken();
       const saved = await new BriefClient(workspaceId).save(
         channelId,
         BriefInputSchema.parse(value),
       );
+      accept(value);
       setVersion(saved.version);
       setMessage(`Saved immutable Brief version ${saved.version}.`);
     } catch {
@@ -95,7 +99,7 @@ function useEditorState({
     channelId,
     editable,
     value,
-    setValue,
+    setValue: edit,
     version,
     offerL3,
     loaded,
@@ -104,6 +108,30 @@ function useEditorState({
     busy,
     submit,
   };
+}
+function useBriefDraft(channelId: string): {
+  value: BriefInput;
+  edit: (value: BriefInput) => void;
+  accept: (value: BriefInput) => void;
+} {
+  const [value, setValue] = useState<BriefInput>(seed);
+  const [dirty, setDirty] = useState(false);
+  const saved = useRef(value);
+  const accept = useCallback((next: BriefInput): void => {
+    saved.current = next;
+    setValue(next);
+    setDirty(false);
+  }, []);
+  const edit = (next: BriefInput): void => {
+    draftEdited();
+    setDirty(true);
+    setValue(next);
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    return registerDraft(`brief:${channelId}`, () => accept(saved.current));
+  }, [accept, channelId, dirty]);
+  return { value, edit, accept };
 }
 function EditorView({
   editable,
@@ -119,7 +147,7 @@ function EditorView({
 }: ReturnType<typeof useEditorState>): JSX.Element {
   return (
     <Panel>
-      <h1>Channel Brief</h1>
+      <h2>Channel Brief</h2>
       <p>Version {version}. Edits create a new immutable version.</p>
       {error && (
         <Alert tone="danger" title="Brief needs attention">
@@ -127,9 +155,9 @@ function EditorView({
         </Alert>
       )}
       {message && <StateMessage kind="success" description={message} />}
-      {!loaded ? (
+      {!loaded && !error ? (
         <StateMessage kind="loading" description="Loading Brief…" />
-      ) : (
+      ) : loaded ? (
         <form onSubmit={submit} className="rf-form">
           <fieldset disabled={!editable || busy}>
             <legend>{editable ? "Edit your Brief" : "Read-only Brief"}</legend>
@@ -142,7 +170,7 @@ function EditorView({
             </Button>
           </fieldset>
         </form>
-      )}
+      ) : null}
     </Panel>
   );
 }

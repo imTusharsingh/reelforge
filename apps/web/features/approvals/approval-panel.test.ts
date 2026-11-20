@@ -34,7 +34,7 @@ describe("mobile approval UI on fake transport", () => {
       ),
     );
     const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
-    expect(button.style.minHeight).toBe("48px");
+    expect(host.textContent).toContain("The first 10 Shorts require human approval");
     await act(async () => button.click());
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -42,6 +42,45 @@ describe("mobile approval UI on fake transport", () => {
       label === "Approve Short" ? "APPROVE" : "REJECT",
     );
     expect(host.querySelector('[role="status"]')).not.toBeNull();
+  });
+  it("renders packaged metadata and the retained assembly preview", async () => {
+    const data = detail();
+    const packaging = {
+      title: "A real Short",
+      description: "A sample description",
+      tags: ["science"],
+      coverFrameTimestampMs: 1000,
+      containsSyntheticMedia: true,
+    };
+    data.steps.push({
+      ...data.steps[0]!,
+      key: "quality:packaging",
+      output: { result: { packaging } },
+    });
+    data.artifactUrls.push({
+      stepId: "00000000-0000-4000-8000-000000000009",
+      artifacts: [
+        { kind: "final", contentType: "video/mp4", url: "/api/v1/runs/video" },
+        { kind: "refs", contentType: "image/jpeg", url: "/api/v1/runs/cover" },
+      ],
+    });
+    await act(async () =>
+      root.render(
+        createElement(ApprovalPanel, {
+          detail: data,
+          workspaceId,
+          editable: true,
+          refresh: vi.fn(),
+        }),
+      ),
+    );
+    expect(host.textContent).toContain(packaging.title);
+    expect(host.textContent).toContain(packaging.description);
+    expect(host.textContent).toContain(packaging.tags[0]);
+    expect(host.querySelector("video")?.getAttribute("src")).toBe("/api/v1/runs/video");
+    expect(host.querySelector('img[alt="Short thumbnail"]')?.getAttribute("src")).toBe(
+      "/api/v1/runs/cover",
+    );
   });
   it("blocks missing gate approval, permits rejection, and hides viewer actions", async () => {
     const data = detail();

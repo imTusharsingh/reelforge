@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunScreen } from "./run-screen";
 import { RunList } from "./run-list";
-import { UsageScreen } from "../usage/usage-screen";
 import { AutonomyPanel } from "./autonomy-panel";
 import { detail, FakeEventSource, runId, workspaceId } from "./timeline.fixture";
 vi.mock("../../components/studio-workspace-context", () => ({
@@ -39,11 +38,6 @@ function fakeFetch(): ReturnType<typeof vi.fn> {
         samples: 10,
         recommended: true,
       });
-    if (url.includes("/usage"))
-      return Response.json({
-        shorts: [{ runId, costMinor: 579 }],
-        providers: [{ providerId: "gemini", costMinor: 579 }],
-      });
     if (url.includes("/run-experience?")) return Response.json([detail().run]);
     return Response.json(detail());
   });
@@ -54,27 +48,21 @@ describe("V8 mounted experience with fake HTTP", () => {
   it("renders run steps, critic, spend, autonomy offer and storyboard", async () => {
     fakeFetch();
     await act(async () => root.render(createElement(RunScreen, { id: runId })));
-    expect(host.textContent).toContain("Cost so far $5.79");
+    expect(host.textContent).toContain("$5.79 used of $8.00 cap");
+    expect(host.querySelectorAll(".rf-timeline li")).toHaveLength(14);
     expect(host.textContent).toContain("Storyboard");
     expect(host.textContent).toContain("8/10");
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
   });
-  it("renders the mobile inbox with immediate approve/reject buttons and list routes", async () => {
+  it("routes review cards to review and shows costs on the dashboard", async () => {
     fakeFetch();
     await act(async () => root.render(createElement(RunList, { inbox: true })));
-    expect(host.textContent).toContain("Approval inbox");
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain(
-      "Approve Short",
-    );
+    expect(host.textContent).toContain("Review queue");
+    expect(host.querySelector(`a[href="/runs/${runId}/review"]`)).not.toBeNull();
     await act(async () => root.render(createElement(RunList)));
     expect(host.querySelector(`a[href="/runs/${runId}"]`)).not.toBeNull();
-  });
-  it("shows provider and Short costs on the separate usage route", async () => {
-    fakeFetch();
-    await act(async () => root.render(createElement(UsageScreen)));
-    expect(host.textContent).toContain("Cost per Short");
-    expect(host.textContent).toContain("gemini: $5.79");
+    expect(host.textContent).toContain("$5.79");
   });
   it("offers explicit L3 selection after ten, and posts selection without auto enabling it", async () => {
     const fetcher = fakeFetch();

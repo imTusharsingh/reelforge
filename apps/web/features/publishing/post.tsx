@@ -39,13 +39,11 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
   }, [api, postId]);
 
   return (
-    <section>
+    <section className="rf-stack">
       <header className="rf-page-heading">
-        <p className="rf-eyebrow">Studio / Publishing</p>
         <h1>Post detail</h1>
         <div className="rf-action-row">
           <StudioLink href="/publishing">Calendar</StudioLink>
-          <StudioLink href="/publishing/history">Delivery history</StudioLink>
         </div>
       </header>
       {error && (
@@ -53,9 +51,9 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
           {error}
         </Alert>
       )}
-      {!post ? (
+      {!post && !error ? (
         <p role="status">Loading post…</p>
-      ) : (
+      ) : post ? (
         <>
           <Panel>
             <h2>
@@ -100,7 +98,7 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
             );
           })}
         </>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -1,10 +1,14 @@
 import type { JSX } from "react";
 import { AuthWorkspace } from "../../components/auth-workspace";
-import { UsageScreen } from "../../features/usage/usage-screen";
+import { Ideas } from "../../features/discovery/ideas";
+import { PublishingScope } from "../../features/publishing/session";
+
 export default function Page(): JSX.Element {
   return (
     <AuthWorkspace>
-      <UsageScreen />
+      <PublishingScope>
+        <Ideas />
+      </PublishingScope>
     </AuthWorkspace>
   );
 }

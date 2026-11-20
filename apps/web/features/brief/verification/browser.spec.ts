@@ -11,7 +11,7 @@ async function register(page: Page): Promise<void> {
   await page.getByLabel("Email address").fill(`v7-${crypto.randomUUID()}@example.com`);
   await page.getByLabel("Password", { exact: true }).fill("V7-test-password-2026");
   await page.getByRole("button", { name: "Create account", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your first Short" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create a Channel Brief" })).toBeVisible();
 }
 test("sign-up, five inputs, queued run, immutable Brief and accessible settings", async ({
   page,
@@ -45,9 +45,12 @@ test("sign-up, five inputs, queued run, immutable Brief and accessible settings"
   );
   await register(page);
   await accessible(page);
-  expect(await page.locator("form input,form select").count()).toBe(5);
+  expect(await page.locator("form input,form select").count()).toBe(3);
   await page.getByLabel("Niche or topic").fill("Science explainers");
   await page.getByLabel("Audience", { exact: true }).fill("Curious adults");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Narrator voice").selectOption("Puck");
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Create channel and start first Short" }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
   expect(runCalls).toBe(1);

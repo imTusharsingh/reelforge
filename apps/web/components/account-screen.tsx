@@ -221,7 +221,7 @@ export function AccountScreen(): JSX.Element {
   return (
     <section className="rf-account-page" aria-labelledby="account-heading">
       <p className="rf-eyebrow">Account</p>
-      <h1 id="account-heading">Profile and security</h1>
+      <h2 id="account-heading">Profile and security</h2>
       <p className="rf-lede">Manage your profile and keep your account secure.</p>
       <div className="rf-account-grid">
         <ProfilePanel />

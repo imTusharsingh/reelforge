@@ -1,4 +1,6 @@
-import { isRecord } from "../channels/model";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export const platformValues = ["YOUTUBE", "INSTAGRAM"] as const;
 type Platform = (typeof platformValues)[number];

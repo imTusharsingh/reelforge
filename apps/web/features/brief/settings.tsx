@@ -1,8 +1,11 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
-import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
+import { Alert, Badge, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { BriefClient, type KeyStatus, type SetupPorts } from "./client";
+import { ensureCsrfToken } from "../../lib/csrf";
+import { StudioLink } from "../../components/studio-link";
+import { Skeleton } from "../../components/ui/studio";
 import type { ProviderCapability } from "../../../../packages/contracts/src/foundations";
 
 export function ProviderSettings(): JSX.Element {
@@ -27,7 +30,10 @@ function Settings({
   const load = (): void => {
     void new BriefClient(workspaceId)
       .keys()
-      .then(setStatus)
+      .then((data) => {
+        setStatus(data);
+        setError("");
+      })
       .catch(() =>
         setError("Provider key settings are unavailable until the provider service is ready."),
       );
@@ -35,7 +41,7 @@ function Settings({
   useEffect(load, [workspaceId]);
   return (
     <Panel>
-      <h1>Provider keys</h1>
+      <h2>Provider keys</h2>
       <p>
         Paste each key once. The provider service stores it encrypted. Only configuration status is
         shown.
@@ -45,17 +51,25 @@ function Settings({
           {error}
         </Alert>
       )}
-      {(["gemini", "xai"] as const).map((provider) => (
-        <KeyForm
-          key={provider}
-          provider={provider}
-          configured={status?.[provider] ?? null}
-          client={new BriefClient(workspaceId)}
-          editable={editable}
-          onSaved={load}
-        />
-      ))}
-      <a href="/settings/providers">Provider health and capabilities</a>
+      {!error && !status && <Skeleton label="Checking key configuration…" />}
+      {error && (
+        <Button tone="secondary" onClick={load}>
+          Retry key status
+        </Button>
+      )}
+      <div className="rf-ideas">
+        {(["gemini", "xai"] as const).map((provider) => (
+          <KeyForm
+            key={provider}
+            provider={provider}
+            configured={status?.[provider] ?? null}
+            client={new BriefClient(workspaceId)}
+            editable={editable}
+            onSaved={load}
+          />
+        ))}
+      </div>
+      <StudioLink href="/settings/providers">Provider health and capabilities</StudioLink>
     </Panel>
   );
 }
@@ -107,6 +121,7 @@ function useKeyFormState({
     setBusy(true);
     setError("");
     try {
+      await ensureCsrfToken();
       await client.saveKey(provider, secret);
       onSaved();
     } catch {
@@ -128,14 +143,16 @@ function KeyFormView({
   submit,
 }: ReturnType<typeof useKeyFormState>): JSX.Element {
   return (
-    <form onSubmit={submit} className="rf-form">
-      <h2>{provider === "gemini" ? "Google (Gemini)" : "xAI fallback"}</h2>
+    <form onSubmit={submit} className="rf-form rf-panel">
+      <h3>{provider === "gemini" ? "Google (Gemini)" : "xAI fallback"}</h3>
       <p role="status">
-        {configured === null
-          ? "Checking configuration…"
-          : configured
-            ? "Configured"
-            : "Not configured"}
+        <Badge tone={configured ? "success" : "neutral"}>
+          {configured === null
+            ? "Configuration unknown"
+            : configured
+              ? "Configured"
+              : "Not configured"}
+        </Badge>
       </p>
       {error && (
         <Alert tone="danger" title="Unable to save key">
@@ -191,7 +208,7 @@ function useHealthState({ workspaceId }: { workspaceId: string }): {
 function HealthView({ capabilities, error }: ReturnType<typeof useHealthState>): JSX.Element {
   return (
     <Panel>
-      <h1>Provider health and capabilities</h1>
+      <h2>Provider health and capabilities</h2>
       <p>Registry data only. Opening this page never probes a live provider.</p>
       {error && (
         <Alert tone="danger" title="Health unavailable">
@@ -202,7 +219,16 @@ function HealthView({ capabilities, error }: ReturnType<typeof useHealthState>):
         <StateMessage kind="loading" description="Loading capabilities…" />
       )}
       {capabilities?.length === 0 && <p>No capabilities configured.</p>}
-      {capabilities && capabilities.length > 0 && <CapabilityMatrix capabilities={capabilities} />}
+      {capabilities && capabilities.length > 0 && (
+        <div
+          className="rf-table-scroll"
+          role="region"
+          aria-label="Provider capabilities"
+          tabIndex={0}
+        >
+          <CapabilityMatrix capabilities={capabilities} />
+        </div>
+      )}
     </Panel>
   );
 }

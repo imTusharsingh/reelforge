@@ -37,5 +37,9 @@ export function useRun(
     };
   }, [workspaceId, id, version]);
   useEffect(() => watchRun(workspaceId, id, refresh, setConnection), [workspaceId, id, refresh]);
+  useEffect(() => {
+    const timer = setInterval(refresh, connection === "Live" ? 240000 : 15000);
+    return (): void => clearInterval(timer);
+  }, [connection, refresh]);
   return { detail, error, connection, refresh };
 }
