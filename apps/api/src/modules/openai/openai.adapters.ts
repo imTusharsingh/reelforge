@@ -40,15 +40,15 @@ class OpenAiTextClient {
     protected readonly modelId: string,
     public readonly capability: CapabilityMetadata,
     protected readonly fetcher: FetchImplementation = fetch,
+    providerId: "openai" | "gemini" = "openai",
   ) {
-    if (apiKey === process.env.GEMINI_API_KEY && process.env.NODE_ENV !== "test")
-      this.capability = { ...capability, providerId: "gemini" };
+    this.capability = { ...capability, providerId };
   }
 
   protected async completeJson(request: LlmRequest, systemPrompt: string): Promise<LlmResponse> {
     if (!this.modelId.trim())
       throw notSent("NOT_CONFIGURED", "Text model and key are required", request.correlationId);
-    if (this.apiKey === process.env.GEMINI_API_KEY && process.env.NODE_ENV !== "test")
+    if (this.capability.providerId === "gemini")
       return geminiLegacyText(this.apiKey, this.modelId, this.fetcher, request, systemPrompt);
     const result = await requestJson(
       this.fetcher,
@@ -80,14 +80,25 @@ const INSIGHT_SYSTEM_PROMPT =
   "Return JSON with a narrative string grounded only in the supplied performance evidence. Do not invent metrics.";
 
 export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightReportLlmPort {
-  public constructor(apiKey: string, modelId: string, fetcher: FetchImplementation = fetch) {
-    super(apiKey, modelId, textCapability("insight-report", OPENAI_TEXT_ESTIMATE_USD), fetcher);
+  public constructor(
+    apiKey: string,
+    modelId: string,
+    fetcher: FetchImplementation = fetch,
+    providerId: "openai" | "gemini" = "openai",
+  ) {
+    super(
+      apiKey,
+      modelId,
+      textCapability("insight-report", OPENAI_TEXT_ESTIMATE_USD),
+      fetcher,
+      providerId,
+    );
   }
 
   public isConfigured(): boolean {
-    return !providerKeyIssue(
-      this.capability.providerId === "gemini" ? "gemini" : "openai",
-      this.apiKey,
+    return (
+      !!this.modelId.trim() &&
+      !providerKeyIssue(this.capability.providerId === "gemini" ? "gemini" : "openai", this.apiKey)
     );
   }
 
@@ -113,6 +124,7 @@ export class OpenAiInsightReportLlm extends OpenAiTextClient implements InsightR
 
 export type OpenAiRuntimeConfig = Readonly<{
   key: string | undefined;
+  providerId: "openai" | "gemini";
   textModel: string;
   textFallbackEnabled: boolean;
   imageModel: string;
@@ -121,16 +133,16 @@ export type OpenAiRuntimeConfig = Readonly<{
 export function openAiRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenAiRuntimeConfig {
   const gemini = providerKey("gemini", env);
   return {
+    providerId: gemini ? "gemini" : "openai",
     key: gemini ?? (env.OPENAI_TEXT_FALLBACK_ENABLED === "true" ? openAiKey(env) : undefined),
     textModel: gemini ? env.GEMINI_TEXT_MODEL?.trim() || "" : openAiTextModel(env),
-    textFallbackEnabled:
-      !!gemini || (env.NODE_ENV !== "test" && env.OPENAI_TEXT_FALLBACK_ENABLED === "true"),
+    textFallbackEnabled: !!gemini || env.OPENAI_TEXT_FALLBACK_ENABLED === "true",
     imageModel: env.GEMINI_IMAGE_MODEL?.trim() || "",
     ttsModel: env.GEMINI_TTS_MODEL?.trim() || "",
   };
 }
 export function openAiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return env.NODE_ENV === "test" ? undefined : env.OPENAI_API_KEY || undefined;
+  return env.OPENAI_API_KEY || undefined;
 }
 export function openAiTextModel(env: NodeJS.ProcessEnv = process.env): string {
   return env.OPENAI_TEXT_MODEL?.trim() || "";

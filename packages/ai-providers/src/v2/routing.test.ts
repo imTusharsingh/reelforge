@@ -96,6 +96,7 @@ describe("routing policy", () => {
     for (let i = 0; i < 4; i++) await router.submit(shot, `key${i}`, ["gemini", "xai"]);
     expect(primary.submit).toHaveBeenCalledTimes(3);
     expect(router.matrix()[0]!.health).toBe("UNAVAILABLE");
+    expect(router.matrix()[1]!.health).toBe("HEALTHY");
   });
   it("rejects an empty route and honors capability fit", async () => {
     const { router } = setup();
@@ -183,7 +184,7 @@ describe("exact catalog and money", () => {
       pricePerSecond: { "720p": 140000 },
     });
   });
-  it("loads model ids from config and disables environment credentials in tests", () => {
+  it("loads model IDs and credentials from the supplied environment", () => {
     const env = {
       GEMINI_VIDEO_MODEL: models.video,
       GEMINI_IMAGE_MODEL: models.image,
@@ -194,7 +195,7 @@ describe("exact catalog and money", () => {
     };
     expect(providerModels(env)).toEqual(models);
     expect(() => providerModels({})).toThrow();
-    expect(providerKey("gemini", { NODE_ENV: "test", GEMINI_API_KEY: "secret" })).toBeUndefined();
+    expect(providerKey("gemini", { NODE_ENV: "test", GEMINI_API_KEY: "secret" })).toBe("secret");
     expect(providerKey("gemini", { GEMINI_API_KEY: " secret " })).toBe(" secret ");
     expect(providerKey("xai", { XAI_API_KEY: "secret" })).toBe("secret");
     expect(providerKey("xai", {})).toBeUndefined();

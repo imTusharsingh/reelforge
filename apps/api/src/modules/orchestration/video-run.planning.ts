@@ -32,8 +32,8 @@ export class RunPlanning {
     if (!handler) throw new ConflictException("Step handler unavailable");
     const step = previous ?? (await this.begin(context, run));
     const output = previous
-      ? await handler.reconcile(run, this.brief(run), step)
-      : await handler.execute(run, this.brief(run), step);
+      ? await handler.reconcile(run, this.brief(run), step, context)
+      : await handler.execute(run, this.brief(run), step, context);
     if (output === null)
       throw new ConflictException("Stage reconciliation required; no paid resubmission");
     const artifacts = run.state === "ASSEMBLING" ? await this.outputs.assembly(context, run) : [];
@@ -138,7 +138,7 @@ export class RunPlanning {
       where: { runId: run.id, key: "REEDIT", state: "PENDING" },
     });
     if (!step) return;
-    const output = await this.handlers.ASSEMBLING!.execute(run, this.brief(run), step);
+    const output = await this.handlers.ASSEMBLING!.execute(run, this.brief(run), step, context);
     const artifacts = await this.outputs.assembly(context, run);
     const result = await this.runs.store.mutate(
       context,

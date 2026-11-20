@@ -49,6 +49,5 @@ export function providerKey(
   vendor: "gemini" | "xai",
   env: Record<string, string | undefined>,
 ): string | undefined {
-  if (env.NODE_ENV === "test") return undefined;
   return env[vendor === "gemini" ? "GEMINI_API_KEY" : "XAI_API_KEY"] || undefined;
 }

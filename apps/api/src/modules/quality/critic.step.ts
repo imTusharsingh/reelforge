@@ -22,9 +22,8 @@ export class CriticStep implements StepHandler {
     planning.handlers = { ...planning.handlers, CRITIC: this };
   }
 
-  public async execute(run: Run, brief: ChannelBrief, step: Step): Promise<Json> {
+  public async execute(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json> {
     const runs = this.modules.get(RunsService, { strict: false });
-    const context = await this.context(runs, run);
     const db = runs.store.scoped(context);
     const attempts = await db.videoRunStep.findMany({
       where: {
@@ -43,9 +42,9 @@ export class CriticStep implements StepHandler {
     return json(report);
   }
 
-  public reconcile(run: Run, brief: ChannelBrief, step: Step): Promise<Json> {
+  public reconcile(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json> {
     // RunCritic replays completed paid calls and blocks redispatch for unresolved intents.
-    return this.execute(run, brief, step);
+    return this.execute(run, brief, step, context);
   }
 
   private async savePackaging(
@@ -83,19 +82,6 @@ export class CriticStep implements StepHandler {
       },
     );
     await runs.events?.publish(saved.event);
-  }
-
-  private async context(runs: RunsService, run: Run): Promise<Context> {
-    const actor = await runs.store.db.workspaceMembership.findFirst({
-      where: {
-        workspaceId: run.workspaceId,
-        role: { in: ["OWNER", "EDITOR"] },
-        workspace: { archivedAt: null },
-      },
-      orderBy: { userId: "asc" },
-    });
-    if (!actor) throw new ConflictException("Critic has no authorized workspace actor");
-    return { workspaceId: run.workspaceId, userId: actor.userId, role: actor.role };
   }
 
   private async redo(

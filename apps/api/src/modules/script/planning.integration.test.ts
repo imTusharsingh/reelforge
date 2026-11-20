@@ -138,6 +138,9 @@ describe.skipIf(!url)("V4 database and storage integration (offline providers)",
     const result = await service.plan(context, request);
     expect(result.manifest.prompts.map((prompt) => prompt.version)).toEqual([2, 2, 2]);
     expect(result.manifest.shots).toHaveLength(6);
+    expect(await service.plan(context, request)).toEqual(result);
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(images.generate).toHaveBeenCalledTimes(4);
     expect(
       await db.shotSpec.count({
         where: { workspaceId: context.workspaceId, runId: request.runId },

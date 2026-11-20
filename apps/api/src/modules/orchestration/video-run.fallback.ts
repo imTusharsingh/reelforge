@@ -16,7 +16,11 @@ export class RunFallback {
     await this.paid.finish(context, failed, false, 0);
     const result = await this.runs.store.mutate(context, run.id, "fallback", async (db) => {
       const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-      if (budget.route === "FALLBACK") throw new ConflictException("Fallback provider unavailable");
+      if (budget.route === "FALLBACK")
+        throw new ConflictException({
+          code: "PROVIDER_OUTAGE",
+          message: "Fallback provider unavailable",
+        });
       const all = await db.videoRunStep.findMany({
         where: { runId: run.id, key: { startsWith: "shot-" } },
       });

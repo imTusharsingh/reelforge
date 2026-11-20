@@ -15,23 +15,32 @@ export interface RouterDispatch {
   /** V3 re-estimates its envelope before a fallback is allowed to spend. */
   allowFallback(providerId: string, estimate: Money): Promise<void>;
 }
+type VideoRouteStats = { failures: number; openUntil: number; accepted: number; calls: number };
+export type VideoRoutingState = Map<string, VideoRouteStats>;
+export function videoHealth(
+  configured: ReturnType<VideoGenPort["capabilities"]>["health"],
+  state: VideoRouteStats | undefined,
+  now: number,
+): ReturnType<VideoGenPort["capabilities"]>["health"] {
+  if (configured !== "HEALTHY" || !state) return configured;
+  if (state.openUntil > now) return "UNAVAILABLE";
+  return state.failures > 0 || state.accepted < state.calls ? "DEGRADED" : "HEALTHY";
+}
+
 export class VideoRouter {
-  private readonly health = new Map<
-    string,
-    { failures: number; openUntil: number; accepted: number; calls: number }
-  >();
   public constructor(
     private readonly routes: readonly Route[],
     private readonly dispatch: RouterDispatch,
     private readonly rewrite: (spec: ShotSpec) => Promise<ShotSpec>,
     private readonly now: () => number = Date.now,
+    private readonly health: VideoRoutingState = new Map(),
   ) {}
   public matrix(): ReadonlyArray<ReturnType<VideoGenPort["capabilities"]>> {
     return this.routes.map(({ port }) => {
       const cap = port.capabilities();
       return {
         ...cap,
-        health: this.state(cap.providerId).openUntil > this.now() ? "UNAVAILABLE" : cap.health,
+        health: videoHealth(cap.health, this.health.get(cap.providerId), this.now()),
       };
     });
   }
@@ -41,7 +50,10 @@ export class VideoRouter {
     channelRoute: readonly string[],
   ): Promise<RoutedJob> {
     const routes = this.select(spec, channelRoute);
-    let outage: unknown = new ProviderFailure("NOT_CONFIGURED", false);
+    const circuitOpen = channelRoute.some(
+      (id) => (this.health.get(id)?.openUntil ?? 0) > this.now(),
+    );
+    let outage: unknown = new ProviderFailure(circuitOpen ? "OUTAGE" : "NOT_CONFIGURED", false);
     for (const route of routes) {
       const providerId = route.port.capabilities().providerId;
       if (route.port.capabilities().providerId !== channelRoute[0])

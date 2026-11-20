@@ -11,7 +11,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
-import { json, type Context, type Run } from "../runs/runs.types.js";
+import { json } from "../runs/runs.types.js";
 import type { StepHandler } from "../orchestration/video-run.handlers.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
@@ -61,6 +61,7 @@ export class MediaBindings {
           this.ports.limiter(context.workspaceId, vendor),
           (body, from) => this.frames.extensionTail(body, from),
           () => ports.assertKey(vendor),
+          this.ports.videoState(context.workspaceId),
         );
       return { primary: routed(ports.omni, "gemini"), fallback: routed(ports.grok, "xai") };
     };
@@ -71,17 +72,17 @@ export class MediaBindings {
         idea: brief.topic,
         source: "CHANNEL_BRIEF",
       })),
-      SCRIPTING: this.handler(async (run, brief) =>
-        json(await this.planning.plan(await this.context(run), run, brief)),
+      SCRIPTING: this.handler(async (run, brief, _step, context) =>
+        json(await this.planning.plan(context, run, brief)),
       ),
-      SHOT_PLANNING: this.handler(async (run, brief) => {
-        const result = await this.planning.saved(await this.context(run), run, brief);
+      SHOT_PLANNING: this.handler(async (run, brief, _step, context) => {
+        const result = await this.planning.saved(context, run, brief);
         if (!result) throw new Error("V4 planning result missing");
         return json(result.manifest);
       }),
-      ASSEMBLING: this.handler(async (run, brief) =>
+      ASSEMBLING: this.handler(async (run, brief, _step, context) =>
         json({
-          storageArtifacts: await this.assembly.execute(await this.context(run), run, brief),
+          storageArtifacts: await this.assembly.execute(context, run, brief),
         }),
       ),
     };
@@ -93,17 +94,6 @@ export class MediaBindings {
   }
   private handler(execute: StepHandler["execute"]): StepHandler {
     return { execute, reconcile: execute };
-  }
-  private async context(run: Run): Promise<Context> {
-    const actor = await this.access.runs.store.db.workspaceMembership.findFirst({
-      where: {
-        workspaceId: run.workspaceId,
-        role: { in: ["OWNER", "EDITOR"] },
-        workspace: { archivedAt: null },
-      },
-    });
-    if (!actor) throw new Error("Worker actor no longer authorized");
-    return { workspaceId: run.workspaceId, userId: actor.userId, role: actor.role };
   }
 }
 @Global()

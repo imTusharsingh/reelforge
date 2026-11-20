@@ -121,6 +121,7 @@ describe.skipIf(
       access,
       {
         ports: async () => ({ ...native, assertKey: (): void => {} }),
+        videoState: () => new Map(),
       } as unknown as ProvidersRuntime,
       jobs,
     );

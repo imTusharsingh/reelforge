@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateBriefDuplicates } from "./brief-consistency.js";
 
 export const FOUNDATION_VERSION = "1.0" as const;
 const uuid = z.uuid();
@@ -143,7 +144,7 @@ export const TuningBoundsSchema = z
     scoringWeights: z.record(text, WeightBoundsSchema),
   })
   .strict();
-export const ChannelBriefSchema = owned
+export const ChannelBriefShape = owned
   .extend({
     channelId: uuid,
     version: z.int().positive(),
@@ -156,12 +157,16 @@ export const ChannelBriefSchema = owned
     tuningBounds: TuningBoundsSchema.nullable(),
     languages: z.object({ script: text, narration: text, captions: text }).strict(),
     onCameraVoice: NarratorVoiceSchema.nullable(),
+    /** @deprecated Use formatMix for format selection. */
     formatKey: text,
     targetDurationSeconds: z.number().positive().max(180),
+    /** @deprecated Use languages.narration. */
     narrationLanguage: text,
+    /** @deprecated Use languages.narration for the voice language. Voice identity remains here. */
     narratorVoice: NarratorVoiceSchema.nullable(),
     requestedAutonomy: AutonomyLevelSchema,
     cadence: CadenceSchema,
+    /** @deprecated Use guardrails.aiDisclosure. */
     aiDisclosure: z.literal(true),
     renderProfile: RenderProfileSchema,
     budgetPolicy: BudgetPolicySchema,
@@ -178,6 +183,7 @@ export const ChannelBriefSchema = owned
     constraints: z.record(z.string(), z.json()),
   })
   .strict();
+export const ChannelBriefSchema = ChannelBriefShape.superRefine(validateBriefDuplicates);
 export type ChannelBrief = z.infer<typeof ChannelBriefSchema>;
 export const VideoRunSchema = owned
   .extend({

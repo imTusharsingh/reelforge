@@ -38,7 +38,10 @@ export class RunPaidCalls {
       ttlMs: 86400000,
     });
     if (result.decision !== "RESERVED")
-      throw new ServiceUnavailableException("Budget policy unavailable");
+      throw new ServiceUnavailableException({
+        code: result.reason,
+        message: "Budget policy unavailable",
+      });
     if (result.replayed) throw new ConflictException("Paid dispatch requires reconciliation");
     await this.store.db.providerRequest.create({
       data: {

@@ -37,7 +37,8 @@ export function fallbackEstimate(
     envelope.reservedMinor +
     clipEstimate(remaining, true) +
     overheadRemaining;
-  if (baseEstimateMinor > 800) throw new ConflictException("Fallback exceeds $8");
+  if (baseEstimateMinor > 800)
+    throw new ConflictException({ code: "BUDGET_CAP", message: "Fallback exceeds $8" });
   const reserve =
     baseEstimateMinor + envelope.reshootReserveMinor <= 800 ? envelope.reshootReserveMinor : 0;
   return { baseEstimateMinor, reshootReserveMinor: reserve, route: "FALLBACK" };

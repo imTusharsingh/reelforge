@@ -115,7 +115,10 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       .scoped(t.context)
       .videoRunStep.findFirstOrThrow({ where: { runId: t.run.id, key: "shot-0" } });
     await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).rejects.toThrow();
-    expect((await t.store.get(t.context, t.run.id)).state).toBe("PAUSED_BUDGET");
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: "PAUSED_BUDGET",
+      pauseReason: "BUDGET_CAP",
+    });
     await t.control.resume(t.context, t.run.id);
     t.stop.stopped = true;
     const submit = vi.spyOn(t.generation.provider, "submit");

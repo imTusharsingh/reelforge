@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ChannelBriefSchema, CadenceSchema } from "./foundations.js";
+import { validateBriefDuplicates } from "./brief-consistency.js";
+import { ChannelBriefShape, CadenceSchema } from "./foundations.js";
 
 export const BRIEF_FORMATS = [
   "explainer",
@@ -12,13 +13,14 @@ export const BRIEF_FORMATS = [
   "news-recap",
 ] as const;
 /** V7 write DTO. Identity and version are assigned by the server, never by the editor. */
-export const BriefInputSchema = ChannelBriefSchema.omit({
+export const BriefInputSchema = ChannelBriefShape.omit({
   id: true,
   workspaceId: true,
   channelId: true,
   version: true,
   schemaVersion: true,
 }).superRefine((brief, ctx) => {
+  validateBriefDuplicates(brief, ctx);
   const keys = brief.formatMix.map((item) => item.formatKey);
   if (
     keys.length !== BRIEF_FORMATS.length ||

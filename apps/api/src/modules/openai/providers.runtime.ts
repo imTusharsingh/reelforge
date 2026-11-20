@@ -16,6 +16,7 @@ import {
   type ReferenceResolver,
   type Money,
   type VideoGenPort,
+  type VideoRoutingState,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
 import type { WorkspaceContext } from "../identity/identity.types.js";
@@ -26,6 +27,16 @@ import { ProviderLedger } from "./provider-ledger.js";
 
 @Injectable()
 export class ProvidersRuntime {
+  private readonly videoStates = new Map<string, VideoRoutingState>();
+  public videoState(workspaceId: string): VideoRoutingState {
+    let state = this.videoStates.get(workspaceId);
+    if (!state) {
+      state = new Map();
+      this.videoStates.set(workspaceId, state);
+    }
+    return state;
+  }
+
   private readonly limiters = new Map<string, ProviderLimiter>();
   public constructor(
     private readonly keys: ProviderKeys,
@@ -94,6 +105,8 @@ export class ProvidersRuntime {
         allowFallback,
       },
       rewrite,
+      Date.now,
+      this.videoState(context.workspaceId),
     );
   }
   public async reconcile(

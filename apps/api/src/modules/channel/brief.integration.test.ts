@@ -60,7 +60,7 @@ describe.skipIf(!enabled)("V7 persisted Brief versions", () => {
     ).rejects.toThrow();
   });
   it("counts channel approvals through the V3 seam, with the ten-approval boundary", async () => {
-    expect(await new BriefApprovals().count(context, channelId)).toBe(0);
+    expect(await new BriefApprovals(db).count(context, channelId)).toBe(0);
     count.mockResolvedValue(9);
     await expect(
       service.create(context, channelId, { ...input, requestedAutonomy: "L3" }),
@@ -79,6 +79,33 @@ describe.skipIf(!enabled)("V7 persisted Brief versions", () => {
       offerL3: true,
     });
     expect(count).toHaveBeenCalledWith(context, channelId);
+  });
+  it("counts only distinct runs with a final approval on this channel", async () => {
+    const brief = await service.create(context, channelId, input);
+    const run = await db.videoRun.create({
+      data: {
+        workspaceId,
+        channelId,
+        channelBriefId: brief.id,
+        channelBriefVersion: brief.version,
+        idempotencyKey: randomUUID(),
+        correlationId: randomUUID(),
+        inputSnapshot: {},
+      },
+    });
+    await db.runEvent.createMany({
+      data: ["stage_approved", "approved", "approved"].map((type, index) => ({
+        workspaceId,
+        runId: run.id,
+        sequence: index + 1,
+        type,
+        correlationId: run.correlationId,
+        payload: {},
+      })),
+    });
+    const approvals = new BriefApprovals(db);
+    expect(await approvals.count(context, channelId)).toBe(1);
+    expect(await approvals.count({ ...context, workspaceId: foreign }, channelId)).toBe(0);
   });
   it("resolves workspace membership on every controller operation", async () => {
     const resolve = vi.fn().mockResolvedValue(context);

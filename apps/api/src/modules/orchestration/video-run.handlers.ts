@@ -1,8 +1,8 @@
 import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
 export interface StepHandler {
-  execute(run: Run, brief: ChannelBrief, step: Step): Promise<Json>;
-  reconcile(run: Run, brief: ChannelBrief, step: Step): Promise<Json | null>;
+  execute(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json>;
+  reconcile(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json | null>;
 }
 class UnconfiguredStep implements StepHandler {
   public async execute(): Promise<never> {
