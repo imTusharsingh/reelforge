@@ -2,6 +2,7 @@
 import { useRef, useState, type FormEvent, type JSX } from "react";
 import {
   defaultBrief,
+  OnboardingInputSchema,
   type OnboardingInput,
 } from "../../../../packages/contracts/src/channel-brief";
 import type { ChannelBrief } from "../../../../packages/contracts/src/foundations";
@@ -13,11 +14,15 @@ import {
   SelectField,
   StateMessage,
 } from "../../components/ui/primitives";
+import { BrandLogo } from "../../components/brand-logo";
+import { StudioLink } from "../../components/studio-link";
+import { ensureCsrfToken } from "../../lib/csrf";
 import { api, type Workspace } from "../../lib/api";
 import { BriefClient } from "./client";
 
 type Progress = { workspace?: Workspace; channelId?: string; brief?: ChannelBrief; key: string };
 async function start(input: OnboardingInput, progress: Progress): Promise<Workspace> {
+  await ensureCsrfToken();
   if (!progress.workspace) {
     const created = await api.createWorkspace(input.niche);
     const authorized = (await api.listWorkspaces()).find((item) => item.id === created.id);
@@ -32,10 +37,12 @@ async function start(input: OnboardingInput, progress: Progress): Promise<Worksp
 }
 export function Onboarding({
   onComplete,
+  workspace,
 }: {
+  workspace?: Workspace | undefined;
   onComplete?: ((workspace: Workspace) => void) | undefined;
 }): JSX.Element {
-  const state = useOnboardingState({ onComplete });
+  const state = useOnboardingState({ onComplete, workspace });
   return <OnboardingView {...state} />;
 }
 type OnboardingState = {
@@ -45,11 +52,15 @@ type OnboardingState = {
   error: string;
   queued: boolean;
   progress: import("react").RefObject<Progress>;
+  step: number;
+  back: () => void;
   submit: (event: FormEvent) => Promise<void>;
 };
 function useOnboardingState({
   onComplete,
+  workspace,
 }: {
+  workspace?: Workspace | undefined;
   onComplete?: ((workspace: Workspace) => void) | undefined;
 }): OnboardingState {
   const [input, setInput] = useState<OnboardingInput>({
@@ -66,14 +77,25 @@ function useOnboardingState({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [queued, setQueued] = useState(false);
-  const progress = useRef<Progress>({ key: "" });
+  const [step, setStep] = useState(0);
+  const progress = useRef<Progress>({ key: "", ...(workspace ? { workspace } : {}) });
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    setBusy(true);
+    if (busy || queued) return;
     setError("");
+    if (step < 2) {
+      setStep(step + 1);
+      return;
+    }
+    const validated = OnboardingInputSchema.safeParse(input);
+    if (!validated.success) {
+      setError(validated.error.issues.map((issue) => issue.message).join(" "));
+      return;
+    }
+    setBusy(true);
     progress.current.key ||= crypto.randomUUID();
     try {
-      const workspace = await start(input, progress.current);
+      const workspace = await start(validated.data, progress.current);
       setQueued(true);
       onComplete?.(workspace);
     } catch {
@@ -84,7 +106,7 @@ function useOnboardingState({
       setBusy(false);
     }
   };
-  return { input, setInput, busy, error, queued, progress, submit };
+  return { input, setInput, busy, error, queued, progress, step, back: () => setStep(step - 1), submit };
 }
 function OnboardingView({
   input,
@@ -93,41 +115,42 @@ function OnboardingView({
   error,
   queued,
   progress,
+  step,
+  back,
   submit,
 }: ReturnType<typeof useOnboardingState>): JSX.Element {
-  if (queued) return <StateMessage kind="success" description="Your first Short is queued." />;
+  if (queued) return <StateMessage kind="success" description="Your first Short is queued." action={<StudioLink href="/">Open studio</StudioLink>} />;
+  const steps = ["Audience", "Voice & cadence", "Confirm"];
   return (
-    <Panel aria-labelledby="onboarding-title">
-      <h1 id="onboarding-title">Your first Short</h1>
-      <p>
-        Five inputs. Everything else starts with safe defaults: L2 approval, $6 target / $8 cap,
-        $20/day and $180/month.
-      </p>
-      {error && (
-        <Alert tone="danger" title="Setup needs attention">
-          {error}
-        </Alert>
-      )}
+    <Panel className="rf-wizard" aria-labelledby="onboarding-title">
+      <BrandLogo inverse />
+      <h1 id="onboarding-title">Create a Channel Brief</h1>
+      <ol className="rf-wizard-steps" aria-label="Setup progress">
+        {steps.map((name, index) => <li key={name} aria-current={step === index ? "step" : undefined}>{name}</li>)}
+      </ol>
+      {error && <Alert tone="danger" title="Setup needs attention">{error}</Alert>}
       <form onSubmit={submit} className="rf-form">
-        <fieldset disabled={busy || Boolean(progress.current.brief)}>
-          <legend>Channel Brief</legend>
-          <SetupFields input={input} setInput={setInput} />
+        <fieldset key={step} disabled={busy || Boolean(progress.current.channelId)}>
+          <legend>{steps[step]}</legend>
+          {step === 0 && <AudienceFields input={input} setInput={setInput} />}
+          {step === 1 && <CadenceFields input={input} setInput={setInput} />}
+          {step === 2 && <p>{input.niche} · {input.audience} · {input.language} · {input.voiceId} · {input.cadence.localTime} ({input.cadence.timezone}). Starts at L2 with a $6 target, $8 per Short cap, $20 daily cap and $180 monthly cap.</p>}
         </fieldset>
-        <Button type="submit" loading={busy}>
-          {progress.current.brief ? "Retry first Short" : "Create channel and start first Short"}
-        </Button>
+        <div className="rf-actions">
+          {step > 0 && !progress.current.channelId && <Button tone="secondary" disabled={busy} onClick={back}>Back</Button>}
+          <Button type="submit" loading={busy}>
+            {step < 2 ? "Continue" : progress.current.brief ? "Retry first Short" : "Create channel and start first Short"}
+          </Button>
+        </div>
       </form>
     </Panel>
   );
 }
 
-function SetupFields({
-  input,
-  setInput,
-}: Pick<OnboardingState, "input" | "setInput">): JSX.Element {
+type Fields = Pick<OnboardingState, "input" | "setInput">;
+function AudienceFields({ input, setInput }: Fields): JSX.Element {
   return (
     <>
-      {" "}
       <Field
         id="setup-niche"
         label="Niche or topic"
@@ -149,6 +172,13 @@ function SetupFields({
         value={input.language}
         onChange={(e) => setInput({ ...input, language: e.target.value })}
       />
+    </>
+  );
+}
+
+function CadenceFields({ input, setInput }: Fields): JSX.Element {
+  return (
+    <>
       <SelectField
         id="setup-voice"
         label="Narrator voice"

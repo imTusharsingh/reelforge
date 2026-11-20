@@ -83,3 +83,8 @@ ul, ol { padding-inline-start: var(--rf-space-5); }
   .rf-columns { grid-template-columns: 1fr; }
   .rf-shell-header { flex-wrap: wrap; }
 }
+
+.rf-wizard { width: min(100%, 640px); margin-inline: auto; }
+.rf-wizard-steps { display: flex; flex-wrap: wrap; list-style: none; padding: 0; gap: var(--rf-space-3); color: var(--rf-muted); font-size: var(--rf-type-sm); }
+.rf-wizard-steps li { border-bottom: 2px solid var(--rf-border); padding: var(--rf-space-2) 0; flex: 1; }
+.rf-wizard-steps [aria-current] { border-color: var(--rf-accent); color: var(--rf-accent); }
