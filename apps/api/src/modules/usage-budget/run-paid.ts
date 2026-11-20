@@ -4,6 +4,16 @@ import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Step } from "../runs/runs.types.js";
 
+async function dispatchOutcome<T>(
+  call: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
+  try {
+    return { ok: true, value: await call() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
 /** Keep M08/M18 logical keys, with the UUID step id as the ledger correlation id. */
 @Injectable()
 export class RunPaidCalls {
@@ -53,11 +63,12 @@ export class RunPaidCalls {
     };
   }
   public async dispatch<T>(context: Context, step: Step, call: () => Promise<T>): Promise<T> {
-    try {
-      await this.store.mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
+    const admission = await this.store
+      .mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (
-          run.state === "CANCELED" ||
+          ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
+          run.pauseReason === "OPERATOR_ABANDONED" ||
           current.state !== "RUNNING" ||
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
@@ -70,26 +81,27 @@ export class RunPaidCalls {
           },
         });
         if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-        return { value: null, payload: {}, stepId: step.id };
+        // Start under the same run lock as cancel. Wait for the provider only after the lock is released.
+        return { value: dispatchOutcome(call), payload: {}, stepId: step.id };
+      })
+      .catch(async (error: unknown) => {
+        const current = await this.store.scoped(context).videoRunStep.findFirst({
+          where: { id: step.id, state: "CANCELLED" },
+        });
+        if (current) await this.finish(context, step, false, 0);
+        throw error;
       });
-    } catch (error) {
-      const run = await this.store.get(context, step.runId);
-      if (run.state === "CANCELED") await this.finish(context, step, false, 0);
-      throw error;
-    }
-    try {
-      return await call();
-    } catch (error) {
-      await this.store.db.providerRequest.updateMany({
-        where: {
-          workspaceId: context.workspaceId,
-          correlationId: step.id,
-          errorCode: "VIDEO_RUN_DISPATCHING",
-        },
-        data: { errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN" },
-      });
-      throw error;
-    }
+    const outcome = await admission.value;
+    if (outcome.ok) return outcome.value;
+    await this.store.db.providerRequest.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: step.id,
+        errorCode: "VIDEO_RUN_DISPATCHING",
+      },
+      data: { errorCode: "VIDEO_RUN_OUTCOME_UNKNOWN" },
+    });
+    throw outcome.error;
   }
   public async finish(
     context: Context,

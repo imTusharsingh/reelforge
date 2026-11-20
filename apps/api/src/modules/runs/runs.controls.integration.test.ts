@@ -42,6 +42,47 @@ suite("V3 approval, caps and retention", () => {
       expect((await t.store.get(t.context, t.run.id)).state).toBe("CANCELED");
     },
   );
+  it("settles a call admitted before cancel and rejects a subsequent dispatch", async () => {
+    const t = await fixture.tenant();
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    const step = await t.store.scoped(t.context).videoRunStep.create({
+      data: {
+        workspaceId: t.context.workspaceId,
+        runId: t.run.id,
+        key: "media:text:fixture",
+        state: "RUNNING",
+        costMinor: 10,
+        idempotencyKey: `${t.run.id}:text:1`,
+        input: {},
+      },
+    });
+    const usage = new UsageBudgetService(t.db, () => new Date());
+    const paid = new RunPaidCalls(usage, t.store);
+    await paid.reserve(t.context, t.run, step, 10);
+    const started = Promise.withResolvers<void>();
+    const completed = Promise.withResolvers<number>();
+    const dispatched = paid.dispatch(t.context, step, () => {
+      started.resolve();
+      return completed.promise;
+    });
+    await started.promise;
+    await t.control.cancel(t.context, t.run.id);
+    expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
+      reservedMinor: 10,
+      committedMinor: 0,
+    });
+    completed.resolve(7);
+    await paid.finish(t.context, step, true, await dispatched);
+    const provider = vi.fn();
+    await expect(paid.dispatch(t.context, step, provider)).rejects.toThrow(
+      "Paid dispatch is closed",
+    );
+    expect(provider).not.toHaveBeenCalled();
+    expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
+      reservedMinor: 0,
+      committedMinor: 7,
+    });
+  });
   it("releases an unknown text attempt and resumes the same stage", async () => {
     const t = await fixture.tenant();
     await t.engine.process(t.runs.job(t.context, t.run.id));
