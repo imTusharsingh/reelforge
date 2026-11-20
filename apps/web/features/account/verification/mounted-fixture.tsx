@@ -90,5 +90,6 @@ function Fixture(): JSX.Element {
   );
 }
 
-if (mode === "account") window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
+if (mode !== "login" && mode !== "csrf")
+  window.localStorage.setItem("reelforge.activeWorkspace", workspace.id);
 createRoot(document.getElementById("root")!).render(<Fixture />);

@@ -21,11 +21,8 @@ const output = await esbuild.build({
   jsx: "automatic",
   define: { "process.env.NODE_ENV": '"development"' },
   alias: {
-    "next/link": path.join(root, "apps/web/features/planning/verification/next-link.tsx"),
-    "next/navigation": path.join(
-      root,
-      "apps/web/features/production/verification/next-navigation.ts",
-    ),
+    "next/link": path.join(directory, "next-link.tsx"),
+    "next/navigation": path.join(directory, "next-navigation.ts"),
   },
 });
 const js = output.outputFiles.find((file) => file.path.endsWith(".js")).text;

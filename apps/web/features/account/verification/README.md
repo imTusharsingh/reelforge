@@ -12,4 +12,6 @@ PLAYWRIGHT_MODULE=/path/to/playwright-core ESBUILD_MODULE=/path/to/esbuild \
   node apps/web/features/account/verification/mounted-browser.mjs
 ```
 
+Run the same command with `csrf-browser.mjs` for the CSRF smoke. Both scripts share local Next.js stubs.
+
 Fixtures mock `/api/v1` fetch responses only. No live provider, credential, or production data is used.
