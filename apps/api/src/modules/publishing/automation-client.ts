@@ -22,20 +22,27 @@ export async function publishingClient(
   return {
     ...client,
     startVideoUpload: async (metadata, bytes, contentType): Promise<string> => {
-      const claimed = await db.v9InsertLease.updateMany({
-        where: {
-          workspaceId: context.workspaceId,
-          slotId: slot.id,
-          status: "RESERVED",
-          slot: { run: { state: "SCHEDULED", pauseReason: null } },
-        },
-        data: { status: "DISPATCHED" },
+      const { upload } = await db.$transaction(async (tx) => {
+        const runs = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM video_runs
+          WHERE workspace_id = ${context.workspaceId}::uuid
+            AND id = ${slot.runId}::uuid AND state = 'SCHEDULED' AND pause_reason IS NULL
+          FOR UPDATE`;
+        if (!runs.length) throw new ConflictException("Run is no longer scheduled for publishing");
+        const claimed = await tx.v9InsertLease.updateMany({
+          where: { workspaceId: context.workspaceId, slotId: slot.id, status: "RESERVED" },
+          data: { status: "DISPATCHED" },
+        });
+        if (claimed.count !== 1)
+          throw new ConflictException(
+            "An insert was already dispatched; reconcile before another upload",
+          );
+        const upload = client.startVideoUpload(metadata, bytes, contentType);
+        // The request starts under the run lock; the response can arrive after releasing it.
+        void upload.catch(() => undefined);
+        return { upload };
       });
-      if (claimed.count !== 1)
-        throw new ConflictException(
-          "An insert was already dispatched; reconcile before another upload",
-        );
-      return client.startVideoUpload(metadata, bytes, contentType);
+      return upload;
     },
   };
 }
