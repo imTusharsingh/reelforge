@@ -18,6 +18,7 @@ import {
   type VideoGenPort,
   type VideoRoutingState,
   type RecordVideoOutcome,
+  type RoutedJob,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
 import type { WorkspaceContext } from "../identity/identity.types.js";
@@ -94,13 +95,40 @@ export class ProvidersRuntime {
         { port: ports.grok, tier: 1 },
       ],
       {
-        submit: async (port, spec, key): Promise<{ providerJobId: string }> => {
-          if (spec.workspaceId !== context.workspaceId)
-            throw new Error("Cross-workspace provider dispatch rejected");
+        assertReplaySafe: async (spec, key): Promise<void> => {
+          assertWorkspace(context.workspaceId, spec);
+          await this.ledger.assertReplaySafe(context.workspaceId, correlations(key));
+        },
+        confirmRefusal: (job: RoutedJob): Promise<void> =>
+          this.ledger.confirmRefusal(
+            context.workspaceId,
+            correlation(job.idemKey),
+            job.providerJobId,
+          ),
+        submitRouted: async (
+          port,
+          spec,
+          key,
+          logicalKey,
+          fallback,
+          replaces,
+        ): Promise<{ providerJobId: string }> => {
+          assertWorkspace(context.workspaceId, spec);
           ports.assertKey(port === ports.omni ? "gemini" : "xai");
           return this.limiter(port).run(
             port.estimate(spec),
-            () => this.ledger.submit(port, spec, correlation(key), channelId, key),
+            () =>
+              this.ledger.submit(port, spec, correlation(key), channelId, key, {
+                lock: `${context.workspaceId}:${logicalKey}`,
+                correlations: correlations(logicalKey),
+                ...(replaces ? { replaces: correlation(replaces) } : {}),
+                ...(fallback
+                  ? {
+                      authorize: () =>
+                        allowFallback(port.capabilities().providerId, port.estimate(spec)),
+                    }
+                  : {}),
+              }),
             port.capabilities().providerId === "gemini",
           );
         },
@@ -133,4 +161,16 @@ export class ProvidersRuntime {
 function correlation(key: string): string {
   const hash = createHash("sha256").update(key).digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+function correlations(key: string): string[] {
+  return ["gemini", "xai"].flatMap((id) => [
+    correlation(`${key}:${id}`),
+    correlation(`${key}:${id}:rewrite`),
+  ]);
+}
+
+function assertWorkspace(workspaceId: string, spec: ShotSpec): void {
+  if (spec.workspaceId !== workspaceId)
+    throw new Error("Cross-workspace provider dispatch rejected");
 }

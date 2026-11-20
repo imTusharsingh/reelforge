@@ -107,7 +107,7 @@ export class MediaFrames {
       await rm(root, { recursive: true, force: true });
     }
   }
-  private extension(shot: ShotSpec): Pick<VideoOptions, "extension"> {
+  public extension(shot: ShotSpec): Pick<VideoOptions, "extension"> {
     // Extension is an explicit, persisted V4 continuity note, never inferred from arbitrary text.
     const note = shot.continuityNotes.find((value) => value.startsWith("extension:"));
     if (!note) return {};

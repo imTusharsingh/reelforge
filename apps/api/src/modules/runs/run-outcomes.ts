@@ -1,4 +1,4 @@
-import type { Run, Scoped, Step } from "./runs.types.js";
+import type { Run, Scoped, Step, Transaction } from "./runs.types.js";
 
 export const PLANNING_MANIFEST_KEY = "planning:manifest:v1";
 export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
@@ -16,6 +16,32 @@ export function unsettledShots(runId: string): {
     key: { startsWith: "shot-" },
     state: { notIn: [...SETTLED_SHOTS] },
   };
+}
+
+export async function clearResolvedSubmissionHold(
+  db: Scoped,
+  tx: Transaction,
+  run: Run,
+  stepId: string,
+): Promise<string | null> {
+  if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED") || !run.pauseReason.includes(stepId))
+    return run.pauseReason;
+  const unresolved = await db.videoRunStep.findMany({
+    where: { runId: run.id, id: { not: stepId }, state: "RUNNING", providerJobId: null },
+    select: { id: true },
+  });
+  const other = await tx.providerRequest.findFirst({
+    where: {
+      workspaceId: run.workspaceId,
+      correlationId: { in: unresolved.map(({ id }) => id) },
+      errorCode: { in: PROTECTED_OUTCOMES },
+    },
+  });
+  const pauseReason = other
+    ? `RECONCILE_REQUIRED: provider submission outcome unknown (${other.correlationId})`
+    : null;
+  await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
+  return pauseReason;
 }
 
 export async function failSettledGeneration(db: Scoped, run: Run): Promise<boolean> {

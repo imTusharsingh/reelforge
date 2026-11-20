@@ -3,7 +3,7 @@ import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
 import { json, type Context, type Scoped, type Step, type Transaction } from "./runs.types.js";
-import { DISPATCHING, OUTCOME_UNKNOWN, PROTECTED_OUTCOMES } from "./run-outcomes.js";
+import { PROTECTED_OUTCOMES } from "./run-outcomes.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
 @Injectable()
@@ -110,18 +110,15 @@ export class RunsControl {
           },
         });
         if (!step) throw new ConflictException("Step has no unknown submission to abandon");
-        const active = await tx.providerRequest.findFirst({
+        const protectedRequest = await tx.providerRequest.findFirst({
           where: {
             workspaceId: context.workspaceId,
             correlationId: step.id,
-            errorCode: DISPATCHING,
+            errorCode: { in: PROTECTED_OUTCOMES },
           },
         });
-        if (
-          active &&
-          (!run.pauseReason?.includes(step.id) || Date.now() - active.createdAt.getTime() < 120_000)
-        )
-          throw new ConflictException("Provider attempt may still be active");
+        if (protectedRequest)
+          throw new ConflictException("Reconcile the provider submission before abandoning");
         await this.releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
           await db.videoRunStep.create({
@@ -156,7 +153,7 @@ export class RunsControl {
       where: {
         workspaceId: context.workspaceId,
         correlationId: { in: remaining.map((item) => item.id) },
-        errorCode: OUTCOME_UNKNOWN,
+        errorCode: { in: PROTECTED_OUTCOMES },
       },
     });
     await db.videoRun.updateMany({
@@ -217,7 +214,11 @@ export class RunsControl {
         status: "FAILED",
         actualCost: null,
       },
-      data: { errorCode: reason },
+      data: {
+        errorCode: reason,
+        actualCost: 0,
+        responseMetadata: { dispatched: false, costKnown: true },
+      },
     });
     await db.videoRunStep.updateMany({
       where: { runId, id: { in: ids } },
@@ -243,7 +244,7 @@ export class RunsControl {
     const run = await this.runs.store.get(context, id);
     await this.boundary.check(context, run);
     if (run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
-      throw new ConflictException("Abandon the unknown attempt before resuming");
+      throw new ConflictException("Reconcile the unknown attempt before resuming");
     if (run.pauseReason === "OPERATOR_ABANDONED") {
       const result = await this.runs.store.mutate(context, id, "resumed", async (db, current) => {
         if (current.pauseReason !== "OPERATOR_ABANDONED")

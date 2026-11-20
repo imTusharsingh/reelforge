@@ -237,6 +237,7 @@ export class VideoRunEngine {
               "ASSEMBLING",
               "CRITIC",
               "PAUSED_BUDGET",
+              "NEEDS_HUMAN",
               "CANCELED",
             ],
           },
@@ -244,9 +245,18 @@ export class VideoRunEngine {
       });
       for (const run of runs) {
         z.uuid().parse(run.id);
-        if (run.state === "CANCELED" || run.state === "PAUSED_BUDGET" || run.pauseReason) {
+        if (
+          run.state === "CANCELED" ||
+          run.state === "PAUSED_BUDGET" ||
+          run.state === "NEEDS_HUMAN" ||
+          run.pauseReason
+        ) {
           const admitted = await this.runs.store.scoped(context).videoRunStep.findMany({
-            where: { runId: run.id, key: { startsWith: "shot-" }, state: "WAITING_EXTERNAL" },
+            where: {
+              runId: run.id,
+              key: { startsWith: "shot-" },
+              state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+            },
           });
           for (const step of admitted)
             await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);

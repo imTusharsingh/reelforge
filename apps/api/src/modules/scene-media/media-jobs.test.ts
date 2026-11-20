@@ -33,13 +33,19 @@ function harness(): {
   const db = {
     videoRunStep: {
       findFirst: vi.fn(async () => state.step),
+      findFirstOrThrow: vi.fn(async () => state.step),
       updateMany: vi.fn(async ({ data }: { data: object }) => {
         state.step = { ...state.step, ...data };
         return { count: 1 };
       }),
     },
   };
-  const paid = { finish: vi.fn() };
+  const paid = {
+    finish: vi.fn(),
+    recordJob: vi.fn(),
+    jobReceipt: vi.fn().mockResolvedValue(null),
+    finalizeJobFailure: vi.fn(),
+  };
   const access = {
     gate: vi.fn(),
     boundary: { check: vi.fn() },
@@ -78,6 +84,7 @@ function harness(): {
     prepare: vi.fn(async () => {
       await account.reserve();
     }),
+    recoverUndispatched: vi.fn().mockResolvedValue(false),
     reconcilePending: vi.fn(async () => {
       throw new Error("RECONCILE_REQUIRED");
     }),

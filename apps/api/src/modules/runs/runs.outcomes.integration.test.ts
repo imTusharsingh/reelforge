@@ -152,7 +152,18 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
       expect(before.request.errorCode).toBe(
         outcome === "unknown" ? "VIDEO_RUN_OUTCOME_UNKNOWN" : "NOT_DISPATCHED",
       );
+      if (outcome === "unknown") {
+        await expect(t.control.abandon(t.context, t.run.id, step.id)).rejects.toThrow("Reconcile");
+        expect(await accounting(t, step.id)).toEqual(before);
+        expect(
+          await t.store.scoped(t.context).videoRunStep.count({
+            where: { runId: t.run.id, key: step.key },
+          }),
+        ).toBe(1);
+      }
       await t.control.cancel(t.context, t.run.id);
+      if (outcome === "unknown")
+        await expect(t.control.abandon(t.context, t.run.id, step.id)).rejects.toThrow("Reconcile");
       expect(await t.store.get(t.context, t.run.id)).toMatchObject({
         state: "CANCELED",
         pauseReason: run.pauseReason,

@@ -1,3 +1,5 @@
+import { rollbackAdmission } from "./run-paid-admission.js";
+import { z } from "zod";
 import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
@@ -10,6 +12,7 @@ import {
   OUTCOME_UNKNOWN,
   PLANNING_MANIFEST_KEY,
   failSettledGeneration,
+  clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
 
 export class SubmissionOutcomeUnknown extends ConflictException {}
@@ -28,44 +31,69 @@ export class RunPaidCalls {
     run: Run,
     step: Step,
     amount: number,
+    transaction?: Transaction,
   ): Promise<PaidCallReservation> {
-    const result = await this.usage.reserve(context.workspaceId, {
-      channelId: run.channelId,
-      idempotencyKey: `m08:${step.idempotencyKey}`,
-      correlationId: step.id,
-      category: "VIDEO_MEDIA",
-      currency: "USD",
-      amountMinor: amount,
-      ttlMs: 86400000,
-    });
+    const result = await this.usage.reserve(
+      context.workspaceId,
+      {
+        channelId: run.channelId,
+        idempotencyKey: `m08:${step.idempotencyKey}`,
+        correlationId: step.id,
+        category: "VIDEO_MEDIA",
+        currency: "USD",
+        amountMinor: amount,
+        ttlMs: 86400000,
+      },
+      transaction,
+    );
     if (result.decision !== "RESERVED")
       throw new ServiceUnavailableException({
         code: result.reason,
         message: "Budget policy unavailable",
       });
     if (result.replayed) throw new ConflictException("Paid dispatch requires reconciliation");
-    await this.store.db.providerRequest.create({
-      data: {
-        workspaceId: context.workspaceId,
-        channelId: run.channelId,
-        correlationId: step.id,
-        providerId: "v3-stub",
-        capabilityId: "video",
-        status: "FAILED",
-        estimatedCost: amount / 100,
-        currency: "USD",
-        latencyMs: 0,
-        dispatchedPrompt: "V3 deterministic stub",
-        responseMetadata: { dispatched: false, costKnown: false },
-        errorCode: "PENDING",
-      },
-    });
+    await this.recordReservation(transaction ?? this.store.db, context, run, step, amount);
     return {
       workspaceId: context.workspaceId,
       reservationId: result.reservation.id,
       currency: "USD",
       estimateMinor: amount,
     };
+  }
+  private async recordReservation(
+    db: Transaction,
+    context: Context,
+    run: Run,
+    step: Step,
+    amount: number,
+  ): Promise<void> {
+    const request = {
+      providerId: step.providerId ?? "v3-stub",
+      capabilityId: "video",
+      status: "FAILED" as const,
+      estimatedCost: amount / 100,
+      actualCost: null,
+      currency: "USD",
+      responseMetadata: { dispatched: false, costKnown: false },
+      errorCode: "PENDING",
+    };
+    const rearmed = await db.providerRequest.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: step.id,
+        errorCode: "ADMISSION_ROLLED_BACK",
+      },
+      data: request,
+    });
+    if (!rearmed.count)
+      await db.providerRequest.create({
+        data: {
+          workspaceId: context.workspaceId,
+          channelId: run.channelId,
+          correlationId: step.id,
+          ...request,
+        },
+      });
   }
   public async dispatch<T>(
     context: Context,
@@ -78,11 +106,21 @@ export class RunPaidCalls {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (
           ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
-          run.pauseReason === "OPERATOR_ABANDONED" ||
+          ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
           current.state !== "RUNNING" ||
+          current.idempotencyKey !== step.idempotencyKey ||
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
-          throw new ConflictException("Paid dispatch is closed");
+          throw new DispatchAdmissionError("Paid dispatch is closed");
+        const reservation = await tx.usageReservation.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            idempotencyKey: `m08:${step.idempotencyKey}`,
+            status: "RESERVED",
+            expiresAt: { gt: new Date() },
+          },
+        });
+        if (!reservation) throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
         const marked = await tx.providerRequest.updateMany({
           where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
           data: {
@@ -99,10 +137,7 @@ export class RunPaidCalls {
         return { value: null, payload: {}, stepId: step.id };
       })
       .catch(async (error: unknown) => {
-        const current = await this.store.scoped(context).videoRunStep.findFirst({
-          where: { id: step.id, state: "CANCELLED" },
-        });
-        if (current) await this.finish(context, step, false, 0);
+        await this.rollbackAdmission(context, step);
         throw error;
       });
     // The durable dispatch marker protects the claims before invoking the provider.
@@ -112,6 +147,31 @@ export class RunPaidCalls {
       if (error instanceof ProviderFailure && !error.dispatched) throw error;
       return this.holdUnknown(context, step, error);
     }
+  }
+
+  public async jobReceipt(context: Context, step: Step): Promise<string | null> {
+    const request = await this.store.db.providerRequest.findUnique({
+      where: {
+        workspaceId_correlationId: { workspaceId: context.workspaceId, correlationId: step.id },
+      },
+    });
+    const receipt = z
+      .object({ providerJobId: z.string().min(1) })
+      .safeParse(request?.responseMetadata);
+    return receipt.success ? receipt.data.providerJobId : null;
+  }
+
+  public async recordJob(context: Context, step: Step, providerJobId: string): Promise<void> {
+    const recorded = await this.store.db.providerRequest.updateMany({
+      where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: DISPATCHING },
+      data: { responseMetadata: { dispatched: true, costKnown: false, providerJobId } },
+    });
+    if (recorded.count !== 1)
+      throw new ConflictException("Provider job receipt could not be recorded");
+  }
+
+  public rollbackAdmission(context: Context, step: Step): Promise<void> {
+    return rollbackAdmission(this.store, this.usage, context, step);
   }
 
   private async holdUnknown(context: Context, step: Step, cause: unknown): Promise<never> {
@@ -172,7 +232,7 @@ export class RunPaidCalls {
           Boolean(current.providerJobId) !== dispatched
         )
           throw new ConflictException("Dispatch claim changed");
-        await this.releaseFailedRequest(tx, context, step, message, dispatched);
+        await this.settleFailedRequest(tx, context, step, message, dispatched);
         await db.videoRunStep.updateMany({
           where: { id: step.id },
           data: {
@@ -193,7 +253,7 @@ export class RunPaidCalls {
               revision: budget.revision + 1,
             },
           });
-        await this.failRunIfSettled(db, run, current, { code: reason, message });
+        await this.failRunIfSettled(db, tx, run, current, { code: reason, message });
         return {
           value: null,
           payload: { reason, message, releasedMinor: amount },
@@ -206,17 +266,13 @@ export class RunPaidCalls {
 
   private async failRunIfSettled(
     db: Scoped,
+    tx: Transaction,
     run: Run,
     step: Step,
     error: { code: string; message: string },
   ): Promise<void> {
     if (step.key.startsWith("shot-")) {
-      const pauseReason =
-        run.pauseReason === `RECONCILE_REQUIRED: submission outcome unknown (${step.id})`
-          ? null
-          : run.pauseReason;
-      if (pauseReason !== run.pauseReason)
-        await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
+      const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
       await failSettledGeneration(db, { ...run, pauseReason });
     } else if (step.key.startsWith("media:text:") && run.state !== "CANCELED") {
       await db.videoRunStep.updateMany({
@@ -238,7 +294,7 @@ export class RunPaidCalls {
     }
   }
 
-  private async releaseFailedRequest(
+  private async settleFailedRequest(
     tx: Transaction,
     context: Context,
     step: Step,
@@ -247,7 +303,11 @@ export class RunPaidCalls {
   ): Promise<void> {
     const code = dispatched ? "PROVIDER_JOB_FAILED" : "NOT_DISPATCHED";
     const updated = await tx.providerRequest.updateMany({
-      where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: DISPATCHING },
+      where: {
+        workspaceId: context.workspaceId,
+        correlationId: step.id,
+        errorCode: dispatched ? { in: [DISPATCHING, OUTCOME_UNKNOWN] } : DISPATCHING,
+      },
       data: {
         status: "FAILED",
         actualCost: dispatched ? null : 0,
@@ -260,7 +320,9 @@ export class RunPaidCalls {
     const reservation = await tx.usageReservation.findFirstOrThrow({
       where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
     });
-    await this.usage.release(context.workspaceId, reservation.id, code, tx);
+    if (dispatched)
+      await this.usage.commit(context.workspaceId, reservation.id, step.costMinor ?? 0, tx);
+    else await this.usage.release(context.workspaceId, reservation.id, code, tx);
   }
   public async commitJob(
     tx: Transaction,
@@ -275,8 +337,10 @@ export class RunPaidCalls {
       where: {
         workspaceId: context.workspaceId,
         correlationId: step.id,
-        // A reconciled job can be recovered from a legacy rolled-back admission.
-        errorCode: { in: [DISPATCHING, "PENDING"] },
+        OR: [
+          { errorCode: { in: [DISPATCHING, OUTCOME_UNKNOWN] } },
+          { status: "SUCCEEDED", errorCode: null },
+        ],
       },
       data: {
         status: "SUCCEEDED",
@@ -296,7 +360,7 @@ export class RunPaidCalls {
     failure: ProviderFailure,
   ): Promise<void> {
     if (failure.dispatched) throw new ConflictException("Provider dispatch was not ruled out");
-    await this.releaseFailedRequest(
+    await this.settleFailedRequest(
       tx,
       context,
       step,
@@ -310,32 +374,32 @@ export class RunPaidCalls {
     step: Step,
     dispatched: boolean,
     actualMinor: number,
+    transaction?: Transaction,
   ): Promise<void> {
-    const reservation = await this.store.db.usageReservation.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        idempotencyKey: `m08:${step.idempotencyKey}`,
-      },
-    });
-    if (!reservation)
-      throw new ConflictException("Paid reservation missing; reconciliation required");
-    await this.store.db.providerRequest.updateMany({
-      where: { workspaceId: context.workspaceId, correlationId: step.id },
-      data: {
-        status: dispatched ? "SUCCEEDED" : "FAILED",
-        actualCost: dispatched ? actualMinor / 100 : 0,
-        responseMetadata: { dispatched, costKnown: true },
-        errorCode: dispatched ? null : "NOT_DISPATCHED",
-      },
-    });
-    await this.usage.finishPaidCall(
-      {
-        workspaceId: context.workspaceId,
-        reservationId: reservation.id,
-        currency: "USD",
-        estimateMinor: Number(reservation.amountMinor),
-      },
-      { dispatched, actualCost: actualMinor / 100, actualCurrency: "USD" },
-    );
+    const finish = async (tx: Transaction): Promise<void> => {
+      const reservation = await tx.usageReservation.findFirstOrThrow({
+        where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+      });
+      const updated = await tx.providerRequest.updateMany({
+        where: {
+          workspaceId: context.workspaceId,
+          correlationId: step.id,
+          ...(dispatched
+            ? { OR: [{ errorCode: DISPATCHING }, { status: "SUCCEEDED", errorCode: null }] }
+            : { errorCode: { in: [DISPATCHING, "PENDING", "RUN_CANCELED", "NOT_DISPATCHED"] } }),
+        },
+        data: {
+          status: dispatched ? "SUCCEEDED" : "FAILED",
+          actualCost: dispatched ? actualMinor / 100 : 0,
+          responseMetadata: { dispatched, costKnown: true },
+          errorCode: dispatched ? null : "NOT_DISPATCHED",
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException("Paid dispatch outcome changed");
+      if (dispatched) await this.usage.commit(context.workspaceId, reservation.id, actualMinor, tx);
+      else await this.usage.release(context.workspaceId, reservation.id, "NOT_DISPATCHED", tx);
+    };
+    if (transaction) await finish(transaction);
+    else await this.store.db.$transaction(finish);
   }
 }

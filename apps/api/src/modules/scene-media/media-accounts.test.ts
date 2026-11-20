@@ -17,7 +17,11 @@ function harness(): {
     request: { id: string } | null;
   };
   db: { usageReservation: { findFirst: ReturnType<typeof vi.fn> } };
-  paid: { reserve: ReturnType<typeof vi.fn>; finish: ReturnType<typeof vi.fn> };
+  paid: {
+    reserve: ReturnType<typeof vi.fn>;
+    finish: ReturnType<typeof vi.fn>;
+    rollbackAdmission: ReturnType<typeof vi.fn>;
+  };
   boundary: { check: ReturnType<typeof vi.fn> };
   accounts: MediaAccounts;
   port: MediaJobPort<object>;
@@ -71,6 +75,8 @@ function harness(): {
       state.request = { id: "request" };
     }),
     finish: vi.fn(),
+    rollbackAdmission: vi.fn(async () => undefined),
+    jobReceipt: vi.fn().mockResolvedValue(null),
     dispatch: async (
       _context: unknown,
       _step: unknown,
@@ -91,9 +97,13 @@ function harness(): {
           _context: unknown,
           _runId: string,
           _event: string,
-          work: (value: typeof db, current: Run) => Promise<{ value: unknown; payload: unknown }>,
+          work: (
+            value: typeof db,
+            current: Run,
+            tx: typeof db,
+          ) => Promise<{ value: unknown; payload: unknown }>,
         ): Promise<{ value: unknown; payload: unknown; event: { payload: unknown } }> => {
-          const result = await work(db, run);
+          const result = await work(db, run, db);
           return { ...result, event: { payload: result.payload } };
         },
       },
@@ -176,29 +186,23 @@ describe("V5 media preflight with fake ledgers and providers", () => {
     expect(h.paid.finish).not.toHaveBeenCalled();
     expect(h.port.submit).not.toHaveBeenCalled();
   });
-  it("settles known non-dispatch on a boundary failure, releases the envelope once, and rejects replay", async () => {
+  it("rolls back after a pre-dispatch boundary failure", async () => {
     const h = harness();
     h.boundary.check
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new ConflictException("Emergency stop"));
     await expect(h.tick()).rejects.toThrow("Emergency stop");
-    expect(h.paid.finish).toHaveBeenCalledWith(
+    expect(h.paid.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(
       context,
       expect.objectContaining({ id: "step" }),
-      false,
-      0,
     );
-    expect(h.state.step?.state).toBe("CANCELLED");
-    expect(h.state.reservedMinor).toBe(0);
-    await h.accounts.cancelUndispatched(context, h.state.step!);
-    expect(h.paid.finish).toHaveBeenCalledOnce();
-    await expect(h.tick()).rejects.toThrow("MEDIA_NOT_DISPATCHED");
+    expect(h.paid.finish).not.toHaveBeenCalled();
     expect(h.port.submit).not.toHaveBeenCalled();
   });
   it("retains held funds when non-dispatch settlement fails and reconciles on retry", async () => {
     const h = harness();
     h.boundary.check.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Stopped"));
-    h.paid.finish.mockRejectedValue(new Error("Settlement unavailable"));
+    h.paid.rollbackAdmission.mockRejectedValueOnce(new Error("Settlement unavailable"));
     await expect(h.tick()).rejects.toThrow("Settlement unavailable");
     expect(h.state.reservedMinor).toBe(4);
     expect(h.state.step?.state).toBe("RUNNING");

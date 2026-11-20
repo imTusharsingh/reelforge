@@ -150,7 +150,7 @@ suite("V3 approval, caps and retention", () => {
       committedMinor: 7,
     });
   });
-  it("releases an unknown text attempt and resumes the same stage", async () => {
+  it("releases a pre-admission text intent and resumes the same stage", async () => {
     const t = await fixture.tenant();
     await t.engine.process(t.runs.job(t.context, t.run.id));
     const db = t.store.scoped(t.context);
@@ -192,6 +192,39 @@ suite("V3 approval, caps and retention", () => {
     expect(next).toMatchObject({ attempt: 2, state: "RUNNING" });
     expect(next.idempotencyKey).not.toBe(step.idempotencyKey);
   });
+  it("rolls back an admission when reference ownership is lost before submit", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const db = t.store.scoped(t.context);
+    const step = await db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0" },
+    });
+    await db.videoRunStep.updateMany({
+      where: { id: step.id },
+      data: { state: "RUNNING", costMinor: 12 },
+    });
+    await db.budgetEnvelope.updateMany({ where: { runId: t.run.id }, data: { reservedMinor: 12 } });
+    const paid = new RunPaidCalls(t.usage, t.store);
+    const reservation = await paid.reserve(t.context, t.run, step, 12);
+    const provider = vi.fn();
+    await expect(
+      paid.dispatch(t.context, step, provider, async () => {
+        throw new Error("lost reference lock");
+      }),
+    ).rejects.toThrow("Reference ownership lost before dispatch");
+    expect(provider).not.toHaveBeenCalled();
+    expect(await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject({
+      state: "PENDING",
+      costMinor: null,
+    });
+    expect(
+      await t.db.usageReservation.findUniqueOrThrow({ where: { id: reservation.reservationId } }),
+    ).toMatchObject({ status: "RELEASED" });
+    expect(await db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } })).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 0,
+    });
+  });
   it("reports reserved and committed VideoRun costs", async () => {
     const t = await fixture.tenant();
     await generating(t);
@@ -205,7 +238,12 @@ suite("V3 approval, caps and retention", () => {
       reservedMinor: 25,
       committedMinor: 0,
     });
-    await paid.finish(t.context, step, true, 20);
+    await t.store.scoped(t.context).videoRunStep.updateMany({
+      where: { id: step.id },
+      data: { state: "RUNNING" },
+    });
+    const actual = await paid.dispatch(t.context, step, async () => 20);
+    await paid.finish(t.context, step, true, actual);
     const result = await usage.runBreakdown(t.context, t.run.id);
     expect(result.videoRunId).toBe(t.run.id);
     expect(result.totals.currencies[0]).toMatchObject({ reservedMinor: 0, committedMinor: 20 });

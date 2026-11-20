@@ -11,7 +11,17 @@ export type RoutedJob = Readonly<{
   rewrites: number;
 }>;
 export interface RouterDispatch {
-  submit(port: VideoGenPort, spec: ShotSpec, idemKey: string): Promise<{ providerJobId: string }>;
+  submit?(port: VideoGenPort, spec: ShotSpec, idemKey: string): Promise<{ providerJobId: string }>;
+  submitRouted?(
+    port: VideoGenPort,
+    spec: ShotSpec,
+    providerKey: string,
+    logicalKey: string,
+    fallback: boolean,
+    replaces?: string,
+  ): Promise<{ providerJobId: string }>;
+  confirmRefusal?(job: RoutedJob): Promise<void>;
+  assertReplaySafe?(spec: ShotSpec, logicalKey: string): Promise<void>;
   /** V3 re-estimates its envelope before a fallback is allowed to spend. */
   allowFallback(providerId: string, estimate: Money): Promise<void>;
 }
@@ -53,6 +63,7 @@ export class VideoRouter {
     key: string,
     channelRoute: readonly string[],
   ): Promise<RoutedJob> {
+    await this.dispatch.assertReplaySafe?.(spec, key);
     const routes = this.select(spec, channelRoute);
     const circuitOpen = channelRoute.some(
       (id) => (this.health.get(id)?.openUntil ?? 0) > this.now(),
@@ -60,10 +71,11 @@ export class VideoRouter {
     let outage: unknown = new ProviderFailure(circuitOpen ? "OUTAGE" : "NOT_CONFIGURED", false);
     for (const route of routes) {
       const providerId = route.port.capabilities().providerId;
-      if (route.port.capabilities().providerId !== channelRoute[0])
+      const fallback = providerId !== channelRoute[0];
+      if (fallback && !this.dispatch.submitRouted)
         await this.dispatch.allowFallback(providerId, route.port.estimate(spec));
       try {
-        return await this.attempt(route.port, spec, `${key}:${providerId}`, 0);
+        return await this.attempt(route.port, spec, `${key}:${providerId}`, 0, key, fallback);
       } catch (error) {
         if (!(error instanceof ProviderFailure) || error.kind !== "OUTAGE" || error.dispatched)
           throw error;
@@ -79,8 +91,10 @@ export class VideoRouter {
     const status = await port.poll(job.providerJobId);
     if (status !== "refused") return { status, job };
     if (job.rewrites >= 1) return { status: "NEEDS_HUMAN", job };
+    await this.dispatch.confirmRefusal?.(job);
     const revised = await this.rewrite(job.spec);
-    const next = await this.attempt(port, revised, `${job.idemKey}:rewrite`, 1);
+    const logicalKey = job.idemKey.slice(0, -`:${job.providerId}`.length);
+    const next = await this.attempt(port, revised, `${job.idemKey}:rewrite`, 1, logicalKey);
     return { status: "queued", job: next };
   }
   private async attempt(
@@ -88,15 +102,27 @@ export class VideoRouter {
     spec: ShotSpec,
     key: string,
     rewrites: number,
+    logicalKey = key,
+    fallback = false,
   ): Promise<RoutedJob> {
     const providerId = port.capabilities().providerId;
     const state = this.state(providerId);
     state.calls++;
     try {
-      const result = await this.dispatch.submit(port, spec, key);
+      const result = await (this.dispatch.submitRouted
+        ? this.dispatch.submitRouted(
+            port,
+            spec,
+            key,
+            logicalKey,
+            fallback,
+            rewrites ? key.slice(0, -":rewrite".length) : undefined,
+          )
+        : this.dispatch.submit?.(port, spec, key));
+      if (!result) throw new Error("Video dispatch is not configured");
       state.accepted++;
       state.failures = 0;
-      await this.recordOutcome?.(providerId, "ACCEPTED");
+      await this.recordOutcome?.(providerId, "ACCEPTED").catch(() => undefined);
       return { ...result, providerId, spec, idemKey: key, rewrites };
     } catch (error) {
       if (error instanceof ProviderFailure && error.kind === "OUTAGE") {
@@ -106,7 +132,7 @@ export class VideoRouter {
       await this.recordOutcome?.(
         providerId,
         error instanceof ProviderFailure && error.kind === "OUTAGE" ? "OUTAGE" : "REJECTED",
-      );
+      ).catch(() => undefined);
       if (
         error instanceof ProviderFailure &&
         error.kind === "REFUSAL" &&
@@ -114,7 +140,7 @@ export class VideoRouter {
         !error.http
       ) {
         if (rewrites >= 1) throw new ProviderFailure("NEEDS_HUMAN", true);
-        return this.attempt(port, await this.rewrite(spec), `${key}:rewrite`, 1);
+        return this.attempt(port, await this.rewrite(spec), `${key}:rewrite`, 1, logicalKey);
       }
       throw error;
     }

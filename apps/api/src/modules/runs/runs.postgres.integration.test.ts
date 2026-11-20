@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderFailure, ProviderHttp } from "@reelforge/ai-providers";
+import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
-import { runsFixture, generating, generateClips } from "./runs.fixture.js";
+import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
+
+function shotZero(t: Tenant): Promise<Step> {
+  return t.store
+    .scoped(t.context)
+    .videoRunStep.findFirstOrThrow({ where: { runId: t.run.id, key: "shot-0" } });
+}
 
 describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
   const fixture = runsFixture();
@@ -128,7 +135,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(submit).not.toHaveBeenCalled();
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toBe("EMERGENCY_STOP");
   });
-  it.each([400, 408, 429, 503, "network", "timeout", "malformed", "unconfirmed"] as const)(
+  it.each([400, 408, 409, 429, 503, "network", "timeout", "malformed", "unconfirmed"] as const)(
     "finalizes or reconciles submission failure %s",
     async (status) => {
       const t = await fixture.tenant();
@@ -164,6 +171,8 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
         await http.json("interactions", { prompt: "fixture" });
         throw new Error("Unexpected successful response");
       });
+      const fallback = vi.spyOn(t.generation.fallbackProvider, "submit");
+      vi.spyOn(t.generation.provider, "reconcile").mockResolvedValue(null);
       const job = t.runs.job(t.context, t.run.id, step.id);
       const rejected = status === 400;
       const message = "Provider invalid (HTTP 400, INVALID_ARGUMENT)";
@@ -219,6 +228,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       expect(events.some((event) => event.type === "reconcile_required")).toBe(!rejected);
       await expect(t.engine.process(job)).resolves.toBeNull();
       expect(submit).toHaveBeenCalledOnce();
+      expect(fallback).not.toHaveBeenCalled();
     },
     15000,
   );
@@ -264,51 +274,117 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       failure.mockRestore();
     }
     expect(await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } })).toMatchObject({
-      state: "RUNNING",
+      state: "PENDING",
       providerJobId: null,
+      costMinor: null,
     });
-    expect(
-      await t.db.providerRequest.findFirstOrThrow({
-        where: { workspaceId: t.context.workspaceId, correlationId: step.id },
-      }),
-    ).toMatchObject({ errorCode: "PENDING" });
-
-    const held = await reservations();
-    expect(held).toMatchObject([
+    const request = await t.db.providerRequest.findFirstOrThrow({
+      where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+    });
+    expect(request.errorCode).toBe("ADMISSION_ROLLED_BACK");
+    expect(request.actualCost?.toString()).toBe("0");
+    expect(await reservations()).toMatchObject([
       {
         idempotencyKey: `m08:${step.idempotencyKey}`,
-        correlationId: step.id,
-        status: "RESERVED",
-        currency: "USD",
+        status: "RELEASED",
         amountMinor: BigInt(estimate),
         committedMinor: null,
-        committedAt: null,
-        releasedAt: null,
-        releaseReason: null,
+        releaseReason: "NOT_DISPATCHED",
       },
     ]);
-    const heldEnvelope = await envelope();
-    expect(heldEnvelope).toEqual({
-      ...before,
-      reservedMinor: estimate,
-      revision: before.revision + 1,
-      updatedAt: heldEnvelope.updatedAt,
-    });
+    expect(await envelope()).toMatchObject({ reservedMinor: 0, spentMinor: 0 });
+    expect(submit).not.toHaveBeenCalled();
 
     await t.control.resume(t.context, t.run.id);
-    await expect(t.engine.process(job)).rejects.toThrow("RECONCILE_REQUIRED");
-    expect(reconcile).toHaveBeenCalledExactlyOnceWith(step.idempotencyKey);
-    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
-      pauseReason: `RECONCILE_REQUIRED: submission outcome unknown (${step.id})`,
-    });
-    expect(await reservations()).toEqual(held);
-    expect(await envelope()).toEqual(heldEnvelope);
     await expect(t.engine.process(job)).resolves.toBeNull();
-    expect(await reservations()).toEqual(held);
-    expect(await envelope()).toEqual(heldEnvelope);
-    expect(hold).toHaveBeenCalledTimes(1);
-    expect(charge).not.toHaveBeenCalled();
-    expect(release).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(hold).toHaveBeenCalledTimes(2);
+    expect(charge).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(await envelope()).toMatchObject({ reservedMinor: 0, spentMinor: estimate });
+  });
+  it("rolls back a shot when a pause interleaves between reserve and admission", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const step = await shotZero(t);
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    const reconcile = vi.spyOn(t.generation.provider, "reconcile");
+    const job = t.runs.job(t.context, t.run.id, step.id);
+    const mutate = t.store.mutate.bind(t.store);
+    const pause = vi
+      .spyOn(t.store, "mutate")
+      .mockImplementation(async (context, id, type, work) => {
+        if (type === "provider_dispatch")
+          await mutate(context, id, "test_pause", async (db) => {
+            await db.videoRun.updateMany({
+              where: { id },
+              data: { state: "PAUSED_BUDGET", pauseReason: "BUDGET_CAP" },
+            });
+            return { value: null, payload: {} };
+          });
+        return mutate(context, id, type, work);
+      });
+    try {
+      await expect(t.engine.process(job)).resolves.toBe(12000);
+    } finally {
+      pause.mockRestore();
+    }
     expect(submit).not.toHaveBeenCalled();
+    expect(await shotZero(t)).toMatchObject({ state: "PENDING", costMinor: null });
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({
+        where: { workspaceId: t.context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+      }),
+    ).toMatchObject({ status: "RELEASED", committedMinor: null });
+    expect(
+      await t.store.scoped(t.context).budgetEnvelope.findFirst({ where: { runId: t.run.id } }),
+    ).toMatchObject({ reservedMinor: 0, spentMinor: 0 });
+    await t.control.resume(t.context, t.run.id);
+    await expect(t.engine.process(job)).resolves.toBeNull();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("recovers a recorded job after its step attachment transaction rolls back", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const step = await shotZero(t);
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    const reconcile = vi.spyOn(t.generation.provider, "reconcile");
+    const mutate = t.store.mutate.bind(t.store);
+    const failure = vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
+      mutate(context, id, type, async (db, run, tx) => {
+        const result = await work(db, run, tx);
+        if (type === "provider_submitted") throw new Error("attachment failed");
+        return result;
+      }),
+    );
+    const job = t.runs.job(t.context, t.run.id, step.id);
+    try {
+      await expect(t.engine.process(job)).rejects.toThrow("attachment failed");
+    } finally {
+      failure.mockRestore();
+    }
+    expect(
+      (
+        await t.db.providerRequest.findFirstOrThrow({
+          where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+        })
+      ).responseMetadata,
+    ).toMatchObject({
+      providerJobId: expect.any(String),
+    });
+    await expect(t.engine.process(job)).resolves.toBeNull();
+    expect(await shotZero(t)).toMatchObject({ state: "SUCCEEDED" });
+    expect(
+      (
+        await t.db.usageReservation.findFirstOrThrow({
+          where: { workspaceId: t.context.workspaceId, correlationId: step.id },
+        })
+      ).status,
+    ).toBe("COMMITTED");
+    expect(submit).toHaveBeenCalledOnce();
+    expect(reconcile).not.toHaveBeenCalled();
   });
 });

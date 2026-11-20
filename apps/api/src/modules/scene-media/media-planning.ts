@@ -154,25 +154,29 @@ export class MediaPlanning {
     });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
-    if (previous && !this.accounts.abandoned(previous))
-      throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${previous.id})`);
     const cost = reservationCents({
       currency: "USD",
       microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
     });
     const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
-    const native = await this.ports.get(context);
-    const step = await this.accounts.begin(
-      context,
-      run,
-      key,
-      { prompt: input.prompt, promptVersion: input.promptVersion },
-      cost,
-      modelId,
-    );
-    await this.accounts.prepare(context, run, step, modelId);
-    const result = await this.dispatchText(context, step, native.text, input);
-    this.validatePlan(input.promptVersion.role, result.output);
+    const pending =
+      previous &&
+      !this.accounts.abandoned(previous) &&
+      !(await this.accounts.recoverUndispatched(context, previous))
+        ? previous
+        : null;
+    const step =
+      pending ??
+      (await this.accounts.begin(
+        context,
+        run,
+        key,
+        { prompt: input.prompt, promptVersion: input.promptVersion },
+        cost,
+        modelId,
+      ));
+    const result = await this.textResult(context, run, step, input, modelId, !!pending);
+    await this.validateAcceptedPlan(context, step, input.promptVersion.role, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
@@ -181,10 +185,6 @@ export class MediaPlanning {
       modelId,
       cost,
     );
-    await db.videoRunStep.updateMany({
-      where: { id: step.id },
-      data: { providerJobId: result.providerJobId },
-    });
     await this.accounts.complete(context, step, {
       ...result,
       receipt,
@@ -193,6 +193,40 @@ export class MediaPlanning {
     });
     return result.output;
   }
+  private async textResult(
+    context: Context,
+    run: Run,
+    step: Step,
+    input: Parameters<TextPort["generate"]>[0],
+    modelId: string,
+    replay: boolean,
+  ): ReturnType<MediaPlanning["dispatchText"]> {
+    if (replay) {
+      const saved = z
+        .object({
+          output: input.schema,
+          providerJobId: z.string().min(1),
+          usage: z.record(z.string(), z.unknown()),
+        })
+        .safeParse(step.output);
+      if (!saved.success)
+        throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
+      return saved.data;
+    }
+    const native = await this.ports.get(context);
+    await this.accounts.prepare(context, run, step, modelId);
+    const result = await this.dispatchText(context, step, native.text, input);
+    await this.access.runs.store.scoped(context).videoRunStep.updateMany({
+      where: { id: step.id, state: "RUNNING" },
+      data: {
+        providerJobId: result.providerJobId,
+        output: json(result),
+        state: "WAITING_EXTERNAL",
+      },
+    });
+    return result;
+  }
+
   private async dispatchText(
     context: Context,
     step: Step,
@@ -219,6 +253,27 @@ export class MediaPlanning {
       });
   }
 
+  private async validateAcceptedPlan(
+    context: Context,
+    step: Step,
+    role: string,
+    output: unknown,
+  ): Promise<void> {
+    try {
+      this.validatePlan(role, output);
+    } catch (error) {
+      const accepted = await this.access.runs.store
+        .scoped(context)
+        .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      const event = await this.access.paid.finalizeJobFailure(
+        context,
+        accepted,
+        "PROVIDER_INVALID",
+      );
+      await this.access.runs.events?.publish(event);
+      throw error;
+    }
+  }
   private validatePlan(role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);

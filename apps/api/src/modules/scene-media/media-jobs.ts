@@ -12,7 +12,6 @@ import {
   type Artifact,
 } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
-import { DispatchAdmissionError } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "./media-accounts.js";
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
 @Injectable()
@@ -41,9 +40,17 @@ export class MediaJobs {
     });
     let step = previous && !this.accounts.abandoned(previous) ? previous : null;
     if (step?.state === "SUCCEEDED") return this.completed(step.output);
+    if (step?.state === "FAILED") throw new ConflictException("Media provider job failed");
     if (step?.state === "CANCELLED")
       throw new ConflictException("MEDIA_NOT_DISPATCHED: new attempt required");
-    if (step && !step.providerJobId) return this.accounts.reconcilePending(context, step);
+    if (step && !step.providerJobId) {
+      if (await this.accounts.recoverUndispatched(context, step)) step = null;
+      else {
+        const providerJobId = await this.access.paid.jobReceipt(context, step);
+        if (!providerJobId) return this.accounts.reconcilePending(context, step);
+        step = await this.attachJob(context, step, providerJobId);
+      }
+    }
     if (!step) {
       const claimed = await this.accounts.begin(context, run, `media:${key}`, spec, cost, modelId);
       await this.accounts.prepare(context, run, claimed, modelId);
@@ -54,22 +61,25 @@ export class MediaJobs {
           () => port.submit(spec, claimed.idempotencyKey),
           assertLocked,
         );
-        await db.videoRunStep.updateMany({
-          where: { id: claimed.id },
-          data: { providerJobId: job.providerJobId, state: "WAITING_EXTERNAL" },
-        });
-        step = { ...claimed, providerJobId: job.providerJobId };
+        await this.access.paid.recordJob(context, claimed, job.providerJobId);
+        step = await this.attachJob(context, claimed, job.providerJobId);
       } catch (error) {
-        if (
-          error instanceof DispatchAdmissionError ||
-          (error instanceof ProviderFailure && !error.dispatched)
-        )
+        if (error instanceof ProviderFailure && !error.dispatched)
           await this.accounts.cancelUndispatched(context, claimed);
         throw error;
       }
     }
     return this.collect(context, key, port, step, modelId, promptVersion, seconds);
   }
+  private async attachJob(context: Context, step: Step, providerJobId: string): Promise<Step> {
+    const db = this.access.runs.store.scoped(context);
+    await db.videoRunStep.updateMany({
+      where: { id: step.id, state: "RUNNING", providerJobId: null },
+      data: { providerJobId, state: "WAITING_EXTERNAL" },
+    });
+    return db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+  }
+
   private async collect<T>(
     context: Context,
     key: string,
@@ -81,7 +91,12 @@ export class MediaJobs {
   ): Promise<CompletedMedia | null> {
     const status = await port.poll(step.providerJobId!);
     if (status === "queued" || status === "running") return null;
-    if (status !== "succeeded") throw new ConflictException(`PROVIDER_${status.toUpperCase()}`);
+    if (status !== "succeeded") {
+      const code = `PROVIDER_${status.toUpperCase()}`;
+      const event = await this.access.paid.finalizeJobFailure(context, step, code);
+      await this.access.runs.events?.publish(event);
+      throw new ConflictException(code);
+    }
     const media = await port.fetch(step.providerJobId!, seconds || undefined);
     const body = await this.bytes(context, media);
     const artifact = await this.access.artifacts.put(context, mediaKind(key), body, media.mimeType);
