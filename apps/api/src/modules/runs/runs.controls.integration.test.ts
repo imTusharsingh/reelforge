@@ -44,6 +44,29 @@ suite("V3 approval, caps and retention", () => {
       expect((await t.store.get(t.context, t.run.id)).state).toBe("CANCELED");
     },
   );
+  it("blocks a shot if cancel lands while its provider inputs are being prepared", async () => {
+    const t = await fixture.tenant();
+    await generating(t);
+    const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0" },
+    });
+    const preparing = Promise.withResolvers<void>();
+    const prepared = Promise.withResolvers<void>();
+    t.generation.resolvePorts = async (): ReturnType<
+      NonNullable<typeof t.generation.resolvePorts>
+    > => {
+      preparing.resolve();
+      await prepared.promise;
+      return { primary: t.generation.provider, fallback: t.generation.fallbackProvider };
+    };
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    const queued = t.engine.process(t.runs.job(t.context, t.run.id, step.id));
+    await preparing.promise;
+    await t.control.cancel(t.context, t.run.id);
+    prepared.resolve();
+    await expect(queued).rejects.toThrow("Run is not generating");
+    expect(submit).not.toHaveBeenCalled();
+  });
   it("settles a call admitted before cancel and rejects a subsequent dispatch", async () => {
     const t = await fixture.tenant();
     await t.engine.process(t.runs.job(t.context, t.run.id));

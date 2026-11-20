@@ -47,9 +47,23 @@ export class MediaPorts {
       }),
     );
   }
-  public async get(context: Context): Promise<Awaited<ReturnType<ProvidersRuntime["ports"]>>> {
+  public async get(
+    context: Context,
+    videoShot?: ShotSpec,
+  ): Promise<Awaited<ReturnType<ProvidersRuntime["ports"]>>> {
+    // Video ports resolve these immediately when they start their HTTP request under the run lock.
+    // Resolve storage and database references before paid dispatch admission.
+    const prepared = videoShot && {
+      key: JSON.stringify(videoShot.references),
+      media: await this.references(context, videoShot),
+    };
     const references: ReferenceResolver = {
-      resolve: (shot): Promise<MediaInput[]> => this.references(context, shot),
+      resolve: async (shot): Promise<MediaInput[]> => {
+        if (!prepared) return this.references(context, shot);
+        if (JSON.stringify(shot.references) !== prepared.key)
+          throw new Error("Video references changed after preparation");
+        return prepared.media;
+      },
     };
     const ports = await this.providers.ports(context, references);
     if (ports.omni.capabilities().health === "NOT_CONFIGURED")

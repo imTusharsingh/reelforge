@@ -47,7 +47,7 @@ export class MediaBindings {
       await this.accounts.sync(context, run);
       const options = await this.frames.prepare(context, run, shot);
       if (!options) return null;
-      const ports = await this.ports.get(context);
+      const ports = await this.ports.get(context, shot);
       return {
         primary: new RoutedMediaVideo(
           ports.omni,
