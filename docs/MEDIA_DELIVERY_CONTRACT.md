@@ -26,8 +26,8 @@ All paths are relative to the global `/api/v1` prefix and require a verified ses
 ### 1. Immutable asset-version content
 
 ```http
-GET  /api/v1/workspaces/:workspaceId/assets/:assetId/versions/:version/content
-HEAD /api/v1/workspaces/:workspaceId/assets/:assetId/versions/:version/content
+GET  /api/v1/workspaces/:workspaceId/assets/:assetId/versions/:version/content-v2
+HEAD /api/v1/workspaces/:workspaceId/assets/:assetId/versions/:version/content-v2
 ```
 
 - `:assetId` is either the exact version row ID or the root asset ID.
@@ -81,10 +81,14 @@ No other query parameter changes authorization, storage location, media type, or
 | `X-Content-Type-Options` | `nosniff` |
 | `Accept-Ranges` | `bytes` |
 | `ETag` | `"sha256-<64 hex>"` |
-| `Cache-Control` | Asset versions: `private, max-age=31536000, immutable`; render artifacts: `private, no-store`. |
+| `Cache-Control` | Asset versions: `private, no-store`; render artifacts: `private, no-store`. |
 | `Content-Range` | Present on `206` and `416` only. |
 
-Asset versions are immutable and non-expiring, so browsers may cache them privately for a year. Render artifacts can expire and their bytes can be deleted by retention, so they are never stored in a shared or persistent HTTP cache.
+Asset requests in the `content-v2` namespace require current workspace membership and use `Cache-Control: private, no-store`. Render artifacts also use `private, no-store`.
+
+Deploy the `content-v2` origin routes and 410 retirement for `content` together. Update API clients and stored links under application control, and purge any reverse-proxy/CDN cache for the old route during rollout. The retirement response sends `Clear-Site-Data: "cache"` to supporting browsers over HTTPS when they reach the origin.
+
+Revocation is immediate for new namespace requests and for requests reaching the retired route. A previously cached immutable response can still be served locally without contacting the deployment until its original one-year freshness expires or the client clears that origin's cache. For managed clients requiring immediate revocation of those legacy entries, clear the origin's HTTP cache on every managed profile at cutover. Unmanaged cached copies and already downloaded bytes are outside that guarantee.
 
 ### Status codes
 
@@ -118,7 +122,7 @@ M25 must build these paths from persisted identifiers and must not construct sto
 ```ts
 // Asset gallery / scene asset preview
 const assetContentPath =
-  `/api/v1/workspaces/${workspaceId}/assets/${asset.id}/versions/${asset.version}/content`;
+  `/api/v1/workspaces/${workspaceId}/assets/${asset.id}/versions/${asset.version}/content-v2`;
 
 // Render preview/download
 const artifactContentPath =
@@ -139,7 +143,7 @@ Recommended M25 behavior:
 
 ## Limits and known gaps
 
-- The current `StoragePort` returns a full `Buffer`; this contract verifies the whole object before serving a range. Large render memory use is bounded by the existing render size, but a future storage adapter should add server-side range reads while preserving checksum/state checks.
+- Local storage opens a consistent file handle and checks its length for HEAD. GET validates SHA-256 before delivery. Byte ranges use 256 KiB chunks with digests pinned in the database or artifact descriptor. A legacy object without digests receives a bounded full checksum scan and lazy digest backfill. New run artifacts are limited to 128 MiB at write time. Larger historical run artifacts use bounded-memory checksum verification and a temporary verified copy of the requested bytes. Delivery limits concurrent responses to four per API process.
 - Multi-range requests are rejected rather than multipart-encoded.
 - No transcoding, thumbnailing, watermarking, or format negotiation is performed.
 - No public/signed URL is issued.

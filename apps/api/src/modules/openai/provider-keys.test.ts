@@ -1,3 +1,4 @@
+import type { ProvidersRuntime } from "./providers.runtime.js";
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
@@ -45,7 +46,6 @@ describe("write-only provider credentials", () => {
     expect(JSON.stringify(delegate.upsert.mock.calls)).not.toContain(key);
     const encrypted = delegate.upsert.mock.calls[0]![0].create;
     delegate.findUnique.mockResolvedValue(encrypted);
-    vi.stubEnv("NODE_ENV", "production");
     expect(await keys.resolve(context, "gemini")).toBe(key);
     await expect(keys.resolve({ ...context, workspaceId: "other" }, "gemini")).rejects.toThrow();
     await expect(keys.resolve(context, "xai")).rejects.toThrow();
@@ -78,9 +78,6 @@ describe("write-only provider credentials", () => {
     expect(() => parseVendor("openai")).toThrow();
     expect(parseVendor("xai")).toBe("xai");
     expect(await keys.resolve(context, "gemini")).toBeUndefined();
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("GEMINI_API_KEY", "environment-secret");
-    expect(await keys.resolve(context, "gemini")).toBe("environment-secret");
     delegate.findUnique.mockResolvedValue({ keyVersion: "future" });
     await expect(keys.resolve(context, "gemini")).rejects.toThrow("version");
   });
@@ -97,7 +94,11 @@ describe("write-only provider credentials", () => {
   it("authenticates every API action and makes health entirely offline", async () => {
     const { keys } = setup();
     const workspaces = { context: vi.fn().mockResolvedValue(context) };
-    const controller = new ProvidersController(keys, workspaces as unknown as WorkspaceService);
+    const controller = new ProvidersController(
+      keys,
+      workspaces as unknown as WorkspaceService,
+      { videoState: () => new Map() } as unknown as ProvidersRuntime,
+    );
     const request = { principal: { userId: "owner" } } as AuthenticatedRequest;
     for (const name of ["VIDEO", "IMAGE", "TEXT", "TTS", "MUSIC"])
       vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());

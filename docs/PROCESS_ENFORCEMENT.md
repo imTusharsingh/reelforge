@@ -80,7 +80,7 @@ are not valid authorizations):
   "base": "<exact base SHA>",
   "head": "<exact head SHA>",
   "workstream": "F",
-  "metadataDigest": "<SHA256 of JSON.stringify(parsed PR metadata)>",
+  "metadataDigest": "<SHA256 of JSON.stringify(parsed PR metadata without authorizationComment)>",
   "expires": "<explicit ISO timestamp with timezone>",
   "paths": ["<every exact changed path, including rename origins>"],
   "blobs": { "<each protected path>": "<Git blob SHA>" },
@@ -98,10 +98,12 @@ protected-prefix rules cannot be changed by candidate self-authorization; policy
 is read from base. An authorization comment ID or author-supplied login alone is
 insufficient. The real GitHub author ID/type, issue association, record contents,
 paths, blobs, expiry and SHAs are checked. The authorization also binds
-SHA256(JSON.stringify(parsed PR metadata)), including acceptance rows and the
-authorization comment ID. An author changing evidence, scope or even parsed key
-order must obtain renewed attestation. The reviewer can first create a pending
-comment to allocate its ID, then replace it with the final bound approval.
+SHA256(JSON.stringify(parsed PR metadata without `authorizationComment`)), including
+acceptance rows. Preserve the parsed key order. The author fills out PR metadata
+and shares the exact head and evidence with Minu. Minu posts one complete signed-off
+record on the linked issue. The author then sets `authorizationComment` to that
+comment’s positive numeric ID and reruns Process Policy. Changes to bound metadata
+require a fresh authorization from Minu. CI verifies the linked comment independently.
 
 Any new commit invalidates head-bound authorization. Edited/deleted records,
 closed tasks, missing or inaccessible evidence and metadata ambiguity fail closed.

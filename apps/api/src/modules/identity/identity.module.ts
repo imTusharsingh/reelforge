@@ -4,6 +4,10 @@ import { AuthGuard } from "./auth.guard.js";
 import { IdentityService } from "./identity.service.js";
 import { IdentityController } from "./identity.controller.js";
 
+import { AccountEmailController } from "./account-email.controller.js";
+import { AccountEmailService } from "./account-email.service.js";
+import { ACCOUNT_EMAIL, accountEmailRelay, type AccountEmailPort } from "./account-email.port.js";
+
 const databaseProvider = {
   provide: "DATABASE",
   useFactory: async (): Promise<ReturnType<typeof createDatabaseClient>> => {
@@ -18,8 +22,14 @@ const databaseProvider = {
   },
 };
 @Module({
-  controllers: [IdentityController],
-  providers: [databaseProvider, IdentityService, AuthGuard],
+  controllers: [IdentityController, AccountEmailController],
+  providers: [
+    databaseProvider,
+    IdentityService,
+    AuthGuard,
+    AccountEmailService,
+    { provide: ACCOUNT_EMAIL, useFactory: (): AccountEmailPort => accountEmailRelay(process.env) },
+  ],
   exports: [IdentityService, AuthGuard, "DATABASE"],
 })
 export class IdentityModule {}

@@ -1,13 +1,44 @@
-import { createHash } from "node:crypto";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ProviderFailure } from "@reelforge/ai-providers";
+import { ConflictException, HttpException, Injectable } from "@nestjs/common";
 import { createContext, runWithContext, withSpan, metrics } from "@reelforge/observability";
 import { z } from "zod";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
-import { RunJobSchema, type Context, type Run, type RunJob } from "../runs/runs.types.js";
+import {
+  RECOVERY_PRINCIPAL,
+  RunJobSchema,
+  type Context,
+  type Run,
+  type RunJob,
+} from "../runs/runs.types.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
+
+const pauseCode = z.enum([
+  "BUDGET_CAP",
+  "BUDGET_EXHAUSTED",
+  "BUDGET_POLICY_UNAVAILABLE",
+  "BUDGET_CURRENCY_MISMATCH",
+  "PROVIDER_REFUSED",
+  "PROVIDER_FAILED",
+  "PROVIDER_OUTAGE",
+  "BUDGET_TIMEZONE_INVALID",
+]);
+function generationPause(error: unknown): string {
+  if (error instanceof ProviderFailure) {
+    if (error.kind === "REFUSAL" || error.kind === "NEEDS_HUMAN") return "PROVIDER_REFUSED";
+    return `PROVIDER_${error.kind}`;
+  }
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (typeof response === "object" && "code" in response) {
+      const parsed = pauseCode.safeParse(response.code);
+      if (parsed.success) return parsed.data;
+    }
+  }
+  return "GENERATION_FAILED";
+}
 
 @Injectable()
 export class VideoRunEngine {
@@ -28,7 +59,7 @@ export class VideoRunEngine {
       createContext({
         workspaceId: run.workspaceId,
         correlationId: run.correlationId,
-        traceparent: `00-${createHash("sha256").update(run.correlationId).digest("hex").slice(0, 32)}-0000000000000001-01`,
+        traceparent: job.traceparent,
       }),
       async () =>
         withSpan(
@@ -79,12 +110,7 @@ export class VideoRunEngine {
       if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
         await this.hold(context, run, error.message);
       else if (current.state === "GENERATING")
-        await this.runs.move(
-          context,
-          current,
-          "PAUSED_BUDGET",
-          error instanceof Error ? error.message : "Reconciliation required",
-        );
+        await this.runs.move(context, current, "PAUSED_BUDGET", generationPause(error));
       throw error;
     }
   }
@@ -146,6 +172,14 @@ export class VideoRunEngine {
     return null;
   }
   private async context(job: RunJob): Promise<Context> {
+    if (job.userId === RECOVERY_PRINCIPAL) {
+      const active = await this.runs.store.db.workspace.findFirst({
+        where: { id: job.workspaceId, archivedAt: null },
+        select: { id: true },
+      });
+      if (!active) throw new ConflictException("Recovered run workspace is inactive");
+      return { workspaceId: active.id, userId: RECOVERY_PRINCIPAL, role: "OWNER" };
+    }
     const membership = await this.runs.store.db.workspaceMembership.findFirst({
       where: {
         workspaceId: job.workspaceId,
@@ -161,17 +195,10 @@ export class VideoRunEngine {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.
     const workspaces = await this.runs.store.db.workspace.findMany({ where: { archivedAt: null } });
     for (const workspace of workspaces) {
-      const actor = await this.runs.store.db.workspaceMembership.findFirst({
-        where: {
-          workspaceId: workspace.id,
-          role: { in: ["OWNER", "EDITOR"] },
-        },
-      });
-      if (!actor) continue;
       const context: Context = {
         workspaceId: workspace.id,
-        userId: actor.userId,
-        role: actor.role,
+        userId: RECOVERY_PRINCIPAL,
+        role: "OWNER",
       };
       await this.artifacts.sweep(context);
       const runs = await this.runs.store.scoped(context).videoRun.findMany({

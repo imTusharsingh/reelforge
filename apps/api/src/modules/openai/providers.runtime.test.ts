@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import type { ProviderKeys } from "./provider-keys.js";
+import type { ProviderVideoHealth } from "./provider-video-health.js";
 import type { ProviderLedger } from "./provider-ledger.js";
 import { ProvidersRuntime } from "./providers.runtime.js";
 import { shot, artifact } from "./provider.fixture.js";
@@ -22,9 +23,11 @@ describe("registered provider runtime", () => {
       submit: vi.fn().mockResolvedValue({ providerJobId: "job" }),
       finish: vi.fn().mockResolvedValue(undefined),
     };
+    const record = vi.fn().mockResolvedValue(undefined);
     const runtime = new ProvidersRuntime(
       keys as unknown as ProviderKeys,
       ledger as unknown as ProviderLedger,
+      { state: vi.fn().mockResolvedValue(new Map()), record } as unknown as ProviderVideoHealth,
       {} as StoragePort,
     );
     const context = { workspaceId: shot.workspaceId, userId: "owner", role: "OWNER" as const };
@@ -45,6 +48,7 @@ describe("registered provider runtime", () => {
     const router = await runtime.router(context, null, refs, async (spec) => spec, allow);
     const job = await router.submit(shot, "run:shot:1", ["gemini", "xai"]);
     expect(job.providerJobId).toBe("job");
+    expect(record).toHaveBeenCalledWith(context.workspaceId, "gemini", "ACCEPTED");
     expect(ledger.submit).toHaveBeenCalledWith(
       expect.anything(),
       shot,

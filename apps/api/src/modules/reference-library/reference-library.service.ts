@@ -1,10 +1,5 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-} from "@nestjs/common";
+import { Inject, Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
+import { withSessionLock } from "../runs/session-lock.js";
 import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   ChannelReferenceDefaultsSchema,
@@ -90,23 +85,13 @@ export class ReferenceLibraryService implements ReferenceLibrary {
     channelId: string,
     initialize: (assertLocked: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
-    // Keep the lock on a dedicated transaction while provider accounting commits independently.
-    // A contender fails immediately instead of occupying a connection while a provider polls.
     const key = `reference-init:${context.workspaceId}:${channelId}`;
-    return this.db.$transaction(
-      async (tx) => {
-        const [lock] = await tx.$queryRaw<{ acquired: boolean }[]>`
-        SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired
-      `;
-        if (!lock?.acquired)
-          throw new ConflictException("Channel reference initialization in progress");
-        return initialize(async () => {
-          // A closed or expired transaction must never authorize a subsequent image dispatch.
-          await tx.$queryRaw`SELECT 1`;
-        });
-      },
-      // Allow four image jobs, each with up to 20 minutes of provider polling.
-      { timeout: 90 * 60 * 1000 },
+    return withSessionLock(
+      key,
+      "reference-initialization",
+      "Channel reference initialization in progress",
+      "Channel reference initialization lock lost",
+      initialize,
     );
   }
 

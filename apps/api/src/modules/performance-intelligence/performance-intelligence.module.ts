@@ -24,7 +24,7 @@ import { OpenAiInsightReportLlm, openAiRuntimeConfig } from "../openai/openai.ad
         const config = openAiRuntimeConfig();
         return config.key === undefined || !config.textFallbackEnabled
           ? new NotConfiguredInsightReportLlm()
-          : new OpenAiInsightReportLlm(config.key, config.textModel);
+          : new OpenAiInsightReportLlm(config.key, config.textModel, fetch, config.providerId);
       },
     },
   ],

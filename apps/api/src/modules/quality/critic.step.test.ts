@@ -104,7 +104,7 @@ describe("V3 critic registration", () => {
     const { handler, planning, reshoot } = fixture();
     handler.onModuleInit();
     expect(planning.handlers).toEqual({ ASSEMBLING: {}, CRITIC: handler });
-    await expect(handler.execute(run, brief, step)).rejects.toThrow("deferred");
+    await expect(handler.execute(run, brief, step, context)).rejects.toThrow("deferred");
     expect(reshoot).toHaveBeenCalledWith(context, run.id, 0);
   });
 
@@ -117,7 +117,7 @@ describe("V3 critic registration", () => {
         createdAt: new Date(),
       })),
     );
-    await expect(handler.reconcile(run, brief, step)).resolves.toEqual(report);
+    await expect(handler.reconcile(run, brief, step, context)).resolves.toEqual(report);
     expect(assemble).toHaveBeenCalledWith(context, run, brief);
     expect(execute).toHaveBeenCalledWith(context, run, brief, step, 3);
     expect(reshoot).not.toHaveBeenCalled();
@@ -125,18 +125,18 @@ describe("V3 critic registration", () => {
 
   it("stops when the run cannot afford another shot and review", async () => {
     const { handler, reshoot } = fixture([], 799);
-    await expect(handler.execute(run, brief, step)).resolves.toBeDefined();
+    await expect(handler.execute(run, brief, step, context)).resolves.toBeDefined();
     expect(reshoot).not.toHaveBeenCalled();
   });
 
   it("requests one V3 re-edit and respects an existing request", async () => {
     const first = fixture();
     first.execute.mockReturnValue({ report, redo: { shots: [], reedit: true } });
-    await expect(first.handler.execute(run, brief, step)).rejects.toThrow("re-edit");
+    await expect(first.handler.execute(run, brief, step, context)).rejects.toThrow("re-edit");
     expect(first.reedit).toHaveBeenCalledWith(context, run.id);
     const repeated = fixture([{ key: "REEDIT", state: "SUCCEEDED", createdAt: new Date() }]);
     repeated.execute.mockReturnValue({ report, redo: { shots: [], reedit: true } });
-    await expect(repeated.handler.reconcile(run, brief, step)).resolves.toBeDefined();
+    await expect(repeated.handler.reconcile(run, brief, step, context)).resolves.toBeDefined();
     expect(repeated.reedit).not.toHaveBeenCalled();
   });
 });

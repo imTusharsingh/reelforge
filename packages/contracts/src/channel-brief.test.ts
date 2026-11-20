@@ -76,4 +76,22 @@ describe("V7 Brief defaults and boundary", () => {
     ])
       expect(BriefInputSchema.safeParse({ ...brief, ...patch }).success).toBe(false);
   });
+  it("rejects conflicting legacy narration fields", () => {
+    const brief = defaultBrief({
+      niche: "Science",
+      audience: "Adults",
+      language: "English",
+      voiceId: "Kore",
+      cadence: { shortsPerDay: 1, localTime: "18:00", timezone: "UTC" },
+    });
+    expect(BriefInputSchema.safeParse({ ...brief, narrationLanguage: "French" }).success).toBe(
+      false,
+    );
+    expect(
+      BriefInputSchema.safeParse({
+        ...brief,
+        narratorVoice: { ...brief.narratorVoice, language: "French" },
+      }).success,
+    ).toBe(false);
+  });
 });

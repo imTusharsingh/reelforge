@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HookSchema, CtaSchema, scriptWordBudget, words } from "./script-content.js";
-import { ChannelBriefSchema, ReferencePinSchema, ShotSpecSchema } from "./foundations.js";
+import { StoredChannelBriefSchema, ReferencePinSchema, ShotSpecSchema } from "./foundations.js";
 
 const text = z.string().trim().min(1);
 export const PlanningFormatSchema = z.enum([
@@ -27,7 +27,7 @@ export type PlanningScript = z.infer<typeof PlanningScriptSchema>;
 export const PlanningRequestSchema = z
   .object({
     runId: z.uuid(),
-    brief: ChannelBriefSchema,
+    brief: StoredChannelBriefSchema,
     idea: text.max(20000),
     format: PlanningFormatSchema,
   })
@@ -57,7 +57,7 @@ export type PlanningManifest = Readonly<{
   runId: string;
   briefId: string;
   briefVersion: number;
-  narratorVoice: NonNullable<z.infer<typeof ChannelBriefSchema>["narratorVoice"]>;
+  narratorVoice: NonNullable<z.infer<typeof StoredChannelBriefSchema>["narratorVoice"]>;
   prompts: readonly PlanningPromptReceipt[];
   shots: readonly z.infer<typeof ShotSpecSchema>[];
 }>;

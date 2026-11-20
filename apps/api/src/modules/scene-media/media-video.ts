@@ -7,6 +7,8 @@ import {
   type ClipArtifact,
   type VideoGenPort as NativeVideoPort,
   type VideoOptions,
+  type VideoRoutingState,
+  type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
@@ -27,6 +29,8 @@ export class RoutedMediaVideo implements VideoGenPort {
     private readonly limiter: ProviderLimiter = new ProviderLimiter(),
     private readonly trim?: (body: Buffer, from: number) => Promise<Buffer>,
     private readonly validateKey?: () => void,
+    private readonly videoState?: VideoRoutingState,
+    private readonly recordOutcome?: RecordVideoOutcome,
   ) {
     void _run;
     this.providerId = native.capabilities().providerId;
@@ -60,6 +64,9 @@ export class RoutedMediaVideo implements VideoGenPort {
       async (): Promise<never> => {
         throw new ProviderFailure("NEEDS_HUMAN", false);
       },
+      Date.now,
+      this.videoState,
+      this.recordOutcome,
     );
     const job = await router.submit(shot, key, [this.providerId]);
     return { providerJobId: job.providerJobId };

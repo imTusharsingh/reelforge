@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import {
-  ChannelBriefSchema,
+  StoredChannelBriefSchema,
   type PublishingPackage,
   type ChannelBrief,
 } from "@reelforge/contracts";
@@ -20,7 +20,7 @@ export class AutomationSlots {
     now: Date,
   ): Promise<AutoSlot> {
     const snapshot = run.inputSnapshot;
-    const brief = ChannelBriefSchema.parse(
+    const brief = StoredChannelBriefSchema.parse(
       snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot.brief : null,
     );
     if (

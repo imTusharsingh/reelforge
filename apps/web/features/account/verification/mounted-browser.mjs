@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
-import { createRequire } from "node:module";
+import { chromium } from "@playwright/test";
+import { build } from "esbuild";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright-core");
-const esbuild = require(process.env.ESBUILD_MODULE || "esbuild");
 const root = path.resolve(directory, "../../../../..");
 
-const output = await esbuild.build({
+const output = await build({
   entryPoints: [path.join(directory, "mounted-fixture.tsx")],
   bundle: true,
   write: false,
@@ -51,7 +49,7 @@ const server = http.createServer((request, response) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+  executablePath: process.env.CHROMIUM_PATH,
   headless: true,
 });
 let count = 0;
@@ -140,14 +138,11 @@ try {
       viewport,
     );
     await test(
-      `forgot password unavailable at ${width}px`,
+      `password recovery opens at ${width}px`,
       async (page) => {
-        await page
-          .getByText(
-            "Forgot password? Password reset isn't available yet. Contact your workspace owner.",
-          )
-          .waitFor();
-        assert.equal(await page.locator('a:has-text("Forgot password")').count(), 0);
+        await page.getByRole("button", { name: "Forgot password?" }).click();
+        await page.getByRole("heading", { name: "Reset password" }).waitFor();
+        await page.getByRole("button", { name: "Send reset code" }).waitFor();
       },
       "mode=login",
       viewport,

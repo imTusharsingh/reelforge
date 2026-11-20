@@ -22,11 +22,9 @@ describe("authentication form validation", () => {
     expect(validateAuth("creator@example.com", "long-enough-password", "", "signin")).toBe("");
   });
 
-  it("shows password reset as unavailable text on the login screen", () => {
-    expect(workspaceSource).toContain(
-      "Forgot password? Password reset isn&apos;t available yet. Contact your workspace owner.",
-    );
-    expect(workspaceSource).not.toContain("Password recovery unavailable");
+  it("offers password recovery from sign-in", () => {
+    expect(workspaceSource).toContain("Forgot password?");
+    expect(workspaceSource).toContain('<AccountEmailForm mode="reset"');
   });
 
   it("only treats an already-invalid session as safe logout completion", () => {

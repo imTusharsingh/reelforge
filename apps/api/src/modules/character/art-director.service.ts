@@ -151,12 +151,21 @@ export class ArtDirectorService implements ArtDirector {
       for (const [view, description] of Object.entries(plan.character)) {
         await assertLocked();
         references.push(
-          await this.generate(context, request, "CHARACTER", `${view}: ${description}`, references),
+          await this.generate(
+            context,
+            request,
+            "CHARACTER",
+            `${view}: ${description}`,
+            references,
+            assertLocked,
+          ),
         );
       }
     }
     await assertLocked();
-    references.push(await this.generate(context, request, "STYLE", plan.styleFrame, references));
+    references.push(
+      await this.generate(context, request, "STYLE", plan.styleFrame, references, assertLocked),
+    );
     const characterRefs = references.filter((ref) => ref.kind === "CHARACTER");
     if (characterRefs.length) {
       const characterVersionId = await this.characters.publish(
@@ -176,6 +185,7 @@ export class ArtDirectorService implements ArtDirector {
     kind: "CHARACTER" | "STYLE",
     prompt: string,
     references: ReferenceAsset[],
+    assertLocked: () => Promise<void>,
   ): Promise<ReferenceAsset> {
     screenPlanningContent(request, prompt);
     const image = await this.images.generate({
@@ -185,6 +195,7 @@ export class ArtDirectorService implements ArtDirector {
       modelId: planningModels.image,
       prompt,
       references,
+      assertLocked,
     });
     const asset = await this.assets.store(context, image);
     const reference: ReferenceAsset = {

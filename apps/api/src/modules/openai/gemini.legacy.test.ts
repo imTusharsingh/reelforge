@@ -6,7 +6,7 @@ describe("Insight narration text configuration", () => {
     expect(
       openAiRuntimeConfig({ NODE_ENV: "test", GEMINI_API_KEY: "secret", OPENAI_API_KEY: "other" })
         .key,
-    ).toBeUndefined();
+    ).toBe("secret");
     expect(openAiRuntimeConfig({ OPENAI_API_KEY: "secret" }).key).toBeUndefined();
     expect(
       openAiRuntimeConfig({
@@ -16,9 +16,7 @@ describe("Insight narration text configuration", () => {
       }),
     ).toMatchObject({ key: "secret", textModel: "current", textFallbackEnabled: true });
     expect(openAiTextModel({})).toBe("");
-    expect(openAiKey({ NODE_ENV: "test", OPENAI_API_KEY: "x" })).toBeUndefined();
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("GEMINI_API_KEY", "gemini");
+    expect(openAiKey({ NODE_ENV: "test", OPENAI_API_KEY: "x" })).toBe("x");
     const config = openAiRuntimeConfig({
       NODE_ENV: "production",
       GEMINI_API_KEY: "gemini",

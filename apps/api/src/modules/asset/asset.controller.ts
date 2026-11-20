@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Get,
-  Head,
   Param,
   Post,
   Query,
@@ -20,6 +19,7 @@ import {
   parseDownloadQuery,
   parsePositiveInteger,
   sendMediaContent,
+  claimMediaDelivery,
   singleHeaderValue,
 } from "./content-delivery.js";
 import {
@@ -125,29 +125,22 @@ export class AssetController {
     return this.assets.listUsage(await this.context(request, workspaceId), assetId);
   }
 
-  @Get(":assetId/versions/:version/content") public async content(
+  @Get(":assetId/versions/:version/content")
+  public async retiredContent(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Param("assetId") assetId: string,
     @Param("version") version: string,
-    @Query("download") downloadQuery: unknown,
     @Res() response: Response,
   ): Promise<void> {
     const context = await this.context(request, workspaceId);
-    const download = parseDownloadQuery(downloadQuery);
-    const content = await this.assets.getContent(
-      context,
-      assetId,
-      parsePositiveInteger(version, "version"),
-    );
-    sendMediaContent(response, content, {
-      download,
-      rangeHeader: singleHeaderValue(request.headers.range),
-      ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
-    });
+    await this.assets.getVersion(context, assetId, parsePositiveInteger(version, "version"));
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Clear-Site-Data", '"cache"');
+    response.status(410).end();
   }
 
-  @Head(":assetId/versions/:version/content") public async contentHead(
+  @Get(":assetId/versions/:version/content-v2") public async content(
     @Req() request: AuthenticatedRequest,
     @Param("workspaceId") workspaceId: string,
     @Param("assetId") assetId: string,
@@ -157,14 +150,26 @@ export class AssetController {
   ): Promise<void> {
     const context = await this.context(request, workspaceId);
     const download = parseDownloadQuery(downloadQuery);
-    const content = await this.assets.getContent(
-      context,
-      assetId,
-      parsePositiveInteger(version, "version"),
-    );
-    sendMediaContent(response, content, {
+    const options = {
       download,
-      head: true,
-    });
+      head: request.method === "HEAD",
+      rangeHeader: singleHeaderValue(request.headers.range),
+      ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
+    };
+    const release = claimMediaDelivery(response);
+    try {
+      const content = await this.assets.getContent(
+        context,
+        assetId,
+        parsePositiveInteger(version, "version"),
+        options,
+      );
+      sendMediaContent(response, content, options);
+      if (response.destroyed) release();
+      else response.once("close", release);
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 }

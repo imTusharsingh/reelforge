@@ -1,3 +1,10 @@
+import {
+  currentContext,
+  createContext,
+  formatTraceparent,
+  runWithContext,
+} from "@reelforge/observability";
+import { RECOVERY_PRINCIPAL } from "./runs.types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { firstValueFrom, take, toArray, timeout } from "rxjs";
 import { DelayedError, Queue, Worker } from "bullmq";
@@ -109,8 +116,31 @@ describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
     });
     t.runs.queue = queue;
     try {
+      await t.db.workspaceMembership.deleteMany({ where: { workspaceId: t.context.workspaceId } });
       await t.engine.recover();
-      expect(await inspect.getJob(`${t.run.id}-${t.run.revision}`)).toBeTruthy();
+      const queued = await inspect.getJob(`${t.run.id}-${t.run.revision}`);
+      expect(queued?.data.userId).toBe(RECOVERY_PRINCIPAL);
+      const parent = createContext();
+      expect(runWithContext(parent, () => t.runs.job(t.context, t.run.id)).traceparent).toBe(
+        formatTraceparent(parent),
+      );
+      let observed: string | undefined;
+      t.planning.handlers = {
+        ...t.planning.handlers,
+        SCRIPTING: {
+          execute: async (): Promise<Record<string, never>> => {
+            observed = currentContext()?.traceId;
+            return {};
+          },
+          reconcile: async (): Promise<null> => null,
+        },
+      };
+      await t.engine.process({ ...queued?.data, traceparent: formatTraceparent(parent) });
+      expect((await t.store.get(t.context, t.run.id)).state).toBe("SCRIPTING");
+      await t.engine.process(
+        queued?.data ? { ...queued.data, traceparent: formatTraceparent(parent) } : undefined,
+      );
+      expect(observed).toBe(parent.traceId);
     } finally {
       await inspect.obliterate({ force: true });
       await queue.close();

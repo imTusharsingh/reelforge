@@ -15,6 +15,8 @@ async function dispatchOutcome<T>(
   }
 }
 
+export class DispatchAdmissionError extends ConflictException {}
+
 /** Keep M08/M18 logical keys, with the UUID step id as the ledger correlation id. */
 @Injectable()
 export class RunPaidCalls {
@@ -38,7 +40,10 @@ export class RunPaidCalls {
       ttlMs: 86400000,
     });
     if (result.decision !== "RESERVED")
-      throw new ServiceUnavailableException("Budget policy unavailable");
+      throw new ServiceUnavailableException({
+        code: result.reason,
+        message: "Budget policy unavailable",
+      });
     if (result.replayed) throw new ConflictException("Paid dispatch requires reconciliation");
     await this.store.db.providerRequest.create({
       data: {
@@ -63,7 +68,12 @@ export class RunPaidCalls {
       estimateMinor: amount,
     };
   }
-  public async dispatch<T>(context: Context, step: Step, call: () => Promise<T>): Promise<T> {
+  public async dispatch<T>(
+    context: Context,
+    step: Step,
+    call: () => Promise<T>,
+    assertLocked?: () => Promise<void>,
+  ): Promise<T> {
     const admission = await this.store
       .mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -82,6 +92,11 @@ export class RunPaidCalls {
           },
         });
         if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
+        try {
+          await assertLocked?.();
+        } catch (cause) {
+          throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
+        }
         // Start under the same run lock as cancel. Wait for the provider only after the lock is released.
         return { value: dispatchOutcome(call), payload: {}, stepId: step.id };
       })

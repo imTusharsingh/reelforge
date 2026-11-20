@@ -1,5 +1,6 @@
 "use client";
 import { useState, type FormEvent, type JSX } from "react";
+import { AccountEmailForm } from "./account-email-form";
 import { Alert, Button, Field } from "./ui/primitives";
 import { ApiError, api } from "../lib/api";
 import { validateAuth, type AuthMode } from "../lib/auth-validation";
@@ -82,6 +83,7 @@ function useAuthFormState({
 }
 function AuthFormView(state: AuthFormState): JSX.Element {
   const { mode, setMode, setError, error } = state;
+  const [reset, setReset] = useState(false);
   return (
     <main className="rf-auth-page">
       <div className="rf-auth-brand">
@@ -93,38 +95,58 @@ function AuthFormView(state: AuthFormState): JSX.Element {
         </span>
       </div>
       <section className="rf-auth-card" aria-labelledby="auth-heading">
-        <p className="rf-eyebrow">The creator&apos;s control room</p>
-        <h1 id="auth-heading">
-          {mode === "signin" ? "Welcome back." : "Make space for good work."}
-        </h1>
-        <p className="rf-auth-intro">
-          {mode === "signin"
-            ? "Sign in to continue to your studio."
-            : "Create an account and start with a workspace."}
-        </p>
-        {error && (
-          <Alert tone="danger" title="Unable to continue">
-            {error}
-          </Alert>
+        {reset ? (
+          <ResetPassword close={() => setReset(false)} />
+        ) : (
+          <>
+            <p className="rf-eyebrow">The creator&apos;s control room</p>
+            <h1 id="auth-heading">
+              {mode === "signin" ? "Welcome back." : "Make space for good work."}
+            </h1>
+            <p className="rf-auth-intro">
+              {mode === "signin"
+                ? "Sign in to continue to your studio."
+                : "Create an account and start with a workspace."}
+            </p>
+            {error && (
+              <Alert tone="danger" title="Unable to continue">
+                {error}
+              </Alert>
+            )}
+            <AuthFields {...state} />
+            <div className="rf-auth-links">
+              <button
+                type="button"
+                className="rf-text-button"
+                onClick={() => {
+                  setMode(mode === "signin" ? "register" : "signin");
+                  setError("");
+                }}
+              >
+                {mode === "signin" ? "Create an account" : "I already have an account"}
+              </button>
+              {mode === "signin" && (
+                <button type="button" className="rf-text-button" onClick={() => setReset(true)}>
+                  Forgot password?
+                </button>
+              )}
+            </div>
+          </>
         )}
-        <AuthFields {...state} />
-        <div className="rf-auth-links">
-          <button
-            type="button"
-            className="rf-text-button"
-            onClick={() => {
-              setMode(mode === "signin" ? "register" : "signin");
-              setError("");
-            }}
-          >
-            {mode === "signin" ? "Create an account" : "I already have an account"}
-          </button>
-          <p className="rf-auth-unavailable" aria-disabled="true">
-            Forgot password? Password reset isn&apos;t available yet. Contact your workspace owner.
-          </p>
-        </div>
       </section>
     </main>
+  );
+}
+
+function ResetPassword({ close }: { close: () => void }): JSX.Element {
+  return (
+    <>
+      <h1 id="auth-heading">Reset password</h1>
+      <AccountEmailForm mode="reset" />
+      <button type="button" className="rf-text-button" onClick={close}>
+        Back to sign in
+      </button>
+    </>
   );
 }
 

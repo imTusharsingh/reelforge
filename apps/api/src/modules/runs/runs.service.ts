@@ -1,3 +1,5 @@
+import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
+import { countApprovedShorts } from "../channel/brief-approvals.js";
 import { RunsArtifacts } from "./runs.artifacts.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -6,7 +8,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { autonomyPolicy, ChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
+import { autonomyPolicy, StoredChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
 import { RunsStore } from "./runs.store.js";
 import { json, type Context, type Run, type RunJob } from "./runs.types.js";
 import type { RunQueueHealth, RunsQueue } from "./runs.queue.js";
@@ -34,7 +36,7 @@ export class RunsService {
     if (previous) return this.replay(previous, briefId);
     const briefRow = await db.channelBrief.findFirst({ where: { id: briefId } });
     if (!briefRow) throw new NotFoundException("Brief not found");
-    const brief = ChannelBriefSchema.parse(briefRow.document);
+    const brief = StoredChannelBriefSchema.parse(briefRow.document);
     if (
       brief.id !== briefRow.id ||
       brief.workspaceId !== context.workspaceId ||
@@ -42,9 +44,9 @@ export class RunsService {
       brief.channelId !== briefRow.channelId
     )
       throw new ConflictException("Brief ownership/version mismatch");
-    const approvedShorts = await db.runEvent.count({
-      where: { type: "approved", run: { channelId: brief.channelId } },
-    });
+    const approvedShorts = await countApprovedShorts(db, brief.channelId);
+    const requestContext = currentContext();
+    const traceparent = requestContext && formatTraceparent(requestContext);
     try {
       return await this.store.db.$transaction(async (tx) => {
         const scoped = this.store.scoped(context, tx);
@@ -60,7 +62,11 @@ export class RunsService {
             idempotencyKey,
             correlationId: randomUUID(),
             revision: 1,
-            inputSnapshot: json({ brief, actorId: context.userId }),
+            inputSnapshot: json({
+              brief,
+              actorId: context.userId,
+              ...(traceparent ? { traceparent } : {}),
+            }),
           },
         });
         await scoped.runEvent.create({
@@ -93,10 +99,18 @@ export class RunsService {
       run.pauseReason === "OPERATOR_ABANDONED"
     )
       return;
-    await this.queue?.enqueue(
-      { workspaceId: context.workspaceId, userId: context.userId, runId: run.id },
-      run.revision,
-    );
+    const job = this.job(context, run.id);
+    const snapshot = run.inputSnapshot;
+    if (
+      !job.traceparent &&
+      snapshot &&
+      typeof snapshot === "object" &&
+      !Array.isArray(snapshot) &&
+      typeof snapshot.traceparent === "string" &&
+      parseTraceparent(snapshot.traceparent)
+    )
+      job.traceparent = snapshot.traceparent;
+    await this.queue?.enqueue(job, run.revision);
   }
   public async move(
     context: Context,
@@ -134,7 +148,9 @@ export class RunsService {
   }
 
   public job(context: Context, runId: string, stepId?: string): RunJob {
+    const active = currentContext();
     return {
+      ...(active ? { traceparent: formatTraceparent(active) } : {}),
       workspaceId: context.workspaceId,
       userId: context.userId,
       runId,

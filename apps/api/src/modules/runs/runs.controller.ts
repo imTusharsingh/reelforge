@@ -1,3 +1,10 @@
+import { sendLargeLegacyArtifact } from "./legacy-artifact.js";
+import {
+  claimMediaDelivery,
+  defaultContentFilename,
+  sendMediaContent,
+  singleHeaderValue,
+} from "../asset/content-delivery.js";
 import {
   BadRequestException,
   Body,
@@ -142,17 +149,43 @@ export class RunsController {
     @Res() response: Response,
   ): Promise<void> {
     const context = await this.context(request, query.workspaceId);
-    const media = await this.artifacts.get(
-      context,
-      this.id(id),
-      this.id(stepId),
-      checksum,
-      Number(query.expires),
-      query.signature ?? "",
-    );
-    response.setHeader("Cache-Control", "private, no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
-    response.type(media.contentType).send(media.body);
+    const abort = new AbortController();
+    const cancel = (): void => abort.abort();
+    const options = {
+      signal: abort.signal,
+      head: request.method === "HEAD",
+      rangeHeader: singleHeaderValue(request.headers.range),
+      ifRangeHeader: singleHeaderValue(request.headers["if-range"]),
+    };
+    const release = claimMediaDelivery(response);
+    response.once("close", cancel);
+    if (response.destroyed) cancel();
+    try {
+      const media = await this.artifacts.get(
+        context,
+        this.id(id),
+        this.id(stepId),
+        checksum,
+        Number(query.expires),
+        query.signature ?? "",
+        options,
+      );
+      const content = {
+        ...media,
+        mediaType: media.contentType,
+        filename: defaultContentFilename(media.contentType, "run-artifact"),
+        checksumSha256: checksum,
+        cacheControl: "private, no-store",
+      };
+      if (media.file) await sendLargeLegacyArtifact(response, content, options, media.file);
+      else sendMediaContent(response, content, options);
+    } catch (error) {
+      release();
+      throw error;
+    } finally {
+      response.off("close", cancel);
+      if (response.destroyed) release();
+    }
   }
   private id(value: unknown): string {
     const parsed = z.uuid().safeParse(value);

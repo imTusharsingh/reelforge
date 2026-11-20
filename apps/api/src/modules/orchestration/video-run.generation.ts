@@ -70,9 +70,10 @@ export class RunGeneration {
       metrics
         .counter("run_provider_results", "Provider outcomes")
         .inc({ provider: step.providerId ?? "unconfigured", status });
-      throw new ConflictException(
-        `PROVIDER_${status.toUpperCase()}: human reconciliation required`,
-      );
+      throw new ConflictException({
+        code: status === "refused" ? "PROVIDER_REFUSED" : "PROVIDER_FAILED",
+        message: `PROVIDER_${status.toUpperCase()}: human reconciliation required`,
+      });
     }
     await this.complete(context, step, ports);
     return null;
@@ -149,7 +150,8 @@ export class RunGeneration {
       async (db, current) => {
         if (current.state !== "GENERATING") throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        if (!envelopeRoom(budget, amount)) throw new ConflictException("Envelope exhausted");
+        if (!envelopeRoom(budget, amount))
+          throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
         const claimed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "PENDING" },
           data: {
@@ -254,8 +256,7 @@ export class RunGeneration {
       [ports.primary, ports.fallback].map((port) => [port.providerId, port]),
     );
     const port = step.providerId ? registry.get(step.providerId) : undefined;
-    if (!port)
-      throw new ConflictException("Stored provider is unavailable; reconciliation required");
+    if (!port) throw new ConflictException("RECONCILE_REQUIRED: stored provider is unavailable");
     return port;
   }
   private completionOutput(

@@ -59,7 +59,6 @@ export class ProviderKeys {
   /** Server-only resolver; never expose through a controller or return in health responses. */
   public async resolve(context: WorkspaceContext, providerId: Vendor): Promise<string | undefined> {
     this.guard(context, true);
-    if (process.env.NODE_ENV === "test") return undefined;
     const row = await this.db.providerKey.findUnique({
       where: { workspaceId_providerId: { workspaceId: context.workspaceId, providerId } },
     });

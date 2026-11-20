@@ -12,7 +12,8 @@ const principal: Principal = {
 type MockFunction = ReturnType<typeof vi.fn>;
 type TestTransaction = {
   user: { update: MockFunction };
-  passwordCredential: { upsert: MockFunction };
+  passwordCredential: { updateMany: MockFunction };
+  emailChallenge: { deleteMany: MockFunction };
   session: { updateMany: MockFunction };
   authEvent: { create: MockFunction };
 };
@@ -24,6 +25,7 @@ type TestDatabase = TestTransaction & {
 };
 function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
     user: {
       update: vi.fn().mockResolvedValue({
         id: principal.userId,
@@ -31,7 +33,8 @@ function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
         displayName: "Updated",
       }),
     },
-    passwordCredential: { upsert: vi.fn().mockResolvedValue({}) },
+    passwordCredential: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    emailChallenge: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     authEvent: { create: vi.fn().mockResolvedValue({}) },
     ...(overrides.tx as Record<string, unknown> | undefined),
@@ -51,7 +54,8 @@ function createDb(overrides: Record<string, unknown> = {}): TestDatabase {
         displayName: "Updated",
       }),
     },
-    passwordCredential: { upsert: vi.fn().mockResolvedValue({}) },
+    passwordCredential: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    emailChallenge: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     session: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     $transaction: vi.fn(async (cb: (client: unknown) => Promise<unknown>) => cb(tx)),
     _tx: tx,
@@ -174,7 +178,7 @@ describe("IdentityService C5 account", () => {
     );
     expect(result).toEqual({ ok: true, revokedSessions: 2 });
     expect(db.$transaction).toHaveBeenCalledTimes(1);
-    expect(db._tx.passwordCredential.upsert).toHaveBeenCalled();
+    expect(db._tx.passwordCredential.updateMany).toHaveBeenCalled();
     expect(db._tx.session.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({

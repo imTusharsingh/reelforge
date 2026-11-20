@@ -10,7 +10,7 @@ import type {
   PerformanceInsightReport,
 } from "@reelforge/contracts";
 import { describe, expect, it, vi, type Mock } from "vitest";
-import type { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { paidUsage } from "./performance-intelligence.fixture.js";
 import type {
   InsightNarrativeResult,
   InsightReportLlmPort,
@@ -253,21 +253,6 @@ function database(): MockDatabase {
   return db;
 }
 
-function paidUsage(): {
-  reservePaidCall: Mock<UsageBudgetService["reservePaidCall"]>;
-  finishPaidCall: Mock<UsageBudgetService["finishPaidCall"]>;
-} {
-  return {
-    reservePaidCall: vi.fn<UsageBudgetService["reservePaidCall"]>().mockResolvedValue({
-      workspaceId,
-      reservationId: "reservation-a",
-      currency: "USD",
-      estimateMinor: 1,
-    }),
-    finishPaidCall: vi.fn<UsageBudgetService["finishPaidCall"]>().mockResolvedValue(undefined),
-  };
-}
-
 function analytics(
   current: readonly LatestMetricSnapshot[] = [],
   previous: readonly LatestMetricSnapshot[] = [],
@@ -488,10 +473,18 @@ describe("PerformanceIntelligenceService", () => {
       first,
       second,
     ]);
-    usage.reservePaidCall.mockRejectedValueOnce(
-      new ConflictException({ code: "PAID_CALL_REPLAYED" }),
-    );
-    await expect(generate(first)).rejects.toMatchObject({ status: 409 });
+    const expectLedgerAndSettlementCounts = (): void => {
+      expect(db.providerRequest.create).toHaveBeenCalledTimes(2);
+      expect(db.providerRequest.update).toHaveBeenCalledTimes(2);
+      expect(usage.finishPaidCall).toHaveBeenCalledTimes(2);
+    };
+    expectLedgerAndSettlementCounts();
+    await expect(generate(first)).rejects.toMatchObject({
+      status: 409,
+      response: { code: "PAID_CALL_REPLAYED" },
+    });
+    expectLedgerAndSettlementCounts();
+    expect(usage.reservePaidCall).toHaveBeenCalledTimes(3);
     expect(usage.reservePaidCall.mock.lastCall?.[0].correlationId).toBe(first);
     expect(insightLlm.generate).toHaveBeenCalledTimes(2);
     expect(db.performanceInsightReport.create).toHaveBeenCalledTimes(2);

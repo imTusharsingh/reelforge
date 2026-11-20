@@ -16,20 +16,33 @@ import {
   type ReferenceResolver,
   type Money,
   type VideoGenPort,
+  type VideoRoutingState,
+  type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import { ProviderArtifacts } from "./provider-artifacts.js";
 import { ProviderKeys, type Vendor } from "./provider-keys.js";
+import { ProviderVideoHealth } from "./provider-video-health.js";
 import { ProviderLedger } from "./provider-ledger.js";
 
 @Injectable()
 export class ProvidersRuntime {
+  public videoState(workspaceId: string): Promise<VideoRoutingState> {
+    return this.health.state(workspaceId);
+  }
+
+  public videoOutcome(workspaceId: string): RecordVideoOutcome {
+    return (providerId, outcome): Promise<void> =>
+      this.health.record(workspaceId, providerId, outcome);
+  }
+
   private readonly limiters = new Map<string, ProviderLimiter>();
   public constructor(
     private readonly keys: ProviderKeys,
     private readonly ledger: ProviderLedger,
+    private readonly health: ProviderVideoHealth,
     @Inject(STORAGE_PORT) private readonly storage: StoragePort,
   ) {}
   public async ports(
@@ -94,6 +107,9 @@ export class ProvidersRuntime {
         allowFallback,
       },
       rewrite,
+      Date.now,
+      await this.videoState(context.workspaceId),
+      this.videoOutcome(context.workspaceId),
     );
   }
   public async reconcile(

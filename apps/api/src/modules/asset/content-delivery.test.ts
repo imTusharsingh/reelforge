@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import {
   contentDisposition,
@@ -8,6 +8,8 @@ import {
   parsePositiveInteger,
   parseRangeHeader,
   readVerifiedStorageObject,
+  readMediaBody,
+  deliveryChunkHashes,
   sanitizeContentFilename,
 } from "./content-delivery.js";
 import { sha256Hex } from "./storage/checksum.js";
@@ -168,4 +170,35 @@ describe("media delivery content helpers", () => {
       }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+});
+
+it("uses only the touched verified chunk for a tiny range and no reads for HEAD", async () => {
+  const bytes = Buffer.alloc(1024 * 1024, 3);
+  const read = vi.fn(async (offset: number, length: number) =>
+    bytes.subarray(offset, offset + length),
+  );
+  const close = vi.fn().mockResolvedValue(undefined);
+  const storage = Object.assign(new StubStorage(), {
+    openObject: async () => ({ byteSize: bytes.byteLength, read, close }),
+  });
+  const input = {
+    storage,
+    workspaceId: "workspace",
+    objectKey: "object",
+    byteSize: bytes.byteLength,
+    checksumSha256: sha256Hex(bytes),
+    label: "Asset",
+  };
+  const hashes = deliveryChunkHashes(bytes);
+  const head = await readMediaBody(input, { head: true }, null);
+  expect(head.body.length).toBe(0);
+  expect(read).not.toHaveBeenCalled();
+  const range = await readMediaBody(input, { rangeHeader: "bytes=500000-500001" }, hashes);
+  expect(range.body).toEqual(Buffer.from([3, 3]));
+  expect(read).toHaveBeenCalledExactlyOnceWith(256 * 1024, 256 * 1024);
+  bytes[500000] = 4;
+  await expect(
+    readMediaBody(input, { rangeHeader: "bytes=500000-500001" }, hashes),
+  ).rejects.toThrow("integrity validation");
+  expect(close).toHaveBeenCalledTimes(3);
 });

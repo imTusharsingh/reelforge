@@ -28,3 +28,28 @@ A Husky pre-commit hook runs Prettier and ESLint `--fix` on staged files only, v
 ## Scope and review
 
 Keep changes within the assigned work package. Shared contracts, schema, migration order, and root configuration require Core Reviewer ownership. Do not claim approval or merge your own PR. Record exact command results and changed files in the assigned status report and append a dated `docs/WORK_LOG.md` entry.
+
+The optional **Full suite reliability** GitHub Actions workflow runs the entire
+offline suite three times per mode. Select it under Actions and use Run workflow.
+The modes use PostgreSQL alone, PostgreSQL with Redis, and PostgreSQL with FFmpeg.
+Each job publishes the output of all three attempts.
+
+Set `REELFORGE_API_ORIGIN` to the API's explicit HTTP(S) origin for a production
+web build. The manual text smoke also requires an explicit `OPENAI_TEXT_MODEL`.
+Account recovery can use an HTTPS email relay configured through
+`ACCOUNT_EMAIL_RELAY_URL` and `ACCOUNT_EMAIL_RELAY_TOKEN`. The relay accepts an
+authenticated JSON POST containing `to`, `purpose` and a one-time `code`. Deliver
+the code in the email body for the recipient to paste into the account form.
+
+Configure the email relay before enabling account email in a deployment. With
+missing or invalid relay configuration, issuance endpoints return HTTP 503 for
+all callers. Reset requests enter a PostgreSQL queue before account lookup. The
+API worker retries relay outages up to four attempts, expires queued requests
+after ten minutes, and removes the queued code on completion. The relay should
+treat repeated delivery of the same code as a retry. Keep the queue database
+restricted to the same operational access as credential storage. Set
+`API_TRUSTED_PROXIES` to the proxy IPs or CIDRs if traffic is proxied. Only those
+peers can supply client addresses for source limits.
+
+Planning uses session advisory locks. Point `DIRECT_DATABASE_URL` at PostgreSQL
+or a session-mode endpoint if `DATABASE_URL` uses a transaction-mode pooler.

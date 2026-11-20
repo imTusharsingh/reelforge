@@ -1,3 +1,4 @@
+import { parseTraceparent } from "@reelforge/observability";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "@reelforge/database";
 import type { foundationWorkspaceGuard } from "@reelforge/database";
@@ -11,6 +12,8 @@ export type Json = Prisma.InputJsonValue;
 export type Transaction = Prisma.TransactionClient;
 export type Database = PrismaClient;
 export type Context = WorkspaceContext;
+/** Internal queue principal. It has no login, session, or workspace membership. */
+export const RECOVERY_PRINCIPAL = "0cc1aa5f-0000-4000-8000-000000000001";
 export const RunCreateSchema = z
   .object({
     workspaceId: z.uuid(),
@@ -24,6 +27,11 @@ export const RunJobSchema = z
     userId: z.uuid(),
     runId: z.uuid(),
     stepId: z.uuid().optional(),
+    traceparent: z
+      .string()
+      .max(55)
+      .refine((value) => parseTraceparent(value) !== null)
+      .optional(),
   })
   .strict();
 export type RunJob = z.infer<typeof RunJobSchema>;
@@ -53,6 +61,10 @@ export const ArtifactSchema = z
       "text/vtt",
     ]),
     byteSize: z.int().positive(),
+    deliveryChunkHashes: z
+      .array(z.string().regex(/^[a-f0-9]{64}$/))
+      .max(512)
+      .optional(),
     expiresAt: z.iso.datetime().nullable(),
   })
   .strict();

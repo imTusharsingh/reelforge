@@ -2,8 +2,7 @@ import { z } from "zod";
 
 /**
  * C5/M22 account contracts. Identity bodies are strict: unknown keys (including `email` on profile
- * edits) are rejected. Password reset is deferred (no delivery port); these schemas cover profile
- * reads/edits and password changes only.
+ * edits) are rejected.
  */
 
 export const AuthMeResponseSchema = z

@@ -1,13 +1,22 @@
-import { Injectable } from "@nestjs/common";
-import type { WorkspaceContext } from "../identity/identity.types.js";
+import { Inject, Injectable } from "@nestjs/common";
+import { foundationWorkspaceGuard } from "@reelforge/database";
+import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 
-/** V3 seam: fail closed until its channel approval-count API is available.
- * Never infer approvals from uploads, run state, or workspace totals. */
+export function countApprovedShorts(
+  scoped: ReturnType<typeof foundationWorkspaceGuard>,
+  channelId: string,
+): Promise<number> {
+  return scoped.videoRun.count({
+    where: { channelId, events: { some: { type: "approved" } } },
+  });
+}
+
 @Injectable()
 export class BriefApprovals {
-  public async count(_context: WorkspaceContext, _channelId: string): Promise<number> {
-    void _context;
-    void _channelId;
-    return 0;
+  public constructor(@Inject("DATABASE") db: Database) {
+    this.count = (context, channelId): Promise<number> =>
+      countApprovedShorts(foundationWorkspaceGuard(db, context), channelId);
   }
+
+  public readonly count: (context: WorkspaceContext, channelId: string) => Promise<number>;
 }
