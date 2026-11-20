@@ -128,10 +128,8 @@ export function Accounts(): JSX.Element {
   return (
     <section className="rf-stack">
       <header className="rf-page-heading">
-          <h2>YouTube connection</h2>
-        <p>
-          Connect a YouTube account to publish approved Shorts.
-        </p>
+        <h2>YouTube connection</h2>
+        <p>Connect a YouTube account to publish approved Shorts.</p>
       </header>
       {!editable && (
         <Alert tone="warning" title="Read-only">
@@ -163,7 +161,9 @@ export function Accounts(): JSX.Element {
       )}
       <Panel>
         <h3>Publishing availability</h3>
-        {loading ? <p role="status">Checking YouTube availability…</p> : available.length === 0 ? (
+        {loading ? (
+          <p role="status">Checking YouTube availability…</p>
+        ) : available.length === 0 ? (
           <p>No platform capabilities are configured.</p>
         ) : (
           <ul>

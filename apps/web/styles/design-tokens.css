@@ -24,6 +24,6 @@
   --rf-radius-sm: 8px;
   --rf-radius: 14px;
   --rf-font: "Inter", system-ui, sans-serif;
-  --rf-type-sm: .875rem;
+  --rf-type-sm: 0.875rem;
   --rf-type-title: clamp(2rem, 4vw, 3rem);
 }

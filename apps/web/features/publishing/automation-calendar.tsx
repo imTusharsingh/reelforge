@@ -48,12 +48,32 @@ function Schedule({ workspaceId }: { workspaceId: string }): JSX.Element {
     <section className="rf-stack">
       <header className="rf-page-heading">
         <h1>Publishing schedule</h1>
-        <p>Approved Shorts fill the next available channel slot. YouTube keeps them private until the scheduled time.</p>
+        <p>
+          Approved Shorts fill the next available channel slot. YouTube keeps them private until the
+          scheduled time.
+        </p>
       </header>
-      {error && <Alert tone="danger" title="Schedule unavailable">{error}</Alert>}
+      {error && (
+        <Alert tone="danger" title="Schedule unavailable">
+          {error}
+        </Alert>
+      )}
       {!slots && !error && <Skeleton label="Loading publishing schedule…" />}
-      {slots?.length === 0 && <EmptyState title="No automatic publishing slots yet"><p>Approved Shorts appear here when a publishing slot is reserved.</p><StudioLink href="/approvals">Open review queue</StudioLink></EmptyState>}
-      {slots && slots.length > 0 && <ol className="rf-schedule">{slots.map((slot) => <li key={slot.id}><ScheduleSlot slot={slot} /></li>)}</ol>}
+      {slots?.length === 0 && (
+        <EmptyState title="No automatic publishing slots yet">
+          <p>Approved Shorts appear here when a publishing slot is reserved.</p>
+          <StudioLink href="/approvals">Open review queue</StudioLink>
+        </EmptyState>
+      )}
+      {slots && slots.length > 0 && (
+        <ol className="rf-schedule">
+          {slots.map((slot) => (
+            <li key={slot.id}>
+              <ScheduleSlot slot={slot} />
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
   );
 }
@@ -62,7 +82,9 @@ function ScheduleSlot({ slot }: { slot: AutoSlotView }): JSX.Element {
   const date = new Date(slot.scheduledAt);
   const format = (options: Intl.DateTimeFormatOptions): string => {
     try {
-      return new Intl.DateTimeFormat(undefined, { ...options, timeZone: slot.timezone }).format(date);
+      return new Intl.DateTimeFormat(undefined, { ...options, timeZone: slot.timezone }).format(
+        date,
+      );
     } catch {
       return slot.scheduledAt;
     }
@@ -70,13 +92,26 @@ function ScheduleSlot({ slot }: { slot: AutoSlotView }): JSX.Element {
   return (
     <Card className="rf-schedule-slot">
       <div>
-        <strong>{format({ weekday: "short", month: "short", day: "numeric", year: "numeric" })}</strong>
-        <p><time dateTime={slot.scheduledAt}>{format({ timeStyle: "short" })}</time> · {slot.timezone}</p>
+        <strong>
+          {format({ weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+        </strong>
+        <p>
+          <time dateTime={slot.scheduledAt}>{format({ timeStyle: "short" })}</time> ·{" "}
+          {slot.timezone}
+        </p>
       </div>
       <div>
-        <h2><StudioLink href={`/publishing/new?autoSlot=${slot.id}`}>{slot.package.title}</StudioLink></h2>
+        <h2>
+          <StudioLink href={`/publishing/new?autoSlot=${slot.id}`}>{slot.package.title}</StudioLink>
+        </h2>
         <p>YouTube Shorts</p>
-        {slot.lastError && <p>{slot.lastError === "RECONNECT_YOUTUBE" ? "Reconnect YouTube to continue." : "Preflight or upload reconciliation needs attention."}</p>}
+        {slot.lastError && (
+          <p>
+            {slot.lastError === "RECONNECT_YOUTUBE"
+              ? "Reconnect YouTube to continue."
+              : "Preflight or upload reconciliation needs attention."}
+          </p>
+        )}
       </div>
       <Badge tone={slot.lastError ? "warning" : "neutral"}>{stateLabel(slot.status)}</Badge>
     </Card>

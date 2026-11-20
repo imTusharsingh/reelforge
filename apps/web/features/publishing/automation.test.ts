@@ -51,6 +51,8 @@ describe("V9 automatic calendar and prefilled composer with fake HTTP", () => {
       vi.fn(async () => Response.json([slot])),
     );
     await act(async () => root.render(createElement(AutomationCalendar)));
+    expect(host.querySelector("h1")?.textContent).toBe("Publishing schedule");
+    expect(host.querySelector("time")?.dateTime).toBe(slot.scheduledAt);
     expect(host.textContent).toContain("Science");
     expect(host.textContent).toContain("America/New_York");
     expect(host.querySelector(`a[href="/publishing/new?autoSlot=${uuid}"]`)).not.toBeNull();

@@ -6,7 +6,9 @@ import { AccountScreen } from "../../components/account-screen";
 export default function AccountPage(): JSX.Element {
   return (
     <AuthWorkspace>
-      <StudioSettings current="/account"><AccountScreen /></StudioSettings>
+      <StudioSettings current="/account">
+        <AccountScreen />
+      </StudioSettings>
     </AuthWorkspace>
   );
 }

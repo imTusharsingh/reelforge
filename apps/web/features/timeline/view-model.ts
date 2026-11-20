@@ -28,7 +28,10 @@ export function dollars(minor: number): string {
 }
 
 export function stateLabel(state: string): string {
-  return state.toLowerCase().replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+  return state
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
 }
 
 export function finalMedia(detail: RunDetailView): { video?: string; poster?: string } {
@@ -36,14 +39,25 @@ export function finalMedia(detail: RunDetailView): { video?: string; poster?: st
   const groups = [...detail.artifactUrls].reverse();
   const hasFinal = (group: (typeof groups)[number]): boolean =>
     group.artifacts.some((item) => item.kind === "final" && item.contentType === "video/mp4");
-  const current = groups.find((group) => group.stepId === assembly?.id && hasFinal(group))
-    ?? groups.find((group) => hasFinal(group) && !detail.steps.some((step) => step.id === group.stepId && step.key.startsWith("quality:assembly-history:")));
-  const video = current?.artifacts.find((item) => item.kind === "final" && item.contentType === "video/mp4");
+  const current =
+    groups.find((group) => group.stepId === assembly?.id && hasFinal(group)) ??
+    groups.find(
+      (group) =>
+        hasFinal(group) &&
+        !detail.steps.some(
+          (step) => step.id === group.stepId && step.key.startsWith("quality:assembly-history:"),
+        ),
+    );
+  const video = current?.artifacts.find(
+    (item) => item.kind === "final" && item.contentType === "video/mp4",
+  );
   const poster = current?.artifacts.find((item) => item.contentType.startsWith("image/"));
   return { ...(video && { video: video.url }), ...(poster && { poster: poster.url }) };
 }
 
-export function runMetadata(detail: RunDetailView): { title: string; description: string; tags: string[] } | null {
+export function runMetadata(
+  detail: RunDetailView,
+): { title: string; description: string; tags: string[] } | null {
   const steps = [...detail.steps].sort((a, b) => b.attempt - a.attempt);
   for (const key of ["PACKAGING", "quality:packaging"]) {
     const output = steps.find((step) => step.key === key && step.state === "SUCCEEDED")?.output;

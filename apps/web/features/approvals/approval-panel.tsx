@@ -30,44 +30,97 @@ export function ApprovalPanel({
   return (
     <section className="rf-review" aria-label="Review Short">
       <div className="rf-player-card">
-        <VideoPlayer src={media.video} poster={media.poster} label={media.video ? "Final Short preview" : "Final video not available"} />
+        <VideoPlayer
+          src={media.video}
+          poster={media.poster}
+          label={media.video ? "Final Short preview" : "Final video not available"}
+        />
       </div>
       <div className="rf-stack">
         <ReviewMetadata detail={detail} poster={media.poster} />
         <Card>
           <h2>Approval</h2>
-          <p>The first 10 Shorts require human approval before publishing. This run started with {detail.run.approvedShortsAtStart} approved Shorts for its channel.</p>
+          <p>
+            The first 10 Shorts require human approval before publishing. This run started with{" "}
+            {detail.run.approvedShortsAtStart} approved Shorts for its channel.
+          </p>
           <CriticSummary detail={detail} />
           {pending && editable && (
-            <div className="rf-actions">
-              <Button disabled={busy || !humanGatesPass(report) || detail.run.pauseReason !== null} onClick={() => void decide("APPROVE")}>Approve Short</Button>
-              <Button tone="danger" disabled={busy} onClick={() => void decide("REJECT")}>Reject Short</Button>
-            </div>
+            <DecisionActions
+              busy={busy}
+              canApprove={humanGatesPass(report) && detail.run.pauseReason === null}
+              decide={decide}
+            />
           )}
           {detail.run.state === "CRITIC" && editable && <a href="#storyboard">Redo a shot</a>}
-          {detail.run.state === "AWAITING_APPROVAL" && <p>Shot redo is available during Critic review.</p>}
+          {detail.run.state === "AWAITING_APPROVAL" && (
+            <p>Shot redo is available during Critic review.</p>
+          )}
           {saved && <Toast>{saved}</Toast>}
-          {error && <Alert tone="danger" title="Decision failed">{error}</Alert>}
+          {error && (
+            <Alert tone="danger" title="Decision failed">
+              {error}
+            </Alert>
+          )}
         </Card>
       </div>
     </section>
   );
 }
 
-function ReviewMetadata({ detail, poster }: { detail: RunDetailView; poster: string | undefined }): JSX.Element {
+function DecisionActions({
+  busy,
+  canApprove,
+  decide,
+}: {
+  busy: boolean;
+  canApprove: boolean;
+  decide: ReturnType<typeof useDecision>["decide"];
+}): JSX.Element {
+  return (
+    <div className="rf-actions">
+      <Button disabled={busy || !canApprove} onClick={() => void decide("APPROVE")}>
+        Approve Short
+      </Button>
+      <Button tone="danger" disabled={busy} onClick={() => void decide("REJECT")}>
+        Reject Short
+      </Button>
+    </div>
+  );
+}
+function ReviewMetadata({
+  detail,
+  poster,
+}: {
+  detail: RunDetailView;
+  poster: string | undefined;
+}): JSX.Element {
   const metadata = runMetadata(detail);
   return (
     <Card>
       <h2>Publishing details</h2>
       {metadata ? (
         <dl className="rf-metadata">
-          <dt>Title</dt><dd>{metadata.title}</dd>
-          <dt>Description</dt><dd>{metadata.description || "No description"}</dd>
-          <dt>Tags</dt><dd className="rf-cluster">{metadata.tags.length ? metadata.tags.map((tag, index) => <Badge key={`${tag}:${index}`}>{tag}</Badge>) : "No tags"}</dd>
+          <dt>Title</dt>
+          <dd>{metadata.title}</dd>
+          <dt>Description</dt>
+          <dd>{metadata.description || "No description"}</dd>
+          <dt>Tags</dt>
+          <dd className="rf-cluster">
+            {metadata.tags.length
+              ? metadata.tags.map((tag, index) => <Badge key={`${tag}:${index}`}>{tag}</Badge>)
+              : "No tags"}
+          </dd>
         </dl>
-      ) : <p>Publishing details are unavailable for this run.</p>}
+      ) : (
+        <p>Publishing details are unavailable for this run.</p>
+      )}
       <h3>Thumbnail</h3>
-      {poster ? <img className="rf-cover" src={poster} alt="Short thumbnail" /> : <p>Thumbnail unavailable.</p>}
+      {poster ? (
+        <img className="rf-cover" src={poster} alt="Short thumbnail" />
+      ) : (
+        <p>Thumbnail unavailable.</p>
+      )}
     </Card>
   );
 }
@@ -111,11 +164,16 @@ export function CriticSummary({ detail }: { detail: RunDetailView }): JSX.Elemen
   if (!report) return <p>Critic evidence is unavailable. Approval requires all hard gates.</p>;
   return (
     <div className="rf-stack">
-      <Badge tone={report.recommendation === "APPROVE" ? "success" : "warning"}>{report.recommendation === "APPROVE" ? "Recommend approval" : "Recommend rejection"}</Badge>
+      <Badge tone={report.recommendation === "APPROVE" ? "success" : "warning"}>
+        {report.recommendation === "APPROVE" ? "Recommend approval" : "Recommend rejection"}
+      </Badge>
       <p>{report.summary}</p>
       <ul className="rf-verdicts">
         {Object.entries(report.gates).map(([gate, pass]) => (
-          <li key={gate}><span>{gate}</span><Badge tone={pass ? "success" : "warning"}>{pass ? "Pass" : "Needs attention"}</Badge></li>
+          <li key={gate}>
+            <span>{gate}</span>
+            <Badge tone={pass ? "success" : "warning"}>{pass ? "Pass" : "Needs attention"}</Badge>
+          </li>
         ))}
       </ul>
     </div>

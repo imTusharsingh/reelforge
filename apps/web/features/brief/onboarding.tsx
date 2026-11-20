@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState, type FormEvent, type JSX } from "react";
+import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import {
   defaultBrief,
   OnboardingInputSchema,
@@ -56,14 +56,8 @@ type OnboardingState = {
   back: () => void;
   submit: (event: FormEvent) => Promise<void>;
 };
-function useOnboardingState({
-  onComplete,
-  workspace,
-}: {
-  workspace?: Workspace | undefined;
-  onComplete?: ((workspace: Workspace) => void) | undefined;
-}): OnboardingState {
-  const [input, setInput] = useState<OnboardingInput>({
+function initialInput(): OnboardingInput {
+  return {
     niche: "",
     audience: "",
     language: "English",
@@ -73,7 +67,16 @@ function useOnboardingState({
       localTime: "18:00",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
-  });
+  };
+}
+function useOnboardingState({
+  onComplete,
+  workspace,
+}: {
+  workspace?: Workspace | undefined;
+  onComplete?: ((workspace: Workspace) => void) | undefined;
+}): OnboardingState {
+  const [input, setInput] = useState(initialInput);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [queued, setQueued] = useState(false);
@@ -106,7 +109,17 @@ function useOnboardingState({
       setBusy(false);
     }
   };
-  return { input, setInput, busy, error, queued, progress, step, back: () => setStep(step - 1), submit };
+  return {
+    input,
+    setInput,
+    busy,
+    error,
+    queued,
+    progress,
+    step,
+    back: () => setStep(step - 1),
+    submit,
+  };
 }
 function OnboardingView({
   input,
@@ -119,27 +132,50 @@ function OnboardingView({
   back,
   submit,
 }: ReturnType<typeof useOnboardingState>): JSX.Element {
-  if (queued) return <StateMessage kind="success" description="Your first Short is queued." action={<StudioLink href="/">Open studio</StudioLink>} />;
-  const steps = ["Audience", "Voice & cadence", "Confirm"];
+  if (queued)
+    return (
+      <StateMessage
+        kind="success"
+        description="Your first Short is queued."
+        action={<StudioLink href="/">Open studio</StudioLink>}
+      />
+    );
+
   return (
     <Panel className="rf-wizard" aria-labelledby="onboarding-title">
       <BrandLogo inverse />
       <h1 id="onboarding-title">Create a Channel Brief</h1>
-      <ol className="rf-wizard-steps" aria-label="Setup progress">
-        {steps.map((name, index) => <li key={name} aria-current={step === index ? "step" : undefined}>{name}</li>)}
-      </ol>
-      {error && <Alert tone="danger" title="Setup needs attention">{error}</Alert>}
+      <WizardProgress step={step} />
+      {error && (
+        <Alert tone="danger" title="Setup needs attention">
+          {error}
+        </Alert>
+      )}
       <form onSubmit={submit} className="rf-form">
         <fieldset key={step} disabled={busy || Boolean(progress.current.channelId)}>
-          <legend>{steps[step]}</legend>
+          <StepLegend step={step} />
           {step === 0 && <AudienceFields input={input} setInput={setInput} />}
           {step === 1 && <CadenceFields input={input} setInput={setInput} />}
-          {step === 2 && <p>{input.niche} · {input.audience} · {input.language} · {input.voiceId} · {input.cadence.localTime} ({input.cadence.timezone}). Starts at L2 with a $6 target, $8 per Short cap, $20 daily cap and $180 monthly cap.</p>}
+          {step === 2 && (
+            <p>
+              {input.niche} · {input.audience} · {input.language} · {input.voiceId} ·{" "}
+              {input.cadence.localTime} ({input.cadence.timezone}). Starts at L2 with a $6 target,
+              $8 per Short cap, $20 daily cap and $180 monthly cap.
+            </p>
+          )}
         </fieldset>
         <div className="rf-actions">
-          {step > 0 && !progress.current.channelId && <Button tone="secondary" disabled={busy} onClick={back}>Back</Button>}
+          {step > 0 && !progress.current.channelId && (
+            <Button tone="secondary" disabled={busy} onClick={back}>
+              Back
+            </Button>
+          )}
           <Button type="submit" loading={busy}>
-            {step < 2 ? "Continue" : progress.current.brief ? "Retry first Short" : "Create channel and start first Short"}
+            {step < 2
+              ? "Continue"
+              : progress.current.brief
+                ? "Retry first Short"
+                : "Create channel and start first Short"}
           </Button>
         </div>
       </form>
@@ -147,6 +183,31 @@ function OnboardingView({
   );
 }
 
+function StepLegend({ step }: { step: number }): JSX.Element {
+  const legend = useRef<HTMLLegendElement>(null);
+  useEffect(() => {
+    if (step > 0) legend.current?.focus();
+  }, [step]);
+  return (
+    <legend ref={legend} tabIndex={-1}>
+      {wizardSteps[step]}
+    </legend>
+  );
+}
+
+const wizardSteps = ["Audience", "Voice & cadence", "Confirm"];
+
+function WizardProgress({ step }: { step: number }): JSX.Element {
+  return (
+    <ol className="rf-wizard-steps" aria-label="Setup progress">
+      {wizardSteps.map((name, index) => (
+        <li key={name} aria-current={step === index ? "step" : undefined}>
+          {name}
+        </li>
+      ))}
+    </ol>
+  );
+}
 type Fields = Pick<OnboardingState, "input" | "setInput">;
 function AudienceFields({ input, setInput }: Fields): JSX.Element {
   return (

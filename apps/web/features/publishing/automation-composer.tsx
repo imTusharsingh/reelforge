@@ -4,13 +4,17 @@ import { useSearchParams } from "next/navigation";
 import type { AutoSlotView } from "../../../../packages/contracts/src/publishing-automation";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
+import { Alert, Button, Card, Field, TextAreaField } from "../../components/ui/primitives";
+import { EmptyState, Skeleton } from "../../components/ui/studio";
 import { autoSlot, automationRequest } from "./automation-api";
 export function PublishingComposer(): JSX.Element {
   const id = useSearchParams().get("autoSlot");
   return id ? (
     <AutomationComposer id={id} />
   ) : (
-    <p>Select a scheduled run from the publishing calendar.</p>
+    <EmptyState title="No scheduled Short selected">
+      <StudioLink href="/publishing">Open schedule</StudioLink>
+    </EmptyState>
   );
 }
 export function AutomationComposer({ id }: { id: string }): JSX.Element {
@@ -46,49 +50,68 @@ export function AutomationComposer({ id }: { id: string }): JSX.Element {
     }
   };
   return (
-    <section>
-      <h1>Automatic publishing composer</h1>
-      {error && <p role="alert">{error}</p>}
+    <section className="rf-stack">
+      <header className="rf-page-heading">
+        <h1>Scheduled Short</h1>
+        <StudioLink href="/publishing">Back to schedule</StudioLink>
+      </header>
+      {error && (
+        <Alert tone="danger" title="Publishing details unavailable">
+          {error}
+        </Alert>
+      )}
       {slot ? (
         <>
           <PackagedMetadata slot={slot} />
           {slot.lastError === "RECONNECT_YOUTUBE" && (
-            <>
-              <p>
-                Reconnect the existing YouTube account, then reconcile. This will reuse any saved
-                upload session.
-              </p>
-              <StudioLink href="/publishing/accounts">Reconnect YouTube</StudioLink>
-              {workspace.role !== "VIEWER" && (
-                <button disabled={busy} onClick={() => void retry()}>
-                  Reconcile after reconnect
-                </button>
-              )}
-            </>
+            <ReconnectNotice editable={workspace.role !== "VIEWER"} busy={busy} retry={retry} />
           )}
         </>
-      ) : (
-        <p role="status">Loading packaged metadata…</p>
-      )}
+      ) : !error ? (
+        <Skeleton label="Loading packaged metadata…" />
+      ) : null}
     </section>
+  );
+}
+
+function ReconnectNotice({
+  editable,
+  busy,
+  retry,
+}: {
+  editable: boolean;
+  busy: boolean;
+  retry: () => Promise<void>;
+}): JSX.Element {
+  return (
+    <Card>
+      <h2>Reconnect YouTube</h2>
+      <p>Reconnect the existing YouTube account, then reconcile the saved upload session.</p>
+      <div className="rf-actions">
+        <StudioLink href="/publishing/accounts">Reconnect YouTube</StudioLink>
+        {editable && (
+          <Button loading={busy} onClick={() => void retry()}>
+            Reconcile after reconnect
+          </Button>
+        )}
+      </div>
+    </Card>
   );
 }
 
 function PackagedMetadata({ slot }: { slot: AutoSlotView }): JSX.Element {
   return (
-    <>
-      {" "}
+    <Card>
       <p>
         {slot.status} · {slot.timezone} · {slot.scheduledAt}
       </p>
-      <label>
-        Packaged title
-        <input readOnly value={slot.package.title} />
-      </label>
-      <label>
-        Packaged description
-        <textarea readOnly value={slot.package.description} />
-      </label>
+      <Field id="packaged-title" label="Packaged title" readOnly value={slot.package.title} />
+      <TextAreaField
+        id="packaged-description"
+        label="Packaged description"
+        readOnly
+        value={slot.package.description}
+      />
       <p>Tags: {slot.package.tags.join(", ")}</p>
       <p>AI disclosure: always on · Private until the scheduled slot.</p>
       {slot.scheduledPostId && (
@@ -96,6 +119,6 @@ function PackagedMetadata({ slot }: { slot: AutoSlotView }): JSX.Element {
           Open saved post and reconciliation
         </StudioLink>
       )}
-    </>
+    </Card>
   );
 }

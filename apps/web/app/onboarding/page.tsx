@@ -9,10 +9,18 @@ import { Onboarding } from "../../features/brief/onboarding";
 function BriefWizard(): JSX.Element {
   const workspace = useActiveWorkspace();
   if (workspace.role === "VIEWER")
-    return <EmptyState title="Channel setup is read-only"><p>An owner or editor can create a channel.</p></EmptyState>;
+    return (
+      <EmptyState title="Channel setup is read-only">
+        <p>An owner or editor can create a channel.</p>
+      </EmptyState>
+    );
   return <Onboarding key={workspace.id} workspace={workspace} />;
 }
 
 export default function Page(): JSX.Element {
-  return <AuthWorkspace><BriefWizard /></AuthWorkspace>;
+  return (
+    <AuthWorkspace>
+      <BriefWizard />
+    </AuthWorkspace>
+  );
 }

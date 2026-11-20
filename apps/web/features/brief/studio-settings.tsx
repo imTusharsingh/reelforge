@@ -8,10 +8,18 @@ const settings = [
   { label: "Account", href: "/account" },
 ];
 
-export function StudioSettings({ current, children }: { current: string; children: ReactNode }): JSX.Element {
+export function StudioSettings({
+  current,
+  children,
+}: {
+  current: string;
+  children: ReactNode;
+}): JSX.Element {
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading"><h1>Settings</h1></header>
+      <header className="rf-page-heading">
+        <h1>Settings</h1>
+      </header>
       <Tabs label="Settings sections" items={settings} current={current} />
       {children}
     </section>

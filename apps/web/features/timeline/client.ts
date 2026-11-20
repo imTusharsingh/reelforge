@@ -78,6 +78,8 @@ const eventTypes = [
   "budget_estimated",
   "fallback",
   "reedit_requested",
+  "critic_packaged",
+  "critic_assembly_invalidated",
 ];
 /** V3 emits named SSE events. Native EventSource reconnects using Last-Event-ID. */
 export function watchRun(

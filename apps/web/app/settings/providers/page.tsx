@@ -5,7 +5,9 @@ import { ProviderHealth } from "../../../features/brief/settings";
 export default function Page(): JSX.Element {
   return (
     <AuthWorkspace>
-      <StudioSettings current="/settings"><ProviderHealth /></StudioSettings>
+      <StudioSettings current="/settings">
+        <ProviderHealth />
+      </StudioSettings>
     </AuthWorkspace>
   );
 }

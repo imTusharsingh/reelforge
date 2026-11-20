@@ -10,7 +10,9 @@ export default async function Page({
   const { channelId } = await params;
   return (
     <AuthWorkspace>
-      <StudioSettings current="/settings/channel"><BriefEditor channelId={channelId} /></StudioSettings>
+      <StudioSettings current="/settings/channel">
+        <BriefEditor channelId={channelId} />
+      </StudioSettings>
     </AuthWorkspace>
   );
 }

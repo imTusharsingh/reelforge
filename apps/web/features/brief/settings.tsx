@@ -30,7 +30,10 @@ function Settings({
   const load = (): void => {
     void new BriefClient(workspaceId)
       .keys()
-      .then((data) => { setStatus(data); setError(""); })
+      .then((data) => {
+        setStatus(data);
+        setError("");
+      })
       .catch(() =>
         setError("Provider key settings are unavailable until the provider service is ready."),
       );
@@ -49,17 +52,23 @@ function Settings({
         </Alert>
       )}
       {!error && !status && <Skeleton label="Checking key configuration…" />}
-      {error && <Button tone="secondary" onClick={load}>Retry key status</Button>}
-      <div className="rf-ideas">{(["gemini", "xai"] as const).map((provider) => (
-        <KeyForm
-          key={provider}
-          provider={provider}
-          configured={status?.[provider] ?? null}
-          client={new BriefClient(workspaceId)}
-          editable={editable}
-          onSaved={load}
-        />
-      ))}</div>
+      {error && (
+        <Button tone="secondary" onClick={load}>
+          Retry key status
+        </Button>
+      )}
+      <div className="rf-ideas">
+        {(["gemini", "xai"] as const).map((provider) => (
+          <KeyForm
+            key={provider}
+            provider={provider}
+            configured={status?.[provider] ?? null}
+            client={new BriefClient(workspaceId)}
+            editable={editable}
+            onSaved={load}
+          />
+        ))}
+      </div>
       <StudioLink href="/settings/providers">Provider health and capabilities</StudioLink>
     </Panel>
   );
@@ -136,13 +145,15 @@ function KeyFormView({
   return (
     <form onSubmit={submit} className="rf-form rf-panel">
       <h3>{provider === "gemini" ? "Google (Gemini)" : "xAI fallback"}</h3>
-      <p role="status"><Badge tone={configured ? "success" : "neutral"}>
-        {configured === null
-          ? "Configuration unknown"
-          : configured
-            ? "Configured"
-            : "Not configured"}
-      </Badge></p>
+      <p role="status">
+        <Badge tone={configured ? "success" : "neutral"}>
+          {configured === null
+            ? "Configuration unknown"
+            : configured
+              ? "Configured"
+              : "Not configured"}
+        </Badge>
+      </p>
       {error && (
         <Alert tone="danger" title="Unable to save key">
           {error}
@@ -208,7 +219,16 @@ function HealthView({ capabilities, error }: ReturnType<typeof useHealthState>):
         <StateMessage kind="loading" description="Loading capabilities…" />
       )}
       {capabilities?.length === 0 && <p>No capabilities configured.</p>}
-      {capabilities && capabilities.length > 0 && <div className="rf-table-scroll" role="region" aria-label="Provider capabilities" tabIndex={0}><CapabilityMatrix capabilities={capabilities} /></div>}
+      {capabilities && capabilities.length > 0 && (
+        <div
+          className="rf-table-scroll"
+          role="region"
+          aria-label="Provider capabilities"
+          tabIndex={0}
+        >
+          <CapabilityMatrix capabilities={capabilities} />
+        </div>
+      )}
     </Panel>
   );
 }

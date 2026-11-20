@@ -10,7 +10,12 @@ import { studioDestinations } from "./pipeline-navigation";
 
 function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
   const route = usePathname();
-  const pathname = route === "/account" || route === "/publishing/accounts" || route.startsWith("/channels/") ? "/settings" : route === "/runs" || route.startsWith("/runs/") ? "/" : route;
+  const pathname =
+    route === "/account" || route === "/publishing/accounts" || route.startsWith("/channels/")
+      ? "/settings"
+      : route === "/runs" || route.startsWith("/runs/")
+        ? "/"
+        : route;
   return (
     <nav aria-label="Studio navigation">
       <ul className="rf-nav-list">
@@ -19,10 +24,16 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
             <StudioLink
               className="rf-nav-item"
               href={href}
-              aria-current={pathname === href || (href !== "/" && pathname.startsWith(href + "/")) ? "page" : undefined}
+              aria-current={
+                pathname === href || (href !== "/" && pathname.startsWith(href + "/"))
+                  ? "page"
+                  : undefined
+              }
               onClick={onNavigate}
             >
-              <span className="rf-nav-icon" aria-hidden="true">{icon}</span>
+              <span className="rf-nav-icon" aria-hidden="true">
+                {icon}
+              </span>
               {name}
             </StudioLink>
           </li>
@@ -45,7 +56,9 @@ export function AppShell({
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <div className="rf-shell">
-      <a className="rf-skip-link" href="#main-content">Skip to content</a>
+      <a className="rf-skip-link" href="#main-content">
+        Skip to content
+      </a>
       <aside className="rf-sidebar">
         <BrandLogo inverse />
         <Navigation />
@@ -53,7 +66,13 @@ export function AppShell({
       <div>
         <header className="rf-shell-header">
           <div className="rf-cluster">
-            <Button ref={trigger} className="rf-menu-toggle" tone="secondary" aria-haspopup="dialog" onClick={() => menu.current?.showModal()}>
+            <Button
+              ref={trigger}
+              className="rf-menu-toggle"
+              tone="secondary"
+              aria-haspopup="dialog"
+              onClick={() => menu.current?.showModal()}
+            >
               Menu
             </Button>
             <strong>{workspaceName}</strong>

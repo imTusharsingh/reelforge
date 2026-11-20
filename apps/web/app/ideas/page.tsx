@@ -4,5 +4,11 @@ import { Ideas } from "../../features/discovery/ideas";
 import { PublishingScope } from "../../features/publishing/session";
 
 export default function Page(): JSX.Element {
-  return <AuthWorkspace><PublishingScope><Ideas /></PublishingScope></AuthWorkspace>;
+  return (
+    <AuthWorkspace>
+      <PublishingScope>
+        <Ideas />
+      </PublishingScope>
+    </AuthWorkspace>
+  );
 }
