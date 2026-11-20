@@ -1,5 +1,5 @@
 import type {
-  ButtonHTMLAttributes,
+  ComponentPropsWithRef,
   HTMLAttributes,
   InputHTMLAttributes,
   JSX,
@@ -9,7 +9,7 @@ import type {
 } from "react";
 
 type ButtonTone = "primary" | "secondary" | "ghost" | "danger";
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type ButtonProps = ComponentPropsWithRef<"button"> & {
   tone?: ButtonTone;
   loading?: boolean;
   children: ReactNode;
@@ -145,7 +145,7 @@ export function Badge({
   return <span className={`rf-badge rf-badge--${tone}`}>{children}</span>;
 }
 
-export function Panel({
+export function Card({
   children,
   className = "",
   ...props
@@ -156,6 +156,8 @@ export function Panel({
     </section>
   );
 }
+
+export const Panel = Card;
 
 type StateKind = "loading" | "empty" | "error" | "success" | "forbidden" | "unavailable";
 const stateLabels: Record<StateKind, string> = {

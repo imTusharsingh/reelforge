@@ -1,7 +1,7 @@
 "use client";
 import type { JSX, ReactNode } from "react";
 import { AppShell } from "./app-shell";
-import { Alert, Badge, Button } from "./ui/primitives";
+import { Alert, Button } from "./ui/primitives";
 import { requestNavigationIntent } from "./studio-navigation";
 import type { Workspace } from "../lib/api";
 import { WorkspaceProvider } from "./studio-workspace-context";
@@ -20,7 +20,7 @@ export function Studio({
 }): JSX.Element {
   return (
     <AppShell
-      inspector={<StudioInspector workspace={workspace} />}
+      workspaceName={workspace.name}
       shellActions={
         <div className="rf-actions">
           <Button
@@ -51,19 +51,5 @@ export function Studio({
         {content}
       </WorkspaceProvider>
     </AppShell>
-  );
-}
-
-function StudioInspector({ workspace }: { workspace: Workspace }): JSX.Element {
-  return (
-    <>
-      <p className="rf-eyebrow">Setup checklist</p>
-      <h2>{workspace.name}</h2>
-      <div className="rf-checklist">
-        <Badge tone="success">Verified</Badge>
-        <span>Workspace created</span>
-      </div>
-      <p>Set up your Channel Brief and provider keys to begin.</p>
-    </>
   );
 }
