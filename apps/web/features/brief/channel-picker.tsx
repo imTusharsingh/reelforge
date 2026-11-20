@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type JSX, type ReactNode } from "react";
+import { requestNavigationIntent } from "../../components/studio-navigation";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, SelectField } from "../../components/ui/primitives";
 import { EmptyState, Skeleton } from "../../components/ui/studio";
@@ -54,7 +55,9 @@ export function ChannelPicker({
         label="Channel"
         disabled={disabled}
         value={selected.id}
-        onChange={(event) => setId(event.target.value)}
+        onChange={(event) => {
+          if (requestNavigationIntent("selection")) setId(event.target.value);
+        }}
       >
         {channels.map((channel) => (
           <option key={channel.id} value={channel.id}>

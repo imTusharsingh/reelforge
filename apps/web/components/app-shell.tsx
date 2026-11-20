@@ -29,7 +29,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
                   ? "page"
                   : undefined
               }
-              onClick={onNavigate}
+              onClick={() => onNavigate?.()}
             >
               <span className="rf-nav-icon" aria-hidden="true">
                 {icon}
