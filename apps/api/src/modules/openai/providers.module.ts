@@ -6,6 +6,7 @@ import { UsageBudgetModule } from "../usage-budget/usage-budget.module.js";
 import { TokenVault } from "../social-accounts/token-vault.js";
 import { ProviderKeys } from "./provider-keys.js";
 import { ProviderLedger } from "./provider-ledger.js";
+import { ProviderVideoHealth } from "./provider-video-health.js";
 import { ProvidersRuntime } from "./providers.runtime.js";
 import { ProvidersController } from "./providers.controller.js";
 @Module({
@@ -15,6 +16,7 @@ import { ProvidersController } from "./providers.controller.js";
     ProviderKeys,
     ProviderLedger,
     ProvidersRuntime,
+    ProviderVideoHealth,
     {
       provide: TokenVault,
       useFactory: (): TokenVault => new TokenVault(process.env.PROVIDER_KEY_ENCRYPTION_KEY),

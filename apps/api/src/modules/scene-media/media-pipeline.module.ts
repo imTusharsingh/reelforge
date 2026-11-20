@@ -47,7 +47,10 @@ export class MediaBindings {
       await this.accounts.sync(context, run);
       const options = await this.frames.prepare(context, run, shot);
       if (!options) return null;
-      const ports = await this.ports.get(context, shot);
+      const [ports, videoState] = await Promise.all([
+        this.ports.get(context, shot),
+        this.ports.videoState(context.workspaceId),
+      ]);
       const routed = (
         port: typeof ports.omni | typeof ports.grok,
         vendor: Parameters<typeof ports.assertKey>[0],
@@ -61,7 +64,8 @@ export class MediaBindings {
           this.ports.limiter(context.workspaceId, vendor),
           (body, from) => this.frames.extensionTail(body, from),
           () => ports.assertKey(vendor),
-          this.ports.videoState(context.workspaceId),
+          videoState,
+          this.ports.videoOutcome(context.workspaceId),
         );
       return { primary: routed(ports.omni, "gemini"), fallback: routed(ports.grok, "xai") };
     };

@@ -28,6 +28,9 @@ export class MediaPorts {
   public videoState(workspaceId: string): ReturnType<ProvidersRuntime["videoState"]> {
     return this.providers.videoState(workspaceId);
   }
+  public videoOutcome(workspaceId: string): ReturnType<ProvidersRuntime["videoOutcome"]> {
+    return this.providers.videoOutcome(workspaceId);
+  }
   public async references(
     context: Context,
     shot: Pick<ShotSpec, "references">,

@@ -53,6 +53,7 @@ jobs:
       - name: Run the full suite three times
         run: |
           set -o pipefail
+          if [ "$FFMPEG_PATH" = /usr/bin/ffmpeg ]; then export FFPROBE_PATH=/usr/bin/ffprobe; fi
           result=0
           for attempt in 1 2 3; do
             pnpm test 2>&1 | tee "full-suite-$attempt.txt" || result=1

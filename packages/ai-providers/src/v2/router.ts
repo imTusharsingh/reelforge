@@ -16,6 +16,8 @@ export interface RouterDispatch {
   allowFallback(providerId: string, estimate: Money): Promise<void>;
 }
 type VideoRouteStats = { failures: number; openUntil: number; accepted: number; calls: number };
+export type VideoOutcome = "ACCEPTED" | "OUTAGE" | "REJECTED";
+export type RecordVideoOutcome = (providerId: string, outcome: VideoOutcome) => Promise<void>;
 export type VideoRoutingState = Map<string, VideoRouteStats>;
 export function videoHealth(
   configured: ReturnType<VideoGenPort["capabilities"]>["health"],
@@ -24,7 +26,8 @@ export function videoHealth(
 ): ReturnType<VideoGenPort["capabilities"]>["health"] {
   if (configured !== "HEALTHY" || !state) return configured;
   if (state.openUntil > now) return "UNAVAILABLE";
-  return state.failures > 0 || state.accepted < state.calls ? "DEGRADED" : "HEALTHY";
+  const lowAcceptance = state.calls > 0 && state.accepted / state.calls < 0.9;
+  return state.failures > 0 || lowAcceptance ? "DEGRADED" : "HEALTHY";
 }
 
 export class VideoRouter {
@@ -34,6 +37,7 @@ export class VideoRouter {
     private readonly rewrite: (spec: ShotSpec) => Promise<ShotSpec>,
     private readonly now: () => number = Date.now,
     private readonly health: VideoRoutingState = new Map(),
+    private readonly recordOutcome?: RecordVideoOutcome,
   ) {}
   public matrix(): ReadonlyArray<ReturnType<VideoGenPort["capabilities"]>> {
     return this.routes.map(({ port }) => {
@@ -91,12 +95,17 @@ export class VideoRouter {
       const result = await this.dispatch.submit(port, spec, key);
       state.accepted++;
       state.failures = 0;
+      await this.recordOutcome?.(providerId, "ACCEPTED");
       return { ...result, providerId, spec, idemKey: key, rewrites };
     } catch (error) {
       if (error instanceof ProviderFailure && error.kind === "OUTAGE") {
         state.failures++;
         if (state.failures >= 3) state.openUntil = this.now() + 60000;
       }
+      await this.recordOutcome?.(
+        providerId,
+        error instanceof ProviderFailure && error.kind === "OUTAGE" ? "OUTAGE" : "REJECTED",
+      );
       if (error instanceof ProviderFailure && error.kind === "REFUSAL") {
         if (rewrites >= 1) throw new ProviderFailure("NEEDS_HUMAN", true);
         return this.attempt(port, await this.rewrite(spec), `${key}:rewrite`, 1);

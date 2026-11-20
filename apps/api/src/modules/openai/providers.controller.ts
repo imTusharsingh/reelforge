@@ -52,7 +52,7 @@ export class ProvidersController {
     @Param("workspaceId") workspaceId: string,
   ): Promise<ProviderCapability[]> {
     const context = await this.workspaces.context(request.principal.userId, workspaceId);
-    const state = this.runtime.videoState(workspaceId);
+    const state = await this.runtime.videoState(workspaceId);
     return capabilityCatalog(
       workspaceId,
       providerModels(process.env),

@@ -255,6 +255,7 @@ model Workspace {
   runEventRows                    RunEvent[]
   providerKeyRows                 ProviderKey[]
   providerCapabilityRows          ProviderCapability[]
+  providerVideoHealth             ProviderVideoHealth[]
   shotSpecRows                    ShotSpec[]
   videoRunStepRows                VideoRunStep[]
   videoRunRows                    VideoRun[]
@@ -2724,6 +2725,19 @@ model ShotSpec {
   @@unique([workspaceId, runId, ordinal, version])
   @@unique([workspaceId, id])
   @@map("shot_specs")
+}
+
+model ProviderVideoHealth {
+  workspaceId String    @map("workspace_id") @db.Uuid
+  providerId  String    @map("provider_id")
+  calls       Int
+  accepted    Int
+  failures    Int
+  openUntil   DateTime? @map("open_until") @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, providerId])
+  @@map("provider_video_health")
 }
 
 model ProviderCapability {
