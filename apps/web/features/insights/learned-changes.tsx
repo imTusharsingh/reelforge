@@ -4,6 +4,7 @@ import {
   LearnedChangeSchema,
   type LearnedChange,
 } from "../../../../packages/contracts/src/discovery";
+import { Skeleton } from "../../components/ui/studio";
 import { Panel, StateMessage } from "../../components/ui/primitives";
 
 function useLearnedChanges(
@@ -59,11 +60,15 @@ export function LearnedChanges({
         Scoring weights and format mix can change within your Brief’s bounds, at most 0.05 per week.
         Prompt and configuration changes remain recommendations.
       </p>
-      {status && (
-        <StateMessage
-          kind={status.includes("unavailable") ? "unavailable" : "empty"}
-          description={status}
-        />
+      {status.startsWith("Loading") ? (
+        <Skeleton label={status} />
+      ) : (
+        status && (
+          <StateMessage
+            kind={status.includes("unavailable") ? "error" : "empty"}
+            description={status}
+          />
+        )
       )}
       {changes.map((change) => (
         <article key={change.id}>

@@ -117,7 +117,9 @@ function ReviewMetadata({
       )}
       <h3>Thumbnail</h3>
       {poster ? (
-        <img className="rf-cover" src={poster} alt="Short thumbnail" />
+        <div className="rf-cover">
+          <VideoPlayer preview poster={poster} label="Short thumbnail" />
+        </div>
       ) : (
         <p>Thumbnail unavailable.</p>
       )}

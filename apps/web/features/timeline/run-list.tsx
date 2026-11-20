@@ -174,7 +174,7 @@ function RunTile({
       <StudioLink className="rf-run-link" href={`/runs/${run.id}${inbox ? "/review" : ""}`}>
         <VideoPlayer
           preview
-          src={media.poster ? undefined : media.video}
+          src={media.video}
           poster={media.poster}
           label={
             media.poster

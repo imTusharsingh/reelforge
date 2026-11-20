@@ -71,9 +71,10 @@ export function VideoPlayer({
   label: string;
   preview?: boolean;
 }): JSX.Element {
-  const [failedSource, setFailedSource] = useState<string>();
-  const playable = src && src !== failedSource;
-  const image = poster && poster !== failedSource && (!playable || preview);
+  const [failedVideo, setFailedVideo] = useState<string>();
+  const [failedPoster, setFailedPoster] = useState<string>();
+  const playable = Boolean(src && src !== failedVideo);
+  const image = Boolean(poster && poster !== failedPoster && (!playable || preview));
   return (
     <div className={preview ? "rf-frame rf-frame--preview" : "rf-frame"}>
       {playable && !(preview && image) ? (
@@ -83,13 +84,13 @@ export function VideoPlayer({
           aria-label={label}
           controls={!preview}
           preload="metadata"
-          onError={() => setFailedSource(src)}
+          onError={() => setFailedVideo(src)}
           playsInline
         />
       ) : image ? (
-        <img src={poster} alt={label} loading="lazy" onError={() => setFailedSource(poster)} />
+        <img src={poster} alt={label} loading="lazy" onError={() => setFailedPoster(poster)} />
       ) : (
-        <span>{failedSource ? "Media unavailable" : label}</span>
+        <span>{failedVideo || failedPoster ? "Media unavailable" : label}</span>
       )}
     </div>
   );
