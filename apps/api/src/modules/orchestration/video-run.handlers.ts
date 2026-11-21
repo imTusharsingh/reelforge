@@ -1,5 +1,5 @@
 import type { ClipArtifact } from "@reelforge/ai-providers";
-import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
+import type { ChannelBrief, MediaReceipt, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
 export interface StepHandler {
   execute(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json>;
@@ -49,6 +49,7 @@ export type ShotBilling = {
   record: (receipt: VideoReceipt) => Promise<void>;
 };
 export type VideoReceipt = {
+  costBasis: MediaReceipt["costBasis"];
   media: ClipArtifact | null;
   seconds: number;
   providerDurationSeconds: number | null;

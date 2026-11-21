@@ -14,12 +14,11 @@ import { type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
 import {
-  awaitingBilling,
   reconcilePricedReceipt,
   recordShotArtifact,
-  pendingShotMedia,
   captureShotReceipt,
 } from "../usage-budget/run-billing.js";
+import { awaitingBilling, pendingShotMedia } from "../usage-budget/run-shot-receipt.js";
 import { billingHold } from "../runs/run-outcomes.js";
 import { pinnedBudget, envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";

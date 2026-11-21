@@ -16,6 +16,7 @@ const providerRequestSelect = {
   responseMetadata: true,
   createdAt: true,
   actualCost: true,
+  estimatedCost: true,
   channelId: true,
   currency: true,
 } satisfies Prisma.ProviderRequestSelect;

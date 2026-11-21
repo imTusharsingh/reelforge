@@ -110,6 +110,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
           durationSeconds: 10,
         },
         providerDurationSeconds: 10,
+        costBasis: "BILLED",
         costMinor: job === "sibling" ? 56 : 70,
         seconds: 10,
         modelId: "fixture",

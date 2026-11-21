@@ -72,6 +72,27 @@ describe("V5 landed router bridge", () => {
     });
     expect(await bridge.reconcile()).toBeNull();
   });
+  it("refetches a previously saved invalid descriptor and records the verified replacement", async () => {
+    const port = native();
+    const valid = await port.fetch("fixture-job");
+    vi.mocked(port.fetch).mockClear();
+    const bytes = vi.fn().mockResolvedValue(Buffer.from("valid"));
+    const bridge = new RoutedMediaVideo(
+      port,
+      { bytes } as unknown as MediaJobs,
+      context,
+      {} as Run,
+    );
+    const record = vi.fn();
+    await expect(
+      bridge.fetch("fixture-job", { ...valid, fps: 30 }, { shot, record }),
+    ).resolves.toEqual(Buffer.from("valid"));
+    expect(port.fetch).toHaveBeenCalledExactlyOnceWith("fixture-job", expect.any(Function));
+    expect(bytes).toHaveBeenCalledExactlyOnceWith(context, valid);
+    expect(record).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ media: valid, costBasis: "BILLED" }),
+    );
+  });
   it("does not resubmit uncertain calls, rewrite without a reservation, or switch vendors on refusal/429", async () => {
     for (const kind of ["OUTAGE", "RATE_LIMIT", "REFUSAL"] as const) {
       const port = native();
@@ -101,9 +122,7 @@ describe("V5 landed router bridge", () => {
       fps: 24,
       billedSeconds: 8,
     });
-    const receipt = await bridge.collectReceipt("fixture-job", shot);
-    expect(receipt.costMinor).toBeGreaterThan(0);
-    await expect(bridge.fetch("fixture-job", receipt.media!)).rejects.toThrow("invalid 720p video");
+    await expect(bridge.collectReceipt("fixture-job", shot)).rejects.toThrow("invalid 720p video");
   });
 });
 

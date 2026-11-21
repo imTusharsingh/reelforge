@@ -20,6 +20,9 @@ import type { Context, Run } from "../runs/runs.types.js";
 import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
 import { MediaJobs, MediaChecksumMismatch } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
+
+class InvalidVideoFormat extends Error {}
+
 /** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
@@ -86,31 +89,35 @@ export class RoutedMediaVideo implements VideoGenPort {
     const media = saved ?? (await this.native.fetch(id, this.recordBilling(billing)));
     let body: Buffer;
     try {
-      body = await this.readClip(media);
+      this.validateFormat(media);
+      body = await this.jobs.bytes(this.context, media);
     } catch (error) {
       if (
         !saved ||
         !billing ||
-        !(error instanceof StorageObjectNotFoundError || error instanceof MediaChecksumMismatch)
+        !(
+          error instanceof StorageObjectNotFoundError ||
+          error instanceof MediaChecksumMismatch ||
+          error instanceof InvalidVideoFormat
+        )
       )
         throw error;
       const receipt = await this.collectReceipt(id, billing.shot, billing);
+      body = await this.jobs.bytes(this.context, receipt.media);
       await billing.record(receipt);
-      body = await this.readClip(receipt.media);
     }
     if (!this.options.extension) return body;
     if (!this.trim) throw new Error("Extension tail extraction is not configured");
     return this.trim(body, this.options.extension.previousSeconds);
   }
-  private async readClip(media: ClipArtifact): Promise<Buffer> {
+  private validateFormat(media: ClipArtifact): void {
     if (
       media.mimeType !== "video/mp4" ||
       media.width !== 720 ||
       media.height !== 1280 ||
       media.fps !== 24
     )
-      throw new Error("Provider returned invalid 720p video");
-    return this.jobs.bytes(this.context, media);
+      throw new InvalidVideoFormat("Provider returned invalid 720p video");
   }
   public async collectReceipt(
     id: string,
@@ -118,20 +125,23 @@ export class RoutedMediaVideo implements VideoGenPort {
     billing?: ShotBilling,
   ): Promise<VideoReceipt & { media: ClipArtifact }> {
     const media = await this.native.fetch(id, this.recordBilling(billing));
-    return this.price(shot, media.billedSeconds ?? shot.durationSeconds, media);
+    this.validateFormat(media);
+    return this.price(shot, media.billedSeconds, media);
   }
   private recordBilling(billing?: ShotBilling): ((seconds: number) => Promise<void>) | undefined {
     if (billing) return (seconds) => billing.record(this.price(billing.shot, seconds, null));
   }
   private price<T extends ClipArtifact | null>(
     shot: ShotSpec,
-    seconds: number,
+    billedSeconds: number | null,
     media: T,
   ): VideoReceipt & { media: T } {
+    const seconds = billedSeconds ?? shot.durationSeconds;
     const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
     const images = shot.references.length + this.frameCount;
     return {
       media,
+      costBasis: billedSeconds === null ? "RESERVATION" : "BILLED",
       seconds,
       providerDurationSeconds: media?.durationSeconds ?? null,
       costMinor: reservationCents({

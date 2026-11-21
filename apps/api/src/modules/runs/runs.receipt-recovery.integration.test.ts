@@ -5,6 +5,7 @@ import type { RunsQueue } from "./runs.queue.js";
 
 function pricedClip(seconds = 10): VideoReceipt {
   return {
+    costBasis: "BILLED",
     costMinor: seconds * 7,
     seconds,
     providerDurationSeconds: seconds,
@@ -145,7 +146,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     }
   });
 
-  it("finishes the artifact and envelope once for an already-paid legacy shot", async () => {
+  it.each([6, 8])("replays legacy payment after a %i-second poll", async (seconds) => {
     const t = await fixture.tenant();
     const run = await generating(t);
     const shot = await t.db.videoRunStep.findFirstOrThrow({
@@ -155,7 +156,16 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       collectReceipt: vi.fn(async () => pricedClip(8)),
     });
     vi.spyOn(port, "estimate").mockReturnValue(56);
-    vi.spyOn(port, "poll").mockResolvedValueOnce("running");
+    vi.spyOn(port, "poll")
+      .mockResolvedValueOnce("running")
+      .mockImplementationOnce(async (_id, billing) => {
+        await billing!.record({
+          ...pricedClip(seconds),
+          media: null,
+          providerDurationSeconds: null,
+        });
+        return "succeeded";
+      });
     const submit = vi.spyOn(port, "submit");
     const job = t.runs.job(t.context, run.id, shot.id);
     await expect(t.engine.process(job)).resolves.toBe(12000);

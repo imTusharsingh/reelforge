@@ -76,6 +76,7 @@ const eventTypes = [
   "dispatch_released",
   "provider_dispatch",
   "provider_receipt",
+  "billing_reconciled",
   "reconcile_required",
   "step_abandoned",
   "resumed",

@@ -501,6 +501,7 @@ export class UsageBudgetService {
     channelId: string,
     reservation: { id: string; amountMinor: bigint },
     cost: number,
+    previousCommit?: bigint,
   ): Promise<void> {
     const liability = BigInt(parseActualMinor(cost));
     await this.lockBudgets(
@@ -509,8 +510,15 @@ export class UsageBudgetService {
       await this.applicableBudgets(tx, workspaceId, channelId),
     );
     const raised = await tx.usageReservation.updateMany({
-      where: { workspaceId, id: reservation.id, status: { in: ["RESERVED", "EXPIRED"] } },
+      where: {
+        workspaceId,
+        id: reservation.id,
+        ...(previousCommit === undefined
+          ? { status: { in: ["RESERVED", "EXPIRED"] } }
+          : { status: "COMMITTED", committedMinor: previousCommit }),
+      },
       data: {
+        ...(previousCommit !== undefined && { committedMinor: liability }),
         amountMinor: liability > reservation.amountMinor ? liability : reservation.amountMinor,
       },
     });
