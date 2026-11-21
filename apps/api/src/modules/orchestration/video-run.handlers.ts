@@ -37,7 +37,7 @@ export interface VideoGenPort {
     providerJobId: string,
     billing?: ShotBilling,
   ): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
-  fetch(providerJobId: string, media?: ClipArtifact): Promise<Buffer>;
+  fetch(providerJobId: string, media?: ClipArtifact, billing?: ShotBilling): Promise<Buffer>;
   collectReceipt?(
     providerJobId: string,
     shot: ShotSpec,

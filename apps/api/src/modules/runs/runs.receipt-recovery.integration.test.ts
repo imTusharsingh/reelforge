@@ -3,11 +3,11 @@ import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { generateClips, generating, runsFixture } from "./runs.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
 
-function pricedClip(): VideoReceipt {
+function pricedClip(seconds = 10): VideoReceipt {
   return {
-    costMinor: 70,
-    seconds: 10,
-    providerDurationSeconds: 10,
+    costMinor: seconds * 7,
+    seconds,
+    providerDurationSeconds: seconds,
     modelId: "fixture-video",
     promptVersion: "fixture",
     media: {
@@ -18,8 +18,8 @@ function pricedClip(): VideoReceipt {
       width: 720,
       height: 1280,
       fps: 24,
-      billedSeconds: 10,
-      durationSeconds: 10,
+      billedSeconds: seconds,
+      durationSeconds: seconds,
     },
   };
 }
@@ -31,6 +31,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     "artifact write",
     "native storage",
     "emergency stop",
+    "legacy hold before stop",
   ])("preserves the full priced liability across %s", async (cut) => {
     const t = await fixture.tenant();
     const run = await generating(t);
@@ -68,9 +69,25 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     }
     if (cut === "artifact write")
       vi.spyOn(t.storage, "putObject").mockRejectedValueOnce(new Error("storage offline"));
-    if (cut === "emergency stop") {
+    const stopped = cut === "emergency stop" || cut === "legacy hold before stop";
+    if (cut === "legacy hold before stop")
+      await t.db.videoRun.update({
+        where: { id: run.id },
+        data: { pauseReason: "RECONCILE_REQUIRED: provider billing exceeded reservation" },
+      });
+    if (stopped) {
       t.stop.stopped = true;
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("halted");
+    }
+    if (cut === "legacy hold before stop") {
+      // A repeated boundary check must not discard the reason saved on entry to the stop.
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow("halted");
+      t.stop.stopped = false;
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
+      expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
+      await t.engine.process(t.runs.job(t.context, run.id, pending!.id));
+      expect(submit).toHaveBeenCalledOnce();
+      expect(enqueue).not.toHaveBeenCalled();
     }
     await expect(t.engine.process(job)).rejects.toThrow(
       cut === "artifact write" || cut === "native storage" ? "storage offline" : "billing exceeded",
@@ -96,7 +113,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     ).toBe(cut === "swept missing request" ? 0 : 1);
     await expect(compete()).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
     t.stop.stopped = false;
-    if (cut === "emergency stop") {
+    if (stopped) {
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
       expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
     }
@@ -118,7 +135,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       status: "COMMITTED",
       committedMinor: 70n,
     });
-    if (cut === "emergency stop") {
+    if (stopped) {
       expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
       await t.engine.process(t.runs.job(t.context, run.id, pending!.id));
       expect(submit).toHaveBeenCalledOnce();
@@ -126,6 +143,68 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       await t.control.resume(t.context, run.id);
       expect(enqueue).toHaveBeenCalledOnce();
     }
+  });
+
+  it("finishes the artifact and envelope once for an already-paid legacy shot", async () => {
+    const t = await fixture.tenant();
+    const run = await generating(t);
+    const shot = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "shot-0" },
+    });
+    const port = Object.assign(t.generation.provider, {
+      collectReceipt: vi.fn(async () => pricedClip(8)),
+    });
+    vi.spyOn(port, "estimate").mockReturnValue(56);
+    vi.spyOn(port, "poll").mockResolvedValueOnce("running");
+    const submit = vi.spyOn(port, "submit");
+    const job = t.runs.job(t.context, run.id, shot.id);
+    await expect(t.engine.process(job)).resolves.toBe(12000);
+    const where = { workspaceId: run.workspaceId, correlationId: shot.id };
+    const reservation = await t.db.usageReservation.findFirstOrThrow({ where });
+    await t.usage.commit(run.workspaceId, reservation.id, 56);
+    await t.db.providerRequest.updateMany({
+      where,
+      data: {
+        providerId: "v3-stub",
+        status: "SUCCEEDED",
+        errorCode: null,
+        actualCost: 0.56,
+        responseMetadata: { dispatched: true, costKnown: true },
+      },
+    });
+    const committed = await t.db.usageReservation.findFirstOrThrow({ where });
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
+      state: "WAITING_EXTERNAL",
+      providerJobId: expect.any(String),
+      output: null,
+    });
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      spentMinor: 0,
+      reservedMinor: 56,
+    });
+    await t.engine.process(job);
+    await t.engine.process(job);
+    expect(submit).toHaveBeenCalledOnce();
+    expect(port.collectReceipt).toHaveBeenCalledOnce();
+    expect(await t.db.usageReservation.findMany({ where })).toEqual([committed]);
+    const requests = await t.db.providerRequest.findMany({ where });
+    expect(requests).toMatchObject([{ status: "SUCCEEDED", errorCode: null }]);
+    expect(requests[0]!.actualCost?.toNumber()).toBe(0.56);
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
+      state: "SUCCEEDED",
+      costMinor: 56,
+      output: { receipt: { costMinor: 56 }, storageArtifacts: [{ kind: "clips" }] },
+    });
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 56,
+      overageMinor: 0,
+    });
+    expect(
+      await t.db.runEvent.count({
+        where: { runId: run.id, type: "step_completed", stepId: shot.id },
+      }),
+    ).toBe(1);
   });
 
   it("recovers only the failed run's shot with a durable job receipt before attachment", async () => {

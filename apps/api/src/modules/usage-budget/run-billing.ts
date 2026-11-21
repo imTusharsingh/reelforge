@@ -26,6 +26,7 @@ import {
   OUTCOME_UNKNOWN,
   isBillingHold,
   readAdmission,
+  type Admission,
 } from "./run-admission-state.js";
 import type { RunPaidCalls } from "./run-paid.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
@@ -73,18 +74,12 @@ export function pendingShotMedia(step: Step): z.infer<typeof pendingOutput> | nu
   return saved;
 }
 
-async function savePricedRequest(
-  tx: Transaction,
-  context: Context,
+function unpaidReservation(
   run: Run,
   step: Step,
-  receipt: VideoReceipt,
-  overage: boolean,
-  paid: RunPaidCalls,
-): Promise<void> {
-  const { workspaceId, channelId } = run;
-  const { reservation, request } = await readAdmission(tx, context, step);
-  const cost = receipt.costMinor;
+  { request, reservation }: Admission,
+  cost: number,
+): Admission["reservation"] {
   const priorJob = z.object({ providerJobId: z.string() }).safeParse(request?.responseMetadata);
   if (priorJob.success && priorJob.data.providerJobId !== step.providerJobId)
     throw new ConflictException("Provider job receipt changed");
@@ -94,27 +89,59 @@ async function savePricedRequest(
     reservation.channelId !== run.channelId ||
     !step.providerJobId ||
     !step.providerId ||
-    reservation.currency !== "USD"
+    reservation.currency !== "USD" ||
+    (request && (request.currency !== reservation.currency || request.channelId !== run.channelId))
   )
     throw new ConflictException("Billing receipt does not match the paid attempt");
-  if (overage) await paid.usage.recordOverage(tx, workspaceId, channelId, reservation.id, cost);
+  if (reservation.status === "COMMITTED") {
+    if (
+      request?.status === "SUCCEEDED" &&
+      request.errorCode === null &&
+      request.actualCost?.mul(100).equals(cost) &&
+      reservation.committedMinor === BigInt(cost)
+    )
+      return null;
+    throw new ConflictException("Receipt differs from committed payment");
+  }
+  return reservation;
+}
+
+async function savePricedRequest(
+  tx: Transaction,
+  context: Context,
+  run: Run,
+  step: Step,
+  receipt: VideoReceipt,
+  previousCost: number | undefined,
+  paid: RunPaidCalls,
+): Promise<void> {
+  const { workspaceId, channelId } = run;
+  const claim = await readAdmission(tx, context, step);
+  const cost = receipt.costMinor;
+  const reservation = unpaidReservation(run, step, claim, cost);
+  if (!reservation) return;
+  const { request } = claim;
+  await paid.usage.coverShotReceipt(tx, workspaceId, channelId, reservation, cost);
+  const overage = cost > (step.costMinor ?? 0);
   const data = {
     status: "SUCCEEDED" as const,
     errorCode: overage ? BILLING_OVERAGE : null,
-    actualCost: cost / 100,
-    responseMetadata: { providerJobId: step.providerJobId, dispatched: true, costKnown: true },
+    actualCost: new Prisma.Decimal(cost).div(100),
+    responseMetadata: { providerJobId: step.providerJobId!, dispatched: true, costKnown: true },
   };
   if (!request) {
     await tx.providerRequest.create({
       data: {
-        workspaceId: run.workspaceId,
-        channelId: run.channelId,
+        workspaceId,
+        channelId,
         correlationId: step.id,
-        providerId: step.providerId,
+        providerId: step.providerId!,
         capabilityId: receipt.modelId,
         createdAt: reservation.createdAt,
         currency: reservation.currency,
-        estimatedCost: new Prisma.Decimal(reservation.amountMinor.toString()).div(100),
+        estimatedCost: new Prisma.Decimal(
+          (step.costMinor ?? reservation.amountMinor).toString(),
+        ).div(100),
         ...data,
       },
     });
@@ -124,7 +151,13 @@ async function savePricedRequest(
     where: {
       id: request.id,
       workspaceId: run.workspaceId,
-      errorCode: { in: [DISPATCHING, OUTCOME_UNKNOWN] },
+      ...(previousCost === undefined
+        ? { errorCode: { in: [DISPATCHING, OUTCOME_UNKNOWN] } }
+        : {
+            status: "SUCCEEDED",
+            errorCode: previousCost > (step.costMinor ?? 0) ? BILLING_OVERAGE : null,
+            actualCost: new Prisma.Decimal(previousCost).div(100),
+          }),
     },
     data,
   });
@@ -136,7 +169,65 @@ function shotIdentity(step: Step): Pick<Step, "key" | "providerJobId" | "provide
   return { key, providerId, providerJobId };
 }
 
-/** Persist the first priced receipt and its media reference atomically, before reading the clip. */
+function mergeShotReceipt(
+  step: Step,
+  receipt: VideoReceipt,
+): {
+  output: Json;
+  cost: number;
+  previousCost: number | undefined;
+  higher: boolean;
+} | null {
+  const pending = pendingShotMedia(step);
+  const { media, ...price } = receipt;
+  if (!pending && awaitingBilling(step)) {
+    // Another collector may already have written the final clip while settlement is pending.
+    const final = z
+      .object({
+        receipt: pricedOutput.shape.receipt.passthrough(),
+        storageArtifacts: z.array(ArtifactSchema).min(1),
+      })
+      .parse(step.output);
+    if (final.receipt.providerJobId !== step.providerJobId)
+      throw new ConflictException("Stored receipt does not match shot");
+    const previousCost = final.receipt.costMinor;
+    if (price.costMinor <= previousCost) return null;
+    return {
+      higher: true,
+      previousCost,
+      cost: price.costMinor,
+      output: json({
+        ...final,
+        receipt: {
+          ...final.receipt,
+          costMinor: price.costMinor,
+          seconds: price.seconds,
+          modelId: price.modelId,
+          promptVersion: price.promptVersion,
+        },
+      }),
+    };
+  }
+  const higher = !pending || price.costMinor > pending.receipt.costMinor;
+  if (!higher && !media) return null;
+  const pendingMedia = media ?? pending?.pendingMedia ?? null;
+  const output = pendingOutput.parse({
+    pendingMedia,
+    receipt: {
+      ...(higher ? price : pending.receipt),
+      ...shotIdentity(step),
+      providerDurationSeconds: pendingMedia?.durationSeconds ?? null,
+    },
+  });
+  return {
+    higher,
+    previousCost: pending?.receipt.costMinor,
+    cost: output.receipt.costMinor,
+    output,
+  };
+}
+
+/** Keep the highest reported charge and the latest staged media for the accepted job. */
 export async function captureShotReceipt(
   store: RunsStore,
   paid: RunPaidCalls,
@@ -152,43 +243,30 @@ export async function captureShotReceipt(
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       if (current.providerJobId !== step.providerJobId || !step.providerJobId)
         throw new ConflictException("Provider job claim changed");
-      const pending = pendingShotMedia(current);
-      if (pending && !pending.pendingMedia && receipt.media) {
-        const output = {
-          ...pending,
-          pendingMedia: receipt.media,
-          receipt: { ...pending.receipt, providerDurationSeconds: receipt.media.durationSeconds },
-        };
-        await db.videoRunStep.updateMany({ where: { id: step.id }, data: { output } });
-        return {
-          value: await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } }),
-          payload: { mediaAvailable: true },
-          stepId: step.id,
-        };
-      }
-      if (current.state === "SUCCEEDED" || pending || awaitingBilling(current))
+      if (current.state === "SUCCEEDED") {
+        if (receipt.costMinor > (current.costMinor ?? 0))
+          throw new ConflictException("Receipt exceeds settled payment");
         return { value: current, payload: { replay: true } };
+      }
       if (current.state !== "WAITING_EXTERNAL")
         throw new ConflictException("Provider job claim changed");
-      const { media, ...price } = receipt;
-      const output = pendingOutput.parse({
-        pendingMedia: media,
-        receipt: { ...price, ...shotIdentity(current) },
-      });
-      const overage = price.costMinor > (current.costMinor ?? 0);
-      await savePricedRequest(tx, context, run, current, receipt, overage, paid);
+      const merged = mergeShotReceipt(current, receipt);
+      if (!merged) return { value: current, payload: { replay: true } };
+      const { higher, previousCost, output, cost } = merged;
+      const overage = cost > (current.costMinor ?? 0);
+      if (higher) await savePricedRequest(tx, context, run, current, receipt, previousCost, paid);
       await db.videoRunStep.updateMany({
         where: { id: step.id },
         data: { output, ...(overage && { error: { code: BILLING_OVERAGE } }) },
       });
-      if (overage && run.pauseReason !== "EMERGENCY_STOP")
+      if (higher && overage && run.pauseReason !== "EMERGENCY_STOP")
         await db.videoRun.updateMany({
           where: { id: run.id },
           data: { pauseReason: billingHold(step.id) },
         });
       return {
         value: await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } }),
-        payload: { costMinor: price.costMinor, overage },
+        payload: { costMinor: cost, overage },
         stepId: step.id,
       };
     },

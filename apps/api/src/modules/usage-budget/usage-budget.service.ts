@@ -495,22 +495,24 @@ export class UsageBudgetService {
   }
 
   /** Serialize a known liability increase with competing admissions, including an expired claim. */
-  public async recordOverage(
+  public async coverShotReceipt(
     tx: Tx,
     workspaceId: string,
     channelId: string,
-    reservationId: string,
+    reservation: { id: string; amountMinor: bigint },
     cost: number,
   ): Promise<void> {
-    const amount = parseActualMinor(cost);
+    const liability = BigInt(parseActualMinor(cost));
     await this.lockBudgets(
       tx,
       workspaceId,
       await this.applicableBudgets(tx, workspaceId, channelId),
     );
     const raised = await tx.usageReservation.updateMany({
-      where: { workspaceId, id: reservationId, status: { in: ["RESERVED", "EXPIRED"] } },
-      data: { amountMinor: BigInt(amount) },
+      where: { workspaceId, id: reservation.id, status: { in: ["RESERVED", "EXPIRED"] } },
+      data: {
+        amountMinor: liability > reservation.amountMinor ? liability : reservation.amountMinor,
+      },
     });
     if (raised.count !== 1) throw new ConflictException("Billing reservation changed");
   }

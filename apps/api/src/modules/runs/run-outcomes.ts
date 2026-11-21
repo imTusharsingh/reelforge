@@ -44,6 +44,36 @@ function recoverableJob(step: Step): boolean {
 
 const legacyBillingHold = "RECONCILE_REQUIRED: provider billing exceeded reservation";
 
+/** An unkeyed overage can predate all per-shot billing markers. */
+async function stoppedLegacyBillingHold(db: Scoped, runId: string, open: Step[]): Promise<boolean> {
+  const stop = await db.runEvent.findFirst({
+    where: { runId, type: "emergency_stop", payload: { path: ["entered"], equals: true } },
+    orderBy: { sequence: "desc" },
+    select: { payload: true, sequence: true },
+  });
+  const payload = stop?.payload;
+  if (
+    !stop ||
+    !payload ||
+    typeof payload !== "object" ||
+    !("priorPauseReason" in payload) ||
+    payload.priorPauseReason !== legacyBillingHold
+  )
+    return false;
+  // The old hold names no shot. Drain accepted shots and require a real overage settlement.
+  if (open.some((step) => step.key.startsWith("shot-") && step.providerJobId)) return true;
+  const settled = await db.runEvent.findFirst({
+    where: {
+      runId,
+      type: "billing_reconciled",
+      stepId: { not: null },
+      sequence: { gt: stop.sequence },
+    },
+    select: { id: true },
+  });
+  return !settled;
+}
+
 export async function remainingSubmissionHold(
   db: Scoped,
   tx: Transaction,
@@ -59,7 +89,11 @@ export async function remainingSubmissionHold(
   const admissions = await readAdmissions(db, tx, run.workspaceId, steps);
   const billing = admissions.find(({ evidence }) => evidence === "billing-overage");
   if (billing) return billingHold(billing.step.id);
-  if (run.pauseReason === legacyBillingHold) return legacyBillingHold;
+  if (
+    run.pauseReason === legacyBillingHold ||
+    (run.pauseReason === "EMERGENCY_STOP" && (await stoppedLegacyBillingHold(db, run.id, steps)))
+  )
+    return legacyBillingHold;
   const other = admissions.find(({ step, ...admission }) =>
     step.providerJobId ? !recoverableJob(step) : !canRollback(admission),
   );

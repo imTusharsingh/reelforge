@@ -82,7 +82,7 @@ export class RunGeneration {
     }
     if (pendingShotMedia(step)) {
       await this.complete(context, step, ports);
-      return awaitingBilling(step) ? this.reconcileBilling(context, step) : null;
+      return null;
     }
     return this.poll(context, step, ports);
   }
@@ -345,26 +345,25 @@ export class RunGeneration {
     const started = step.startedAt?.getTime() ?? Date.now();
     const port = this.port(step, ports);
     const recovering = !!pendingShotMedia(step);
+    const billing = this.billing(context, step);
     if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
-      const billing = this.billing(context, step);
-      const receipt = await port.collectReceipt(
-        step.providerJobId!,
-        billing.shot,
-        recovering ? undefined : billing,
-      );
+      const receipt = await port.collectReceipt(step.providerJobId!, billing.shot, billing);
       step = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
       if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
     }
     const body = await withSpan(
       "run.provider.fetch",
-      () => port.fetch(step.providerJobId!, pendingShotMedia(step)?.pendingMedia ?? undefined),
+      () =>
+        port.fetch(step.providerJobId!, pendingShotMedia(step)?.pendingMedia ?? undefined, billing),
       "CLIENT",
     );
     const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");
     const result = await recordShotArtifact(this.runs.store, this.paid, context, step, artifact);
     await this.runs.events?.publish(result.event);
-    if (!recovering && result.event.type === "reconcile_required")
-      throw new ConflictException(billingHold(step.id));
+    if (result.event.type === "reconcile_required") {
+      if (!recovering) throw new ConflictException(billingHold(step.id));
+      await this.reconcileBilling(context, step);
+    }
     if (result.value) {
       this.recordSuccess(step, started);
     }

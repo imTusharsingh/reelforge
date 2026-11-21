@@ -8,22 +8,31 @@ export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
 export const BILLING_OVERAGE = "VIDEO_RUN_BILLING_OVERAGE";
 export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";
 
-type Request = Pick<
-  Prisma.ProviderRequestGetPayload<object>,
-  "id" | "correlationId" | "errorCode" | "responseMetadata" | "createdAt" | "status" | "actualCost"
->;
-type Reservation = Pick<
-  Prisma.UsageReservationGetPayload<object>,
-  | "id"
-  | "idempotencyKey"
-  | "status"
-  | "expiresAt"
-  | "amountMinor"
-  | "createdAt"
-  | "currency"
-  | "correlationId"
-  | "channelId"
->;
+const providerRequestSelect = {
+  id: true,
+  correlationId: true,
+  errorCode: true,
+  status: true,
+  responseMetadata: true,
+  createdAt: true,
+  actualCost: true,
+  channelId: true,
+  currency: true,
+} satisfies Prisma.ProviderRequestSelect;
+type Request = Prisma.ProviderRequestGetPayload<{ select: typeof providerRequestSelect }>;
+const usageReservationSelect = {
+  id: true,
+  idempotencyKey: true,
+  correlationId: true,
+  channelId: true,
+  status: true,
+  expiresAt: true,
+  amountMinor: true,
+  committedMinor: true,
+  currency: true,
+  createdAt: true,
+} satisfies Prisma.UsageReservationSelect;
+type Reservation = Prisma.UsageReservationGetPayload<{ select: typeof usageReservationSelect }>;
 type Evidence =
   | "never-dispatched"
   | "pending"
@@ -173,29 +182,11 @@ export async function readAdmissions<T extends Attempt>(
   const [requests, reservations, markers] = await Promise.all([
     tx.providerRequest.findMany({
       where: { workspaceId, correlationId: { in: steps.map((s) => s.id) } },
-      select: {
-        id: true,
-        correlationId: true,
-        errorCode: true,
-        status: true,
-        responseMetadata: true,
-        createdAt: true,
-        actualCost: true,
-      },
+      select: providerRequestSelect,
     }),
     tx.usageReservation.findMany({
       where: { workspaceId, idempotencyKey: { in: steps.map((s) => `m08:${s.idempotencyKey}`) } },
-      select: {
-        id: true,
-        idempotencyKey: true,
-        correlationId: true,
-        channelId: true,
-        status: true,
-        expiresAt: true,
-        amountMinor: true,
-        currency: true,
-        createdAt: true,
-      },
+      select: usageReservationSelect,
     }),
     db.runEvent.findMany({
       where: {
