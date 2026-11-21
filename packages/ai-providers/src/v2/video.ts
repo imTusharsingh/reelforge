@@ -6,6 +6,7 @@ import type {
   ArtifactStore,
   ClipArtifact,
   JobStatus,
+  RecordBilledSeconds,
   Money,
   ReferenceResolver,
   VideoGenPort,
@@ -67,11 +68,11 @@ export class OmniVideo implements VideoGenPort {
       idemKey,
     );
   }
-  public poll(id: string): Promise<JobStatus> {
-    return this.client.poll(id);
+  public poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
+    return this.client.poll(id, recordBilling);
   }
-  public fetch(id: string): Promise<ClipArtifact> {
-    return this.client.fetch(id, "video");
+  public fetch(id: string, recordBilling?: RecordBilledSeconds): Promise<ClipArtifact> {
+    return this.client.fetch(id, "video", undefined, recordBilling);
   }
   private validate(spec: ShotSpec): void {
     if (
@@ -127,23 +128,30 @@ export class GrokVideo implements VideoGenPort {
     );
     return { providerJobId: requiredString(response.request_id) };
   }
-  public async poll(id: string): Promise<JobStatus> {
+  public async poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
     const response = await this.get(id);
     if (response.status === "pending") return "running";
     if (response.status === "failed") return "failed";
-    if (response.status === "done")
-      return record(response.video).respect_moderation === false ? "refused" : "succeeded";
+    if (response.status === "done") {
+      const video = record(response.video);
+      if (video.respect_moderation === false) return "refused";
+      const seconds = video.duration;
+      if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0)
+        await recordBilling?.(seconds);
+      return "succeeded";
+    }
     throw new ProviderFailure("INVALID", true);
   }
-  public async fetch(id: string): Promise<ClipArtifact> {
+  public async fetch(id: string, recordBilling?: RecordBilledSeconds): Promise<ClipArtifact> {
     const response = await this.get(id);
     if (response.status !== "done") throw new ProviderFailure("INVALID", true);
     const video = record(response.video);
     if (video.respect_moderation === false) throw new ProviderFailure("REFUSAL", true);
-    const body = await this.http.bytes(requiredString(video.url));
     const seconds = video.duration;
     if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0)
       throw new ProviderFailure("INVALID", true);
+    await recordBilling?.(seconds);
+    const body = await this.http.bytes(requiredString(video.url));
     return { ...(await this.store.save(body, "video/mp4")), billedSeconds: seconds };
   }
   private get(id: string): Promise<Record<string, unknown>> {

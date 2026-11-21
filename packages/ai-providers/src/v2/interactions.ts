@@ -1,5 +1,5 @@
 import { ProviderFailure, ProviderHttp, record, requiredString, type Json } from "./http.js";
-import type { ArtifactStore, ClipArtifact, JobStatus } from "./ports.js";
+import type { ArtifactStore, ClipArtifact, JobStatus, RecordBilledSeconds } from "./ports.js";
 
 /** REST Interactions boundary. Callers persist the returned id before scheduling polls. */
 export class Interactions {
@@ -23,19 +23,28 @@ export class Interactions {
     return { providerJobId: requiredString(response.id) };
   }
 
-  public async poll(id: string): Promise<JobStatus> {
-    return this.status(await this.get(id));
+  public async poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
+    const response = await this.get(id);
+    const status = this.status(response);
+    if (status === "succeeded" && recordBilling) {
+      const seconds = this.billedSeconds(response);
+      if (seconds !== null) await recordBilling(seconds);
+    }
+    return status;
   }
 
   public async fetch(
     id: string,
     kind: "video" | "image" | "audio",
     trimSeconds?: number,
+    recordBilling?: RecordBilledSeconds,
   ): Promise<ClipArtifact> {
     const response = await this.get(id);
     const status = this.status(response);
     if (status === "refused") throw new ProviderFailure("REFUSAL", true);
     if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
+    const billedSeconds = this.billedSeconds(response);
+    if (billedSeconds !== null) await recordBilling?.(billedSeconds);
     const content = this.outputs(response)
       .filter((item) => item.type === kind)
       .at(-1);
@@ -45,13 +54,11 @@ export class Interactions {
         ? await this.http.bytes(content.uri)
         : this.decode(requiredString(content.data));
     const artifact = await this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
-    const usage = response.usage === undefined ? {} : record(response.usage);
-    const seconds = usage.billed_seconds;
-    return {
-      ...artifact,
-      billedSeconds:
-        typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
-    };
+    return { ...artifact, billedSeconds };
+  }
+  private billedSeconds(response: Json): number | null {
+    const seconds = response.usage === undefined ? null : record(response.usage).billed_seconds;
+    return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
   }
 
   public async get(id: string): Promise<Json> {

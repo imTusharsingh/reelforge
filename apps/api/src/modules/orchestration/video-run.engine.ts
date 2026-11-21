@@ -14,6 +14,7 @@ import {
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
 import {
+  collectibleFailedShots,
   failSettledGeneration,
   activeSubmissionHold,
   unsettledShots,
@@ -73,20 +74,18 @@ export class VideoRunEngine {
           async () => {
             if (run.state === "FAILED") {
               if (!job.stepId) return null;
-              const accepted = await this.runs.store.scoped(context).videoRunStep.findFirst({
-                where: {
-                  runId: run.id,
-                  id: job.stepId,
-                  key: { startsWith: "shot-" },
-                  state: "WAITING_EXTERNAL",
-                  providerJobId: { not: null },
-                },
-              });
+              const [accepted] = await collectibleFailedShots(
+                this.runs.store.scoped(context),
+                this.runs.store.db,
+                run,
+                job.stepId,
+              );
               if (!accepted) return null;
             }
             if (job.stepId) return this.shot(context, run, job.stepId);
             if (
               run.state === "CANCELED" ||
+              run.pauseReason === "EMERGENCY_STOP" ||
               run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
               run.pauseReason === "OPERATOR_ABANDONED"
             )
@@ -114,7 +113,7 @@ export class VideoRunEngine {
       run.id,
       "reconcile_required",
       async (db, current, tx) => {
-        if (current.state === run.state) {
+        if (current.state === run.state && current.pauseReason !== "EMERGENCY_STOP") {
           const hold = await activeSubmissionHold(db, tx, {
             ...current,
             pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
@@ -277,20 +276,20 @@ export class VideoRunEngine {
           run.state === "NEEDS_HUMAN" ||
           run.pauseReason
         ) {
-          const admitted = await this.runs.store.scoped(context).videoRunStep.findMany({
-            where: {
-              runId: run.id,
-              OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:keyframe:" } }],
-              state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
-              ...(run.state === "FAILED"
-                ? ({
-                    key: { startsWith: "shot-" },
-                    state: "WAITING_EXTERNAL",
-                    providerJobId: { not: null },
-                  } as const)
-                : {}),
-            },
-          });
+          const db = this.runs.store.scoped(context);
+          const admitted =
+            run.state === "FAILED"
+              ? await collectibleFailedShots(db, this.runs.store.db, run)
+              : await db.videoRunStep.findMany({
+                  where: {
+                    runId: run.id,
+                    OR: [
+                      { key: { startsWith: "shot-" } },
+                      { key: { startsWith: "media:keyframe:" } },
+                    ],
+                    state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+                  },
+                });
           for (const step of admitted)
             await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);
         } else await this.runs.enqueue(context, run);

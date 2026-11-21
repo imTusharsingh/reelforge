@@ -7,35 +7,22 @@ export async function replayedReshoot(
   current: Run,
   ordinal: number,
   source: Step,
-  latest: Step,
   shots: Step[],
-  boundSource: boolean,
 ): Promise<Step | undefined> {
-  const id = current.id;
-  const previousCommand = await db.runEvent.findFirst({
+  const replacement = shots.find((step) => step.attempt === source.attempt + 1);
+  if (!replacement) return undefined;
+  // Older reshoot events identify the source by its unique run, ordinal and attempt.
+  const command = await db.runEvent.findFirst({
     where: {
-      runId: id,
+      runId: current.id,
       type: "reshoot_requested",
       AND: [
         { payload: { path: ["ordinal"], equals: ordinal } },
-        ...(boundSource ? [{ payload: { path: ["attempt"], equals: source.attempt + 1 } }] : []),
+        { payload: { path: ["attempt"], equals: replacement.attempt } },
       ],
     },
-    orderBy: { sequence: "desc" },
   });
-  const command = previousCommand?.payload;
-  const replacement =
-    command && typeof command === "object" && "attempt" in command
-      ? shots.find((step) => step.attempt === command.attempt)
-      : undefined;
-  if (!replacement) return undefined;
-  if (
-    boundSource ||
-    (latest.id === replacement.id &&
-      (current.state === "GENERATING" || replacement.state === "PENDING"))
-  )
-    return replacement;
-  return undefined;
+  return command ? replacement : undefined;
 }
 
 export async function createReshoot(

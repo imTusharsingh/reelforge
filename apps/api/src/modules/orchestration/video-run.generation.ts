@@ -10,13 +10,15 @@ import { withSpan, metrics } from "@reelforge/observability";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
+import { type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
 import {
   awaitingBilling,
   reconcilePricedReceipt,
-  recordShotReceipt,
+  recordShotArtifact,
+  pendingShotMedia,
+  captureShotReceipt,
 } from "../usage-budget/run-billing.js";
 import { billingHold } from "../runs/run-outcomes.js";
 import { pinnedBudget, envelopeRoom } from "../usage-budget/run-envelope.js";
@@ -26,6 +28,7 @@ import {
   UnconfiguredVideoPort,
   type MediaPortResolver,
   type VideoGenPort,
+  type ShotBilling,
 } from "./video-run.handlers.js";
 
 @Injectable()
@@ -46,35 +49,15 @@ export class RunGeneration {
     const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!initial) throw new ConflictException("Step not found in run");
     if (SETTLED_SHOTS.some((state) => state === initial.state)) return null;
-    if (awaitingBilling(initial)) return this.reconcileBilling(context, initial);
+    if (awaitingBilling(initial) && !pendingShotMedia(initial))
+      return this.reconcileBilling(context, initial);
     if (initial.key.startsWith("media:keyframe:")) {
       if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
       return this.recoverKeyframe(context, initial);
     }
     let step = initial;
-    if (!step.providerJobId && step.state !== "RUNNING") {
-      const stopped =
-        run.state === "CANCELED" ||
-        run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-        run.pauseReason === "OPERATOR_ABANDONED";
-      if (stopped || run.state !== "GENERATING") {
-        const frame = await db.videoRunStep.findFirst({
-          where: {
-            runId: run.id,
-            key: `media:${keyframeKey(ShotSpecSchema.parse(step.input))}`,
-            state: "WAITING_EXTERNAL",
-            providerJobId: { not: null },
-          },
-          orderBy: { attempt: "desc" },
-        });
-        if (frame && this.recoverKeyframe) {
-          const delay = await this.recoverKeyframe(context, frame);
-          if (delay) return delay;
-        }
-        return stopped ? null : 12000;
-      }
-      await this.boundary.check(context, run);
-    }
+    const paused = await this.waitAtBoundary(context, run, step);
+    if (paused !== undefined) return paused;
     const shot = ShotSpecSchema.parse(step.input);
     const delay = await waitForShotContinuity(this.runs, context, run, step, shot.firstFrameFrom);
     if (delay !== undefined) return delay;
@@ -97,7 +80,44 @@ export class RunGeneration {
       if (!step.providerJobId)
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
+    if (pendingShotMedia(step)) {
+      await this.complete(context, step, ports);
+      return awaitingBilling(step) ? this.reconcileBilling(context, step) : null;
+    }
     return this.poll(context, step, ports);
+  }
+
+  private async waitAtBoundary(
+    context: Context,
+    run: Run,
+    step: Step,
+  ): Promise<number | null | undefined> {
+    const db = this.runs.store.scoped(context);
+    if (!step.providerJobId && step.state !== "RUNNING") {
+      const stopped =
+        run.state === "CANCELED" ||
+        run.pauseReason === "EMERGENCY_STOP" ||
+        run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+        run.pauseReason === "OPERATOR_ABANDONED";
+      if (stopped || run.state !== "GENERATING") {
+        const frame = await db.videoRunStep.findFirst({
+          where: {
+            runId: run.id,
+            key: `media:${keyframeKey(ShotSpecSchema.parse(step.input))}`,
+            state: "WAITING_EXTERNAL",
+            providerJobId: { not: null },
+          },
+          orderBy: { attempt: "desc" },
+        });
+        if (frame && this.recoverKeyframe) {
+          const delay = await this.recoverKeyframe(context, frame);
+          if (delay) return delay;
+        }
+        return stopped ? null : 12000;
+      }
+      await this.boundary.check(context, run);
+    }
+    return undefined;
   }
 
   private async reconcileBilling(context: Context, step: Step): Promise<null> {
@@ -114,7 +134,7 @@ export class RunGeneration {
   ): Promise<number | null> {
     const status = await withSpan(
       "run.provider.poll",
-      () => this.port(step, ports).poll(step.providerJobId!),
+      () => this.port(step, ports).poll(step.providerJobId!, this.billing(context, step)),
       "CLIENT",
     );
     if (status === "queued" || status === "running") return 12000;
@@ -231,6 +251,7 @@ export class RunGeneration {
       async (db, current, tx) => {
         if (
           current.state !== "GENERATING" ||
+          current.pauseReason === "EMERGENCY_STOP" ||
           current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
           current.pauseReason === "OPERATOR_ABANDONED"
         )
@@ -297,28 +318,6 @@ export class RunGeneration {
     if (!port) throw new ConflictException("RECONCILE_REQUIRED: stored provider is unavailable");
     return port;
   }
-  private completionOutput(
-    step: Step,
-    artifact: import("../runs/runs.types.js").Artifact,
-    meta: ReturnType<NonNullable<VideoGenPort["metadata"]>> | undefined,
-  ): ReturnType<typeof json> {
-    return json({
-      storageArtifacts: [artifact],
-      ...(meta
-        ? {
-            receipt: {
-              key: step.key,
-              providerId: step.providerId,
-              providerJobId: step.providerJobId,
-              ...meta,
-              objectKey: artifact.objectKey,
-              checksumSha256: artifact.checksumSha256,
-              mimeType: "video/mp4",
-            },
-          }
-        : {}),
-    });
-  }
   private recordSuccess(step: Step, started: number): void {
     metrics
       .counter("run_provider_results", "Provider outcomes")
@@ -330,33 +329,41 @@ export class RunGeneration {
       .histogram("run_provider_latency_ms", "Provider latency")
       .observe({ provider: step.providerId ?? "unconfigured" }, Date.now() - started);
   }
+  private billing(context: Context, step: Step): ShotBilling {
+    return {
+      shot: ShotSpecSchema.parse(step.input),
+      record: async (receipt): Promise<void> => {
+        await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+      },
+    };
+  }
   private async complete(
     context: Context,
     step: Step,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<void> {
     const started = step.startedAt?.getTime() ?? Date.now();
+    const port = this.port(step, ports);
+    const recovering = !!pendingShotMedia(step);
+    if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
+      const billing = this.billing(context, step);
+      const receipt = await port.collectReceipt(
+        step.providerJobId!,
+        billing.shot,
+        recovering ? undefined : billing,
+      );
+      step = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+      if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
+    }
     const body = await withSpan(
       "run.provider.fetch",
-      () => this.port(step, ports).fetch(step.providerJobId!),
+      () => port.fetch(step.providerJobId!, pendingShotMedia(step)?.pendingMedia ?? undefined),
       "CLIENT",
     );
     const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");
-    const meta = this.port(step, ports).metadata?.(
-      step.providerJobId!,
-      ShotSpecSchema.parse(step.input),
-    );
-    const output = this.completionOutput(step, artifact, meta);
-    const result = await recordShotReceipt(
-      this.runs.store,
-      this.paid,
-      context,
-      step,
-      output,
-      meta?.costMinor,
-    );
+    const result = await recordShotArtifact(this.runs.store, this.paid, context, step, artifact);
     await this.runs.events?.publish(result.event);
-    if (result.event.type === "reconcile_required")
+    if (!recovering && result.event.type === "reconcile_required")
       throw new ConflictException(billingHold(step.id));
     if (result.value) {
       this.recordSuccess(step, started);

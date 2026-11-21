@@ -34,6 +34,7 @@ export type LedgerRow = Readonly<{
   errorCode: string | null;
   estimatedCost: string | null;
   actualCost: string | null;
+  confirmedNonDispatch?: boolean;
   currency: string | null;
   createdAt: Date;
   sceneKind: string | null;
@@ -63,6 +64,7 @@ type RawLedgerRow = {
   error_code: string | null;
   estimated_cost: string | null;
   actual_cost: string | null;
+  confirmed_non_dispatch: boolean;
   currency: string | null;
   created_at: Date | string;
   scene_kind: string | null;
@@ -94,6 +96,10 @@ function ledgerConditions(filter: LedgerFilter): Prisma.Sql {
     : Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`;
 }
 
+// Only trust cancellation codes when their ledger metadata confirms a known non-dispatch.
+export const confirmedNonDispatch = Prisma.sql`COALESCE(pr.response_metadata @> '{"dispatched":false,"costKnown":true}'::jsonb
+  AND NOT (pr.response_metadata ? 'providerJobId'), false)`;
+
 export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Promise<LedgerRow[]> {
   const where = ledgerConditions(filter);
   const rows = await db.$queryRaw<RawLedgerRow[]>(Prisma.sql`
@@ -107,6 +113,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
              pr.error_code,
              pr.estimated_cost::text AS estimated_cost,
              pr.actual_cost::text AS actual_cost,
+             ${confirmedNonDispatch} AS confirmed_non_dispatch,
              pr.currency,
              pr.created_at,
              scene.kind AS scene_kind,
@@ -164,6 +171,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
     errorCode: row.error_code,
     estimatedCost: row.estimated_cost,
     actualCost: row.actual_cost,
+    confirmedNonDispatch: row.confirmed_non_dispatch,
     currency: row.currency === null ? null : row.currency.trim().toUpperCase(),
     createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
     sceneKind: row.scene_kind,
@@ -208,14 +216,22 @@ export type ClassifiedCost = Readonly<{
  * PRE_DISPATCH_ERROR_CODES) is skipped (NOT_DISPATCHED). A row with neither cost is UNKNOWN.
  */
 export function classifyCost(
-  row: Pick<LedgerRow, "status" | "errorCode" | "estimatedCost" | "actualCost" | "currency">,
+  row: Pick<
+    LedgerRow,
+    "status" | "errorCode" | "estimatedCost" | "actualCost" | "currency" | "confirmedNonDispatch"
+  >,
 ): ClassifiedCost {
   const currency = row.currency !== null && isCurrencyCode(row.currency) ? row.currency : null;
   if (
     row.status === "FAILED" &&
     (row.actualCost === null || new Prisma.Decimal(row.actualCost).isZero()) &&
     row.errorCode !== null &&
-    PRE_DISPATCH_ERROR_CODES.includes(row.errorCode)
+    (PRE_DISPATCH_ERROR_CODES.includes(row.errorCode) ||
+      (row.confirmedNonDispatch &&
+        row.actualCost !== null &&
+        ["CRITIC_SUPERSEDED", "CRITIC_REJECTED", "RUN_CANCELED", "OPERATOR_ABANDONED"].includes(
+          row.errorCode,
+        )))
   )
     return { kind: "NOT_DISPATCHED", amountMinor: null, currency };
   if (row.actualCost !== null)

@@ -38,6 +38,7 @@ suite("V3 approval, caps and retention", () => {
       await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).resolves.toBeNull();
       expect(submit).not.toHaveBeenCalled();
       const breakdown = await usage.runBreakdown(t.context, t.run.id);
+      expect(breakdown.totals.notDispatchedRequests).toBe(1);
       expect(breakdown.reservations).toEqual([
         expect.objectContaining({ status: "RELEASED", committedMinor: null }),
       ]);
@@ -275,7 +276,10 @@ suite("V3 approval, caps and retention", () => {
       await t.engine.process(t.runs.job(t.context, t.run.id));
       await t.engine.process(t.runs.job(t.context, t.run.id));
     }
-    await t.control.reshoot(t.context, t.run.id, 0);
+    const last = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "shot-0", attempt: 3 },
+    });
+    await t.control.reshoot(t.context, t.run.id, 0, last.id);
     expect((await t.store.get(t.context, t.run.id)).state).toBe("NEEDS_HUMAN");
     await t.control.resume(t.context, t.run.id);
     await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow();

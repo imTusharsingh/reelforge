@@ -81,6 +81,8 @@ export class RunsStore {
     reason: string | null = null,
   ): Promise<Event> {
     const result = await this.mutate(context, id, "transition", async (db, run) => {
+      if (run.pauseReason === "EMERGENCY_STOP")
+        throw new ConflictException("Run halted at step boundary");
       if (run.revision !== expectedRevision || !VIDEO_RUN_TRANSITIONS[run.state].includes(state))
         throw new ConflictException("Illegal or stale run transition");
       await db.videoRun.updateMany({

@@ -62,8 +62,10 @@ describe("V5 landed router bridge", () => {
     await bridge.submit(shot, "durable-key");
     expect(port.submit).toHaveBeenCalledWith(shot, "durable-key:gemini", options);
     expect(await bridge.poll("fixture-job")).toBe("succeeded");
-    expect(await bridge.fetch("fixture-job")).toEqual(Buffer.from("fixture-video"));
-    expect(bridge.metadata("fixture-job", shot)).toMatchObject({
+    const receipt = await bridge.collectReceipt("fixture-job", shot);
+    expect(await bridge.fetch("fixture-job", receipt.media!)).toEqual(Buffer.from("fixture-video"));
+    expect(port.fetch).toHaveBeenCalledOnce();
+    expect(receipt).toMatchObject({
       seconds: 8,
       costMinor: 56,
       modelId: "configured-video",
@@ -88,7 +90,6 @@ describe("V5 landed router bridge", () => {
       firstFrame: { type: "image", mime_type: "image/png", data: "fixture" },
     });
     expect(bridge.estimate(shot)).toBe(113);
-    expect(() => bridge.metadata("unknown", shot)).toThrow("receipt unavailable");
     vi.mocked(port.fetch).mockResolvedValue({
       objectKey: "fixture",
       checksumSha256: "a".repeat(64),
@@ -100,7 +101,9 @@ describe("V5 landed router bridge", () => {
       fps: 24,
       billedSeconds: 8,
     });
-    await expect(bridge.fetch("fixture-job")).rejects.toThrow("invalid 720p video");
+    const receipt = await bridge.collectReceipt("fixture-job", shot);
+    expect(receipt.costMinor).toBeGreaterThan(0);
+    await expect(bridge.fetch("fixture-job", receipt.media!)).rejects.toThrow("invalid 720p video");
   });
 });
 

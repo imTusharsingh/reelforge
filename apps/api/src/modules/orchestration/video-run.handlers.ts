@@ -1,3 +1,4 @@
+import type { ClipArtifact } from "@reelforge/ai-providers";
 import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
 export interface StepHandler {
@@ -32,19 +33,29 @@ export interface VideoGenPort {
   estimate(shot: ShotSpec, fallback: boolean): number;
   submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;
-  poll(providerJobId: string): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
-  fetch(providerJobId: string): Promise<Buffer>;
-  metadata?(
-    id: string,
+  poll(
+    providerJobId: string,
+    billing?: ShotBilling,
+  ): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
+  fetch(providerJobId: string, media?: ClipArtifact): Promise<Buffer>;
+  collectReceipt?(
+    providerJobId: string,
     shot: ShotSpec,
-  ): {
-    seconds: number;
-    providerDurationSeconds?: number;
-    costMinor: number;
-    modelId: string;
-    promptVersion: string;
-  };
+    billing?: ShotBilling,
+  ): Promise<VideoReceipt>;
 }
+export type ShotBilling = {
+  shot: ShotSpec;
+  record: (receipt: VideoReceipt) => Promise<void>;
+};
+export type VideoReceipt = {
+  media: ClipArtifact | null;
+  seconds: number;
+  providerDurationSeconds: number | null;
+  costMinor: number;
+  modelId: string;
+  promptVersion: string;
+};
 export type MediaPortResolver = (
   context: Context,
   run: Run,

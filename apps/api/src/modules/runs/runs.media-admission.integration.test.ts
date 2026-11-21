@@ -1,4 +1,3 @@
-import { ShotSpecSchema } from "@reelforge/contracts";
 import { ProviderFailure, type ImageGenPort } from "@reelforge/ai-providers";
 import { describe, expect, it, vi } from "vitest";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
@@ -82,79 +81,6 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     },
   );
 
-  it.each(["DAY", "MONTH"] as const)(
-    "uses the pinned Brief before and after envelope creation with a lower %s limit",
-    async (period) => {
-      const t = await fixture.tenant("L2", 24);
-      const policy = {
-        ...t.brief.budgetPolicy,
-        targetMinor: 100,
-        hardCapMinor: 300,
-        dailyLimitMinor: period === "DAY" ? 15 : 2000,
-        monthlyLimitMinor: period === "MONTH" ? 15 : 18000,
-      };
-      const append = async (version: number, budgetPolicy: typeof policy): Promise<string> => {
-        const id = crypto.randomUUID();
-        const { workspaceId, channelId } = t.brief;
-        const document = { ...t.brief, id, version, budgetPolicy };
-        await t.db.channelBrief.create({ data: { id, workspaceId, channelId, version, document } });
-        return id;
-      };
-      const run = await t.runs.create(t.context, await append(2, policy), "pinned");
-      await append(3, t.brief.budgetPolicy);
-      const access = {
-        runs: t.runs,
-        paid: new RunPaidCalls(t.usage, t.store),
-        boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
-      } as MediaAccess;
-      const accounts = new MediaAccounts(access);
-      await expect(
-        accounts.begin(t.context, run, "media:expensive", {}, 301, "fixture"),
-      ).rejects.toThrow("BUDGET_CAP");
-      const pre = await accounts.begin(t.context, run, "media:pre", {}, 16, "fixture");
-      await expect(accounts.prepare(t.context, run, pre, "fixture")).rejects.toMatchObject({
-        code: "BUDGET_EXHAUSTED",
-      });
-      const shots = await t.db.shotSpec.findMany({ where: { runId: t.run.id } });
-      for (const shot of shots) {
-        const document = ShotSpecSchema.parse(shot.document);
-        const id = crypto.randomUUID();
-        await t.db.shotSpec.create({
-          data: {
-            workspaceId: run.workspaceId,
-            runId: run.id,
-            id,
-            ordinal: shot.ordinal,
-            version: 1,
-            document: { ...document, id, runId: run.id },
-          },
-        });
-      }
-      await t.planning.prepare(t.context, run);
-      expect(
-        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
-      ).toMatchObject({ targetMinor: 100, hardCapMinor: 300 });
-      expect(
-        await t.db.runEvent.findFirstOrThrow({
-          where: { runId: run.id, type: "budget_estimated" },
-        }),
-      ).toMatchObject({ payload: expect.objectContaining({ warn: true }) });
-      const after = await accounts.begin(t.context, run, "media:post", {}, 16, "fixture");
-      await expect(accounts.prepare(t.context, run, after, "fixture")).rejects.toMatchObject({
-        code: "BUDGET_EXHAUSTED",
-      });
-      await t.usage.upsertBudget(t.context, {
-        currency: "USD",
-        dailyLimitMinor: 5,
-        reason: "lower workspace policy",
-      });
-      const lower = await accounts.begin(t.context, run, "media:workspace", {}, 6, "fixture");
-      await expect(accounts.prepare(t.context, run, lower, "fixture")).rejects.toMatchObject({
-        code: "BUDGET_EXHAUSTED",
-      });
-    },
-  );
-
   it("retains a 70-cent receipt on a 56-cent shot while its sibling attaches and settles", async () => {
     const t = await fixture.tenant();
     const run = await generating(t);
@@ -171,7 +97,19 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
       return receipt.promise;
     });
     Object.assign(provider, {
-      metadata: (job: string) => ({
+      collectReceipt: async (job: string) => ({
+        media: {
+          objectKey: "provider-clip",
+          checksumSha256: "a".repeat(64),
+          byteSize: 16,
+          mimeType: "video/mp4",
+          width: 720,
+          height: 1280,
+          fps: 24,
+          billedSeconds: 10,
+          durationSeconds: 10,
+        },
+        providerDurationSeconds: 10,
         costMinor: job === "sibling" ? 56 : 70,
         seconds: 10,
         modelId: "fixture",

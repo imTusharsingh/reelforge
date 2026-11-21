@@ -14,7 +14,15 @@ type Request = Pick<
 >;
 type Reservation = Pick<
   Prisma.UsageReservationGetPayload<object>,
-  "id" | "idempotencyKey" | "status" | "expiresAt" | "amountMinor" | "createdAt" | "currency"
+  | "id"
+  | "idempotencyKey"
+  | "status"
+  | "expiresAt"
+  | "amountMinor"
+  | "createdAt"
+  | "currency"
+  | "correlationId"
+  | "channelId"
 >;
 type Evidence =
   | "never-dispatched"
@@ -64,7 +72,17 @@ function classify(
     ) &&
     request.status === "FAILED" &&
     (!request.actualCost || request.actualCost.isZero()) &&
-    reservation?.status === "RELEASED" &&
+    (reservation?.status === "RELEASED" ||
+      (reservation?.status === "EXPIRED" &&
+        !marked &&
+        request.errorCode === "NOT_DISPATCHED" &&
+        z
+          .object({
+            admissionOrdering: z.literal(ADMISSION_ORDERING),
+            costKnown: z.literal(true),
+            stepId: z.literal(request.correlationId),
+          })
+          .safeParse(request.responseMetadata).success)) &&
     !jobId &&
     !receiptSchema.safeParse(request.responseMetadata).success &&
     z.object({ dispatched: z.literal(false) }).safeParse(request.responseMetadata).success
@@ -170,6 +188,8 @@ export async function readAdmissions<T extends Attempt>(
       select: {
         id: true,
         idempotencyKey: true,
+        correlationId: true,
+        channelId: true,
         status: true,
         expiresAt: true,
         amountMinor: true,

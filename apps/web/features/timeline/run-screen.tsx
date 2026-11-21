@@ -120,8 +120,8 @@ function RunContent({
   const { action, actionError, busy, notice } = controls;
   const redo =
     editable && detail.run.state === "CRITIC"
-      ? (ordinal: number): void => {
-          void action(`reshoot/${ordinal}`);
+      ? (ordinal: number, sourceStepId: string): void => {
+          void action(`reshoot/${ordinal}?sourceStepId=${encodeURIComponent(sourceStepId)}`);
         }
       : undefined;
   return (

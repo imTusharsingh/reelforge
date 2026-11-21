@@ -36,7 +36,7 @@ export class RunFallback {
         if (current.state === "CANCELED") return { value: false, payload: { canceled: true } };
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         const estimate = await this.estimate(db, run, step, budget);
-        if (!estimate) return { value: false, payload: { fallbackBudgetDenied: true } };
+        if (!estimate) return { value: false, payload: { fallbackUnavailable: true } };
         await this.paid.settleRejectedRequest(tx, context, step, failure);
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id },
@@ -84,6 +84,12 @@ export class RunFallback {
     failed: Step,
     budget: Parameters<typeof fallbackEstimate>[0],
   ): Promise<ReturnType<typeof fallbackEstimate> | null> {
+    if (
+      await db.videoRunStep.findFirst({
+        where: { runId: run.id, key: { startsWith: "media:text:critic:" }, state: "FAILED" },
+      })
+    )
+      return null;
     const all = await db.videoRunStep.findMany({
       where: { runId: run.id, key: { startsWith: "shot-" } },
     });

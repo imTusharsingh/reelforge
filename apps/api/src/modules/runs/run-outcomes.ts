@@ -2,6 +2,7 @@ import { criticPrefix } from "../usage-budget/critic-admission.js";
 import { QualityRubricSchema, type ShotSpec } from "@reelforge/contracts";
 import {
   canRollback,
+  jobIdFromAdmission,
   readAdmissions,
   attachedTextResult,
 } from "../usage-budget/run-admission-state.js";
@@ -148,6 +149,98 @@ export async function failSettledGeneration(db: Scoped, run: Run): Promise<boole
   });
   return true;
 }
+export async function releaseSteps(
+  workspaceId: string,
+  db: Scoped,
+  tx: Transaction,
+  runId: string,
+  steps: Step[],
+  reason: "RUN_CANCELED" | "OPERATOR_ABANDONED" | "CRITIC_SUPERSEDED" | "CRITIC_REJECTED",
+): Promise<void> {
+  if (!steps.length) return;
+  const ids = steps.map((step) => step.id);
+  await tx.usageReservation.updateMany({
+    where: {
+      workspaceId,
+      idempotencyKey: { in: steps.map((step) => `m08:${step.idempotencyKey}`) },
+      status: "RESERVED",
+    },
+    data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
+  });
+  await tx.providerRequest.updateMany({
+    where: {
+      workspaceId,
+      correlationId: { in: ids },
+      status: "FAILED",
+      actualCost: null,
+    },
+    data: {
+      errorCode: reason,
+      actualCost: 0,
+      responseMetadata: { dispatched: false, costKnown: true },
+    },
+  });
+  await db.videoRunStep.updateMany({
+    where: { runId, id: { in: ids } },
+    data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
+  });
+  const refunded = steps
+    .filter((step) => step.state === "RUNNING")
+    .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
+  if (!refunded) return;
+  const budget = await db.budgetEnvelope.findFirst({ where: { runId } });
+  if (budget) {
+    await db.budgetEnvelope.updateMany({
+      where: { id: budget.id },
+      data: {
+        reservedMinor: Math.max(0, budget.reservedMinor - refunded),
+        revision: budget.revision + 1,
+      },
+    });
+  }
+}
+
+/** A terminal critic may race a legacy replacement. Fence every unsubmitted child under the run lock. */
+async function closeUnsubmittedShots(db: Scoped, tx: Transaction, run: Run): Promise<void> {
+  const steps = await db.videoRunStep.findMany({
+    where: { ...unsettledShots(run.id), providerJobId: null },
+  });
+  const claims = await readAdmissions(db, tx, run.workspaceId, steps);
+  const safe = claims.filter(
+    (claim) => canRollback(claim) || claim.evidence === "released-nondispatch",
+  );
+  await releaseSteps(
+    run.workspaceId,
+    db,
+    tx,
+    run.id,
+    safe.map(({ step }) => step),
+    "CRITIC_REJECTED",
+  );
+}
+
+export async function collectibleFailedShots(
+  db: Scoped,
+  tx: Transaction,
+  run: Run,
+  id?: string,
+): Promise<Step[]> {
+  const steps = await db.videoRunStep.findMany({
+    where: {
+      runId: run.id,
+      ...(id && { id }),
+      key: { startsWith: "shot-" },
+      state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+    },
+  });
+  const claims = await readAdmissions(db, tx, run.workspaceId, steps);
+  return claims
+    .filter(({ step, ...claim }) =>
+      step.state === "WAITING_EXTERNAL" ? !!step.providerJobId : !!jobIdFromAdmission(claim),
+    )
+    .map(({ step }) => step);
+}
+
 export async function failRunIfSettled(
   db: Scoped,
   tx: Transaction,
@@ -155,6 +248,8 @@ export async function failRunIfSettled(
   step: Step,
   error: { code: string; message: string },
 ): Promise<void> {
+  if (step.key.startsWith(criticPrefix) && run.state !== "CANCELED")
+    await closeUnsubmittedShots(db, tx, run);
   const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
   if (step.key.startsWith("shot-")) {
     await failSettledGeneration(db, { ...run, pauseReason });

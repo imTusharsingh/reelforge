@@ -144,7 +144,7 @@ async function holdAmbiguousAdmission(
         ...unknownPrice(admission, step),
       },
     });
-  if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+  if (run.pauseReason !== "EMERGENCY_STOP" && !run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
   return { value: reason, payload: { reason }, stepId: step.id, eventType: "reconcile_required" };
 }

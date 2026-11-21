@@ -28,7 +28,7 @@ export async function assertRunCap(
   run: Run,
   amount: number,
   excludingStepId?: string,
-): Promise<void> {
+): Promise<number> {
   const claims = await db.videoRunStep.aggregate({
     where: {
       runId: run.id,
@@ -37,8 +37,10 @@ export async function assertRunCap(
     },
     _sum: { costMinor: true },
   });
-  if ((claims._sum.costMinor ?? 0) + amount > pinnedBudget(run).hardCapMinor)
+  const cumulative = (claims._sum.costMinor ?? 0) + amount;
+  if (cumulative > pinnedBudget(run).hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
+  return cumulative;
 }
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;

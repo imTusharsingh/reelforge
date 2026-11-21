@@ -133,7 +133,7 @@ export class RunsController {
     @Param("id") id: string,
     @Param("ordinal") ordinal: string,
     @Query("workspaceId") workspaceId: string,
-    @Query("sourceStepId") sourceStepId?: string,
+    @Query("sourceStepId") sourceStepId: string,
   ): Promise<{ stepId: string | null }> {
     const number = Number(ordinal);
     if (!Number.isSafeInteger(number) || number < 0)
@@ -143,7 +143,7 @@ export class RunsController {
         await this.context(request, workspaceId),
         this.id(id),
         number,
-        sourceStepId === undefined ? undefined : this.id(sourceStepId),
+        this.id(sourceStepId),
       ),
     };
   }

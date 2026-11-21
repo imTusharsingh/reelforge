@@ -169,10 +169,11 @@ export class RunPaidCalls {
         data: { errorCode: OUTCOME_UNKNOWN },
       });
       if (marked.count !== 1) throw new ConflictException("Paid dispatch outcome changed");
-      await db.videoRun.updateMany({
-        where: { id: run.id },
-        data: { pauseReason: (await remainingSubmissionHold(db, tx, run)) ?? reason },
-      });
+      if (run.pauseReason !== "EMERGENCY_STOP")
+        await db.videoRun.updateMany({
+          where: { id: run.id },
+          data: { pauseReason: (await remainingSubmissionHold(db, tx, run)) ?? reason },
+        });
       return { value: null, payload: { reason }, stepId: step.id };
     });
     throw new SubmissionOutcomeUnknown(reason, { cause });

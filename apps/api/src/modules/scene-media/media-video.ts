@@ -11,7 +11,11 @@ import {
   type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
-import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import type {
+  VideoGenPort,
+  VideoReceipt,
+  ShotBilling,
+} from "../orchestration/video-run.handlers.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { MediaJobs } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
@@ -19,7 +23,6 @@ import { imageSurcharge } from "./media-prices.js";
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
   public readonly modelId: string;
-  private readonly receipts = new Map<string, ClipArtifact>();
   public constructor(
     private readonly native: NativeVideoPort,
     private readonly jobs: MediaJobs,
@@ -75,12 +78,11 @@ export class RoutedMediaVideo implements VideoGenPort {
   public async reconcile(): Promise<null> {
     return null;
   }
-  public poll(id: string): ReturnType<NativeVideoPort["poll"]> {
-    return this.native.poll(id);
+  public poll(id: string, billing?: ShotBilling): ReturnType<NativeVideoPort["poll"]> {
+    return this.native.poll(id, this.recordBilling(billing));
   }
-  public async fetch(id: string): Promise<Buffer> {
-    const media = await this.native.fetch(id);
-    this.receipts.set(id, media);
+  public async fetch(id: string, saved?: ClipArtifact): Promise<Buffer> {
+    const media = saved ?? (await this.native.fetch(id));
     if (
       media.mimeType !== "video/mp4" ||
       media.width !== 720 ||
@@ -93,24 +95,24 @@ export class RoutedMediaVideo implements VideoGenPort {
     if (!this.trim) throw new Error("Extension tail extraction is not configured");
     return this.trim(body, this.options.extension.previousSeconds);
   }
-  public metadata(
+  public async collectReceipt(
     id: string,
     shot: ShotSpec,
-  ): {
-    seconds: number;
-    providerDurationSeconds: number;
-    costMinor: number;
-    modelId: string;
-    promptVersion: string;
-  } {
-    const media = this.receipts.get(id);
-    if (!media) throw new Error("Provider receipt unavailable");
-    const seconds = media.billedSeconds ?? shot.durationSeconds;
+    billing?: ShotBilling,
+  ): Promise<VideoReceipt> {
+    const media = await this.native.fetch(id, this.recordBilling(billing));
+    return this.price(shot, media.billedSeconds ?? shot.durationSeconds, media);
+  }
+  private recordBilling(billing?: ShotBilling): ((seconds: number) => Promise<void>) | undefined {
+    if (billing) return (seconds) => billing.record(this.price(billing.shot, seconds, null));
+  }
+  private price(shot: ShotSpec, seconds: number, media: ClipArtifact | null): VideoReceipt {
     const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
     const images = shot.references.length + this.frameCount;
     return {
+      media,
       seconds,
-      providerDurationSeconds: media.durationSeconds,
+      providerDurationSeconds: media?.durationSeconds ?? null,
       costMinor: reservationCents({
         ...cost,
         microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),

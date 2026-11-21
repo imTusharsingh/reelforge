@@ -16,7 +16,7 @@ export async function runRequest(
     ? `workspaces/${encodeURIComponent(workspaceId)}/${path}`
     : path;
   const response = await fetch(
-    `/api/v1/${scopedPath}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    `/api/v1/${scopedPath}${scopedPath.includes("?") ? "&" : "?"}workspaceId=${encodeURIComponent(workspaceId)}`,
     withCsrf({
       credentials: "include",
       ...(body === undefined

@@ -11,6 +11,7 @@ import {
   type Transaction,
 } from "./runs.types.js";
 import {
+  releaseSteps,
   activeSubmissionHold,
   remainingSubmissionHold,
   SETTLED_SHOTS,
@@ -97,14 +98,16 @@ export class RunsControl {
     tx: Transaction,
     run: Run,
   ): Promise<void> {
+    if (run.pauseReason === "EMERGENCY_STOP")
+      throw new ConflictException("Resume the stopped run before editing");
     if (await activeSubmissionHold(db, tx, run))
       throw new ConflictException("Reconcile the unknown attempt before editing");
     const critics = await openCritics(db, tx, run);
     if (critics.some((critic) => !canRollback(critic)))
       throw new ConflictException("Settle the prior critic before editing");
     if (critics.length)
-      await this.releaseSteps(
-        context,
+      await releaseSteps(
+        context.workspaceId,
         db,
         tx,
         run.id,
@@ -161,7 +164,10 @@ export class RunsControl {
         }
         if (!canRollback(admission)) {
           const reason = (await remainingSubmissionHold(db, tx, run)) ?? submissionHold(step.id);
-          if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+          if (
+            run.pauseReason !== "EMERGENCY_STOP" &&
+            !run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+          )
             await db.videoRun.updateMany({ where: { id }, data: { pauseReason: reason } });
           return { value: reason, payload: { reason }, stepId, eventType: "reconcile_required" };
         }
@@ -170,7 +176,7 @@ export class RunsControl {
           run.pauseReason === "OPERATOR_ABANDONED"
         ))
           throw new ConflictException("Run is not awaiting reconciliation");
-        await this.releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
+        await releaseSteps(context.workspaceId, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
           await db.videoRunStep.create({
             data: {
@@ -192,6 +198,7 @@ export class RunsControl {
       throw new ConflictException("Reconcile the provider submission before abandoning");
   }
   private async updateAbandonHold(db: Scoped, tx: Transaction, run: Run): Promise<void> {
+    if (run.pauseReason === "EMERGENCY_STOP") return;
     const hold = await remainingSubmissionHold(db, tx, run);
     await db.videoRun.updateMany({
       where: { id: run.id },
@@ -210,8 +217,8 @@ export class RunsControl {
     for (const admission of admissions)
       if (admission.evidence === "released-nondispatch")
         await closeReleasedMedia(db, run, admission.step);
-    await this.releaseSteps(
-      context,
+    await releaseSteps(
+      context.workspaceId,
       db,
       tx,
       run.id,
@@ -221,55 +228,6 @@ export class RunsControl {
     return remainingSubmissionHold(db, tx, run);
   }
 
-  private async releaseSteps(
-    context: Context,
-    db: Scoped,
-    tx: Transaction,
-    runId: string,
-    steps: Step[],
-    reason: "RUN_CANCELED" | "OPERATOR_ABANDONED" | "CRITIC_SUPERSEDED",
-  ): Promise<void> {
-    const ids = steps.map((step) => step.id);
-    await tx.usageReservation.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        idempotencyKey: { in: steps.map((step) => `m08:${step.idempotencyKey}`) },
-        status: "RESERVED",
-      },
-      data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
-    });
-    await tx.providerRequest.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: { in: ids },
-        status: "FAILED",
-        actualCost: null,
-      },
-      data: {
-        errorCode: reason,
-        actualCost: 0,
-        responseMetadata: { dispatched: false, costKnown: true },
-      },
-    });
-    await db.videoRunStep.updateMany({
-      where: { runId, id: { in: ids } },
-      data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
-    });
-    const refunded = steps
-      .filter((step) => step.state === "RUNNING")
-      .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
-    if (!refunded) return;
-    const budget = await db.budgetEnvelope.findFirst({ where: { runId } });
-    if (budget) {
-      await db.budgetEnvelope.updateMany({
-        where: { id: budget.id },
-        data: {
-          reservedMinor: Math.max(0, budget.reservedMinor - refunded),
-          revision: budget.revision + 1,
-        },
-      });
-    }
-  }
   public async resume(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
@@ -323,7 +281,7 @@ export class RunsControl {
     context: Context,
     id: string,
     ordinal: number,
-    sourceStepId?: string,
+    sourceStepId: string,
   ): Promise<string | null> {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
@@ -339,17 +297,9 @@ export class RunsControl {
         });
         const latest = shots[0];
         if (!latest) throw new ConflictException("Reshoot source unavailable");
-        const source = sourceStepId ? shots.find((step) => step.id === sourceStepId) : latest;
+        const source = shots.find((step) => step.id === sourceStepId);
         if (!source) throw new ConflictException("Reshoot source changed");
-        const replacement = await replayedReshoot(
-          db,
-          current,
-          ordinal,
-          source,
-          latest,
-          shots,
-          !!sourceStepId,
-        );
+        const replacement = await replayedReshoot(db, current, ordinal, source, shots);
         if (replacement) {
           if (current.state === "CRITIC" && replacement.state === "PENDING") {
             await this.fenceCritics(context, db, tx, current);
@@ -370,7 +320,10 @@ export class RunsControl {
       },
     );
     await this.runs.events?.publish(result.event);
-    if (result.value) await this.runs.enqueue(context, await this.runs.store.get(context, id));
+    if (result.value) {
+      const current = await this.runs.store.get(context, id);
+      if (current.state === "GENERATING") await this.runs.enqueue(context, current);
+    }
     return result.value;
   }
 }

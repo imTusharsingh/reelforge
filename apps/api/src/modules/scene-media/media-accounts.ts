@@ -9,7 +9,7 @@ import {
   BudgetUnresolvableError,
 } from "../usage-budget/usage-budget.types.js";
 import { assertCriticRevision } from "../usage-budget/critic-admission.js";
-import { envelopeRoom, assertRunCap } from "../usage-budget/run-envelope.js";
+import { envelopeRoom, assertRunCap, pinnedBudget } from "../usage-budget/run-envelope.js";
 import {
   json,
   type Context,
@@ -50,7 +50,7 @@ export class MediaAccounts {
           };
         if (previous) await this.verifyRetry(tx, context, previous);
         await assertCriticRevision(db, tx, current, { key, input: { spec: input } });
-        const budget = await this.checkRoom(db, current, cost);
+        const { budget, warning } = await this.checkRoom(db, current, cost);
         const attempt = (previous?.attempt ?? 0) + 1;
         const step = await db.videoRunStep.create({
           data: {
@@ -71,7 +71,7 @@ export class MediaAccounts {
             where: { id: budget.id, revision: budget.revision },
             data: { reservedMinor: budget.reservedMinor + cost, revision: budget.revision + 1 },
           });
-        return { value: step, payload: { key, costMinor: cost }, stepId: step.id };
+        return { value: step, payload: { key, costMinor: cost, ...warning }, stepId: step.id };
       },
     );
     await this.access.runs.events?.publish(result.event);
@@ -86,15 +86,29 @@ export class MediaAccounts {
         `RECONCILE_REQUIRED: conflicting closed attempt (${previous.id})`,
       );
   }
-  private async checkRoom(db: Scoped, current: Run, cost: number): Promise<BudgetEnvelope | null> {
-    await assertRunCap(db, current, cost);
+  private async checkRoom(
+    db: Scoped,
+    current: Run,
+    cost: number,
+  ): Promise<{
+    budget: BudgetEnvelope | null;
+    warning: { cumulativeMinor: number; warn: boolean } | null;
+  }> {
+    const cumulative = await assertRunCap(db, current, cost);
     const budget = await db.budgetEnvelope.findFirst({ where: { runId: current.id } });
     if (budget && !envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
-    return budget;
+    return { budget, warning: budget ? null : this.targetWarning(current, cumulative) };
+  }
+  private targetWarning(
+    run: Run,
+    cumulativeMinor: number,
+  ): { cumulativeMinor: number; warn: boolean } {
+    return { cumulativeMinor, warn: cumulativeMinor > pinnedBudget(run).targetMinor };
   }
   private requireDispatchable(run: Run, current: Run): void {
     if (
       current.state !== run.state ||
+      current.pauseReason === "EMERGENCY_STOP" ||
       current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
       current.pauseReason === "OPERATOR_ABANDONED"
     )
@@ -272,7 +286,21 @@ export class MediaAccounts {
           },
         });
         await clearResolvedSubmissionHold(db, tx, run, step.id);
-        return { value: null, payload: { costMinor: step.costMinor }, stepId: step.id };
+        const paid = budget
+          ? null
+          : await db.videoRunStep.aggregate({
+              where: { runId: run.id, state: "SUCCEEDED", key: { startsWith: "media:" } },
+              _sum: { costMinor: true },
+            });
+        const cumulativeMinor = paid?._sum.costMinor ?? 0;
+        return {
+          value: null,
+          payload: {
+            costMinor: step.costMinor,
+            ...(paid && this.targetWarning(run, cumulativeMinor)),
+          },
+          stepId: step.id,
+        };
       },
     );
     await this.access.runs.events?.publish(result.event);

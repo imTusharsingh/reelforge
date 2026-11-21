@@ -113,7 +113,7 @@ export class CriticStep implements StepHandler {
         !envelopeRoom(budget, (previous.costMinor ?? 0) + criticReservationCents())
       )
         continue;
-      await control.reshoot(context, run.id, ordinal);
+      await control.reshoot(context, run.id, ordinal, previous.id);
       throw new ConflictException("Critic deferred while V3 processes the reshoot");
     }
     if (

@@ -1,5 +1,10 @@
 import { Prisma } from "@reelforge/database";
-import { classifyCost, type LedgerReader, type LedgerRow } from "./usage-budget.ledger.js";
+import {
+  classifyCost,
+  confirmedNonDispatch,
+  type LedgerReader,
+  type LedgerRow,
+} from "./usage-budget.ledger.js";
 import type { PeriodBounds } from "./usage-budget.time.js";
 
 type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
@@ -34,11 +39,11 @@ export async function budgetExposure(
        )
     )
     SELECT currency, actual_cost::text AS "actualCost", estimated_cost::text AS "estimatedCost",
-           error_code AS "errorCode", status::text, NULL::text AS minor, 1::bigint AS entries
+           error_code AS "errorCode", status::text, ${confirmedNonDispatch} AS "confirmedNonDispatch", NULL::text AS minor, 1::bigint AS entries
       FROM provider_requests pr WHERE ${period}
        AND NOT EXISTS (SELECT FROM coverage c WHERE c.correlation_id = pr.correlation_id)
     UNION ALL
-    SELECT currency, NULL, NULL, NULL, NULL, SUM(minor)::text, COUNT(*) FROM (
+    SELECT currency, NULL, NULL, NULL, NULL, false, SUM(minor)::text, COUNT(*) FROM (
       SELECT currency, minor FROM coverage
        WHERE minor > 0 AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}
       UNION ALL

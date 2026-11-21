@@ -135,6 +135,7 @@ export class RunsService {
   public async enqueue(context: Context, run: Run): Promise<void> {
     if (
       run.state === "CANCELED" ||
+      run.pauseReason === "EMERGENCY_STOP" ||
       run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
       run.pauseReason === "OPERATOR_ABANDONED"
     )
