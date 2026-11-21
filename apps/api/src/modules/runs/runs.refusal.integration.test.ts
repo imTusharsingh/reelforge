@@ -101,7 +101,7 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
     },
   );
 
-  it.each(["safety", "safety without ID", "403"] as const)(
+  it.each(["safety", "safety without ID", "403", "401"] as const)(
     "settles immediate rewrite response %s across restart",
     async (outcome) => {
       const t = await fixture.tenant("L2", 42);
@@ -110,23 +110,40 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
       const source = await db.videoRunStep.findFirstOrThrow({
         where: { runId: run.id, key: "shot-0" },
       });
-      await db.videoRunStep.updateMany({
+      const charged = outcome !== "401" && outcome !== "403";
+      const code = outcome === "401" ? "UNAUTHENTICATED" : "PERMISSION_DENIED";
+      const [accepted, pending, prepared] = await db.videoRunStep.findMany({
         where: { runId: run.id, key: { startsWith: "shot-" }, id: { not: source.id } },
-        data: { state: "SKIPPED" },
+        orderBy: { key: "asc" },
       });
       const fetcher = vi
         .fn<typeof fetch>()
         .mockResolvedValueOnce(Response.json({ status: "queued", id: "first" }))
-        .mockResolvedValueOnce(Response.json({ status: "refused" }))
-        .mockResolvedValueOnce(
-          outcome === "403"
-            ? Response.json({ error: { status: "PERMISSION_DENIED" } }, { status: 403 })
-            : Response.json({
-                status: "failed",
-                error: { code: "safety" },
-                ...(outcome === "safety" ? { id: "second" } : {}),
-              }),
-        );
+        .mockResolvedValueOnce(Response.json({ status: "refused" }));
+      if (!charged)
+        fetcher
+          .mockResolvedValueOnce(Response.json({ status: "queued", id: "sibling" }))
+          .mockResolvedValueOnce(Response.json({ status: "in_progress" }));
+      fetcher.mockResolvedValueOnce(
+        charged
+          ? Response.json({
+              status: "failed",
+              error: { code: "safety" },
+              ...(outcome === "safety" ? { id: "second" } : {}),
+            })
+          : Response.json({ error: { status: code } }, { status: Number(outcome) }),
+      );
+      const bytes = Buffer.from("offline sibling clip");
+      const save = vi.fn(async (body: Uint8Array, mimeType: string) => ({
+        objectKey: "sibling",
+        checksumSha256: "a".repeat(64),
+        byteSize: body.length,
+        durationSeconds: 7,
+        width: 720,
+        height: 1280,
+        fps: 24,
+        mimeType,
+      }));
       const cap = capabilityCatalog(
         run.workspaceId,
         {
@@ -142,15 +159,11 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
       const restart = (): void => {
         const client = new Interactions(
           new ProviderHttp("AIza" + "abc".repeat(12), "gemini", fetcher),
-          {
-            save: async (): Promise<never> => {
-              throw new Error("Unexpected download");
-            },
-          },
+          { save },
         );
         t.generation.provider = new RoutedMediaVideo(
           new OmniVideo(client, cap, { resolve: async (): Promise<[]> => [] }),
-          {} as MediaJobs,
+          { bytes: async () => bytes } as unknown as MediaJobs,
           t.context,
           run,
         );
@@ -160,15 +173,58 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
       const replacement = await db.videoRunStep.findFirstOrThrow({
         where: { runId: run.id, key: source.key, attempt: 2 },
       });
+      const siblingJob = t.runs.job(t.context, run.id, accepted!.id);
+      if (!charged) {
+        expect(await t.engine.process(siblingJob)).toBe(12000);
+        const stop = vi
+          .spyOn(RunPaidCalls.prototype, "dispatch")
+          .mockRejectedValueOnce(new Error("prepared"));
+        try {
+          await expect(t.generation.process(t.context, run, prepared!.id)).rejects.toThrow(
+            "prepared",
+          );
+        } finally {
+          stop.mockRestore();
+        }
+      }
       const job = t.runs.job(t.context, run.id, replacement.id);
       restart();
       await t.engine.process(job);
       restart();
       await t.engine.process(job);
-      const charged = outcome !== "403";
-      const spent = charged ? 98 : 49;
+      if (!charged) {
+        expect(await t.store.get(t.context, run.id)).toMatchObject({
+          state: "NEEDS_HUMAN",
+          pauseReason: `PROVIDER_${code}`,
+        });
+        await expect(t.control.resume(t.context, run.id)).rejects.toThrow();
+        await t.engine.recover();
+        await t.engine.process(t.runs.job(t.context, run.id, pending!.id));
+        fetcher.mockResolvedValueOnce(Response.json({ status: "completed" })).mockResolvedValueOnce(
+          Response.json({
+            status: "completed",
+            steps: [
+              {
+                type: "model_output",
+                content: [
+                  { type: "video", mime_type: "video/mp4", data: bytes.toString("base64") },
+                ],
+              },
+            ],
+          }),
+        );
+        await t.engine.process(siblingJob);
+        await t.engine.process(siblingJob);
+        expect(save).toHaveBeenCalledOnce();
+        expect(await db.videoRunStep.findFirst({ where: { id: pending!.id } })).toMatchObject({
+          state: "CANCELLED",
+          providerJobId: null,
+        });
+      }
+      const spent = 98;
       expect(await t.store.get(t.context, run.id)).toMatchObject({
         state: charged ? "NEEDS_HUMAN" : "FAILED",
+        pauseReason: charged ? "PROVIDER_REFUSED" : `PROVIDER_${code}`,
       });
       expect(
         await db.videoRunStep.findFirstOrThrow({ where: { id: replacement.id } }),
@@ -179,7 +235,7 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
         }),
       ).toMatchObject({
         errorCode: charged ? "PROVIDER_JOB_FAILED" : "NOT_DISPATCHED",
-        ...(charged ? {} : { errorMessage: "Provider refusal (HTTP 403, PERMISSION_DENIED)" }),
+        ...(charged ? {} : { errorMessage: `Provider refusal (HTTP ${outcome}, ${code})` }),
         responseMetadata: {
           dispatched: charged,
           ...(outcome === "safety" ? { providerJobId: "second" } : {}),
@@ -195,9 +251,18 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
       });
       expect(reservations.map((r) => [r.status, r.committedMinor])).toEqual([
         ["COMMITTED", 49n],
+        ...(!charged
+          ? [
+              ["COMMITTED", 49n],
+              ["RELEASED", null],
+            ]
+          : []),
         charged ? ["COMMITTED", 49n] : ["RELEASED", null],
       ]);
-      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(
+        charged ? 2 : 3,
+      );
+      expect(fetcher).toHaveBeenCalledTimes(charged ? 3 : 7);
     },
   );
 

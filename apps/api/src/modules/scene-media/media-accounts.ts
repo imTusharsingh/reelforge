@@ -1,6 +1,6 @@
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
-import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { clearResolvedSubmissionHold, failSettledGeneration } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   BudgetExhaustedError,
@@ -247,7 +247,9 @@ export class MediaAccounts {
             output: json({ result: output, budgetAccounted: !!budget }),
           },
         });
-        await clearResolvedSubmissionHold(db, tx, run, step.id);
+        const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
+        if (run.state === "NEEDS_HUMAN" && step.key.startsWith("media:keyframe:"))
+          await failSettledGeneration(db, { ...run, pauseReason });
         return { value: null, payload: { costMinor: step.costMinor }, stepId: step.id };
       },
     );

@@ -27,7 +27,8 @@ export class RunFallback {
       async (db, current, tx) => {
         const step = await db.videoRunStep.findFirstOrThrow({ where: { id: failed.id } });
         if (step.state !== "RUNNING") return { value: true, payload: { replay: true } };
-        if (current.state === "CANCELED") return { value: false, payload: { canceled: true } };
+        if (current.state === "CANCELED" || current.state === "NEEDS_HUMAN")
+          return { value: false, payload: { admissionClosed: true } };
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         const estimate = await this.estimate(db, run, step, budget);
         if (!estimate) return { value: false, payload: { fallbackBudgetDenied: true } };

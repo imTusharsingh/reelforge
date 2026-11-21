@@ -40,7 +40,7 @@ export interface VideoGenPort {
   submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;
   poll(providerJobId: string): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
-  fetch(providerJobId: string): Promise<Buffer>;
+  fetch(providerJobId: string, savedOutput: unknown): Promise<Buffer>;
   metadata?(
     id: string,
     shot: ShotSpec,

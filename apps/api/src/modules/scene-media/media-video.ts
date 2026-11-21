@@ -81,7 +81,8 @@ export class RoutedMediaVideo implements VideoGenPort {
   public poll(id: string): ReturnType<NativeVideoPort["poll"]> {
     return this.native.poll(id);
   }
-  public async fetch(id: string): Promise<Buffer> {
+  public async fetch(id: string, savedOutput: unknown): Promise<Buffer> {
+    this.savedPricing(savedOutput);
     const media = await this.native.fetch(id);
     this.receipts.set(id, media);
     if (
@@ -107,6 +108,11 @@ export class RoutedMediaVideo implements VideoGenPort {
           : 0,
     });
   }
+  private savedPricing(savedOutput: unknown): z.infer<typeof pricingSchema> {
+    const pricingResult = z.object({ videoPricing: pricingSchema }).safeParse(savedOutput);
+    if (!pricingResult.success) throw new MissingVideoPricing("Missing admission video pricing");
+    return pricingResult.data.videoPricing;
+  }
   public metadata(
     id: string,
     shot: ShotSpec,
@@ -121,9 +127,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     const media = this.receipts.get(id);
     if (!media) throw new Error("Provider receipt unavailable");
     const seconds = media.billedSeconds ?? shot.durationSeconds;
-    const pricingResult = z.object({ videoPricing: pricingSchema }).safeParse(savedOutput);
-    if (!pricingResult.success) throw new MissingVideoPricing("Missing admission video pricing");
-    const pricing = pricingResult.data.videoPricing;
+    const pricing = this.savedPricing(savedOutput);
     const cost = secondsCost(seconds, pricing.microUsdPerSecond);
     return {
       seconds,

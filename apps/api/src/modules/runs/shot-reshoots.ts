@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { Scoped, Step } from "./runs.types.js";
 
+export const MAX_SHOT_RESHOOTS = 2;
+
 const request = z.object({ ordinal: z.int().nonnegative(), attempt: z.int().positive() });
 
 export async function shotReshoots(

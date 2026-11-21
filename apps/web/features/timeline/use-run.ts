@@ -1,18 +1,18 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import type { RunDetailView } from "../../../../packages/contracts/src/run-experience";
+import type { TimelineDetail } from "./client";
 import { runClient, watchRun } from "./client";
 
 export function useRun(
   workspaceId: string,
   id: string,
 ): {
-  detail: RunDetailView | null;
+  detail: TimelineDetail | null;
   error: string;
   connection: string;
   refresh: () => void;
 } {
-  const [detail, setDetail] = useState<RunDetailView | null>(null);
+  const [detail, setDetail] = useState<TimelineDetail | null>(null);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState("Connecting…");
   const [version, setVersion] = useState(0);

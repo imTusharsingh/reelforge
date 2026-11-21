@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type JSX } from "react";
-import type { RunDetailView } from "../../../../packages/contracts/src/run-experience";
+import type { TimelineDetail } from "./client";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Card } from "../../components/ui/primitives";
 import { Skeleton, Toast } from "../../components/ui/studio";
@@ -98,7 +98,7 @@ function useRunActions(
 }
 
 type RunContentProps = {
-  detail: RunDetailView;
+  detail: TimelineDetail;
   workspaceId: string;
   editable: boolean;
   review: boolean;
@@ -203,7 +203,7 @@ function RunOperatorControls({
   );
 }
 
-function RunHeading({ detail, review }: { detail: RunDetailView; review: boolean }): JSX.Element {
+function RunHeading({ detail, review }: { detail: TimelineDetail; review: boolean }): JSX.Element {
   const href = `/runs/${detail.run.id}`;
   const reviewHref = href + "/review";
   const title = runMetadata(detail)?.title ?? `Short ${detail.run.id.slice(0, 8)}`;
@@ -236,7 +236,7 @@ function LiveRun({
   refresh,
   approve,
 }: {
-  detail: RunDetailView;
+  detail: TimelineDetail;
   connection: string;
   workspaceId: string;
   editable: boolean;
@@ -283,7 +283,7 @@ function LiveRun({
   );
 }
 
-function Budget({ envelope }: { envelope: NonNullable<RunDetailView["envelope"]> }): JSX.Element {
+function Budget({ envelope }: { envelope: NonNullable<TimelineDetail["envelope"]> }): JSX.Element {
   const { spentMinor, hardCapMinor } = envelope;
   return (
     <>

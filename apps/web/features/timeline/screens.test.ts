@@ -55,6 +55,77 @@ describe("V8 mounted experience with fake HTTP", () => {
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
   });
+  it.each(["assembly_input_failed", "assembly_failed", "shot_refused", "step_failed"])(
+    "refreshes the open timeline on %s",
+    async (event) => {
+      const data = detail();
+      data.run.state = "ASSEMBLING";
+      const fetcher = fakeFetch();
+      fetcher.mockImplementation(async () => Response.json(data));
+      await act(async () => root.render(createElement(RunScreen, { id: runId })));
+      const current = (): string | null | undefined =>
+        host.querySelector(".rf-timeline [aria-current=step]")?.textContent;
+      expect(current()).toBe("Assembling");
+      data.run.state = "FAILED";
+      await act(async () => FakeEventSource.instances[0]!.emit(event, 7));
+      expect(current()).toBe("Failed");
+    },
+  );
+  it("enables the remaining quality reshoot after a refusal rewrite and one requested redo", async () => {
+    const data = detail();
+    data.run.state = "CRITIC";
+    const input = {
+      id: crypto.randomUUID(),
+      schemaVersion: "1.0",
+      workspaceId,
+      runId,
+      ordinal: 0,
+      version: 1,
+      keyframePrompt: "Tree",
+      motionPrompt: "Pan",
+      negativePrompt: "",
+      durationSeconds: 5,
+      voLine: "Leaves",
+      dialogue: "",
+      onScreenText: "",
+      continuityNotes: [],
+      firstFrameFrom: null,
+      camera: "wide",
+      transition: "cut",
+      references: [],
+      width: 720,
+      height: 1280,
+      fps: 24,
+      seed: null,
+    };
+    for (const attempt of [1, 2, 3])
+      data.steps.push({
+        ...data.steps[0]!,
+        id: crypto.randomUUID(),
+        key: "shot-0",
+        input,
+        attempt,
+        state: attempt === 1 ? "SKIPPED" : "SUCCEEDED",
+        output:
+          attempt === 2
+            ? { refusalRewrite: { sourceStepId: data.steps[1]!.id, providerId: "gemini" } }
+            : {},
+      });
+    const remainingReshoots = { "shot-0": 1 };
+    const fetcher = fakeFetch();
+    fetcher.mockImplementation(async () => Response.json({ ...data, remainingReshoots }));
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    const redo = (): HTMLButtonElement | undefined =>
+      [...host.querySelectorAll("button")].find((button) => button.textContent === "Redo shot");
+    expect(redo()?.disabled).toBe(false);
+    await act(async () => redo()!.click());
+    expect(
+      fetcher.mock.calls.some(([path]) => String(path).includes(`runs/${runId}/reshoot/0`)),
+    ).toBe(true);
+    remainingReshoots["shot-0"] = 0;
+    await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
+    expect(redo()?.disabled).toBe(true);
+  });
   it("routes review cards to review and shows costs on the dashboard", async () => {
     fakeFetch();
     await act(async () => root.render(createElement(RunList, { inbox: true })));

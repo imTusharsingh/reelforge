@@ -89,17 +89,45 @@ export async function clearResolvedSubmissionHold(
   return pauseReason;
 }
 
+/** The first permanent input failure owns the run diagnostic while accepted siblings drain. */
+export function generationFailure(db: Scoped, runId: string): Promise<Step | null> {
+  return db.videoRunStep.findFirst({
+    where: {
+      runId,
+      key: { startsWith: "shot-" },
+      state: "FAILED",
+      error: { path: ["closesGeneration"], equals: true },
+    },
+    orderBy: [{ finishedAt: "asc" }, { key: "asc" }],
+  });
+}
+
 export async function failSettledGeneration(db: Scoped, run: Run): Promise<boolean> {
   if (
-    !["GENERATING", "PAUSED_BUDGET"].includes(run.state) ||
+    !["GENERATING", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
     run.pauseReason?.startsWith("RECONCILE_REQUIRED")
   )
     return false;
   if (await db.videoRunStep.findFirst({ where: unsettledShots(run.id) })) return false;
-  const failed = await db.videoRunStep.findFirst({
-    where: { runId: run.id, key: { startsWith: "shot-" }, state: "FAILED" },
-    orderBy: { key: "asc" },
-  });
+  const permanent = await generationFailure(db, run.id);
+  if (run.state === "NEEDS_HUMAN" && !permanent) return false;
+  if (
+    permanent &&
+    (await db.videoRunStep.findFirst({
+      where: {
+        runId: run.id,
+        key: { startsWith: "media:keyframe:" },
+        state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+      },
+    }))
+  )
+    return false;
+  const failed =
+    permanent ??
+    (await db.videoRunStep.findFirst({
+      where: { runId: run.id, key: { startsWith: "shot-" }, state: "FAILED" },
+      orderBy: { key: "asc" },
+    }));
   if (!failed) return false;
   const error = failed.error;
   const reason =

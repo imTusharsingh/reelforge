@@ -1,5 +1,6 @@
 import {
   RunDetailViewSchema,
+  type RunDetailView,
   RunSummariesSchema,
   RunAutonomyStatusSchema,
   RunUsageSchema,
@@ -38,14 +39,34 @@ export async function runRequest(
   }
   return response.json().catch(() => null);
 }
+export type TimelineDetail = RunDetailView & { remainingReshoots: Record<string, number> };
+
+function timelineDetail(value: unknown): TimelineDetail {
+  const detail = RunDetailViewSchema.parse(value);
+  const remainingReshoots: Record<string, number> = {};
+  if (value && typeof value === "object" && "remainingReshoots" in value) {
+    const counts = value.remainingReshoots;
+    if (!counts || typeof counts !== "object" || Array.isArray(counts))
+      throw new Error("Invalid reshoot allowance");
+    for (const [key, count] of Object.entries(counts)) {
+      if (
+        !/^shot-\d+$/.test(key) ||
+        typeof count !== "number" ||
+        !Number.isSafeInteger(count) ||
+        count < 0
+      )
+        throw new Error("Invalid reshoot allowance");
+      remainingReshoots[key] = count;
+    }
+  }
+  return { ...detail, remainingReshoots };
+}
+
 export const runClient = {
   list: async (workspaceId: string): Promise<ReturnType<typeof RunSummariesSchema.parse>> =>
     RunSummariesSchema.parse(await runRequest("run-experience", workspaceId)),
-  detail: async (
-    workspaceId: string,
-    id: string,
-  ): Promise<ReturnType<typeof RunDetailViewSchema.parse>> =>
-    RunDetailViewSchema.parse(await runRequest(`runs/${id}`, workspaceId)),
+  detail: async (workspaceId: string, id: string): Promise<TimelineDetail> =>
+    timelineDetail(await runRequest(`runs/${id}`, workspaceId)),
   status: async (
     workspaceId: string,
     id: string,
@@ -63,6 +84,10 @@ const eventTypes = [
   "stage_approved",
   "step_started",
   "step_completed",
+  "step_failed",
+  "shot_refused",
+  "assembly_input_failed",
+  "assembly_failed",
   "shot_started",
   "shot_completed",
   "approved",

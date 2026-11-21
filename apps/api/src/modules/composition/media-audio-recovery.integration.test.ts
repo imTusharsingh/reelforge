@@ -1,3 +1,5 @@
+import { DelayedError, Queue, Worker } from "bullmq";
+import { parseRedisConnection } from "../runs/redis-connection.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Interactions, GeminiTts, ProviderHttp } from "@reelforge/ai-providers";
 import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
@@ -61,7 +63,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
       plan,
       native,
       bindings,
-      job: t.runs.job(t.context, run.id),
+      job: { ...t.runs.job(t.context, run.id), assembly: true },
     };
   }
   it.each(["narration", "music"] as const)(
@@ -78,7 +80,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
         .mockResolvedValueOnce("running")
         .mockResolvedValue("running");
       const collect = vi.spyOn(sibling, "fetch");
-      const job = t.runs.job(t.context, t.run.id);
+      const job = { ...t.runs.job(t.context, t.run.id), assembly: true as const };
       expect(await t.engine.process(job)).toBe(12000);
       expect(await t.engine.process(job)).toBe(12000);
       const rows = t.store.scoped(t.context).videoRunStep;
@@ -119,6 +121,83 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
       expect(siblingSubmit).toHaveBeenCalledOnce();
       expect(collect).toHaveBeenCalledOnce();
     },
+  );
+
+  it.skipIf(!process.env.REDIS_URL)(
+    "forwards a late generation flow parent to the one delayed assembly job",
+    async () => {
+      vi.stubEnv("GEMINI_IMAGE_MODEL", "fixture-image");
+      const { t, run, native } = await setup();
+      const db = t.store.scoped(t.context);
+      await db.videoRun.updateMany({ where: { id: run.id }, data: { state: "GENERATING" } });
+      await db.videoRunStep.updateMany({
+        where: { runId: run.id, key: { startsWith: "shot-" }, NOT: { key: "shot-0" } },
+        data: { state: "SKIPPED" },
+      });
+      const last = await db.videoRunStep.findFirstOrThrow({
+        where: { runId: run.id, key: "shot-0" },
+      });
+      const poll = vi.spyOn(native.music, "poll").mockResolvedValue("running");
+      const queueName = `recovery-${run.id}`;
+      const queue = new RunsQueue(process.env.REDIS_URL!, queueName);
+      const connection = parseRedisConnection(process.env.REDIS_URL!);
+      const inspect = new Queue<RunJob>(queueName, { connection });
+      const parent = t.runs.job(t.context, run.id);
+      t.runs.queue = queue;
+      // Both parents are queued before the final child settles. Gate their processing
+      // to reproduce the sweep winning the transition while the old flow parent waits.
+      await queue.fanout(parent, [last.id], run.revision);
+      await queue.enqueue(parent, run.revision);
+      const enqueue = vi.spyOn(queue, "enqueue");
+      const childSettled = Promise.withResolvers<void>();
+      const transitioned = Promise.withResolvers<void>();
+      const completed: string[] = [];
+      const failures: string[] = [];
+      let flowParentState: Run["state"] | undefined;
+      const worker = new Worker<RunJob>(
+        queueName,
+        async (job, token) => {
+          const sweep = job.id === `${run.id}-${run.revision}`;
+          if (sweep) await childSettled.promise;
+          if (job.name === "assemble") {
+            await transitioned.promise;
+            flowParentState = (await t.store.get(t.context, run.id)).state;
+          }
+          const delay = await t.engine.process(job.data);
+          if (job.data.stepId) childSettled.resolve();
+          if (sweep) transitioned.resolve();
+          if (delay !== null) {
+            await job.moveToDelayed(Date.now() + delay, token);
+            throw new DelayedError();
+          }
+        },
+        { connection, concurrency: 3 },
+      );
+      worker.on("failed", (_job, error) => failures.push(error.message));
+      worker.on("completed", (job) => completed.push(job.id!));
+      try {
+        await vi.waitFor(
+          async () => {
+            expect(failures).toEqual([]);
+            expect(completed).toContain(`${run.id}-assemble-${run.revision}`);
+            expect(completed).toContain(`${run.id}-${run.revision}`);
+            const delayed = await inspect.getDelayed();
+            expect(delayed.map((job) => job.id)).toEqual([`${run.id}-assembly`]);
+          },
+          { timeout: 10000 },
+        );
+        expect(flowParentState).toBe("ASSEMBLING");
+        expect(enqueue.mock.calls.filter(([data]) => data.assembly)).toHaveLength(2);
+        expect(poll).toHaveBeenCalledOnce();
+      } finally {
+        childSettled.resolve();
+        transitioned.resolve();
+        await worker.close();
+        await inspect.obliterate();
+        await Promise.all([queue.close(), inspect.close()]);
+      }
+    },
+    15000,
   );
 
   it.each(["music", "narration"] as const)(
@@ -246,22 +325,59 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     });
   });
 
-  it("continues collecting after cancellation between assembly ticks", async () => {
+  it.each(["attached", "ledger only"])("recovers %s audio after cancellation", async (boundary) => {
     const { t, run, native, bindings, job } = await setup();
     const music = vi.spyOn(native.music, "submit"),
       voice = vi.spyOn(native.tts, "submit");
     vi.spyOn(native.music, "poll").mockResolvedValueOnce("running").mockResolvedValue("succeeded");
     const collect = vi.spyOn(native.music, "fetch");
-    expect(await t.engine.process(job)).toBe(12000);
+    if (boundary === "ledger only") {
+      const record = bindings.access.paid.recordJob.bind(bindings.access.paid);
+      vi.spyOn(bindings.access.paid, "recordJob").mockImplementation(async (...args) => {
+        await record(...args);
+        if (args[1].key === "media:music") throw new Error("worker stopped after receipt");
+      });
+      await expect(t.engine.process(job)).rejects.toThrow("worker stopped after receipt");
+    } else expect(await t.engine.process(job)).toBe(12000);
+    const step = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "media:music" },
+    });
+    const submitted = await music.mock.results[0]!.value;
+    if (boundary === "ledger only") {
+      expect(step).toMatchObject({ state: "RUNNING", providerJobId: null });
+      expect(
+        await t.db.providerRequest.findFirst({ where: { correlationId: step.id } }),
+      ).toMatchObject({
+        responseMetadata: { providerJobId: submitted.providerJobId },
+      });
+    }
     await t.control.cancel(t.context, run.id);
     const restarted = bindMedia(t, native);
     const render = vi.spyOn(restarted.renderer, "render");
     vi.spyOn(bindings.renderer, "render").mockImplementation(async () => {
       throw new Error("Unexpected render");
     });
-    await t.engine.process(job);
-    await t.engine.process(job);
-    expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "CANCELED" });
+    const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
+    t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
+    for (let sweep = 0; sweep < 2; sweep++) {
+      enqueue.mockClear();
+      await t.engine.recover();
+      const queued = enqueue.mock.calls.filter(([data]) => data.runId === run.id);
+      if (sweep === 0) expect(queued).toHaveLength(1);
+      for (const [data] of queued) {
+        expect(data.assembly).toBe(true);
+        await t.engine.process(data);
+      }
+    }
+    expect(await t.db.videoRunStep.findUnique({ where: { id: step.id } })).toMatchObject({
+      state: "SUCCEEDED",
+      providerJobId: submitted.providerJobId,
+    });
+    expect(collect).toHaveBeenCalledWith(submitted.providerJobId, 30);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "CANCELED",
+      pauseReason: null,
+    });
     expect(music).toHaveBeenCalledOnce();
     expect(voice).toHaveBeenCalledOnce();
     expect(collect).toHaveBeenCalledOnce();

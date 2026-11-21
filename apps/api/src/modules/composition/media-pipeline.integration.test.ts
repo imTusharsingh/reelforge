@@ -97,8 +97,13 @@ describe.skipIf(
     const render = vi.spyOn(renderer, "render");
     await expect(ports.get(t.context, shot)).rejects.toThrow();
     const admitted = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: first.id } });
+    const download = vi.spyOn(native.omni, "fetch");
+    const write = vi.spyOn(t.artifacts, "put");
     await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: {} } });
     await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
+    await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
+    expect(download).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toContain(first.id);
     await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow("Reconcile");
     await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: admitted.output! } });
@@ -195,6 +200,9 @@ describe.skipIf(
     await t.engine.process(job);
     await t.engine.process(job);
     expect(review.mock.calls.map((call) => call[4])).toEqual([1, 2]);
+    expect(await t.runs.detail(t.context, current.id)).toMatchObject({
+      remainingReshoots: { "shot-1": 1, "shot-0": 2 },
+    });
     expect(
       await t.db.runEvent.count({
         where: { runId: current.id, type: "critic_assembly_invalidated" },

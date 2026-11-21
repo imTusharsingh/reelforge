@@ -1,25 +1,20 @@
-import { shotReshoots } from "./shot-reshoots.js";
+import { closeSteps, releaseSteps } from "./run-close-steps.js";
+import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
-import {
-  json,
-  type Context,
-  type Run,
-  type Scoped,
-  type Step,
-  type Transaction,
-} from "./runs.types.js";
+import { json, type Context, type Run, type Scoped, type Transaction } from "./runs.types.js";
 import {
   activeSubmissionHold,
+  generationFailure,
   remainingSubmissionHold,
   SETTLED_SHOTS,
   submissionHold,
   storedSubmissionHold,
 } from "./run-outcomes.js";
-import { canRollback, readAdmission, readAdmissions } from "../usage-budget/run-admission-state.js";
+import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 
 @Injectable()
@@ -92,7 +87,7 @@ export class RunsControl {
           providerJobId: null,
         },
       });
-      const hold = await this.closeSteps(context, db, tx, id, steps);
+      const hold = await closeSteps(context, db, tx, id, steps, "RUN_CANCELED");
       await db.videoRun.updateMany({
         where: { id },
         data: {
@@ -133,7 +128,7 @@ export class RunsControl {
           run.pauseReason === "OPERATOR_ABANDONED"
         ))
           throw new ConflictException("Run is not awaiting reconciliation");
-        await this.releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
+        await releaseSteps(context, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
           await db.videoRunStep.create({
             data: {
@@ -165,83 +160,6 @@ export class RunsControl {
     });
   }
 
-  private async closeSteps(
-    context: Context,
-    db: Scoped,
-    tx: Transaction,
-    runId: string,
-    steps: Step[],
-  ): Promise<string | null> {
-    const admissions = await readAdmissions(db, tx, context.workspaceId, steps);
-    await this.releaseSteps(
-      context,
-      db,
-      tx,
-      runId,
-      admissions.filter(canRollback).map(({ step }) => step),
-      "RUN_CANCELED",
-    );
-    const protectedAttempt = admissions.find((admission) => !canRollback(admission));
-    return protectedAttempt ? submissionHold(protectedAttempt.step.id) : null;
-  }
-
-  private async releaseSteps(
-    context: Context,
-    db: Scoped,
-    tx: Transaction,
-    runId: string,
-    steps: Step[],
-    reason: "RUN_CANCELED" | "OPERATOR_ABANDONED",
-  ): Promise<void> {
-    const ids = steps.map((step) => step.id);
-    await tx.usageReservation.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        idempotencyKey: { in: steps.map((step) => `m08:${step.idempotencyKey}`) },
-        status: "RESERVED",
-      },
-      data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
-    });
-    await tx.providerRequest.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: { in: ids },
-        status: "FAILED",
-        actualCost: null,
-      },
-      data: {
-        errorCode: reason,
-        actualCost: 0,
-        responseMetadata: { dispatched: false, costKnown: true },
-      },
-    });
-    await db.videoRunStep.updateMany({
-      where: { runId, id: { in: ids } },
-      data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
-    });
-    for (const step of steps) {
-      const rewrite = refusalRewrite(step);
-      if (rewrite)
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: { output: { closedBy: reason, refusalRewrite: rewrite } },
-        });
-    }
-    const refunded = steps
-      .filter((step) => step.state === "RUNNING")
-      .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
-    if (!refunded) return;
-    const budget = await db.budgetEnvelope.findFirst({ where: { runId } });
-    if (budget) {
-      await db.budgetEnvelope.updateMany({
-        where: { id: budget.id },
-        data: {
-          reservedMinor: Math.max(0, budget.reservedMinor - refunded),
-          revision: budget.revision + 1,
-        },
-      });
-    }
-  }
   public async resume(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
@@ -270,6 +188,8 @@ export class RunsControl {
         }))
       )
         throw new ConflictException("Refused shot requires human resolution");
+      if (current.state === "NEEDS_HUMAN" && (await generationFailure(db, id)))
+        throw new ConflictException("Required generation input failed");
       const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
       const resolved =
         current.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
@@ -306,7 +226,7 @@ export class RunsControl {
     });
     const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: id } });
     const reshoots = (await shotReshoots(db, id)).filter((request) => request.key === previous.key);
-    if (reshoots.length >= 2 || !envelopeRoom(budget, previous.costMinor ?? 0)) {
+    if (reshoots.length >= MAX_SHOT_RESHOOTS || !envelopeRoom(budget, previous.costMinor ?? 0)) {
       await this.runs.move(context, run, "NEEDS_HUMAN", "Reshoot cap or envelope exhausted");
       return;
     }

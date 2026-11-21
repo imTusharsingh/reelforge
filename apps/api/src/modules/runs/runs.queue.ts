@@ -9,9 +9,12 @@ export const RUN_QUEUE = "video-runs-v3";
 export class RunsQueue {
   private readonly queue: Queue<RunJob>;
   private readonly flows: FlowProducer;
-  public constructor(redisUrl: string) {
+  public constructor(
+    redisUrl: string,
+    private readonly queueName = RUN_QUEUE,
+  ) {
     const connection = parseRedisConnection(redisUrl);
-    this.queue = new Queue(RUN_QUEUE, { connection });
+    this.queue = new Queue(queueName, { connection });
     this.flows = new FlowProducer({ connection });
     this.queue.on("error", () => undefined);
     this.flows.on("error", () => undefined);
@@ -47,12 +50,12 @@ export class RunsQueue {
     await this.removeFinished(`${data.runId}-assemble-${revision}`);
     await this.flows.add({
       name: "assemble",
-      queueName: RUN_QUEUE,
+      queueName: this.queueName,
       data,
       opts: { jobId: `${data.runId}-assemble-${revision}`, removeOnComplete: true },
       children: stepIds.map((stepId) => ({
         name: "shot",
-        queueName: RUN_QUEUE,
+        queueName: this.queueName,
         data: { ...data, stepId },
         opts: {
           jobId: createHash("sha256").update(stepId).digest("hex"),

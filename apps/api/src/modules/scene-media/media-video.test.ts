@@ -62,7 +62,9 @@ describe("V5 landed router bridge", () => {
     await bridge.submit(shot, "durable-key");
     expect(port.submit).toHaveBeenCalledWith(shot, "durable-key:gemini", options);
     expect(await bridge.poll("fixture-job")).toBe("succeeded");
-    expect(await bridge.fetch("fixture-job")).toEqual(Buffer.from("fixture-video"));
+    expect(
+      await bridge.fetch("fixture-job", { videoPricing: bridge.collectionPricing(shot) }),
+    ).toEqual(Buffer.from("fixture-video"));
     expect(
       bridge.metadata("fixture-job", shot, { videoPricing: bridge.collectionPricing(shot) }),
     ).toMatchObject({
@@ -87,7 +89,11 @@ describe("V5 landed router bridge", () => {
       pricePerSecond: { ...cap.pricePerSecond, "720p": 1 },
     });
     const restarted = new RoutedMediaVideo(port, jobs, context, {} as Run);
-    await restarted.fetch("accepted-job");
+    await expect(restarted.fetch("accepted-job", {})).rejects.toThrow(
+      "Missing admission video pricing",
+    );
+    expect(port.fetch).not.toHaveBeenCalled();
+    await restarted.fetch("accepted-job", { videoPricing });
     expect(restarted.metadata("accepted-job", shot, { videoPricing })).toMatchObject({
       costMinor: 113,
       modelId: original.modelId,
@@ -127,7 +133,9 @@ describe("V5 landed router bridge", () => {
       fps: 24,
       billedSeconds: 8,
     });
-    await expect(bridge.fetch("fixture-job")).rejects.toThrow("invalid 720p video");
+    await expect(
+      bridge.fetch("fixture-job", { videoPricing: bridge.collectionPricing(shot) }),
+    ).rejects.toThrow("invalid 720p video");
   });
 });
 
@@ -146,6 +154,8 @@ it("extracts only the newly generated extension tail before assembly", async () 
     undefined,
     trim,
   );
-  expect(await bridge.fetch("extended-job")).toEqual(Buffer.from("new-extension-tail"));
+  expect(
+    await bridge.fetch("extended-job", { videoPricing: bridge.collectionPricing(shot) }),
+  ).toEqual(Buffer.from("new-extension-tail"));
   expect(trim).toHaveBeenCalledWith(Buffer.from("complete-extended-clip"), 8);
 });

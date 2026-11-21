@@ -332,7 +332,7 @@ export class RunGeneration {
     const started = step.startedAt?.getTime() ?? Date.now();
     const body = await withSpan(
       "run.provider.fetch",
-      () => this.port(step, ports).fetch(step.providerJobId!),
+      () => this.port(step, ports).fetch(step.providerJobId!, step.output),
       "CLIENT",
     );
     const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");

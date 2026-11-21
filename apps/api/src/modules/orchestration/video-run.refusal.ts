@@ -1,7 +1,12 @@
 import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { clearResolvedSubmissionHold, SETTLED_SHOTS } from "../runs/run-outcomes.js";
+import {
+  clearResolvedSubmissionHold,
+  failSettledGeneration,
+  generationFailure,
+  SETTLED_SHOTS,
+} from "../runs/run-outcomes.js";
 import type { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import type { RunPaidCalls } from "../usage-budget/run-paid.js";
@@ -36,7 +41,7 @@ export async function settleVideoRefusal(
       )
         throw new ConflictException("Refused job claim changed");
       const rewritten = !!refusalRewrite(current);
-      const active = ["GENERATING", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state);
+      const active = await acceptsRewrite(db, run);
       const retry = active && !rewritten;
       const evidence = { providerJobId: submissionJobId ?? current.providerJobId, retry };
       await recordRefusal(db, tx, paid, context, current, evidence);
@@ -49,7 +54,8 @@ export async function settleVideoRefusal(
           stepId: current.id,
         };
       }
-      if (active)
+      if (!active) await failSettledGeneration(db, { ...run, pauseReason });
+      else
         await db.videoRun.updateMany({
           where: { id: run.id },
           data: {
@@ -70,6 +76,11 @@ export async function settleVideoRefusal(
   await runs.events?.publish(result.event);
   if (result.value)
     await runs.queue?.enqueue(runs.job(context, step.runId, result.value), result.event.sequence);
+}
+
+async function acceptsRewrite(db: Scoped, run: Run): Promise<boolean> {
+  if (run.state === "NEEDS_HUMAN") return !(await generationFailure(db, run.id));
+  return run.state === "GENERATING" || run.state === "PAUSED_BUDGET";
 }
 
 async function recordRefusal(

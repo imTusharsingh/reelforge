@@ -203,7 +203,7 @@ export class MediaAssembly {
         (await db.videoRunStep.findFirst({
           where: { runId: run.id, key: "ASSEMBLING", state: "FAILED" },
         })) &&
-        (await db.videoRunStep.findFirst({ where: acceptedAudio(run.id) }))
+        (await acceptedAudio(db, this.access.runs.store.db, run)).length
       )
         throw new AssemblyInterrupted(12000);
       return this.failAssembly(context, run, failed);
@@ -211,15 +211,15 @@ export class MediaAssembly {
   }
   public async collectCanceled(context: Context, run: Run): Promise<number | null> {
     const db = this.access.runs.store.scoped(context);
-    const accepted = acceptedAudio(run.id);
-    if (!(await db.videoRunStep.findFirst({ where: accepted }))) return null;
+    const accepted = await acceptedAudio(db, this.access.runs.store.db, run);
+    if (!accepted.length) return null;
     const shots = await db.shotSpec.findMany({ where: { runId: run.id } });
     const seconds = shots.reduce(
       (total, row) => total + ShotSpecSchema.parse(row.document).durationSeconds,
       0,
     );
-    await this.drainAudio(context, run, await this.ports.get(context), seconds, true);
-    return (await db.videoRunStep.findFirst({ where: accepted })) ? 12000 : null;
+    await this.drainAudio(context, run, await this.ports.get(context), seconds, accepted);
+    return (await acceptedAudio(db, this.access.runs.store.db, run)).length ? 12000 : null;
   }
 
   private async drainAudio(
@@ -227,15 +227,17 @@ export class MediaAssembly {
     run: Run,
     ports: Awaited<ReturnType<MediaPorts["get"]>>,
     seconds: number,
-    acceptedOnly = false,
+    accepted?: Step[],
   ): Promise<void> {
-    const active = await this.access.runs.store.scoped(context).videoRunStep.findMany({
-      where: {
-        runId: run.id,
-        key: { in: AUDIO_KEYS },
-        state: { in: acceptedOnly ? ["WAITING_EXTERNAL"] : ["RUNNING", "WAITING_EXTERNAL"] },
-      },
-    });
+    const active =
+      accepted ??
+      (await this.access.runs.store.scoped(context).videoRunStep.findMany({
+        where: {
+          runId: run.id,
+          key: { in: AUDIO_KEYS },
+          state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+        },
+      }));
     for (const step of active) {
       if (step.key === "media:narration")
         await this.jobs.drainAudio(context, step, ports.tts, seconds);

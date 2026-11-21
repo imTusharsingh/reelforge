@@ -75,6 +75,11 @@ export class VideoRunEngine {
           async () => {
             if (run.state === "FAILED") return null;
             if (job.stepId) return this.shot(context, run, job.stepId);
+            if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
+              await this.runs.enqueue(context, run);
+              return null;
+            }
+            if (run.state === "CANCELED" && !job.assembly && this.runs.queue) return null;
             if (run.state === "CANCELED")
               return this.planning.collectCanceledAudio?.(context, run) ?? null;
             if (job.assembly && run.state !== "ASSEMBLING") return null;
@@ -272,9 +277,7 @@ export class VideoRunEngine {
         ) {
           if (
             run.state === "CANCELED" &&
-            (await this.runs.store.scoped(context).videoRunStep.findFirst({
-              where: acceptedAudio(run.id),
-            }))
+            (await acceptedAudio(this.runs.store.scoped(context), this.runs.store.db, run)).length
           )
             await this.runs.queue?.enqueue(
               { ...this.runs.job(context, run.id), assembly: true },

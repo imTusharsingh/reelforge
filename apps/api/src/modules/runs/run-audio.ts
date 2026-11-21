@@ -1,19 +1,22 @@
-import type { Scoped, Step } from "./runs.types.js";
+import { jobIdFromAdmission, readAdmissions } from "../usage-budget/run-admission-state.js";
+import type { Run, Scoped, Step, Transaction } from "./runs.types.js";
 
 export const AUDIO_KEYS = ["media:narration", "media:music"];
 
-export function acceptedAudio(runId: string): {
-  runId: string;
-  key: { in: string[] };
-  state: "WAITING_EXTERNAL";
-  providerJobId: { not: null };
-} {
-  return {
-    runId,
-    key: { in: AUDIO_KEYS },
-    state: "WAITING_EXTERNAL",
-    providerJobId: { not: null },
-  };
+export async function acceptedAudio(db: Scoped, tx: Transaction, run: Run): Promise<Step[]> {
+  const active = await db.videoRunStep.findMany({
+    where: {
+      runId: run.id,
+      key: { in: AUDIO_KEYS },
+      state: { in: ["WAITING_EXTERNAL", "RUNNING"] },
+    },
+  });
+  const unattached = active.filter((step) => step.state === "RUNNING" && !step.providerJobId);
+  const admissions = await readAdmissions(db, tx, run.workspaceId, unattached);
+  return [
+    ...active.filter((step) => step.state === "WAITING_EXTERNAL" && step.providerJobId),
+    ...admissions.filter((admission) => jobIdFromAdmission(admission)).map(({ step }) => step),
+  ];
 }
 
 export function failedAudio(db: Scoped, runId: string): Promise<Step | null> {
