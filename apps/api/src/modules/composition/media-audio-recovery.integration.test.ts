@@ -1,0 +1,279 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Interactions, GeminiTts, ProviderHttp } from "@reelforge/ai-providers";
+import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
+import { RunsQueue } from "../runs/runs.queue.js";
+import type { Run, RunJob } from "../runs/runs.types.js";
+import type { MediaPlanning } from "../scene-media/media-planning.js";
+import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
+import { bindMedia } from "./media-bindings.fixture.js";
+import { fakeMediaPorts } from "./media-fixture.fixture.js";
+const narrator = {
+  providerId: "gemini" as const,
+  voiceId: "narrator",
+  language: "English",
+  pace: 1,
+};
+describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
+  const fixture = runsFixture();
+  beforeEach(() => {
+    vi.stubEnv("GEMINI_TTS_MODEL", "fixture-TTS");
+    vi.stubEnv("GEMINI_MUSIC_MODEL", "fixture-music");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+  async function setup(): Promise<{
+    t: Tenant;
+    run: Run;
+    plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>;
+    native: ReturnType<typeof fakeMediaPorts>;
+    bindings: ReturnType<typeof bindMedia>;
+    job: RunJob;
+  }> {
+    const t = await fixture.tenant("L2", 30, narrator);
+    await generating(t);
+    const run = await t.store.get(t.context, t.run.id);
+    await t.store
+      .scoped(t.context)
+      .videoRun.updateMany({ where: { id: run.id }, data: { state: "ASSEMBLING" } });
+    const plan = {
+      script: scriptFixture(),
+      manifest: {
+        schemaVersion: "1.0" as const,
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        briefId: t.brief.id,
+        briefVersion: 1,
+        narratorVoice: narrator,
+        prompts: [],
+        shots: shotsFixture(planningFixture()).map((shot) => ({ ...shot, durationSeconds: 5 })),
+      },
+    };
+    const native = fakeMediaPorts(
+      t.context.workspaceId,
+      t.storage,
+      { audio: Buffer.from("audio"), clip: Buffer.from("clip"), image: Buffer.from("image") },
+      [],
+    );
+    const bindings = bindMedia(t, native);
+    vi.spyOn(bindings.planning, "saved").mockResolvedValue(plan);
+    return {
+      t,
+      run: await t.store.get(t.context, run.id),
+      plan,
+      native,
+      bindings,
+      job: t.runs.job(t.context, run.id),
+    };
+  }
+  it.each(["narration", "music"] as const)(
+    "drains the accepted sibling when %s fails",
+    async (failed) => {
+      const { t, run, plan, native } = await setup();
+      const bad = failed === "music" ? native.music : native.tts;
+      const sibling = failed === "music" ? native.tts : native.music;
+      const badSubmit = vi.spyOn(bad, "submit");
+      const siblingSubmit = vi.spyOn(sibling, "submit");
+      vi.spyOn(bad, "poll").mockResolvedValueOnce("running").mockResolvedValue("failed");
+      vi.spyOn(sibling, "poll")
+        .mockResolvedValueOnce("running")
+        .mockResolvedValueOnce("running")
+        .mockResolvedValue("running");
+      const collect = vi.spyOn(sibling, "fetch");
+      const job = t.runs.job(t.context, t.run.id);
+      expect(await t.engine.process(job)).toBe(12000);
+      expect(await t.engine.process(job)).toBe(12000);
+      const rows = t.store.scoped(t.context).videoRunStep;
+      expect(await rows.findFirst({ where: { runId: run.id, key: "ASSEMBLING" } })).toMatchObject({
+        state: "FAILED",
+      });
+      expect((await t.store.get(t.context, run.id)).state).toBe("ASSEMBLING");
+      vi.spyOn(bindMedia(t, native).planning, "saved").mockResolvedValue(plan);
+      const revision = (await t.store.get(t.context, run.id)).revision;
+      const add = vi.fn();
+      t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), {
+        queue: { getJob: async () => null, add },
+      });
+      for (let i = 0; i < 3; i++) {
+        await t.engine.recover();
+        expect(await t.engine.process(job)).toBe(12000);
+      }
+      const scheduled = add.mock.calls.filter((call) => call[1].runId === run.id);
+      expect(scheduled.map((call) => call[2].jobId)).toEqual(Array(3).fill(`${run.id}-assembly`));
+      expect((await t.store.get(t.context, run.id)).revision).toBe(revision);
+      expect(
+        await t.db.runEvent.count({ where: { runId: run.id, type: "assembly_input_failed" } }),
+      ).toBe(1);
+      vi.mocked(sibling.poll).mockResolvedValue("succeeded");
+      await expect(t.engine.process(job)).resolves.toBeNull();
+      await expect(t.engine.process(job)).resolves.toBeNull();
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: "FAILED",
+        pauseReason: "PROVIDER_FAILED",
+      });
+      expect(
+        await t.db.usageReservation.findMany({ where: { workspaceId: t.context.workspaceId } }),
+      ).toMatchObject([{ status: "COMMITTED" }, { status: "COMMITTED" }]);
+      expect(
+        await t.store.scoped(t.context).budgetEnvelope.findFirst({ where: { runId: run.id } }),
+      ).toMatchObject({ reservedMinor: 0, spentMinor: 9 });
+      expect(badSubmit).toHaveBeenCalledOnce();
+      expect(siblingSubmit).toHaveBeenCalledOnce();
+      expect(collect).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["music", "narration"] as const)(
+    "releases the prepared sibling when %s fails before sibling dispatch",
+    async (failed) => {
+      const { t, run, native, bindings, job } = await setup();
+      const bad = failed === "music" ? native.music : native.tts;
+      const other = failed === "music" ? native.tts : native.music;
+      const submit = vi.spyOn(other, "submit");
+      const ready = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<void>();
+      vi.spyOn(bad, "poll")
+        .mockResolvedValueOnce("running")
+        .mockImplementation(async () => {
+          await ready.promise;
+          return "failed";
+        });
+      const cost = failed === "music" ? 8 : 1;
+      if (failed === "music")
+        await bindings.jobs.tick(
+          t.context,
+          run,
+          failed,
+          native.music,
+          { prompt: "music" },
+          cost,
+          "music",
+          "v1",
+          30,
+        );
+      else
+        await bindings.jobs.tick(
+          t.context,
+          run,
+          failed,
+          native.tts,
+          { text: "voice", voice: "fixture" },
+          cost,
+          "voice",
+          "v1",
+          30,
+        );
+      const prepare = bindings.accounts.prepare.bind(bindings.accounts);
+      vi.spyOn(bindings.accounts, "prepare").mockImplementation(async (...args) => {
+        await prepare(...args);
+        ready.resolve();
+        await settled.promise;
+      });
+      const finish = bindings.access.paid.finalizeJobFailure.bind(bindings.access.paid);
+      vi.spyOn(bindings.access.paid, "finalizeJobFailure").mockImplementation(async (...args) => {
+        try {
+          return await finish(...args);
+        } finally {
+          settled.resolve();
+        }
+      });
+      await t.engine.process(job);
+      await t.engine.process(job);
+      expect(submit).not.toHaveBeenCalled();
+      expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "FAILED" });
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({ reservedMinor: 0, spentMinor: cost });
+      expect(
+        await t.db.usageReservation.findMany({
+          where: { workspaceId: run.workspaceId },
+          orderBy: { createdAt: "asc" },
+        }),
+      ).toMatchObject([{ status: "COMMITTED" }, { status: "RELEASED" }]);
+    },
+  );
+
+  it("settles a submit-time Gemini refusal and collects its accepted sibling on restart", async () => {
+    const { t, run, native, bindings, job, plan } = await setup();
+    vi.spyOn(native.music, "poll").mockResolvedValue("running");
+    await bindings.jobs.tick(
+      t.context,
+      run,
+      "music",
+      native.music,
+      { prompt: "music" },
+      8,
+      "music",
+      "v1",
+      30,
+    );
+    const http = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ status: "failed", id: "refused-tts", error: { code: "safety" } }),
+      );
+    native.tts = new GeminiTts(
+      new Interactions(new ProviderHttp("AIza" + "abc".repeat(12), "gemini", http), {
+        save: async (): Promise<never> => {
+          throw new Error("Unexpected download");
+        },
+      }),
+      "voice",
+    );
+    expect(await t.engine.process(job)).toBe(12000);
+    vi.spyOn(bindMedia(t, native).planning, "saved").mockResolvedValue(plan);
+    vi.mocked(native.music.poll).mockResolvedValue("succeeded");
+    await t.engine.process(job);
+    await t.engine.process(job);
+    expect(http).toHaveBeenCalledOnce();
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "FAILED",
+      pauseReason: "PROVIDER_REFUSED",
+    });
+    const track = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "media:narration" },
+    });
+    expect(track).toMatchObject({ state: "FAILED", providerJobId: "refused-tts" });
+    expect(
+      await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: track.id } }),
+    ).toMatchObject({ responseMetadata: { dispatched: true, providerJobId: "refused-tts" } });
+    expect(
+      await t.db.usageReservation.count({
+        where: { workspaceId: run.workspaceId, status: "COMMITTED" },
+      }),
+    ).toBe(2);
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 9,
+    });
+  });
+
+  it("continues collecting after cancellation between assembly ticks", async () => {
+    const { t, run, native, bindings, job } = await setup();
+    const music = vi.spyOn(native.music, "submit"),
+      voice = vi.spyOn(native.tts, "submit");
+    vi.spyOn(native.music, "poll").mockResolvedValueOnce("running").mockResolvedValue("succeeded");
+    const collect = vi.spyOn(native.music, "fetch");
+    expect(await t.engine.process(job)).toBe(12000);
+    await t.control.cancel(t.context, run.id);
+    const restarted = bindMedia(t, native);
+    const render = vi.spyOn(restarted.renderer, "render");
+    vi.spyOn(bindings.renderer, "render").mockImplementation(async () => {
+      throw new Error("Unexpected render");
+    });
+    await t.engine.process(job);
+    await t.engine.process(job);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "CANCELED" });
+    expect(music).toHaveBeenCalledOnce();
+    expect(voice).toHaveBeenCalledOnce();
+    expect(collect).toHaveBeenCalledOnce();
+    expect(render).not.toHaveBeenCalled();
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 9,
+    });
+    expect(
+      await t.db.usageReservation.count({
+        where: { workspaceId: run.workspaceId, status: "COMMITTED" },
+      }),
+    ).toBe(2);
+  });
+});

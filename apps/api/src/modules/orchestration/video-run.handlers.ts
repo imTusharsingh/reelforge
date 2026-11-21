@@ -1,5 +1,6 @@
 import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
+export class MissingVideoPricing extends Error {}
 export class AssemblyInterrupted extends Error {
   public constructor(public readonly delay: number | null) {
     super("Required assembly inputs are pending or failed");

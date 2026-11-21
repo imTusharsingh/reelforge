@@ -75,9 +75,10 @@ function harness(): {
       _step: unknown,
       call: () => Promise<unknown>,
     ): Promise<unknown> => call(),
-    begin: vi.fn(async () => {
+    begin: vi.fn(async (_context, _run, _key, _spec, _cost, modelId: string) => {
       state.step = {
         id: "step",
+        input: { modelId },
         runId: run.id,
         idempotencyKey: "once",
         costMinor: 4,
@@ -141,9 +142,10 @@ describe("V5 durable async media jobs", () => {
       h.port,
       {},
       4,
-      "configured-model",
+      "changed-model",
       "v2",
     );
+    expect(result?.receipt.modelId).toBe("configured-model");
     expect(result?.receipt.providerJobId).toBe("fixture-job");
     expect(
       await h.jobs.tick(context, run, "keyframe:0", h.port, {}, 4, "configured-model", "v2"),

@@ -1,7 +1,9 @@
+import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
 import { createHash } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   AssemblyManifestSchema,
+  ShotSpecSchema,
   MediaReceiptSchema,
   type ChannelBrief,
   type MediaReceipt,
@@ -56,10 +58,10 @@ export class MediaAssembly {
     run: Run,
     brief: ChannelBrief,
     plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>,
+    totalCostMinor: number,
     receipts: MediaReceipt[],
     rendered: Awaited<ReturnType<MediaRenderer["render"]>>,
   ): ReturnType<typeof AssemblyManifestSchema.parse> {
-    const totalCostMinor = receipts.reduce((sum, receipt) => sum + receipt.costMinor, 0);
     return AssemblyManifestSchema.parse({
       schemaVersion: "1.0",
       workspaceId: context.workspaceId,
@@ -87,7 +89,18 @@ export class MediaAssembly {
     receipts: MediaReceipt[],
     rendered: Awaited<ReturnType<MediaRenderer["render"]>>,
   ): Promise<Artifact[]> {
-    const manifest = this.manifest(context, run, brief, plan, receipts, rendered);
+    const budget = await this.access.runs.store
+      .scoped(context)
+      .budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+    const manifest = this.manifest(
+      context,
+      run,
+      brief,
+      plan,
+      budget.spentMinor,
+      receipts,
+      rendered,
+    );
     const artifacts = await Promise.all([
       this.access.artifacts.put(context, "final", rendered.video, "video/mp4"),
       this.access.artifacts.put(context, "refs", rendered.cover, "image/jpeg"),
@@ -168,7 +181,7 @@ export class MediaAssembly {
       ),
     ]);
     if (narration.status === "rejected" || music.status === "rejected") {
-      const failure = await this.failedAudio(context, run);
+      const failure = await failedAudio(this.access.runs.store.scoped(context), run.id);
       if (failure) return this.failAssembly(context, run, failure);
     }
     if (narration.status === "rejected") throw narration.reason;
@@ -182,37 +195,60 @@ export class MediaAssembly {
     ports: Awaited<ReturnType<MediaPorts["get"]>>,
     seconds: number,
   ): Promise<void> {
-    const failed = await this.failedAudio(context, run);
+    const failed = await failedAudio(this.access.runs.store.scoped(context), run.id);
     if (failed) {
-      const active = await this.access.runs.store.scoped(context).videoRunStep.findMany({
-        where: {
-          runId: run.id,
-          key: { in: ["media:narration", "media:music"] },
-          state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
-        },
-      });
-      for (const step of active) {
-        if (step.key === "media:narration")
-          await this.jobs.drainAudio(context, step, ports.tts, seconds);
-        else await this.jobs.drainAudio(context, step, ports.music, seconds);
-      }
+      await this.drainAudio(context, run, ports, seconds);
+      const db = this.access.runs.store.scoped(context);
+      if (
+        (await db.videoRunStep.findFirst({
+          where: { runId: run.id, key: "ASSEMBLING", state: "FAILED" },
+        })) &&
+        (await db.videoRunStep.findFirst({ where: acceptedAudio(run.id) }))
+      )
+        throw new AssemblyInterrupted(12000);
       return this.failAssembly(context, run, failed);
     }
   }
-  private failedAudio(context: Context, run: Run): Promise<Step | null> {
-    return this.access.runs.store.scoped(context).videoRunStep.findFirst({
-      where: { runId: run.id, key: { in: ["media:narration", "media:music"] }, state: "FAILED" },
-      orderBy: { key: "asc" },
-    });
+  public async collectCanceled(context: Context, run: Run): Promise<number | null> {
+    const db = this.access.runs.store.scoped(context);
+    const accepted = acceptedAudio(run.id);
+    if (!(await db.videoRunStep.findFirst({ where: accepted }))) return null;
+    const shots = await db.shotSpec.findMany({ where: { runId: run.id } });
+    const seconds = shots.reduce(
+      (total, row) => total + ShotSpecSchema.parse(row.document).durationSeconds,
+      0,
+    );
+    await this.drainAudio(context, run, await this.ports.get(context), seconds, true);
+    return (await db.videoRunStep.findFirst({ where: accepted })) ? 12000 : null;
   }
 
+  private async drainAudio(
+    context: Context,
+    run: Run,
+    ports: Awaited<ReturnType<MediaPorts["get"]>>,
+    seconds: number,
+    acceptedOnly = false,
+  ): Promise<void> {
+    const active = await this.access.runs.store.scoped(context).videoRunStep.findMany({
+      where: {
+        runId: run.id,
+        key: { in: AUDIO_KEYS },
+        state: { in: acceptedOnly ? ["WAITING_EXTERNAL"] : ["RUNNING", "WAITING_EXTERNAL"] },
+      },
+    });
+    for (const step of active) {
+      if (step.key === "media:narration")
+        await this.jobs.drainAudio(context, step, ports.tts, seconds);
+      else await this.jobs.drainAudio(context, step, ports.music, seconds);
+    }
+  }
   private async failAssembly(context: Context, run: Run, failure: Step): Promise<never> {
     const result = await this.access.runs.store.mutate(
       context,
       run.id,
       "assembly_input_failed",
       async (db, locked) => {
-        if (locked.state !== "ASSEMBLING") return { value: false, payload: { stale: true } };
+        if (locked.state !== "ASSEMBLING") throw new AssemblyInterrupted(null);
         const code =
           failure.error &&
           typeof failure.error === "object" &&
@@ -220,7 +256,7 @@ export class MediaAssembly {
           typeof failure.error.code === "string"
             ? failure.error.code
             : "PROVIDER_FAILED";
-        await db.videoRunStep.updateMany({
+        const changed = await db.videoRunStep.updateMany({
           where: { runId: run.id, key: "ASSEMBLING", state: "RUNNING" },
           data: {
             state: "FAILED",
@@ -231,10 +267,11 @@ export class MediaAssembly {
         const active = await db.videoRunStep.findFirst({
           where: {
             runId: run.id,
-            key: { in: ["media:narration", "media:music"] },
+            key: { in: AUDIO_KEYS },
             state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
           },
         });
+        if (!changed.count && active) throw new AssemblyInterrupted(12000);
         if (!active)
           await db.videoRun.updateMany({
             where: { id: run.id },
@@ -244,7 +281,11 @@ export class MediaAssembly {
               ...(locked.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
             },
           });
-        return { value: !!active, payload: { code, inputStepId: failure.id, draining: !!active } };
+        return {
+          value: !!active,
+          eventType: changed.count ? "assembly_input_failed" : "assembly_failed",
+          payload: { code, inputStepId: failure.id, draining: !!active },
+        };
       },
     );
     await this.access.runs.events?.publish(result.event);

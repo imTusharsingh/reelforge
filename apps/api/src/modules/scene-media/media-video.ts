@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  ProviderFailure,
   VideoRouter,
   ProviderLimiter,
   reservationCents,
@@ -12,7 +11,7 @@ import {
   type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
-import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import { MissingVideoPricing, type VideoGenPort } from "../orchestration/video-run.handlers.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { MediaJobs } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
@@ -68,9 +67,7 @@ export class RoutedMediaVideo implements VideoGenPort {
           throw new Error("V3 must re-estimate the envelope before fallback");
         },
       },
-      async (): Promise<never> => {
-        throw new ProviderFailure("NEEDS_HUMAN", true);
-      },
+      undefined, // V3 admits each rewrite separately.
       Date.now,
       this.videoState,
       this.recordOutcome,
@@ -124,10 +121,9 @@ export class RoutedMediaVideo implements VideoGenPort {
     const media = this.receipts.get(id);
     if (!media) throw new Error("Provider receipt unavailable");
     const seconds = media.billedSeconds ?? shot.durationSeconds;
-    const pricing =
-      savedOutput && typeof savedOutput === "object" && "videoPricing" in savedOutput
-        ? pricingSchema.parse(savedOutput.videoPricing)
-        : this.collectionPricing(shot);
+    const pricingResult = z.object({ videoPricing: pricingSchema }).safeParse(savedOutput);
+    if (!pricingResult.success) throw new MissingVideoPricing("Missing admission video pricing");
+    const pricing = pricingResult.data.videoPricing;
     const cost = secondsCost(seconds, pricing.microUsdPerSecond);
     return {
       seconds,

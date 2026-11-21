@@ -1,3 +1,5 @@
+import { shotReshoots } from "./shot-reshoots.js";
+import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { RunsService } from "./runs.service.js";
@@ -141,6 +143,9 @@ export class RunsControl {
               attempt: step.attempt + 1,
               idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
               input: json(step.input),
+              ...(refusalRewrite(step)
+                ? { output: json({ refusalRewrite: refusalRewrite(step) }) }
+                : {}),
             },
           });
         }
@@ -214,6 +219,14 @@ export class RunsControl {
       where: { runId, id: { in: ids } },
       data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
     });
+    for (const step of steps) {
+      const rewrite = refusalRewrite(step);
+      if (rewrite)
+        await db.videoRunStep.updateMany({
+          where: { id: step.id },
+          data: { output: { closedBy: reason, refusalRewrite: rewrite } },
+        });
+    }
     const refunded = steps
       .filter((step) => step.state === "RUNNING")
       .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
@@ -245,6 +258,18 @@ export class RunsControl {
           eventType: "reconcile_required",
         };
       }
+      if (
+        current.state === "NEEDS_HUMAN" &&
+        (await db.videoRunStep.findFirst({
+          where: {
+            runId: id,
+            key: { startsWith: "shot-" },
+            state: "FAILED",
+            error: { path: ["code"], equals: "PROVIDER_REFUSED" },
+          },
+        }))
+      )
+        throw new ConflictException("Refused shot requires human resolution");
       const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
       const resolved =
         current.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
@@ -280,7 +305,8 @@ export class RunsControl {
       orderBy: { attempt: "desc" },
     });
     const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: id } });
-    if (previous.attempt >= 3 || !envelopeRoom(budget, previous.costMinor ?? 0)) {
+    const reshoots = (await shotReshoots(db, id)).filter((request) => request.key === previous.key);
+    if (reshoots.length >= 2 || !envelopeRoom(budget, previous.costMinor ?? 0)) {
       await this.runs.move(context, run, "NEEDS_HUMAN", "Reshoot cap or envelope exhausted");
       return;
     }

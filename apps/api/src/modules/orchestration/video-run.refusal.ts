@@ -18,7 +18,7 @@ export async function settleVideoRefusal(
   paid: RunPaidCalls,
   context: Context,
   step: Step,
-  dispatched: boolean,
+  submissionJobId?: string | null,
 ): Promise<void> {
   const result = await runs.store.mutate(
     context,
@@ -30,7 +30,7 @@ export async function settleVideoRefusal(
         return { value: null, payload: { replay: true } };
       if (
         !current.providerId ||
-        current.state !== (dispatched ? "WAITING_EXTERNAL" : "RUNNING") ||
+        current.state !== (submissionJobId === undefined ? "WAITING_EXTERNAL" : "RUNNING") ||
         current.providerJobId !== step.providerJobId ||
         current.idempotencyKey !== step.idempotencyKey
       )
@@ -38,7 +38,8 @@ export async function settleVideoRefusal(
       const rewritten = !!refusalRewrite(current);
       const active = ["GENERATING", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state);
       const retry = active && !rewritten;
-      await recordRefusal(db, tx, paid, context, current, dispatched, retry);
+      const evidence = { providerJobId: submissionJobId ?? current.providerJobId, retry };
+      await recordRefusal(db, tx, paid, context, current, evidence);
       const pauseReason = await clearResolvedSubmissionHold(db, tx, run, current.id);
       if (retry) {
         const replacement = await createRewrite(db, run, current);
@@ -77,8 +78,7 @@ async function recordRefusal(
   paid: RunPaidCalls,
   context: Context,
   current: Step,
-  dispatched: boolean,
-  retry: boolean,
+  { providerJobId, retry }: { providerJobId: string | null; retry: boolean },
 ): Promise<void> {
   const amount = current.costMinor ?? 0;
   await paid.settleFailedRequest(
@@ -86,14 +86,15 @@ async function recordRefusal(
     context,
     current,
     "Video provider refused the shot",
-    dispatched,
+    true,
+    providerJobId,
   );
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: current.runId } });
   await db.budgetEnvelope.updateMany({
     where: { id: budget.id },
     data: {
       reservedMinor: budget.reservedMinor - amount,
-      spentMinor: budget.spentMinor + (dispatched ? amount : 0),
+      spentMinor: budget.spentMinor + amount,
       revision: budget.revision + 1,
     },
   });
@@ -101,7 +102,8 @@ async function recordRefusal(
     where: { id: current.id },
     data: {
       state: retry ? "SKIPPED" : "FAILED",
-      costMinor: dispatched ? amount : 0,
+      costMinor: amount,
+      providerJobId,
       finishedAt: new Date(),
       error: { code: "PROVIDER_REFUSED", rewriteCount: Number(!!refusalRewrite(current)) },
     },

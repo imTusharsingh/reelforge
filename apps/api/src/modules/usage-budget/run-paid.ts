@@ -1,3 +1,5 @@
+import { AUDIO_KEYS, failedAudio } from "../runs/run-audio.js";
+import { finalizeFailed } from "./run-paid-failure.js";
 import {
   ADMISSION_ORDERING,
   DISPATCHING,
@@ -6,19 +8,18 @@ import {
   readAdmission,
 } from "./run-admission-state.js";
 import { SubmissionOutcomeUnknown, rollbackAdmission } from "./run-paid-admission.js";
-import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
+import {
+  ProviderFailure,
+  SubmissionRefused,
+  providerFailureMessage,
+} from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
-import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
+import type { Context, Event, Run, Step, Transaction } from "../runs/runs.types.js";
 
-import {
-  submissionHold,
-  PLANNING_MANIFEST_KEY,
-  failSettledGeneration,
-  clearResolvedSubmissionHold,
-} from "../runs/run-outcomes.js";
+import { submissionHold } from "../runs/run-outcomes.js";
 
 export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
@@ -128,6 +129,8 @@ export class RunPaidCalls {
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
           throw new DispatchAdmissionError("Paid dispatch is closed");
+        if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
+          throw new DispatchAdmissionError("Required audio input failed");
         const { reservation, evidence } = await readAdmission(tx, context, current);
         if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
           throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
@@ -155,7 +158,11 @@ export class RunPaidCalls {
     try {
       return await call();
     } catch (error) {
-      if (error instanceof ProviderFailure && !error.dispatched) throw error;
+      if (
+        error instanceof SubmissionRefused ||
+        (error instanceof ProviderFailure && !error.dispatched)
+      )
+        throw error;
       return this.holdUnknown(context, step, error);
     }
   }
@@ -196,105 +203,38 @@ export class RunPaidCalls {
     step: Step,
     failure: ProviderFailure,
   ): Promise<Event> {
-    if (failure.dispatched) throw new ConflictException("Provider dispatch was not ruled out");
-    const reason = ["REFUSAL", "NEEDS_HUMAN"].includes(failure.kind)
-      ? "PROVIDER_REFUSED"
-      : `PROVIDER_${failure.kind}`;
-    return this.finalizeFailed(
+    if (failure.dispatched && !(failure instanceof SubmissionRefused))
+      throw new ConflictException("Provider dispatch was not ruled out");
+    const reason =
+      failure.http?.status === 403
+        ? "PROVIDER_PERMISSION_DENIED"
+        : failure.http?.status === 401
+          ? "PROVIDER_UNAUTHENTICATED"
+          : ["REFUSAL", "NEEDS_HUMAN"].includes(failure.kind)
+            ? "PROVIDER_REFUSED"
+            : `PROVIDER_${failure.kind}`;
+    return finalizeFailed(
+      this.store,
+      this,
       context,
       step,
       reason,
       providerFailureMessage(failure.kind, failure.http),
-      false,
+      failure.dispatched,
+      failure instanceof SubmissionRefused ? failure.providerJobId : null,
     );
   }
 
   public async finalizeJobFailure(context: Context, step: Step, reason: string): Promise<Event> {
-    return this.finalizeFailed(context, step, reason, "Provider job ended unsuccessfully", true);
-  }
-
-  private async finalizeFailed(
-    context: Context,
-    step: Step,
-    reason: string,
-    message: string,
-    dispatched: boolean,
-  ): Promise<Event> {
-    const result = await this.store.mutate(
+    return finalizeFailed(
+      this.store,
+      this,
       context,
-      step.runId,
-      "step_failed",
-      async (db, run, tx) => {
-        const current = await db.videoRunStep.findFirstOrThrow({
-          where: { id: step.id, runId: run.id },
-        });
-        if (current.state === "FAILED")
-          return { value: null, payload: { replay: true }, stepId: step.id };
-        if (
-          current.state !== (dispatched ? "WAITING_EXTERNAL" : "RUNNING") ||
-          Boolean(current.providerJobId) !== dispatched
-        )
-          throw new ConflictException("Dispatch claim changed");
-        await this.settleFailedRequest(tx, context, step, message, dispatched);
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: {
-            state: "FAILED",
-            costMinor: dispatched ? current.costMinor : 0,
-            finishedAt: new Date(),
-            error: { code: reason, message },
-          },
-        });
-        const amount = current.costMinor ?? 0;
-        const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
-        if (budget)
-          await db.budgetEnvelope.updateMany({
-            where: { id: budget.id },
-            data: {
-              reservedMinor: budget.reservedMinor - amount,
-              spentMinor: budget.spentMinor + (dispatched ? amount : 0),
-              revision: budget.revision + 1,
-            },
-          });
-        await this.failRunIfSettled(db, tx, run, current, { code: reason, message });
-        return {
-          value: null,
-          payload: { reason, message, releasedMinor: amount },
-          stepId: step.id,
-        };
-      },
+      step,
+      reason,
+      "Provider job ended unsuccessfully",
+      true,
     );
-    return result.event;
-  }
-
-  private async failRunIfSettled(
-    db: Scoped,
-    tx: Transaction,
-    run: Run,
-    step: Step,
-    error: { code: string; message: string },
-  ): Promise<void> {
-    const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
-    if (step.key.startsWith("shot-")) {
-      await failSettledGeneration(db, { ...run, pauseReason });
-    } else if (step.key.startsWith("media:text:") && run.state !== "CANCELED") {
-      await db.videoRunStep.updateMany({
-        where: {
-          runId: run.id,
-          key: { in: [run.state, PLANNING_MANIFEST_KEY] },
-          state: "RUNNING",
-        },
-        data: { state: "FAILED", finishedAt: new Date(), error },
-      });
-      await db.videoRun.updateMany({
-        where: { id: run.id },
-        data: {
-          state: "FAILED",
-          pauseReason: error.code,
-          ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
-        },
-      });
-    }
   }
 
   public async settleFailedRequest(
@@ -303,6 +243,7 @@ export class RunPaidCalls {
     step: Step,
     message: string,
     dispatched: boolean,
+    providerJobId = step.providerJobId,
   ): Promise<void> {
     const code = dispatched ? "PROVIDER_JOB_FAILED" : "NOT_DISPATCHED";
     const updated = await tx.providerRequest.updateMany({
@@ -314,7 +255,11 @@ export class RunPaidCalls {
       data: {
         status: "FAILED",
         actualCost: dispatched ? null : 0,
-        responseMetadata: { dispatched, costKnown: !dispatched },
+        responseMetadata: {
+          dispatched,
+          costKnown: !dispatched,
+          ...(providerJobId ? { providerJobId } : {}),
+        },
         errorCode: code,
         errorMessage: message,
       },

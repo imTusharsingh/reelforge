@@ -1,3 +1,4 @@
+import { acceptedAudio } from "../runs/run-audio.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -18,7 +19,7 @@ import {
   storedSubmissionHold,
   unsettledShots,
 } from "../runs/run-outcomes.js";
-import { AssemblyInterrupted } from "./video-run.handlers.js";
+import { AssemblyInterrupted, MissingVideoPricing } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -74,8 +75,10 @@ export class VideoRunEngine {
           async () => {
             if (run.state === "FAILED") return null;
             if (job.stepId) return this.shot(context, run, job.stepId);
+            if (run.state === "CANCELED")
+              return this.planning.collectCanceledAudio?.(context, run) ?? null;
+            if (job.assembly && run.state !== "ASSEMBLING") return null;
             if (
-              run.state === "CANCELED" ||
               run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
               run.pauseReason === "OPERATOR_ABANDONED"
             )
@@ -124,7 +127,13 @@ export class VideoRunEngine {
         return 12000;
       if (error instanceof SubmissionOutcomeUnknown) throw error;
       const current = await this.runs.store.get(context, run.id);
-      if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
+      if (error instanceof MissingVideoPricing)
+        await this.hold(
+          context,
+          run,
+          `RECONCILE_REQUIRED: missing admission video pricing (${stepId})`,
+        );
+      else if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
         await this.hold(context, run, error.message);
       else if (current.state === "GENERATING" && !current.pauseReason)
         await this.runs.move(context, current, "PAUSED_BUDGET", generationPause(error));
@@ -261,6 +270,16 @@ export class VideoRunEngine {
           run.state === "NEEDS_HUMAN" ||
           run.pauseReason
         ) {
+          if (
+            run.state === "CANCELED" &&
+            (await this.runs.store.scoped(context).videoRunStep.findFirst({
+              where: acceptedAudio(run.id),
+            }))
+          )
+            await this.runs.queue?.enqueue(
+              { ...this.runs.job(context, run.id), assembly: true },
+              run.revision,
+            );
           const admitted = await this.runs.store.scoped(context).videoRunStep.findMany({
             where: {
               runId: run.id,

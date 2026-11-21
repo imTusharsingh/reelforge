@@ -35,7 +35,9 @@ export class RunsQueue {
   public async enqueue(data: RunJob, revision: number, delay = 0): Promise<void> {
     const jobId = data.stepId
       ? `${data.runId}-recover-${data.stepId}`
-      : `${data.runId}-${revision}`;
+      : data.assembly
+        ? `${data.runId}-assembly`
+        : `${data.runId}-${revision}`;
     await this.removeFinished(jobId);
     await this.queue.add("step", data, { jobId, delay, attempts: 1, removeOnComplete: true });
   }

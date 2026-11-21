@@ -1,8 +1,10 @@
+import { CriticStep } from "../quality/critic.step.js";
+import type { RunCritic } from "../quality/run-critic.js";
 import { criticTextPort } from "../quality/critic-text-port.js";
 import { existsSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssemblyManifestSchema, ShotSpecSchema } from "@reelforge/contracts";
-import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
+import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
 import { ReferenceLibraryService } from "../reference-library/reference-library.service.js";
 import { AssetService } from "../asset/asset.service.js";
@@ -55,10 +57,24 @@ describe.skipIf(
         styleFrame: "Original blue leaf illustration",
         keyframePrompts: shots.map(() => "Blue leaf, portrait 9:16"),
       },
-      { verdict: "reedit" },
+      { verdict: "reshoot" },
+      { verdict: "accept" },
     ]);
     const original = bindMedia(t, native);
-    await generating(t);
+    // Stop after attaching the writer result, before writing its final receipt.
+    const job = t.runs.job(t.context, t.run.id);
+    await t.engine.process(job);
+    vi.spyOn(original.accounts, "complete").mockRejectedValueOnce(new Error("worker stopped"));
+    await expect(t.engine.process(job)).rejects.toThrow("worker stopped");
+    const writer = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "media:text:scriptwriter" },
+    });
+    vi.stubEnv("GEMINI_TEXT_MODEL", "changed-text-model");
+    bindMedia(t, native);
+    await t.engine.process(job);
+    await t.engine.process(job);
+    const savedWriter = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: writer.id } });
+    expect(savedWriter.output).toMatchObject({ result: { receipt: { modelId: "fixture-TEXT" } } });
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
       orderBy: { key: "asc" },
@@ -80,10 +96,23 @@ describe.skipIf(
     const { assembly, renderer, access, accounts, ports } = bindMedia(t, native);
     const render = vi.spyOn(renderer, "render");
     await expect(ports.get(t.context, shot)).rejects.toThrow();
+    const admitted = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: first.id } });
+    await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: {} } });
+    await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
+    expect((await t.store.get(t.context, t.run.id)).pauseReason).toContain(first.id);
+    await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow("Reconcile");
+    await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: admitted.output! } });
     await expect(t.engine.process(firstJob)).resolves.toBeNull();
+    await t.control.resume(t.context, t.run.id);
     expect(native.submitted).toHaveLength(1);
     await t.storage.putObject({ ...object, body, contentType: asset.mediaType });
-    for (const step of steps.slice(1))
+    vi.spyOn(native.omni, "poll").mockResolvedValueOnce("refused");
+    await t.engine.process(t.runs.job(t.context, t.run.id, steps[1]!.id));
+    const rewritten = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: steps[1]!.key, attempt: 2 },
+    });
+    await t.engine.process(t.runs.job(t.context, t.run.id, rewritten.id));
+    for (const step of steps.slice(2))
       await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
@@ -104,7 +133,14 @@ describe.skipIf(
     expect(manifest.totalCostMinor).toBeLessThanOrEqual(800);
     expect(manifest.receipts.filter((receipt) => receipt.key.startsWith("shot-"))).toHaveLength(6);
     expect(manifest.promptVersions).toHaveLength(3);
-    expect(native.submitted).toHaveLength(6);
+    expect(native.submitted).toHaveLength(7);
+    expect(writer.input).toMatchObject({ spec: { promptVersion: manifest.promptVersions[0] } });
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({ spentMinor: manifest.totalCostMinor });
+    expect(manifest.totalCostMinor).toBe(
+      manifest.receipts.reduce((sum, r) => sum + r.costMinor, 0) + 35,
+    );
     expect(native.submitted.every((call) => !!call.options.firstFrame)).toBe(true);
     expect(native.submitted.slice(1).every((call) => !!call.options.lastFrame)).toBe(true);
     const receipts = await t.db.providerRequest.findMany({
@@ -120,28 +156,50 @@ describe.skipIf(
       ),
     ).toEqual(artifacts.map((artifact) => artifact.checksumSha256));
     const current = await t.store.get(t.context, t.run.id);
-    await criticTextPort({
-      access,
-      accounts,
-      ports,
-      context: t.context,
-      run: current,
-      attempt: 1,
-    }).complete(
-      {
-        prompt: "Check editing",
-        jsonSchema: {},
-        parse: (value) => value,
-      },
-      "critic-fixture",
-    );
-    await t.control.reedit(t.context, current.id);
-    const rows = t.store.scoped(t.context).videoRunStep;
-    await rows.updateMany({
-      where: { runId: current.id, key: "local:assembly" },
-      data: { key: "quality:assembly-history:1", idempotencyKey: "previous-assembly" },
+    const review = vi.fn(async (_context, run, _brief, _step, attempt: number) => {
+      await criticTextPort({ access, accounts, ports, context: t.context, run, attempt }).complete(
+        {
+          prompt: "Check editing",
+          jsonSchema: {},
+          parse: (value) => value,
+        },
+        "critic-fixture",
+      );
+      return {
+        report: {
+          recommendation: "APPROVE",
+          summary: "Fixture review",
+          gates: {
+            policy: true,
+            rights: true,
+            technical: true,
+            budget: true,
+            permission: true,
+            score: true,
+          },
+        },
+        redo: { shots: attempt === 1 ? ["1"] : [], reedit: false },
+      };
     });
-    await t.planning.reedit(t.context, current);
+    new CriticStep(
+      access.modules,
+      () => ({ execute: review }) as unknown as RunCritic,
+    ).onModuleInit();
+    await expect(t.engine.process(job)).rejects.toThrow("processes the reshoot");
+    const rows = t.store.scoped(t.context).videoRunStep;
+    const reshoot = await rows.findFirstOrThrow({
+      where: { runId: current.id, key: "shot-1", attempt: 3 },
+    });
+    await t.engine.process(t.runs.job(t.context, current.id, reshoot.id));
+    await t.engine.process(job);
+    await t.engine.process(job);
+    await t.engine.process(job);
+    expect(review.mock.calls.map((call) => call[4])).toEqual([1, 2]);
+    expect(
+      await t.db.runEvent.count({
+        where: { runId: current.id, type: "critic_assembly_invalidated" },
+      }),
+    ).toBe(1);
     const refreshed = await assembly.artifacts(t.context, current);
     const refreshedManifest = AssemblyManifestSchema.parse(
       JSON.parse(
@@ -225,67 +283,39 @@ describe.skipIf(
     },
   );
 
-  it.each(["narration", "music"] as const)(
-    "drains the accepted sibling when %s fails",
-    async (failed) => {
-      const t = await fixture.tenant("L2", 30, narrator);
-      await generating(t);
-      const run = await t.store.get(t.context, t.run.id);
-      await t.store
-        .scoped(t.context)
-        .videoRun.updateMany({ where: { id: run.id }, data: { state: "ASSEMBLING" } });
-      const plan = {
-        script: scriptFixture(),
-        manifest: {
-          schemaVersion: "1.0" as const,
-          workspaceId: run.workspaceId,
-          runId: run.id,
-          briefId: t.brief.id,
-          briefVersion: 1,
-          narratorVoice: narrator,
-          prompts: [],
-          shots: shotsFixture(planningFixture()).map((shot) => ({ ...shot, durationSeconds: 5 })),
-        },
-      };
-      const native = offline(t);
-      vi.spyOn(bindMedia(t, native).planning, "saved").mockResolvedValue(plan);
-      const bad = failed === "music" ? native.music : native.tts;
-      const sibling = failed === "music" ? native.tts : native.music;
-      const badSubmit = vi.spyOn(bad, "submit");
-      const siblingSubmit = vi.spyOn(sibling, "submit");
-      vi.spyOn(bad, "poll").mockResolvedValueOnce("running").mockResolvedValue("failed");
-      vi.spyOn(sibling, "poll")
-        .mockResolvedValueOnce("running")
-        .mockResolvedValueOnce("running")
-        .mockResolvedValue("succeeded");
-      const collect = vi.spyOn(sibling, "fetch");
-      const job = t.runs.job(t.context, t.run.id);
-      expect(await t.engine.process(job)).toBe(12000);
-      expect(await t.engine.process(job)).toBe(12000);
-      const rows = t.store.scoped(t.context).videoRunStep;
-      expect(await rows.findFirst({ where: { runId: run.id, key: "ASSEMBLING" } })).toMatchObject({
-        state: "FAILED",
-      });
-      expect((await t.store.get(t.context, run.id)).state).toBe("ASSEMBLING");
-      vi.spyOn(bindMedia(t, native).planning, "saved").mockResolvedValue(plan);
-      await expect(t.engine.process(job)).resolves.toBeNull();
-      await expect(t.engine.process(job)).resolves.toBeNull();
-      expect(await t.store.get(t.context, run.id)).toMatchObject({
-        state: "FAILED",
-        pauseReason: "PROVIDER_FAILED",
-      });
-      expect(
-        await t.db.usageReservation.findMany({ where: { workspaceId: t.context.workspaceId } }),
-      ).toMatchObject([{ status: "COMMITTED" }, { status: "COMMITTED" }]);
-      expect(
-        await t.store.scoped(t.context).budgetEnvelope.findFirst({ where: { runId: run.id } }),
-      ).toMatchObject({ reservedMinor: 0, spentMinor: 9 });
-      expect(badSubmit).toHaveBeenCalledOnce();
-      expect(siblingSubmit).toHaveBeenCalledOnce();
-      expect(collect).toHaveBeenCalledOnce();
-    },
-  );
-
+  it("settles a schema-valid art plan with the wrong keyframe count once", async () => {
+    const t = await fixture.tenant("L2", 30, narrator, false);
+    const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
+      (shot) => ({ ...shot, workspaceId: t.context.workspaceId, durationSeconds: 5 }),
+    );
+    const native = offline(t, [
+      scriptFixture(),
+      shots,
+      { character: null, styleFrame: "Leaves", keyframePrompts: shots.slice(1).map(() => "Leaf") },
+    ]);
+    bindMedia(t, native);
+    const job = t.runs.job(t.context, t.run.id);
+    const submit = vi.spyOn(native.text, "complete");
+    await t.engine.process(job);
+    await expect(t.engine.process(job)).rejects.toThrow("One keyframe prompt per shot required");
+    bindMedia(t, native);
+    await t.engine.process(job);
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: "FAILED",
+      pauseReason: "PROVIDER_INVALID",
+    });
+    expect(
+      await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: t.run.id, key: "media:text:art-director" },
+      }),
+    ).toMatchObject({ state: "FAILED", providerJobId: "fixture-text-3" });
+    expect(
+      await t.db.usageReservation.count({
+        where: { workspaceId: t.context.workspaceId, status: "COMMITTED" },
+      }),
+    ).toBe(3);
+  });
   it.each([
     [29, 30],
     [30, 30],

@@ -5,6 +5,7 @@ import type { Tenant } from "../runs/runs.fixture.js";
 import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
+import { RunsControl } from "../runs/runs.control.js";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
@@ -33,6 +34,7 @@ export function bindMedia(
   native: ReturnType<typeof fakeMediaPorts>,
 ): {
   assembly: MediaAssembly;
+  jobs: MediaJobs;
   renderer: MediaRenderer;
   access: MediaAccess;
   accounts: MediaAccounts;
@@ -42,6 +44,7 @@ export function bindMedia(
   const paid = new RunPaidCalls(new UsageBudgetService(t.db, () => new Date()), t.store);
   const mapping = new Map<unknown, unknown>([
     [RunsService, t.runs],
+    [RunsControl, t.control],
     [RunPaidCalls, paid],
     [RunsArtifacts, t.artifacts],
     [RunsBoundary, new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs)],
@@ -101,7 +104,8 @@ export function bindMedia(
   };
   const renderer = new MediaRenderer(t.storage, new SpawnProcessRunner(), aligner);
   const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);
+  mapping.set(MediaAssembly, assembly);
   const binding = new MediaBindings(access, accounts, frames, ports, jobs, planning, assembly);
   binding.onModuleInit();
-  return { assembly, renderer, access, accounts, ports, planning };
+  return { assembly, jobs, renderer, access, accounts, ports, planning };
 }

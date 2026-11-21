@@ -44,7 +44,7 @@ export class VideoRouter {
   public constructor(
     private readonly routes: readonly Route[],
     private readonly dispatch: RouterDispatch,
-    private readonly rewrite: (spec: ShotSpec) => Promise<ShotSpec>,
+    private readonly rewrite: ((spec: ShotSpec) => Promise<ShotSpec>) | undefined,
     private readonly now: () => number = Date.now,
     private readonly health: VideoRoutingState = new Map(),
     private readonly recordOutcome?: RecordVideoOutcome,
@@ -90,7 +90,7 @@ export class VideoRouter {
     const port = this.port(job.providerId);
     const status = await port.poll(job.providerJobId);
     if (status !== "refused") return { status, job };
-    if (job.rewrites >= 1) return { status: "NEEDS_HUMAN", job };
+    if (!this.rewrite || job.rewrites >= 1) return { status: "NEEDS_HUMAN", job };
     await this.dispatch.confirmRefusal?.(job);
     const revised = await this.rewrite(job.spec);
     const logicalKey = job.idemKey.slice(0, -`:${job.providerId}`.length);
@@ -135,6 +135,7 @@ export class VideoRouter {
       ).catch(() => undefined);
       if (
         error instanceof ProviderFailure &&
+        this.rewrite &&
         error.kind === "REFUSAL" &&
         error.dispatched &&
         !error.http

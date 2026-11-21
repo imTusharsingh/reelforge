@@ -140,6 +140,7 @@ export class RunsService {
     )
       return;
     const job = this.job(context, run.id);
+    if (run.state === "ASSEMBLING") job.assembly = true;
     const snapshot = run.inputSnapshot;
     if (
       !job.traceparent &&

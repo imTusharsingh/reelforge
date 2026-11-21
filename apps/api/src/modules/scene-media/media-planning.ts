@@ -24,6 +24,10 @@ import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
 import { MEDIA_OVERHEAD } from "./media-prices.js";
+const textIntent = z.object({
+  modelId: z.string().min(1),
+  spec: z.object({ promptVersion: planningPromptReceiptSchema }),
+});
 const roles = ["scriptwriter", "director", "art-director"] as const;
 const planningKeys = roles.map((role) => `media:text:${role}`);
 type PlannedMedia = { script: PlanningScript; manifest: PlanningManifest };
@@ -160,8 +164,9 @@ export class MediaPlanning {
       orderBy: { attempt: "desc" },
     });
     if (previous?.state === "SUCCEEDED") {
-      const output = this.output(previous.output).output;
+      const { output, promptVersion } = this.output(previous.output);
       await this.validateAcceptedPlan(context, previous, input, output);
+      input.onPromptUsed?.(planningPromptReceiptSchema.parse(promptVersion));
       return output;
     }
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
@@ -188,20 +193,22 @@ export class MediaPlanning {
       ));
     const result = await this.textResult(context, run, step, input, modelId, !!pending);
     await this.validateAcceptedPlan(context, step, input, result.output);
+    const admitted = textIntent.parse(step.input);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
-      input,
+      admitted.spec.promptVersion,
       result,
-      modelId,
-      cost,
+      admitted.modelId,
+      step.costMinor!,
     );
     await this.accounts.complete(context, step, {
       ...result,
       receipt,
       artifact,
-      promptVersion: input.promptVersion,
+      promptVersion: admitted.spec.promptVersion,
     });
+    input.onPromptUsed?.(admitted.spec.promptVersion);
     return result.output;
   }
   private async textResult(
@@ -310,7 +317,7 @@ export class MediaPlanning {
   private async textReceipt(
     context: Context,
     key: string,
-    input: Parameters<TextPort["generate"]>[0],
+    promptVersion: z.infer<typeof planningPromptReceiptSchema>,
     result: { output: unknown; providerJobId: string },
     modelId: string,
     cost: number,
@@ -329,7 +336,7 @@ export class MediaPlanning {
       providerId: "gemini",
       providerJobId: result.providerJobId,
       modelId,
-      promptVersion: JSON.stringify(input.promptVersion),
+      promptVersion: JSON.stringify(promptVersion),
       seconds: 0,
       costMinor: cost,
       objectKey: artifact.objectKey,

@@ -21,6 +21,7 @@ export interface TextPort {
     schema: z.ZodType;
     validateOutput?: (value: unknown) => void;
     promptVersion: PlanningPromptReceipt;
+    onPromptUsed?: (receipt: PlanningPromptReceipt) => void;
   }): Promise<unknown>;
 }
 /** Returns downloaded bytes, never a provider URL; V2 owns dispatch and accounting. */

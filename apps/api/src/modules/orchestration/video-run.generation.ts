@@ -4,7 +4,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "../usage-budget/run-admission-state.js";
-import { ProviderFailure } from "@reelforge/ai-providers";
+import { ProviderFailure, SubmissionRefused } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema, type ShotSpec } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
@@ -49,6 +49,7 @@ export class RunGeneration {
     if (!step.providerJobId && step.state !== "RUNNING") {
       const stopped =
         run.state === "CANCELED" ||
+        (run.state === "NEEDS_HUMAN" && run.pauseReason === "PROVIDER_REFUSED") ||
         run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
         run.pauseReason === "OPERATOR_ABANDONED";
       if (stopped || run.state !== "GENERATING") {
@@ -109,7 +110,7 @@ export class RunGeneration {
       metrics
         .counter("run_provider_results", "Provider outcomes")
         .inc({ provider: step.providerId ?? "unconfigured", status });
-      if (status === "refused") await settleVideoRefusal(this.runs, this.paid, context, step, true);
+      if (status === "refused") await settleVideoRefusal(this.runs, this.paid, context, step);
       else {
         const event = await this.paid.finalizeJobFailure(context, step, "PROVIDER_FAILED");
         await this.runs.events?.publish(event);
@@ -153,12 +154,12 @@ export class RunGeneration {
       }
       if (
         !(error instanceof ProviderFailure) ||
-        error.dispatched ||
+        (error.dispatched && !(error instanceof SubmissionRefused)) ||
         (error.kind === "OUTAGE" && selected === ports.primary && !refusalRewrite(step))
       )
         throw error;
-      if (refusalRewrite(claimed) && ["REFUSAL", "NEEDS_HUMAN"].includes(error.kind))
-        await settleVideoRefusal(this.runs, this.paid, context, claimed, false);
+      if (error instanceof SubmissionRefused)
+        await settleVideoRefusal(this.runs, this.paid, context, claimed, error.providerJobId);
       else {
         const event = await this.paid.finalizeRejected(context, claimed, error);
         await this.runs.events?.publish(event);
@@ -295,6 +296,7 @@ export class RunGeneration {
     meta: ReturnType<NonNullable<VideoGenPort["metadata"]>> | undefined,
   ): ReturnType<typeof json> {
     return json({
+      ...(refusalRewrite(step) ? { refusalRewrite: refusalRewrite(step) } : {}),
       storageArtifacts: [artifact],
       ...(meta
         ? {

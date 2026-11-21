@@ -63,7 +63,9 @@ describe("V5 landed router bridge", () => {
     expect(port.submit).toHaveBeenCalledWith(shot, "durable-key:gemini", options);
     expect(await bridge.poll("fixture-job")).toBe("succeeded");
     expect(await bridge.fetch("fixture-job")).toEqual(Buffer.from("fixture-video"));
-    expect(bridge.metadata("fixture-job", shot)).toMatchObject({
+    expect(
+      bridge.metadata("fixture-job", shot, { videoPricing: bridge.collectionPricing(shot) }),
+    ).toMatchObject({
       seconds: 8,
       costMinor: 56,
       modelId: "configured-video",
@@ -90,6 +92,9 @@ describe("V5 landed router bridge", () => {
       costMinor: 113,
       modelId: original.modelId,
     });
+    expect(() => restarted.metadata("accepted-job", shot, {})).toThrow(
+      "Missing admission video pricing",
+    );
     expect(port.submit).not.toHaveBeenCalled();
   });
   it("does not resubmit uncertain calls, rewrite without a reservation, or switch vendors on refusal/429", async () => {

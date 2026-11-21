@@ -52,7 +52,12 @@ export async function storedSubmissionHold(
     where: {
       runId,
       id: stepId,
-      OR: [{ providerJobId: { not: null } }, { state: { in: [...SETTLED_SHOTS] } }],
+      OR: [
+        ...(reason.startsWith("RECONCILE_REQUIRED: missing admission video pricing")
+          ? []
+          : [{ providerJobId: { not: null } }]),
+        { state: { in: [...SETTLED_SHOTS] } },
+      ],
     },
     select: { id: true },
   });

@@ -27,6 +27,7 @@ export const RunJobSchema = z
     userId: z.uuid(),
     runId: z.uuid(),
     stepId: z.uuid().optional(),
+    assembly: z.literal(true).optional(),
     traceparent: z
       .string()
       .max(55)

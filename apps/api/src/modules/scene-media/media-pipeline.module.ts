@@ -44,6 +44,8 @@ export class MediaBindings {
     generation.recoverKeyframe = async (context, step): Promise<number | null> =>
       this.jobs.recoverKeyframe(context, step, (await this.ports.get(context)).image);
     const planning = module.get(RunPlanning, { strict: false });
+    planning.collectCanceledAudio = (context, run): Promise<number | null> =>
+      this.assembly.collectCanceled(context, run);
     planning.handlers = {
       ...planning.handlers,
       PLANNING: this.handler(async (_run, brief) => ({
