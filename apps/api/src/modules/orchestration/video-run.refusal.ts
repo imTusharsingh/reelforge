@@ -88,12 +88,13 @@ async function recordRefusal(
     "Video provider refused the shot",
     dispatched,
   );
+  const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: current.runId } });
   await db.budgetEnvelope.updateMany({
-    where: { runId: current.runId },
+    where: { id: budget.id },
     data: {
-      reservedMinor: { decrement: amount },
-      spentMinor: { increment: dispatched ? amount : 0 },
-      revision: { increment: 1 },
+      reservedMinor: budget.reservedMinor - amount,
+      spentMinor: budget.spentMinor + (dispatched ? amount : 0),
+      revision: budget.revision + 1,
     },
   });
   await db.videoRunStep.updateMany({

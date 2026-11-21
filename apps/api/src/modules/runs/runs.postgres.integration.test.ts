@@ -4,6 +4,7 @@ import { ProviderFailure, ProviderHttp } from "@reelforge/ai-providers";
 import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
+import * as mediaPrices from "../scene-media/media-prices.js";
 import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
 
 function shotZero(t: Tenant): Promise<Step> {
@@ -61,7 +62,12 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect((await t.store.get(t.context, t.run.id)).state).toBe("GENERATING");
   });
   it("refuses over-$8 estimates before media dispatch", async () => {
-    const t = await fixture.tenant("L2", 180);
+    const t = await fixture.tenant();
+    using price = vi.spyOn(mediaPrices, "clipMoney");
+    price.mockImplementation((shot) => ({
+      currency: "USD",
+      microUsd: 200_000 * shot.durationSeconds,
+    }));
     const submit = vi.spyOn(t.generation.provider, "submit");
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
