@@ -27,6 +27,14 @@ import { withSessionLock } from "../runs/session-lock.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
 
 import { PLANNING_MANIFEST_KEY as receiptKey } from "../runs/run-outcomes.js";
+export const planningPromptReceiptSchema = z.object({
+  role: z.enum(["scriptwriter", "director", "art-director"]),
+  version: z.literal(2),
+  templateVersionId: z.uuid(),
+  promptSnapshotId: z.uuid(),
+  configSnapshotId: z.uuid(),
+  fingerprintSha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
 const resultSchema = z.object({
   script: PlanningScriptSchema,
   manifest: z.object({
@@ -36,18 +44,7 @@ const resultSchema = z.object({
     briefId: z.uuid(),
     briefVersion: z.int().positive(),
     narratorVoice: NarratorVoiceSchema,
-    prompts: z
-      .array(
-        z.object({
-          role: z.enum(["scriptwriter", "director", "art-director"]),
-          version: z.literal(2),
-          templateVersionId: z.uuid(),
-          promptSnapshotId: z.uuid(),
-          configSnapshotId: z.uuid(),
-          fingerprintSha256: z.string().regex(/^[a-f0-9]{64}$/),
-        }),
-      )
-      .length(3),
+    prompts: z.array(planningPromptReceiptSchema).length(3),
     shots: z.array(ShotSpecSchema).min(1),
   }),
 });

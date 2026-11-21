@@ -44,18 +44,22 @@ export class ScriptwriterService implements Scriptwriter {
 
     const prompt = await this.prompts.capture(context, request.brief.channelId, "scriptwriter");
     const formatTemplate = await this.prompts.format(context, request.format);
+    const validate = (value: unknown): PlanningScript => {
+      const script = validatePlanningScript(value, request);
+      screen(request, JSON.stringify(script));
+      return script;
+    };
     const output = await this.text.generate({
       workspaceId: context.workspaceId,
       runId: request.runId,
       idempotencyKey: `${request.runId}:scriptwriter`,
       modelId: planningModels.text,
       schema: PlanningScriptSchema,
+      validateOutput: validate,
       promptVersion: prompt.receipt,
       prompt: `${prompt.prompt}\n${JSON.stringify({ request, formatTemplate })}`,
     });
-    const script = validatePlanningScript(output, request);
-    screen(request, JSON.stringify(script));
-    return { script, prompt: prompt.receipt };
+    return { script: validate(output), prompt: prompt.receipt };
   }
 }
 @Injectable()
@@ -81,6 +85,9 @@ export class DirectorService implements Director {
         idempotencyKey: `${request.runId}:director`,
         modelId: planningModels.text,
         schema: PlanningShotsSchema,
+        validateOutput: (value): void => {
+          validatePlanningShots(value, request, script);
+        },
         promptVersion: prompt.receipt,
         prompt: `${prompt.prompt}\n${JSON.stringify({ request, script })}`,
       }),

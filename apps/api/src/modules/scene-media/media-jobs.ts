@@ -13,6 +13,7 @@ import {
 } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
+class TerminalMediaJobFailure extends ConflictException {}
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
 @Injectable()
 export class MediaJobs {
@@ -57,8 +58,15 @@ export class MediaJobs {
         await this.access.paid.recordJob(context, claimed, job.providerJobId);
         step = await this.access.runs.attachJob(context, claimed, job.providerJobId);
       } catch (error) {
-        if (error instanceof ProviderFailure && !error.dispatched)
-          await this.accounts.cancelUndispatched(context, claimed);
+        if (error instanceof ProviderFailure && !error.dispatched) {
+          if (
+            (key === "music" || key === "narration") &&
+            ["INVALID", "REFUSAL", "NEEDS_HUMAN"].includes(error.kind)
+          ) {
+            const event = await this.access.paid.finalizeRejected(context, claimed, error);
+            await this.access.runs.events?.publish(event);
+          } else await this.accounts.cancelUndispatched(context, claimed);
+        }
         throw error;
       }
     }
@@ -92,6 +100,32 @@ export class MediaJobs {
     return result ? null : 12000;
   }
 
+  /** Recover an existing audio admission without opening another intent. */
+  public async drainAudio<T>(
+    context: Context,
+    step: Step,
+    port: MediaJobPort<T>,
+    seconds: number,
+  ): Promise<void> {
+    const pending = step.providerJobId ? step : await this.recoverIntent(context, step);
+    if (!pending) return;
+    const key = z.enum(["media:narration", "media:music"]).parse(step.key);
+    const { modelId } = z.object({ modelId: z.string().min(1) }).parse(step.input);
+    try {
+      await this.collect(
+        context,
+        key.slice(6),
+        port,
+        pending,
+        modelId,
+        key === "media:narration" ? "channel-narrator:v1" : "instrumental-bed:v1",
+        seconds,
+      );
+    } catch (error) {
+      if (!(error instanceof TerminalMediaJobFailure)) throw error;
+    }
+  }
+
   private async collect<T>(
     context: Context,
     key: string,
@@ -107,7 +141,7 @@ export class MediaJobs {
       const code = `PROVIDER_${status.toUpperCase()}`;
       const event = await this.access.paid.finalizeJobFailure(context, step, code);
       await this.access.runs.events?.publish(event);
-      throw new ConflictException(code);
+      throw new TerminalMediaJobFailure(code);
     }
     const media = await port.fetch(step.providerJobId!, seconds || undefined);
     const body = await this.bytes(context, media);

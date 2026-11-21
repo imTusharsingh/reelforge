@@ -1,3 +1,4 @@
+import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
@@ -15,14 +16,16 @@ import { ArtDirectorService } from "../character/art-director.service.js";
 import { PlanningCharacterService } from "../character/planning-character.service.js";
 import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
-import { PlanningService } from "../script/planning.service.js";
-import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
+import { planningPromptReceiptSchema, PlanningService } from "../script/planning.service.js";
+import type { Context, Run, Step } from "../runs/runs.types.js";
 import { runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
 import { MEDIA_OVERHEAD } from "./media-prices.js";
+const roles = ["scriptwriter", "director", "art-director"] as const;
+const planningKeys = roles.map((role) => `media:text:${role}`);
 type PlannedMedia = { script: PlanningScript; manifest: PlanningManifest };
 @Injectable()
 export class MediaPlanning {
@@ -41,7 +44,7 @@ export class MediaPlanning {
     )
       throw new Error("V5 requires a narrator and a 30–45 second target");
     const rejected = await this.access.runs.store.scoped(context).videoRunStep.findFirst({
-      where: { runId: run.id, key: { startsWith: "media:text:" }, state: "FAILED" },
+      where: { runId: run.id, key: { in: planningKeys }, state: "FAILED" },
     });
     if (rejected) throw new Error("Planning provider request was rejected");
     const saved = await this.saved(context, run, brief);
@@ -118,14 +121,19 @@ export class MediaPlanning {
     });
     if (!shots.length) return null;
     const steps = await db.videoRunStep.findMany({
-      where: { runId: run.id, key: { startsWith: "media:text:" }, state: "SUCCEEDED" },
+      where: { runId: run.id, key: { in: planningKeys }, state: "SUCCEEDED" },
     });
-    const writer = steps.find((step) => step.key === "media:text:scriptwriter");
-    if (!writer || !brief.narratorVoice) throw new Error("Planning receipt or narrator missing");
-    const script = PlanningScriptSchema.parse(this.output(writer.output).output);
-    const prompts = steps.map(
-      (step) => this.output(step.output).promptVersion as PlanningManifest["prompts"][number],
-    );
+    if (!brief.narratorVoice) throw new Error("Planning narrator missing");
+    const results = roles.map((role) => {
+      const matches = steps.filter((step) => step.key === `media:text:${role}`);
+      if (matches.length !== 1) throw new Error(`Expected one ${role} planning receipt`);
+      const result = this.output(matches[0]!.output);
+      const prompt = planningPromptReceiptSchema.parse(result.promptVersion);
+      if (prompt.role !== role) throw new Error("Planning receipt role mismatch");
+      return { prompt, output: result.output };
+    });
+    const script = PlanningScriptSchema.parse(results[0]!.output);
+    const prompts = results.map((result) => result.prompt);
     return {
       script,
       manifest: {
@@ -151,7 +159,11 @@ export class MediaPlanning {
       where: { runId: run.id, key },
       orderBy: { attempt: "desc" },
     });
-    if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
+    if (previous?.state === "SUCCEEDED") {
+      const output = this.output(previous.output).output;
+      await this.validateAcceptedPlan(context, previous, input, output);
+      return output;
+    }
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
     const cost = reservationCents({
       currency: "USD",
@@ -175,7 +187,7 @@ export class MediaPlanning {
         modelId,
       ));
     const result = await this.textResult(context, run, step, input, modelId, !!pending);
-    await this.validateAcceptedPlan(context, step, input.promptVersion.role, result.output);
+    await this.validateAcceptedPlan(context, step, input, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
@@ -229,12 +241,17 @@ export class MediaPlanning {
   private async validateAcceptedPlan(
     context: Context,
     step: Step,
-    role: string,
+    input: Parameters<TextPort["generate"]>[0],
     output: unknown,
   ): Promise<void> {
     try {
-      this.validatePlan(role, output);
+      input.validateOutput?.(output);
+      this.validatePlan(input.promptVersion.role, output);
     } catch (error) {
+      if (step.state === "SUCCEEDED") {
+        await this.rejectSavedOutput(context, step);
+        throw error;
+      }
       const accepted = await this.access.runs.store
         .scoped(context)
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -246,6 +263,41 @@ export class MediaPlanning {
       await this.access.runs.events?.publish(event);
       throw error;
     }
+  }
+  // Legacy receipts have already settled. Preserve their output and ledger entries.
+  private async rejectSavedOutput(context: Context, step: Step): Promise<void> {
+    const result = await this.access.runs.store.mutate(
+      context,
+      step.runId,
+      "planning_invalid",
+      async (db, run) => {
+        if (run.state !== "SCRIPTING") return { value: null, payload: { stale: true } };
+        const error = {
+          code: "PROVIDER_INVALID",
+          message: "Saved planning output failed validation",
+        };
+        await db.videoRunStep.updateMany({
+          where: {
+            runId: run.id,
+            OR: [
+              { id: step.id, state: "SUCCEEDED" },
+              { key: { in: ["SCRIPTING", PLANNING_MANIFEST_KEY] }, state: "RUNNING" },
+            ],
+          },
+          data: { state: "FAILED", error, finishedAt: new Date() },
+        });
+        await db.videoRun.updateMany({
+          where: { id: run.id },
+          data: {
+            state: "FAILED",
+            pauseReason: error.code,
+            ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+          },
+        });
+        return { value: null, payload: { reason: error.code }, stepId: step.id };
+      },
+    );
+    await this.access.runs.events?.publish(result.event);
   }
   private validatePlan(role: string, output: unknown): void {
     if (role === "director") {
@@ -287,7 +339,6 @@ export class MediaPlanning {
     return { artifact, receipt: { ...receipt, costBasis: "RESERVATION" } };
   }
   private output(value: unknown): Record<string, unknown> {
-    const parsed = json(value) as Record<string, unknown>;
-    return parsed.result as Record<string, unknown>;
+    return z.object({ result: z.record(z.string(), z.unknown()) }).parse(value).result;
   }
 }

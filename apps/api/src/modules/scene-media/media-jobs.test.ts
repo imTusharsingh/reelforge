@@ -6,7 +6,7 @@ import { MediaJobs } from "./media-jobs.js";
 import { MediaAccess } from "./media-access.js";
 import type { MediaAccounts } from "./media-accounts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
-import type { Context, Run } from "../runs/runs.types.js";
+import type { Context, Run, Step } from "../runs/runs.types.js";
 const context: Context = {
   workspaceId: "11111111-1111-4111-8111-111111111111",
   userId: "user",
@@ -164,6 +164,49 @@ describe("V5 durable async media jobs", () => {
       h.jobs.tick(context, run, "keyframe:0", h.port, {}, 4, "configured-model", "v2"),
     ).rejects.toThrow("PROVIDER_REFUSED");
   });
+  it.each(["narration", "music"])(
+    "drains an admitted %s job using its saved identity and model",
+    async (key) => {
+      const h = harness();
+      const now = new Date();
+      const step: Step = {
+        id: "accepted-step",
+        runId: run.id,
+        workspaceId: context.workspaceId,
+        attempt: 1,
+        idempotencyKey: "admitted",
+        providerId: "gemini",
+        schemaVersion: "1.0",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        finishedAt: null,
+        output: null,
+        error: null,
+        artifacts: [],
+        key: `media:${key}`,
+        state: "WAITING_EXTERNAL",
+        providerJobId: "accepted",
+        costMinor: 4,
+        input: { modelId: "admitted-model" },
+      };
+      vi.mocked(h.port.poll).mockResolvedValue("succeeded");
+      await h.jobs.drainAudio(context, step, h.port, 30);
+      expect(h.port.fetch).toHaveBeenCalledWith("accepted", 30);
+      expect(h.port.submit).not.toHaveBeenCalled();
+      expect(h.account.complete).toHaveBeenCalledWith(
+        context,
+        step,
+        expect.objectContaining({
+          receipt: expect.objectContaining({
+            key,
+            modelId: "admitted-model",
+            providerJobId: "accepted",
+          }),
+        }),
+      );
+    },
+  );
   it("records proven non-dispatch without inventing successful output and verifies checksums", async () => {
     const h = harness();
     vi.mocked(h.port.submit).mockRejectedValue(new ProviderFailure("OUTAGE", false));

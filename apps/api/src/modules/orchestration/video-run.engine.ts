@@ -18,6 +18,7 @@ import {
   storedSubmissionHold,
   unsettledShots,
 } from "../runs/run-outcomes.js";
+import { AssemblyInterrupted } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -83,6 +84,7 @@ export class VideoRunEngine {
             try {
               return await this.advance(context, run);
             } catch (error) {
+              if (error instanceof AssemblyInterrupted) return error.delay;
               if (
                 !(error instanceof SubmissionOutcomeUnknown) &&
                 error instanceof Error &&

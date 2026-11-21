@@ -1,3 +1,4 @@
+import { fitsAssemblyDuration } from "../script/planning-validation.js";
 import { RunOutputs } from "./video-run.outputs.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import {
@@ -164,8 +165,7 @@ export class RunPlanning {
       !shots.length ||
       new Set(shots.map((s) => s.ordinal)).size !== shots.length ||
       shots.some((s) => s.runId !== run.id || s.workspaceId !== run.workspaceId) ||
-      Math.abs(shots.reduce((sum, s) => sum + s.durationSeconds, 0) - brief.targetDurationSeconds) >
-        1
+      !fitsAssemblyDuration(shots, brief.targetDurationSeconds)
     )
       throw new ConflictException("Invalid shot list");
   }

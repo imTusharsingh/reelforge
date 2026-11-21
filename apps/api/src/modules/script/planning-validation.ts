@@ -5,18 +5,17 @@ import {
   type ShotSpec,
 } from "@reelforge/contracts";
 import { screenPlanningContent } from "./planning-guardrails.js";
+export function fitsAssemblyDuration(shots: readonly ShotSpec[], targetSeconds: number): boolean {
+  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+  return seconds >= 30 && seconds <= 45 && Math.abs(seconds - targetSeconds) <= 1;
+}
 export function validatePlanningShots(
   input: unknown,
   request: PlanningRequest,
   script?: PlanningScript,
 ): ShotSpec[] {
   const shots = PlanningShotsSchema.parse(input);
-  if (
-    Math.abs(
-      shots.reduce((sum, shot) => sum + shot.durationSeconds, 0) -
-        request.brief.targetDurationSeconds,
-    ) > 1
-  )
+  if (!fitsAssemblyDuration(shots, request.brief.targetDurationSeconds))
     throw new Error("Shot duration mismatch");
   if (new Set(shots.map((shot) => shot.id)).size !== shots.length)
     throw new Error("Duplicate shot IDs");

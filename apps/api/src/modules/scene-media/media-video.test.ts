@@ -70,6 +70,28 @@ describe("V5 landed router bridge", () => {
     });
     expect(await bridge.reconcile()).toBeNull();
   });
+  it("prices a collected job at its admission rate, including its pinned input frames", async () => {
+    const provider = native("xai");
+    const jobs = { bytes: vi.fn().mockResolvedValue(Buffer.from("clip")) } as unknown as MediaJobs;
+    const original = new RoutedMediaVideo(provider, jobs, context, {} as Run, {
+      firstFrame: { type: "image", mime_type: "image/png", data: "fixture" },
+    });
+    const videoPricing = original.collectionPricing(shot);
+    const port = native("xai");
+    const cap = port.capabilities();
+    vi.spyOn(port, "capabilities").mockReturnValue({
+      ...cap,
+      modelId: "changed-model",
+      pricePerSecond: { ...cap.pricePerSecond, "720p": 1 },
+    });
+    const restarted = new RoutedMediaVideo(port, jobs, context, {} as Run);
+    await restarted.fetch("accepted-job");
+    expect(restarted.metadata("accepted-job", shot, { videoPricing })).toMatchObject({
+      costMinor: 113,
+      modelId: original.modelId,
+    });
+    expect(port.submit).not.toHaveBeenCalled();
+  });
   it("does not resubmit uncertain calls, rewrite without a reservation, or switch vendors on refusal/429", async () => {
     for (const kind of ["OUTAGE", "RATE_LIMIT", "REFUSAL"] as const) {
       const port = native();

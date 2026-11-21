@@ -19,6 +19,7 @@ export interface TextPort {
     prompt: string;
     modelId: string;
     schema: z.ZodType;
+    validateOutput?: (value: unknown) => void;
     promptVersion: PlanningPromptReceipt;
   }): Promise<unknown>;
 }

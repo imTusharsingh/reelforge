@@ -297,7 +297,7 @@ export class RunPaidCalls {
     }
   }
 
-  private async settleFailedRequest(
+  public async settleFailedRequest(
     tx: Transaction,
     context: Context,
     step: Step,

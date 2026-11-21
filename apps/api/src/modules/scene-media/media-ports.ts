@@ -55,16 +55,19 @@ export class MediaPorts {
   }
   public async get(
     context: Context,
-    videoShot?: ShotSpec,
+    videoShot?: ShotSpec | "collection",
   ): Promise<Awaited<ReturnType<ProvidersRuntime["ports"]>>> {
     // Video ports resolve these immediately when they start their HTTP request.
     // Resolve storage and database references before paid dispatch admission.
-    const prepared = videoShot && {
-      key: JSON.stringify(videoShot.references),
-      media: await this.references(context, videoShot),
-    };
+    const prepared = videoShot &&
+      videoShot !== "collection" && {
+        key: JSON.stringify(videoShot.references),
+        media: await this.references(context, videoShot),
+      };
     const references: ReferenceResolver = {
       resolve: async (shot): Promise<MediaInput[]> => {
+        if (videoShot === "collection")
+          throw new Error("Collection cannot resolve submission inputs");
         if (!prepared) return this.references(context, shot);
         if (JSON.stringify(shot.references) !== prepared.key)
           throw new Error("Video references changed after preparation");

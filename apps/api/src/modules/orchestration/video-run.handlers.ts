@@ -1,5 +1,10 @@
 import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
+export class AssemblyInterrupted extends Error {
+  public constructor(public readonly delay: number | null) {
+    super("Required assembly inputs are pending or failed");
+  }
+}
 export interface StepHandler {
   execute(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json>;
   reconcile(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json | null>;
@@ -29,6 +34,7 @@ export interface VideoGenPort {
   readonly providerId: string;
   readonly modelId?: string;
   assertKey?(): void;
+  collectionPricing?(shot: ShotSpec): Json;
   estimate(shot: ShotSpec, fallback: boolean): number;
   submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;
@@ -37,6 +43,7 @@ export interface VideoGenPort {
   metadata?(
     id: string,
     shot: ShotSpec,
+    savedOutput?: unknown,
   ): {
     seconds: number;
     providerDurationSeconds?: number;

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   ProviderFailure,
   VideoRouter,
@@ -15,6 +16,11 @@ import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { MediaJobs } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
+const pricingSchema = z.object({
+  modelId: z.string().min(1),
+  microUsdPerSecond: z.int().nonnegative(),
+  inputImageMicroUsd: z.int().nonnegative(),
+});
 /** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
@@ -93,9 +99,21 @@ export class RoutedMediaVideo implements VideoGenPort {
     if (!this.trim) throw new Error("Extension tail extraction is not configured");
     return this.trim(body, this.options.extension.previousSeconds);
   }
+  public collectionPricing(shot: ShotSpec): z.infer<typeof pricingSchema> {
+    const cap = this.native.capabilities();
+    return pricingSchema.parse({
+      modelId: cap.modelId,
+      microUsdPerSecond: cap.pricePerSecond["720p"],
+      inputImageMicroUsd:
+        this.providerId === "xai"
+          ? (shot.references.length + this.frameCount) * imageSurcharge()
+          : 0,
+    });
+  }
   public metadata(
     id: string,
     shot: ShotSpec,
+    savedOutput?: unknown,
   ): {
     seconds: number;
     providerDurationSeconds: number;
@@ -106,16 +124,19 @@ export class RoutedMediaVideo implements VideoGenPort {
     const media = this.receipts.get(id);
     if (!media) throw new Error("Provider receipt unavailable");
     const seconds = media.billedSeconds ?? shot.durationSeconds;
-    const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
-    const images = shot.references.length + this.frameCount;
+    const pricing =
+      savedOutput && typeof savedOutput === "object" && "videoPricing" in savedOutput
+        ? pricingSchema.parse(savedOutput.videoPricing)
+        : this.collectionPricing(shot);
+    const cost = secondsCost(seconds, pricing.microUsdPerSecond);
     return {
       seconds,
       providerDurationSeconds: media.durationSeconds,
       costMinor: reservationCents({
         ...cost,
-        microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
+        microUsd: cost.microUsd + pricing.inputImageMicroUsd,
       }),
-      modelId: this.native.capabilities().modelId,
+      modelId: pricing.modelId,
       promptVersion: "art-director:v2",
     };
   }

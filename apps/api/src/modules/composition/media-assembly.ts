@@ -7,13 +7,17 @@ import {
   type MediaReceipt,
 } from "@reelforge/contracts";
 import { reservationCents } from "@reelforge/ai-providers";
-import { json, type Context, type Run, type Artifact } from "../runs/runs.types.js";
+import { json, type Context, type Run, type Step, type Artifact } from "../runs/runs.types.js";
 import { MediaAccess } from "../scene-media/media-access.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
 import { MEDIA_OVERHEAD } from "../scene-media/media-prices.js";
+import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import { MediaRenderer } from "./media-render.js";
+type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
+type AssemblyAudio = { transcript: string; narration: AudioTrack; music: AudioTrack };
+
 @Injectable()
 export class MediaAssembly {
   public constructor(
@@ -120,11 +124,7 @@ export class MediaAssembly {
     run: Run,
     brief: ChannelBrief,
     plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>,
-  ): Promise<{
-    transcript: string;
-    narration: Awaited<ReturnType<MediaJobs["wait"]>>;
-    music: Awaited<ReturnType<MediaJobs["wait"]>>;
-  }> {
+  ): Promise<AssemblyAudio> {
     if (!brief.narratorVoice) throw new Error("Narrator required");
     const transcript = [
       plan.script.hook,
@@ -134,8 +134,9 @@ export class MediaAssembly {
     ].join(" ");
     const ports = await this.ports.get(context),
       seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
-    const [narration, music] = await Promise.all([
-      this.jobs.wait(
+    await this.drainFailedAudio(context, run, ports, seconds);
+    const [narration, music] = await Promise.allSettled([
+      this.jobs.tick(
         context,
         run,
         "narration",
@@ -149,7 +150,7 @@ export class MediaAssembly {
         "channel-narrator:v1",
         seconds,
       ),
-      this.jobs.wait(
+      this.jobs.tick(
         context,
         run,
         "music",
@@ -166,7 +167,88 @@ export class MediaAssembly {
         seconds,
       ),
     ]);
-    return { transcript, narration, music };
+    if (narration.status === "rejected" || music.status === "rejected") {
+      const failure = await this.failedAudio(context, run);
+      if (failure) return this.failAssembly(context, run, failure);
+    }
+    if (narration.status === "rejected") throw narration.reason;
+    if (music.status === "rejected") throw music.reason;
+    if (!narration.value || !music.value) throw new AssemblyInterrupted(12000);
+    return { transcript, narration: narration.value, music: music.value };
+  }
+  private async drainFailedAudio(
+    context: Context,
+    run: Run,
+    ports: Awaited<ReturnType<MediaPorts["get"]>>,
+    seconds: number,
+  ): Promise<void> {
+    const failed = await this.failedAudio(context, run);
+    if (failed) {
+      const active = await this.access.runs.store.scoped(context).videoRunStep.findMany({
+        where: {
+          runId: run.id,
+          key: { in: ["media:narration", "media:music"] },
+          state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+        },
+      });
+      for (const step of active) {
+        if (step.key === "media:narration")
+          await this.jobs.drainAudio(context, step, ports.tts, seconds);
+        else await this.jobs.drainAudio(context, step, ports.music, seconds);
+      }
+      return this.failAssembly(context, run, failed);
+    }
+  }
+  private failedAudio(context: Context, run: Run): Promise<Step | null> {
+    return this.access.runs.store.scoped(context).videoRunStep.findFirst({
+      where: { runId: run.id, key: { in: ["media:narration", "media:music"] }, state: "FAILED" },
+      orderBy: { key: "asc" },
+    });
+  }
+
+  private async failAssembly(context: Context, run: Run, failure: Step): Promise<never> {
+    const result = await this.access.runs.store.mutate(
+      context,
+      run.id,
+      "assembly_input_failed",
+      async (db, locked) => {
+        if (locked.state !== "ASSEMBLING") return { value: false, payload: { stale: true } };
+        const code =
+          failure.error &&
+          typeof failure.error === "object" &&
+          "code" in failure.error &&
+          typeof failure.error.code === "string"
+            ? failure.error.code
+            : "PROVIDER_FAILED";
+        await db.videoRunStep.updateMany({
+          where: { runId: run.id, key: "ASSEMBLING", state: "RUNNING" },
+          data: {
+            state: "FAILED",
+            finishedAt: new Date(),
+            error: { code, inputStepId: failure.id },
+          },
+        });
+        const active = await db.videoRunStep.findFirst({
+          where: {
+            runId: run.id,
+            key: { in: ["media:narration", "media:music"] },
+            state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+          },
+        });
+        if (!active)
+          await db.videoRun.updateMany({
+            where: { id: run.id },
+            data: {
+              state: "FAILED",
+              pauseReason: code,
+              ...(locked.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+            },
+          });
+        return { value: !!active, payload: { code, inputStepId: failure.id, draining: !!active } };
+      },
+    );
+    await this.access.runs.events?.publish(result.event);
+    throw new AssemblyInterrupted(result.value ? 12000 : null);
   }
   public async artifacts(context: Context, run: Run): Promise<Artifact[]> {
     const step = await this.access.runs.store.scoped(context).videoRunStep.findFirst({

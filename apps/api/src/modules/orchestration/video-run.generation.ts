@@ -1,3 +1,4 @@
+import { refusalRewrite, settleVideoRefusal } from "./video-run.refusal.js";
 import {
   canRollback,
   jobIdFromAdmission,
@@ -5,12 +6,12 @@ import {
 } from "../usage-budget/run-admission-state.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
-import { ShotSpecSchema } from "@reelforge/contracts";
+import { ShotSpecSchema, type ShotSpec } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
+import { json, type Context, type Run, type Scoped, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, failSettledGeneration, keyframeKey } from "../runs/run-outcomes.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
@@ -108,12 +109,11 @@ export class RunGeneration {
       metrics
         .counter("run_provider_results", "Provider outcomes")
         .inc({ provider: step.providerId ?? "unconfigured", status });
-      const event = await this.paid.finalizeJobFailure(
-        context,
-        step,
-        status === "refused" ? "PROVIDER_REFUSED" : "PROVIDER_FAILED",
-      );
-      await this.runs.events?.publish(event);
+      if (status === "refused") await settleVideoRefusal(this.runs, this.paid, context, step, true);
+      else {
+        const event = await this.paid.finalizeJobFailure(context, step, "PROVIDER_FAILED");
+        await this.runs.events?.publish(event);
+      }
       return null;
     }
     await this.complete(context, step, ports);
@@ -154,11 +154,15 @@ export class RunGeneration {
       if (
         !(error instanceof ProviderFailure) ||
         error.dispatched ||
-        (error.kind === "OUTAGE" && selected === ports.primary)
+        (error.kind === "OUTAGE" && selected === ports.primary && !refusalRewrite(step))
       )
         throw error;
-      const event = await this.paid.finalizeRejected(context, claimed, error);
-      await this.runs.events?.publish(event);
+      if (refusalRewrite(claimed) && ["REFUSAL", "NEEDS_HUMAN"].includes(error.kind))
+        await settleVideoRefusal(this.runs, this.paid, context, claimed, false);
+      else {
+        const event = await this.paid.finalizeRejected(context, claimed, error);
+        await this.runs.events?.publish(event);
+      }
       return this.runs.store
         .scoped(context)
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -218,21 +222,17 @@ export class RunGeneration {
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
+        const rewrite = refusalRewrite(step);
+        const provider = rewrite
+          ? this.port({ ...step, providerId: rewrite.providerId }, ports)
+          : budget.route === "FALLBACK"
+            ? ports.fallback
+            : ports.primary;
         provider.assertKey?.();
-        const amount = provider.estimate(shot, budget.route === "FALLBACK");
+        const amount = provider.estimate(shot, provider === ports.fallback);
         if (!envelopeRoom(budget, amount))
           throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
-        const claimed = await db.videoRunStep.updateMany({
-          where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
-          data: {
-            state: "RUNNING",
-            startedAt: new Date(),
-            costMinor: amount,
-            providerId: provider.providerId,
-          },
-        });
-        if (!claimed.count) throw new ConflictException("Step already claimed");
+        await this.claimPending(db, step, provider, shot, amount);
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id, revision: budget.revision },
           data: { reservedMinor: budget.reservedMinor + amount, revision: budget.revision + 1 },
@@ -253,6 +253,33 @@ export class RunGeneration {
     );
     await this.runs.events?.publish(claim.event);
     return claim.value;
+  }
+  private async claimPending(
+    db: Scoped,
+    step: Step,
+    provider: VideoGenPort,
+    shot: ShotSpec,
+    amount: number,
+  ): Promise<void> {
+    const rewrite = refusalRewrite(step);
+    const claimed = await db.videoRunStep.updateMany({
+      where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
+      data: {
+        state: "RUNNING",
+        startedAt: new Date(),
+        costMinor: amount,
+        providerId: provider.providerId,
+        ...(provider.collectionPricing
+          ? {
+              output: json({
+                ...(rewrite ? { refusalRewrite: rewrite } : {}),
+                videoPricing: provider.collectionPricing(shot),
+              }),
+            }
+          : {}),
+      },
+    });
+    if (!claimed.count) throw new ConflictException("Step already claimed");
   }
   private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
     const registry = new Map(
@@ -310,6 +337,7 @@ export class RunGeneration {
     const meta = this.port(step, ports).metadata?.(
       step.providerJobId!,
       ShotSpecSchema.parse(step.input),
+      step.output,
     );
     if (meta && meta.costMinor > (step.costMinor ?? 0))
       throw new ConflictException("RECONCILE_REQUIRED: provider billing exceeded reservation");
@@ -350,9 +378,7 @@ export class RunGeneration {
         };
       },
     );
-    if (result.value) {
-      this.recordSuccess(step, started);
-    }
+    if (result.value) this.recordSuccess(step, started);
     await this.runs.events?.publish(result.event);
   }
 }
