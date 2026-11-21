@@ -12,6 +12,7 @@ import type { RunCritic } from "./run-critic.js";
 const { brief, runId } = planningFixture();
 const run = { id: runId, workspaceId: context.workspaceId } as Run;
 const step = { attempt: 1 } as Step;
+const originalShot = { id: "6d813f55-a72d-436b-9e35-a277ac7f1d03", attempt: 1, costMinor: 10 };
 const report = {
   recommendation: "REJECT",
   summary: "fixture",
@@ -47,7 +48,7 @@ function fixture(
     videoRunStep: {
       findMany: vi.fn(() => attempts),
       findFirst: vi.fn(() => null),
-      findFirstOrThrow: vi.fn(() => ({ attempt: 1, costMinor: 10 })),
+      findFirstOrThrow: vi.fn(() => originalShot),
       updateMany: vi.fn(),
       create: vi.fn(() => ({ id: "package" })),
     },
@@ -105,7 +106,7 @@ describe("V3 critic registration", () => {
     handler.onModuleInit();
     expect(planning.handlers).toEqual({ ASSEMBLING: {}, CRITIC: handler });
     await expect(handler.execute(run, brief, step, context)).rejects.toThrow("deferred");
-    expect(reshoot).toHaveBeenCalledWith(context, run.id, 0);
+    expect(reshoot).toHaveBeenCalledWith(context, run.id, 0, originalShot.id);
   });
 
   it("reviews refreshed evidence and stops after two reshoots of a shot", async () => {
