@@ -2,15 +2,16 @@ import { ShotSpecSchema } from "@reelforge/contracts";
 import type { Prisma } from "@reelforge/database";
 import { describe, expect, it, vi } from "vitest";
 import { ADMISSION_ORDERING, OUTCOME_UNKNOWN } from "../usage-budget/run-admission-state.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import type { Run, Step } from "./runs.types.js";
 import { generating, runsFixture, type Tenant } from "./runs.fixture.js";
 
 const amountMinor = 10;
 
-async function claimShot(t: Tenant, run: Run, key = "shot-0"): Promise<Step> {
+async function claimShot(t: Tenant, run: Run, key = "shot-0", usage = t.usage): Promise<Step> {
   const { context } = t;
-  const paid = new RunPaidCalls(t.usage, t.store);
+  const paid = new RunPaidCalls(usage, t.store);
 
   const { value: step } = await t.store.mutate(
     context,
@@ -43,6 +44,59 @@ async function claimShot(t: Tenant, run: Run, key = "shot-0"): Promise<Step> {
 
 describe.skipIf(!process.env.DATABASE_URL)("shot admission recovery", () => {
   const fixture = runsFixture();
+
+  it.each(["rearmed", "missing"] as const)(
+    "covers a %s November admission after expiry",
+    async (kind) => {
+      const t = await fixture.tenant();
+      const run = await generating(t);
+      let now = new Date("2026-10-31T19:00:00Z");
+      const usage = new UsageBudgetService(t.db, () => now);
+      const paid = new RunPaidCalls(usage, t.store);
+      await usage.upsertBudget(t.context, {
+        currency: "USD",
+        monthlyLimitMinor: 10,
+        reason: "expiry fixture",
+        timezone: "UTC",
+      });
+      if (kind === "rearmed") {
+        const october = await claimShot(t, run, "shot-0", usage);
+        await paid.rollbackAdmission(t.context, october);
+      }
+      now = new Date("2026-11-01T10:00:00Z");
+      const step = await claimShot(t, run, "shot-0", usage);
+      const where = { workspaceId: run.workspaceId, correlationId: step.id };
+      if (kind === "missing") {
+        await t.db.providerRequest.deleteMany({ where });
+        await expect(paid.rollbackAdmission(t.context, step)).rejects.toThrow("RECONCILE_REQUIRED");
+      } else {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(now.getTime());
+        try {
+          await paid.dispatch(t.context, step, async () => undefined);
+        } finally {
+          clock.mockRestore();
+        }
+        expect(
+          await t.db.providerRequest.findFirstOrThrow({
+            where: { workspaceId: run.workspaceId, errorCode: "ADMISSION_ROLLED_BACK" },
+          }),
+        ).toMatchObject({ createdAt: new Date("2026-10-31T19:00:00Z") });
+      }
+      const request = await t.db.providerRequest.findFirstOrThrow({ where });
+      expect(request).toMatchObject({ currency: "USD", createdAt: now });
+      expect(request.estimatedCost?.toNumber()).toBe(0.1);
+      now = new Date("2026-11-03T10:00:00Z");
+      expect(await usage.sweepExpiredReservations(now, run.workspaceId)).toBe(1);
+      await expect(
+        usage.reserve(run.workspaceId, {
+          category: "VIDEO_MEDIA",
+          currency: "USD",
+          amountMinor: 1,
+          idempotencyKey: "competing",
+        }),
+      ).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
+    },
+  );
 
   it.each(["tagged", "legacy", "missing"] as const)(
     "recovers a RUNNING shot with %s admission evidence",

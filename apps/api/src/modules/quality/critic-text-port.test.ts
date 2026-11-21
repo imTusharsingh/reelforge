@@ -31,6 +31,7 @@ function fixture(
     budgetEnvelope: { findFirst: async (): Promise<unknown> => budget },
     videoRunStep: {
       findFirst,
+      findMany: vi.fn().mockResolvedValue([]),
       updateMany: async (): Promise<void> => {
         calls.push("persist-job");
       },

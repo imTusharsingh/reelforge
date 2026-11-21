@@ -4,7 +4,12 @@ import { ShotSpecSchema } from "@reelforge/contracts";
 import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
-import { clipEstimate, fallbackEstimate, runEstimate } from "../usage-budget/run-envelope.js";
+import {
+  clipEstimate,
+  fallbackEstimate,
+  pinnedBudget,
+  runEstimate,
+} from "../usage-budget/run-envelope.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 
 @Injectable()
@@ -26,7 +31,8 @@ export class RunFallback {
       "fallback",
       async (db, current, tx) => {
         const step = await db.videoRunStep.findFirstOrThrow({ where: { id: failed.id } });
-        if (step.state !== "RUNNING") return { value: true, payload: { replay: true } };
+        if (step.state !== "RUNNING" || step.idempotencyKey !== failed.idempotencyKey)
+          return { value: true, payload: { replay: true } };
         if (current.state === "CANCELED") return { value: false, payload: { canceled: true } };
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         const estimate = await this.estimate(db, run, step, budget);
@@ -61,7 +67,8 @@ export class RunFallback {
           },
         });
         await clearResolvedSubmissionHold(db, tx, current, step.id);
-        return { value: true, payload: { ...estimate, warning: estimate.baseEstimateMinor > 600 } };
+        const warning = estimate.baseEstimateMinor > pinnedBudget(run).targetMinor;
+        return { value: true, payload: { ...estimate, warning } };
       },
     );
     await this.runs.events?.publish(result.event);
@@ -95,6 +102,7 @@ export class RunFallback {
         { ...budget, reservedMinor: budget.reservedMinor - (failed.costMinor ?? 0) },
         remaining.map((s) => ShotSpecSchema.parse(s.input)),
         overhead,
+        pinnedBudget(run).hardCapMinor,
       );
     } catch (error) {
       if (!(error instanceof ConflictException)) throw error;

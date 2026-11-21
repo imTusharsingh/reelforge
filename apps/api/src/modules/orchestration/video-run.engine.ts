@@ -15,7 +15,7 @@ import {
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
 import {
   failSettledGeneration,
-  storedSubmissionHold,
+  activeSubmissionHold,
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { RunGeneration } from "./video-run.generation.js";
@@ -71,7 +71,19 @@ export class VideoRunEngine {
         withSpan(
           `run.step.${job.stepId ? "GENERATING" : run.state}`,
           async () => {
-            if (run.state === "FAILED") return null;
+            if (run.state === "FAILED") {
+              if (!job.stepId) return null;
+              const accepted = await this.runs.store.scoped(context).videoRunStep.findFirst({
+                where: {
+                  runId: run.id,
+                  id: job.stepId,
+                  key: { startsWith: "shot-" },
+                  state: "WAITING_EXTERNAL",
+                  providerJobId: { not: null },
+                },
+              });
+              if (!accepted) return null;
+            }
             if (job.stepId) return this.shot(context, run, job.stepId);
             if (
               run.state === "CANCELED" ||
@@ -101,13 +113,17 @@ export class VideoRunEngine {
       context,
       run.id,
       "reconcile_required",
-      async (db, current) => {
-        if (
-          current.state === run.state &&
-          current.pauseReason === null &&
-          (await storedSubmissionHold(db, current.id, reason))
-        )
-          await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
+      async (db, current, tx) => {
+        if (current.state === run.state) {
+          const hold = await activeSubmissionHold(db, tx, {
+            ...current,
+            pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
+              ? current.pauseReason
+              : reason,
+          });
+          if (hold && current.pauseReason !== hold)
+            await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
+        }
         return { value: null, payload: { reason } };
       },
     );
@@ -247,6 +263,7 @@ export class VideoRunEngine {
               "PAUSED_BUDGET",
               "NEEDS_HUMAN",
               "CANCELED",
+              "FAILED",
             ],
           },
         },
@@ -255,6 +272,7 @@ export class VideoRunEngine {
         z.uuid().parse(run.id);
         if (
           run.state === "CANCELED" ||
+          run.state === "FAILED" ||
           run.state === "PAUSED_BUDGET" ||
           run.state === "NEEDS_HUMAN" ||
           run.pauseReason
@@ -264,6 +282,13 @@ export class VideoRunEngine {
               runId: run.id,
               OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:keyframe:" } }],
               state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+              ...(run.state === "FAILED"
+                ? ({
+                    key: { startsWith: "shot-" },
+                    state: "WAITING_EXTERNAL",
+                    providerJobId: { not: null },
+                  } as const)
+                : {}),
             },
           });
           for (const step of admitted)

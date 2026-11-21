@@ -5,20 +5,29 @@ import type { Context, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 export const ADMISSION_ORDERING = "v2-commit-before-dispatch";
 export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
+export const BILLING_OVERAGE = "VIDEO_RUN_BILLING_OVERAGE";
 export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";
 
 type Request = Pick<
   Prisma.ProviderRequestGetPayload<object>,
-  "id" | "correlationId" | "errorCode" | "responseMetadata" | "createdAt" | "status"
+  "id" | "correlationId" | "errorCode" | "responseMetadata" | "createdAt" | "status" | "actualCost"
 >;
 type Reservation = Pick<
   Prisma.UsageReservationGetPayload<object>,
-  "id" | "idempotencyKey" | "status" | "expiresAt"
+  "id" | "idempotencyKey" | "status" | "expiresAt" | "amountMinor" | "createdAt" | "currency"
 >;
 type Evidence =
-  "never-dispatched" | "pending" | "rolled-back" | "ambiguous" | "dispatching" | "recorded";
-type Attempt = Pick<Step, "id" | "runId" | "idempotencyKey" | "providerJobId">;
-type Admission = {
+  | "never-dispatched"
+  | "pending"
+  | "rolled-back"
+  | "ambiguous"
+  | "dispatching"
+  | "recorded"
+  | "released-nondispatch"
+  | "billing-overage";
+type Attempt = Pick<Step, "id" | "runId" | "idempotencyKey" | "providerJobId"> &
+  Partial<Pick<Step, "error">>;
+export type Admission = {
   evidence: Evidence;
   request: Request | null;
   reservation: Reservation | null;
@@ -27,33 +36,84 @@ type Admission = {
 const markerSchema = z.object({ idempotencyKey: z.string() });
 const receiptSchema = z.object({ providerJobId: z.string().min(1) });
 
+export const textResultSchema = z.object({
+  output: z.json(),
+  providerJobId: z.string().min(1),
+  usage: z.record(z.string(), z.unknown()),
+});
+
+export function attachedTextResult(
+  step: Pick<Step, "output" | "providerJobId">,
+): z.infer<typeof textResultSchema> | null {
+  const result = textResultSchema.safeParse(step.output);
+  return result.success && result.data.providerJobId === step.providerJobId ? result.data : null;
+}
+
 function classify(
   request: Request | null,
   reservation: Reservation | null,
-  dispatched: boolean,
+  marked: boolean,
+  jobId: string | null,
 ): Evidence {
+  const dispatched = !!jobId || marked;
   if (!request) return dispatched || reservation ? "ambiguous" : "never-dispatched";
+  if (request.errorCode === BILLING_OVERAGE) return "billing-overage";
+  if (
+    ["NOT_DISPATCHED", "OPERATOR_ABANDONED", "CRITIC_SUPERSEDED"].includes(
+      request.errorCode ?? "",
+    ) &&
+    request.status === "FAILED" &&
+    (!request.actualCost || request.actualCost.isZero()) &&
+    reservation?.status === "RELEASED" &&
+    !jobId &&
+    !receiptSchema.safeParse(request.responseMetadata).success &&
+    z.object({ dispatched: z.literal(false) }).safeParse(request.responseMetadata).success
+  )
+    return "released-nondispatch";
   if (request.errorCode === DISPATCHING) return "dispatching";
   if (request.errorCode !== "PENDING" && request.errorCode !== "ADMISSION_ROLLED_BACK")
     return "recorded"; // Includes OUTCOME_UNKNOWN and provider receipts. Reconcile by the original key.
   const metadata = request.responseMetadata;
   if (
     dispatched ||
+    (request.actualCost && !request.actualCost.isZero()) ||
     request.status === "SUCCEEDED" ||
     reservation?.status === "COMMITTED" ||
     receiptSchema.safeParse(metadata).success ||
     !metadata ||
     typeof metadata !== "object" ||
     Array.isArray(metadata) ||
-    metadata.dispatched === true ||
+    metadata.dispatched !== false ||
     metadata.admissionOrdering !== ADMISSION_ORDERING
   )
     return "ambiguous";
   return request.errorCode === "PENDING" ? "pending" : "rolled-back";
 }
 
+export function isBillingHold(error: unknown): boolean {
+  return z.object({ code: z.literal(BILLING_OVERAGE) }).safeParse(error).success;
+}
+
+export function hasSettledCharge(admission: Admission): boolean {
+  return (
+    admission.evidence === "recorded" &&
+    admission.request?.status === "SUCCEEDED" &&
+    admission.request.errorCode === null &&
+    admission.reservation?.status === "COMMITTED"
+  );
+}
+
 export function canRollback({ evidence }: Admission): boolean {
   return evidence === "never-dispatched" || evidence === "pending" || evidence === "rolled-back";
+}
+
+export function canConfirmRejection(admission: Admission): boolean {
+  return (
+    admission.evidence === "dispatching" &&
+    !jobIdFromAdmission(admission) &&
+    (!admission.request?.actualCost || admission.request.actualCost.isZero()) &&
+    admission.reservation?.status !== "COMMITTED"
+  );
 }
 
 export function jobIdFromAdmission(admission: Admission): string | null {
@@ -77,6 +137,14 @@ function markedSteps(
   return marked;
 }
 
+const dispatchEvents = [
+  "provider_dispatch",
+  "provider_submitted",
+  "reconcile_required",
+  "step_completed",
+  "media_completed",
+];
+
 export async function readAdmissions<T extends Attempt>(
   db: Scoped,
   tx: Transaction,
@@ -94,26 +162,27 @@ export async function readAdmissions<T extends Attempt>(
         status: true,
         responseMetadata: true,
         createdAt: true,
+        actualCost: true,
       },
     }),
     tx.usageReservation.findMany({
       where: { workspaceId, idempotencyKey: { in: steps.map((s) => `m08:${s.idempotencyKey}`) } },
-      select: { id: true, idempotencyKey: true, status: true, expiresAt: true },
+      select: {
+        id: true,
+        idempotencyKey: true,
+        status: true,
+        expiresAt: true,
+        amountMinor: true,
+        currency: true,
+        createdAt: true,
+      },
     }),
     db.runEvent.findMany({
       where: {
         workspaceId,
         runId: { in: [...new Set(steps.map((step) => step.runId))] },
         stepId: { in: steps.map((step) => step.id) },
-        type: {
-          in: [
-            "provider_dispatch",
-            "provider_submitted",
-            "reconcile_required",
-            "step_completed",
-            "media_completed",
-          ],
-        },
+        type: { in: dispatchEvents },
       },
       select: { stepId: true, payload: true },
     }),
@@ -128,7 +197,9 @@ export async function readAdmissions<T extends Attempt>(
       step,
       request,
       reservation,
-      evidence: classify(request, reservation, !!step.providerJobId || marked.has(step.id)),
+      evidence: isBillingHold(step.error)
+        ? "billing-overage"
+        : classify(request, reservation, marked.has(step.id), step.providerJobId),
     };
   });
 }
