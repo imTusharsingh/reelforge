@@ -1,3 +1,4 @@
+import { ShotSpecSchema } from "@reelforge/contracts";
 import { ProviderFailure, type ImageGenPort } from "@reelforge/ai-providers";
 import { describe, expect, it, vi } from "vitest";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
@@ -10,6 +11,217 @@ import { generateClips, generating, runsFixture } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
   const fixture = runsFixture();
+
+  it("preserves the generating stage on explicit resume after emergency clearance", async () => {
+    const t = await fixture.tenant();
+    const run = await generating(t);
+    t.stop.stopped = true;
+    const queue = { enqueue: vi.fn(), fanout: vi.fn() };
+    t.runs.queue = queue as unknown as RunsQueue;
+    await expect(t.control.resume(t.context, run.id)).rejects.toThrow("halted");
+    t.stop.stopped = false;
+    await t.control.resume(t.context, run.id);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "GENERATING",
+      pauseReason: null,
+    });
+    expect(queue.enqueue).toHaveBeenCalledOnce();
+    await t.engine.process(t.runs.job(t.context, run.id));
+    expect(queue.fanout).toHaveBeenCalledOnce();
+  });
+  it.each(["recover", "cancel"] as const)(
+    "closes a legacy released media claim once through %s",
+    async (action) => {
+      const t = await fixture.tenant();
+      const run = await generating(t);
+      const access = {
+        runs: t.runs,
+        paid: new RunPaidCalls(t.usage, t.store),
+        boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
+      } as MediaAccess;
+      const accounts = new MediaAccounts(access);
+      const claim = async (
+        key: string,
+        amount: number,
+      ): Promise<Awaited<ReturnType<typeof accounts.begin>>> => {
+        const step = await accounts.begin(t.context, run, key, {}, amount, "fixture");
+        await accounts.prepare(t.context, run, step, "fixture");
+        await accounts.dispatch(t.context, step, async () => undefined);
+        return step;
+      };
+      const sibling = await claim("media:music", 9);
+      await t.runs.attachJob(t.context, sibling, "sibling");
+      const legacy = await claim("media:keyframe:0:v1", 10);
+      await access.paid.finish(t.context, legacy, false, 0);
+      const submit = vi.fn();
+      const jobs = new MediaJobs(access, accounts, t.storage);
+      const recover = (): ReturnType<typeof jobs.tick> =>
+        jobs.tick(
+          t.context,
+          run,
+          "keyframe:0:v1",
+          { submit, poll: vi.fn(), fetch: vi.fn() },
+          {},
+          10,
+          "fixture",
+          "v1",
+        );
+      if (action === "cancel") await t.control.cancel(t.context, run.id);
+      await expect(recover()).rejects.toThrow("MEDIA_NOT_DISPATCHED");
+      await expect(recover()).rejects.toThrow("MEDIA_NOT_DISPATCHED");
+      expect(submit).not.toHaveBeenCalled();
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: legacy.id } })).toMatchObject(
+        { state: "CANCELLED" },
+      );
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({ reservedMinor: 9, spentMinor: 0 });
+      expect(
+        await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: sibling.id } }),
+      ).toMatchObject({ status: "RESERVED" });
+    },
+  );
+
+  it.each(["DAY", "MONTH"] as const)(
+    "uses the pinned Brief before and after envelope creation with a lower %s limit",
+    async (period) => {
+      const t = await fixture.tenant("L2", 24);
+      const policy = {
+        ...t.brief.budgetPolicy,
+        targetMinor: 100,
+        hardCapMinor: 300,
+        dailyLimitMinor: period === "DAY" ? 15 : 2000,
+        monthlyLimitMinor: period === "MONTH" ? 15 : 18000,
+      };
+      const append = async (version: number, budgetPolicy: typeof policy): Promise<string> => {
+        const id = crypto.randomUUID();
+        const { workspaceId, channelId } = t.brief;
+        const document = { ...t.brief, id, version, budgetPolicy };
+        await t.db.channelBrief.create({ data: { id, workspaceId, channelId, version, document } });
+        return id;
+      };
+      const run = await t.runs.create(t.context, await append(2, policy), "pinned");
+      await append(3, t.brief.budgetPolicy);
+      const access = {
+        runs: t.runs,
+        paid: new RunPaidCalls(t.usage, t.store),
+        boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
+      } as MediaAccess;
+      const accounts = new MediaAccounts(access);
+      await expect(
+        accounts.begin(t.context, run, "media:expensive", {}, 301, "fixture"),
+      ).rejects.toThrow("BUDGET_CAP");
+      const pre = await accounts.begin(t.context, run, "media:pre", {}, 16, "fixture");
+      await expect(accounts.prepare(t.context, run, pre, "fixture")).rejects.toMatchObject({
+        code: "BUDGET_EXHAUSTED",
+      });
+      const shots = await t.db.shotSpec.findMany({ where: { runId: t.run.id } });
+      for (const shot of shots) {
+        const document = ShotSpecSchema.parse(shot.document);
+        const id = crypto.randomUUID();
+        await t.db.shotSpec.create({
+          data: {
+            workspaceId: run.workspaceId,
+            runId: run.id,
+            id,
+            ordinal: shot.ordinal,
+            version: 1,
+            document: { ...document, id, runId: run.id },
+          },
+        });
+      }
+      await t.planning.prepare(t.context, run);
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({ targetMinor: 100, hardCapMinor: 300 });
+      expect(
+        await t.db.runEvent.findFirstOrThrow({
+          where: { runId: run.id, type: "budget_estimated" },
+        }),
+      ).toMatchObject({ payload: expect.objectContaining({ warn: true }) });
+      const after = await accounts.begin(t.context, run, "media:post", {}, 16, "fixture");
+      await expect(accounts.prepare(t.context, run, after, "fixture")).rejects.toMatchObject({
+        code: "BUDGET_EXHAUSTED",
+      });
+      await t.usage.upsertBudget(t.context, {
+        currency: "USD",
+        dailyLimitMinor: 5,
+        reason: "lower workspace policy",
+      });
+      const lower = await accounts.begin(t.context, run, "media:workspace", {}, 6, "fixture");
+      await expect(accounts.prepare(t.context, run, lower, "fixture")).rejects.toMatchObject({
+        code: "BUDGET_EXHAUSTED",
+      });
+    },
+  );
+
+  it("retains a 70-cent receipt on a 56-cent shot while its sibling attaches and settles", async () => {
+    const t = await fixture.tenant();
+    const run = await generating(t);
+    const [a, b, c] = await t.db.videoRunStep.findMany({
+      where: { runId: run.id, key: { startsWith: "shot-" } },
+      orderBy: { key: "asc" },
+    });
+    const provider = t.generation.provider;
+    vi.spyOn(provider, "estimate").mockReturnValue(56);
+    const started = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{ providerJobId: string }>();
+    const submit = vi.spyOn(provider, "submit").mockImplementationOnce(() => {
+      started.resolve();
+      return receipt.promise;
+    });
+    Object.assign(provider, {
+      metadata: (job: string) => ({
+        costMinor: job === "sibling" ? 56 : 70,
+        seconds: 10,
+        modelId: "fixture",
+        promptVersion: "fixture",
+      }),
+    });
+    await t.usage.upsertBudget(t.context, {
+      currency: "USD",
+      monthlyLimitMinor: 120,
+      reason: "priced overage",
+    });
+    const shotJob = (stepId: string): ReturnType<typeof t.engine.process> =>
+      t.engine.process(t.runs.job(t.context, run.id, stepId));
+    const sibling = shotJob(b!.id);
+    try {
+      await Promise.race([started.promise, sibling]);
+      await expect(shotJob(a!.id)).rejects.toThrow("billing exceeded");
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
+    } finally {
+      receipt.resolve({ providerJobId: "sibling" });
+      await sibling;
+    }
+    expect((await t.store.get(t.context, run.id)).pauseReason).toContain(a!.id);
+    expect(await shotJob(c!.id)).toBeNull();
+    expect(submit).toHaveBeenCalledTimes(2);
+    const status = async (): Promise<number | undefined> =>
+      (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
+    expect(await status()).toBe(126);
+    await expect(
+      t.usage.reserve(run.workspaceId, {
+        category: "VIDEO_MEDIA",
+        currency: "USD",
+        amountMinor: 1,
+        idempotencyKey: "competing-run",
+      }),
+    ).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
+    const fetch = vi.spyOn(provider, "fetch");
+    await Promise.all([shotJob(a!.id), shotJob(a!.id)]);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await status()).toBe(126);
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      spentMinor: 126,
+      reservedMinor: 0,
+      overageMinor: 14,
+    });
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: a!.id } }),
+    ).toMatchObject({ status: "COMMITTED", committedMinor: 70n });
+    expect((await t.store.get(t.context, run.id)).pauseReason).toBeNull();
+  });
 
   it("recovers an admitted keyframe independently of its pending parent and resumes a stale hold", async () => {
     const t = await fixture.tenant();

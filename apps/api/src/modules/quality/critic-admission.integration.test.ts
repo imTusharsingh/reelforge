@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ShotSpecSchema } from "@reelforge/contracts";
 import { z } from "zod";
 import { ProviderFailure } from "@reelforge/ai-providers";
-import { generating, runsFixture, type Tenant } from "../runs/runs.fixture.js";
+import { generateClips, generating, runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import type { Run, Step } from "../runs/runs.types.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
@@ -100,6 +101,131 @@ describe.skipIf(!process.env.DATABASE_URL)("critic text admission recovery", () 
       expect((await t.store.get(t.context, run.id)).pauseReason).toBeNull();
     },
   );
+
+  it("settles the saved result after attachJob without another paid call", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
+    const t = await fixture.tenant();
+    const run = await criticRun(t);
+    const c = critic(t, run);
+    const interrupted = vi
+      .spyOn(c.accounts, "complete")
+      .mockRejectedValueOnce(new Error("worker stopped"));
+    await expect(c.review()).rejects.toThrow("worker stopped");
+    interrupted.mockRestore();
+    expect(await c.steps()).toMatchObject([
+      { state: "WAITING_EXTERNAL", providerJobId: "critic-job", output: { output: 8 } },
+    ]);
+    await c.review();
+    await c.review();
+    expect(c.complete).toHaveBeenCalledOnce();
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      spentMinor: criticReservationCents(),
+      reservedMinor: 0,
+    });
+  });
+
+  it("fences re-edit and replay after the dispatch marker and holds a legacy job without output", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
+    const t = await fixture.tenant();
+    await generating(t);
+    await generateClips(t);
+    const run = await t.db.videoRun.update({ where: { id: t.run.id }, data: { state: "CRITIC" } });
+    const c = critic(t, run);
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    c.complete.mockImplementationOnce(async () => {
+      started.resolve();
+      await gate.promise;
+      return { providerJobId: "critic-job", output: 8, usage: {} };
+    });
+    const reviewing = c.review();
+    try {
+      await Promise.race([started.promise, reviewing]);
+      await Promise.all([
+        expect(t.control.reedit(t.context, run.id)).rejects.toThrow("Reconcile"),
+        expect(c.review()).rejects.toThrow("RECONCILE_REQUIRED"),
+      ]);
+      const [step] = await c.steps();
+      await t.runs.attachJob(t.context, step!, "critic-job");
+      await expect(t.control.reshoot(t.context, run.id, 0)).rejects.toThrow("Reconcile");
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
+      expect((await t.store.get(t.context, run.id)).pauseReason).toContain(step!.id);
+      expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: "REEDIT" } })).toBe(0);
+    } finally {
+      gate.resolve();
+      await reviewing;
+    }
+    expect(c.complete).toHaveBeenCalledOnce();
+  });
+
+  it("blocks a prepared critic at dispatch after a reshoot wins the run lock", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
+    const t = await fixture.tenant();
+    await generating(t);
+    await generateClips(t);
+    const run = await t.db.videoRun.update({ where: { id: t.run.id }, data: { state: "CRITIC" } });
+    const c = critic(t, run);
+    const dispatch = c.accounts.dispatchText.bind(c.accounts);
+    vi.spyOn(c.accounts, "dispatchText").mockImplementationOnce(async (ctx, step, call) => {
+      await t.control.reshoot(t.context, run.id, 0);
+      return dispatch(ctx, step, call);
+    });
+    await expect(c.review()).rejects.toThrow();
+    expect(c.complete).not.toHaveBeenCalled();
+    expect(await c.steps()).toMatchObject([{ state: "CANCELLED" }]);
+    expect((await t.store.get(t.context, run.id)).state).toBe("GENERATING");
+  });
+
+  it("collects an accepted legacy reshoot before terminalizing a late critic rejection", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture");
+    const t = await fixture.tenant();
+    await generating(t);
+    await generateClips(t);
+    const run = await t.db.videoRun.update({ where: { id: t.run.id }, data: { state: "CRITIC" } });
+    const c = critic(t, run);
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<never>();
+    c.complete.mockImplementationOnce(() => {
+      started.resolve();
+      return gate.promise;
+    });
+    const review = c.review();
+    const failure = new ProviderFailure("INVALID", false);
+    const settled = expect(review).rejects.toBe(failure);
+    await Promise.race([started.promise, review]);
+    const original = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "shot-0" },
+    });
+    // Legacy command bypassed the critic fence; the replacement is already accepted.
+    const shot = await t.db.videoRunStep.create({
+      data: {
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        key: original.key,
+        attempt: 2,
+        input: ShotSpecSchema.parse(original.input),
+        idempotencyKey: `${run.id}:0:2`,
+      },
+    });
+    await t.db.videoRun.update({ where: { id: run.id }, data: { state: "GENERATING" } });
+    vi.spyOn(t.generation.provider, "poll").mockResolvedValueOnce("running");
+    const job = t.runs.job(t.context, run.id, shot.id);
+    try {
+      await expect(t.engine.process(job)).resolves.toBe(12000);
+    } finally {
+      gate.reject(failure);
+      await settled;
+    }
+    expect((await t.store.get(t.context, run.id)).state).toBe("GENERATING");
+    await t.engine.process(job);
+    expect((await t.store.get(t.context, run.id)).state).toBe("FAILED");
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: shot.id } }),
+    ).toMatchObject({ status: "COMMITTED" });
+    expect(
+      (await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).reservedMinor,
+    ).toBe(0);
+  });
 
   it("holds an ambiguous critic replay with its original key and both claims", async () => {
     vi.stubEnv("GEMINI_TEXT_MODEL", "critic-fixture");

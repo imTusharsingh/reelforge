@@ -12,8 +12,14 @@ import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
-import { SETTLED_SHOTS, failSettledGeneration, keyframeKey } from "../runs/run-outcomes.js";
-import { envelopeRoom } from "../usage-budget/run-envelope.js";
+import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
+import {
+  awaitingBilling,
+  reconcilePricedReceipt,
+  recordShotReceipt,
+} from "../usage-budget/run-billing.js";
+import { billingHold } from "../runs/run-outcomes.js";
+import { pinnedBudget, envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
@@ -40,6 +46,7 @@ export class RunGeneration {
     const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!initial) throw new ConflictException("Step not found in run");
     if (SETTLED_SHOTS.some((state) => state === initial.state)) return null;
+    if (awaitingBilling(initial)) return this.reconcileBilling(context, initial);
     if (initial.key.startsWith("media:keyframe:")) {
       if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
       return this.recoverKeyframe(context, initial);
@@ -91,6 +98,13 @@ export class RunGeneration {
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
     return this.poll(context, step, ports);
+  }
+
+  private async reconcileBilling(context: Context, step: Step): Promise<null> {
+    await reconcilePricedReceipt(this.runs.store, this.paid, context, step);
+    const run = await this.runs.store.get(context, step.runId);
+    if (run.state === "GENERATING" && !run.pauseReason) await this.runs.enqueue(context, run);
+    return null;
   }
 
   private async poll(
@@ -173,7 +187,11 @@ export class RunGeneration {
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<Step> {
     const admission = await readAdmission(this.runs.store.db, context, step);
-    if (canRollback(admission) || admission.evidence === "ambiguous") {
+    if (
+      canRollback(admission) ||
+      admission.evidence === "ambiguous" ||
+      admission.evidence === "released-nondispatch"
+    ) {
       await this.paid.rollbackAdmission(context, step);
       return this.runs.store
         .scoped(context)
@@ -218,11 +236,7 @@ export class RunGeneration {
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
-        provider.assertKey?.();
-        const amount = provider.estimate(shot, budget.route === "FALLBACK");
-        if (!envelopeRoom(budget, amount))
-          throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
+        const { provider, amount } = this.priceShot(current, budget, ports, shot);
         const claimed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
           data: {
@@ -253,6 +267,27 @@ export class RunGeneration {
     );
     await this.runs.events?.publish(claim.event);
     return claim.value;
+  }
+  private priceShot(
+    current: Run,
+    budget: import("@reelforge/database").Prisma.BudgetEnvelopeGetPayload<object>,
+    ports: { primary: VideoGenPort; fallback: VideoGenPort },
+    shot: ReturnType<typeof ShotSpecSchema.parse>,
+  ): { provider: VideoGenPort; amount: number } {
+    const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
+    provider.assertKey?.();
+    const amount = provider.estimate(shot, budget.route === "FALLBACK");
+    if (
+      !envelopeRoom(
+        {
+          ...budget,
+          hardCapMinor: Math.min(budget.hardCapMinor, pinnedBudget(current).hardCapMinor),
+        },
+        amount,
+      )
+    )
+      throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
+    return { provider, amount };
   }
   private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
     const registry = new Map(
@@ -311,48 +346,20 @@ export class RunGeneration {
       step.providerJobId!,
       ShotSpecSchema.parse(step.input),
     );
-    if (meta && meta.costMinor > (step.costMinor ?? 0))
-      throw new ConflictException("RECONCILE_REQUIRED: provider billing exceeded reservation");
-    const result = await this.runs.store.mutate(
+    const output = this.completionOutput(step, artifact, meta);
+    const result = await recordShotReceipt(
+      this.runs.store,
+      this.paid,
       context,
-      step.runId,
-      "step_completed",
-      async (db, run, tx) => {
-        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        if (SETTLED_SHOTS.some((state) => state === current.state))
-          return { value: false, payload: { replay: true } };
-        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: step.runId } });
-        const reserved = step.costMinor ?? 0;
-        const cost = meta?.costMinor ?? reserved;
-        await this.paid.commitJob(tx, context, current, cost);
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: {
-            state: "SUCCEEDED",
-            costMinor: cost,
-            finishedAt: new Date(),
-            output: this.completionOutput(step, artifact, meta),
-          },
-        });
-        await db.budgetEnvelope.updateMany({
-          where: { id: budget.id },
-          data: {
-            reservedMinor: budget.reservedMinor - reserved,
-            spentMinor: budget.spentMinor + cost,
-            revision: budget.revision + 1,
-          },
-        });
-        await failSettledGeneration(db, run);
-        return {
-          value: true,
-          payload: { costMinor: cost, warn: budget.spentMinor + cost > 600 },
-          stepId: step.id,
-        };
-      },
+      step,
+      output,
+      meta?.costMinor,
     );
+    await this.runs.events?.publish(result.event);
+    if (result.event.type === "reconcile_required")
+      throw new ConflictException(billingHold(step.id));
     if (result.value) {
       this.recordSuccess(step, started);
     }
-    await this.runs.events?.publish(result.event);
   }
 }

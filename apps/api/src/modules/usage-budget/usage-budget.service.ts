@@ -55,6 +55,9 @@ import {
   parseUsageQuery,
 } from "./usage-budget.validation.js";
 
+import { budgetExposure } from "./usage-budget.exposure.js";
+import type { ChannelBrief } from "@reelforge/contracts";
+
 type Tx = Prisma.TransactionClient;
 type Client = Database | Tx;
 
@@ -385,6 +388,7 @@ export class UsageBudgetService {
     workspaceId: string,
     body: unknown,
     transaction?: Tx,
+    brief?: ChannelBrief["budgetPolicy"],
   ): Promise<ReserveResult> {
     const input = parseReserve(body);
     const channelId = input.channelId ?? null;
@@ -392,7 +396,6 @@ export class UsageBudgetService {
     if (channelId !== null) await this.channel(db, workspaceId, channelId);
     const existing = await this.findReservationByKey(db, workspaceId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
-    const now = this.clock();
     const reserve = async (tx: Tx): Promise<ReserveResult> => {
       const candidates = await this.applicableBudgets(tx, workspaceId, channelId);
       if (candidates.length === 0)
@@ -400,32 +403,12 @@ export class UsageBudgetService {
       await this.lockBudgets(tx, workspaceId, candidates);
       const raced = await this.findReservationByKey(tx, workspaceId, input.idempotencyKey);
       if (raced) return this.replay(raced, input);
+      const now = this.clock();
       await this.expireReservations(tx, now, workspaceId);
       // Re-read under the lock: a concurrent limit change must be seen.
       const budgets = await this.applicableBudgets(tx, workspaceId, channelId);
-      for (const budget of budgets) {
-        if (budget.currency !== input.currency)
-          throw new BudgetUnresolvableError(
-            "BUDGET_CURRENCY_MISMATCH",
-            `Reservation currency ${input.currency} does not match budget currency ${budget.currency}`,
-          );
-        const status = await this.budgetStatus(tx, budget, now);
-        if (status.unconvertedLedgerRows > 0)
-          throw new BudgetUnresolvableError(
-            "BUDGET_CURRENCY_MISMATCH",
-            "Spend in another currency exists in this budget's scope; it cannot be compared without FX",
-          );
-        for (const period of status.periods)
-          if (period.consumedMinor + input.amountMinor > period.limitMinor)
-            throw new BudgetExhaustedError({
-              budgetId: budget.id,
-              period: period.period,
-              limitMinor: period.limitMinor,
-              consumedMinor: period.consumedMinor,
-              requestedMinor: input.amountMinor,
-              currency: budget.currency,
-            });
-      }
+      for (const budget of this.admissionBudgets(budgets, brief))
+        await this.checkRoom(tx, budget, now, input);
       const created = await tx.usageReservation.create({
         data: {
           workspaceId,
@@ -462,6 +445,74 @@ export class UsageBudgetService {
         });
       return this.replay(winner, input);
     }
+  }
+
+  private admissionBudgets(
+    budgets: BudgetRecord[],
+    brief?: ChannelBrief["budgetPolicy"],
+  ): BudgetRecord[] {
+    if (!brief) return budgets;
+    const workspace = budgets.find((budget) => !budget.channelId);
+    const tighter = (configured: bigint | null, pinned: number): bigint =>
+      configured !== null && configured < BigInt(pinned) ? configured : BigInt(pinned);
+    const effective = {
+      ...(workspace ?? budgets[0]!),
+      channelId: null,
+      timezone: workspace?.timezone ?? "UTC",
+      dailyLimitMinor: tighter(workspace?.dailyLimitMinor ?? null, brief.dailyLimitMinor),
+      monthlyLimitMinor: tighter(workspace?.monthlyLimitMinor ?? null, brief.monthlyLimitMinor),
+    };
+    return [effective, ...budgets.filter((budget) => budget.channelId)];
+  }
+
+  private async checkRoom(
+    tx: Tx,
+    budget: BudgetRecord,
+    now: Date,
+    input: { currency: string; amountMinor: number },
+  ): Promise<void> {
+    if (budget.currency !== input.currency)
+      throw new BudgetUnresolvableError(
+        "BUDGET_CURRENCY_MISMATCH",
+        `Reservation currency ${input.currency} does not match budget currency ${budget.currency}`,
+      );
+    const status = await this.budgetStatus(tx, budget, now);
+    if (status.unconvertedLedgerRows > 0)
+      throw new BudgetUnresolvableError(
+        "BUDGET_CURRENCY_MISMATCH",
+        "Spend in another currency exists in this budget's scope; it cannot be compared without FX",
+      );
+    for (const period of status.periods)
+      if (period.consumedMinor + input.amountMinor > period.limitMinor)
+        throw new BudgetExhaustedError({
+          budgetId: budget.id,
+          period: period.period,
+          limitMinor: period.limitMinor,
+          consumedMinor: period.consumedMinor,
+          requestedMinor: input.amountMinor,
+          currency: budget.currency,
+        });
+  }
+
+  /** Serialize a known liability increase with competing admissions, including an expired claim. */
+  public async recordOverage(
+    tx: Tx,
+    workspaceId: string,
+    channelId: string,
+    reservationId: string,
+    cost: number,
+  ): Promise<void> {
+    const amount = parseActualMinor(cost);
+    await this.lockBudgets(
+      tx,
+      workspaceId,
+      await this.applicableBudgets(tx, workspaceId, channelId),
+    );
+    const raised = await tx.usageReservation.updateMany({
+      where: { workspaceId, id: reservationId, status: { in: ["RESERVED", "EXPIRED"] } },
+      data: { amountMinor: BigInt(amount) },
+    });
+    if (raised.count !== 1) throw new ConflictException("Billing reservation changed");
   }
 
   /** Commits the actual amount. Allowed from RESERVED or EXPIRED: real spend is never hidden. */
@@ -986,6 +1037,7 @@ export class UsageBudgetService {
     workspaceId: string,
     budgets: readonly BudgetRecord[],
   ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM workspaces WHERE id = ${workspaceId}::uuid FOR NO KEY UPDATE`;
     if (budgets.length === 0) return;
     const ids = budgets.map((budget) => budget.id).sort();
     await tx.$queryRaw`
@@ -1095,7 +1147,7 @@ export class UsageBudgetService {
     for (const [period, limit] of limits) {
       if (limit === null) continue;
       const bounds = periodBounds(now, period, timezone);
-      const consumption = await this.consumption(db, budget, bounds, now);
+      const consumption = await budgetExposure(db, budget, bounds, now);
       unconverted = Math.max(unconverted, consumption.unconverted);
       const remaining = limit - consumption.consumed;
       periods.push({
@@ -1122,69 +1174,6 @@ export class UsageBudgetService {
       periods,
       unconvertedLedgerRows: unconverted,
     };
-  }
-
-  /**
-   * consumed = M08 ledger spend (actual, else estimate for succeeded/pending calls) not covered by
-   * an M18 reservation + live reservations + committed reservations + debits - credits.
-   */
-  private async consumption(
-    db: Client,
-    budget: BudgetRecord,
-    bounds: PeriodBounds,
-    now: Date,
-  ): Promise<{ consumed: bigint; unconverted: number }> {
-    let consumed = 0n;
-    let unconverted = 0;
-    const rows = await this.ledger(db, {
-      workspaceId: budget.workspaceId,
-      now,
-      channelId: budget.channelId,
-      from: bounds.start,
-      to: bounds.end,
-    });
-    for (const row of rows) {
-      const cost = classifyCost(row);
-      // Failed-after-dispatch rows count at their estimate (B2); only UNKNOWN (no cost at all) and
-      // provably pre-dispatch rows are skipped.
-      if (cost.kind === "UNKNOWN" || cost.kind === "NOT_DISPATCHED") continue;
-      if (cost.currency !== budget.currency || cost.amountMinor === null) {
-        unconverted += 1;
-        continue;
-      }
-      consumed += cost.amountMinor;
-    }
-    const channelFilter =
-      budget.channelId === null
-        ? Prisma.empty
-        : Prisma.sql`AND "channel_id" = ${budget.channelId}::uuid`;
-    const [reservations] = await db.$queryRaw<Array<{ matched: string; other: string }>>`
-      SELECT
-        COALESCE(SUM(CASE WHEN "currency" = ${budget.currency} THEN "counted" END), 0)::text AS "matched",
-        COUNT(*) FILTER (WHERE "currency" <> ${budget.currency} AND "counted" > 0)::text AS "other"
-      FROM (
-        SELECT "currency",
-               CASE WHEN "status" = 'COMMITTED' THEN "committed_minor"
-                    WHEN "status" = 'RESERVED' AND "expires_at" > ${now} THEN "amount_minor"
-                    ELSE 0 END AS "counted"
-        FROM "usage_reservations"
-        WHERE "workspace_id" = ${budget.workspaceId}::uuid
-          AND "created_at" >= ${bounds.start} AND "created_at" < ${bounds.end}
-          ${channelFilter}
-      ) counted_reservations`;
-    const [adjustments] = await db.$queryRaw<Array<{ matched: string; other: string }>>`
-      SELECT
-        COALESCE(SUM(CASE WHEN "currency" = ${budget.currency}
-                          THEN CASE WHEN "kind" = 'DEBIT' THEN "amount_minor" ELSE -"amount_minor" END
-                     END), 0)::text AS "matched",
-        COUNT(*) FILTER (WHERE "currency" <> ${budget.currency})::text AS "other"
-      FROM "usage_adjustments"
-      WHERE "workspace_id" = ${budget.workspaceId}::uuid
-        AND "created_at" >= ${bounds.start} AND "created_at" < ${bounds.end}
-        ${channelFilter}`;
-    consumed += BigInt(reservations?.matched ?? "0") + BigInt(adjustments?.matched ?? "0");
-    unconverted += Number(reservations?.other ?? "0") + Number(adjustments?.other ?? "0");
-    return { consumed: consumed > 0n ? consumed : 0n, unconverted };
   }
 
   private reservationView(reservation: ReservationRecord): ReservationView {

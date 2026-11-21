@@ -1,3 +1,5 @@
+import type { Prisma } from "@reelforge/database";
+type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
 import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
@@ -6,8 +8,16 @@ import {
   BudgetExhaustedError,
   BudgetUnresolvableError,
 } from "../usage-budget/usage-budget.types.js";
-import { envelopeRoom } from "../usage-budget/run-envelope.js";
-import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
+import { assertCriticRevision } from "../usage-budget/critic-admission.js";
+import { envelopeRoom, assertRunCap } from "../usage-budget/run-envelope.js";
+import {
+  json,
+  type Context,
+  type Run,
+  type Scoped,
+  type Step,
+  type Transaction,
+} from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
 @Injectable()
 export class MediaAccounts {
@@ -25,7 +35,7 @@ export class MediaAccounts {
       context,
       run.id,
       "media_intent",
-      async (db, current) => {
+      async (db, current, tx) => {
         this.requireDispatchable(run, current);
         const previous = await db.videoRunStep.findFirst({
           where: { runId: run.id, key },
@@ -38,13 +48,9 @@ export class MediaAccounts {
             value: previous,
             payload: { replay: true },
           };
-        const steps = await db.videoRunStep.findMany({ where: { runId: run.id } });
-        const pending = steps
-          .filter((s) => !["SKIPPED", "CANCELLED"].includes(s.state))
-          .reduce((sum, s) => sum + (s.costMinor ?? 0), 0);
-        if (pending + cost > 800) throw new ConflictException("BUDGET_CAP");
-        const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
-        if (budget && !envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
+        if (previous) await this.verifyRetry(tx, context, previous);
+        await assertCriticRevision(db, tx, current, { key, input: { spec: input } });
+        const budget = await this.checkRoom(db, current, cost);
         const attempt = (previous?.attempt ?? 0) + 1;
         const step = await db.videoRunStep.create({
           data: {
@@ -72,6 +78,19 @@ export class MediaAccounts {
     this.assertNewIntent(result.event.payload, result.value);
 
     return result.value;
+  }
+  private async verifyRetry(tx: Transaction, context: Context, previous: Step): Promise<void> {
+    const admission = await readAdmission(tx, context, previous);
+    if (!canRollback(admission) && admission.evidence !== "released-nondispatch")
+      throw new ConflictException(
+        `RECONCILE_REQUIRED: conflicting closed attempt (${previous.id})`,
+      );
+  }
+  private async checkRoom(db: Scoped, current: Run, cost: number): Promise<BudgetEnvelope | null> {
+    await assertRunCap(db, current, cost);
+    const budget = await db.budgetEnvelope.findFirst({ where: { runId: current.id } });
+    if (budget && !envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
+    return budget;
   }
   private requireDispatchable(run: Run, current: Run): void {
     if (
@@ -163,6 +182,11 @@ export class MediaAccounts {
     const current = await this.access.runs.store.scoped(context).videoRunStep.findFirstOrThrow({
       where: { id: step.id },
     });
+    if (
+      current.state === "CANCELLED" &&
+      this.record(current.output).closedBy === "PROVIDER_NOT_DISPATCHED"
+    )
+      throw new ConflictException("MEDIA_NOT_DISPATCHED: provider rejected the original attempt");
     return this.abandoned(current) || (budgetDenied && current.state === "CANCELLED");
   }
 

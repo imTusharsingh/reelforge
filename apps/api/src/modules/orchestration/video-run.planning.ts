@@ -8,7 +8,7 @@ import {
 } from "@reelforge/contracts";
 import { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.js";
 
 @Injectable()
@@ -106,10 +106,17 @@ export class RunPlanning {
       ? records.map((row) => ShotSpecSchema.parse(row.document))
       : stubShots(run, this.brief(run));
     this.validateShots(run, shots);
-    const estimate = runEstimate(shots);
+    const { targetMinor, hardCapMinor } = pinnedBudget(run);
+    const estimate = runEstimate(shots, false, hardCapMinor);
     const result = await this.runs.store.mutate(context, run.id, "budget_estimated", async (db) => {
       await db.budgetEnvelope.create({
-        data: { workspaceId: context.workspaceId, runId: run.id, ...estimate },
+        data: {
+          workspaceId: context.workspaceId,
+          runId: run.id,
+          targetMinor,
+          hardCapMinor,
+          ...estimate,
+        },
       });
       for (const shot of shots)
         await db.videoRunStep.create({
@@ -126,7 +133,7 @@ export class RunPlanning {
         value: null,
         payload: {
           ...estimate,
-          warn: estimate.baseEstimateMinor + estimate.reshootReserveMinor > 600,
+          warn: estimate.baseEstimateMinor + estimate.reshootReserveMinor > targetMinor,
         },
       };
     });

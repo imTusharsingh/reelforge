@@ -211,18 +211,19 @@ export function classifyCost(
   row: Pick<LedgerRow, "status" | "errorCode" | "estimatedCost" | "actualCost" | "currency">,
 ): ClassifiedCost {
   const currency = row.currency !== null && isCurrencyCode(row.currency) ? row.currency : null;
+  if (
+    row.status === "FAILED" &&
+    (row.actualCost === null || new Prisma.Decimal(row.actualCost).isZero()) &&
+    row.errorCode !== null &&
+    PRE_DISPATCH_ERROR_CODES.includes(row.errorCode)
+  )
+    return { kind: "NOT_DISPATCHED", amountMinor: null, currency };
   if (row.actualCost !== null)
     return {
       kind: "ACTUAL",
       amountMinor: currency === null ? null : decimalToMinor(row.actualCost, currency),
       currency,
     };
-  if (
-    row.status === "FAILED" &&
-    row.errorCode !== null &&
-    PRE_DISPATCH_ERROR_CODES.includes(row.errorCode)
-  )
-    return { kind: "NOT_DISPATCHED", amountMinor: null, currency };
   if (row.errorCode === "OPERATOR_ABANDONED" || row.errorCode === "RUN_CANCELED")
     return { kind: "UNKNOWN", amountMinor: null, currency };
   if (row.estimatedCost === null) return { kind: "UNKNOWN", amountMinor: null, currency };

@@ -208,7 +208,7 @@ export class MediaPlanning {
           usage: z.record(z.string(), z.unknown()),
         })
         .safeParse(step.output);
-      if (!saved.success)
+      if (!saved.success || !step.providerJobId || saved.data.providerJobId !== step.providerJobId)
         throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
       return saved.data;
     }
