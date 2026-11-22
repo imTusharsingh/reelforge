@@ -147,12 +147,20 @@ async function adjustEnvelope(
   delta: { spentMinor: number; reservedMinor: number; overageMinor: number },
 ): Promise<void> {
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId } });
+  const spentMinor = budget.spentMinor + delta.spentMinor;
+  const reservedMinor = budget.reservedMinor + delta.reservedMinor;
+  // Preserve shot overruns and cover any shortfall after siblings reuse released funds.
+  // Admission still compares gross spent + reserved against the cap.
+  const overageMinor = Math.max(
+    budget.overageMinor + delta.overageMinor,
+    spentMinor + reservedMinor - budget.hardCapMinor,
+  );
   const updated = await db.budgetEnvelope.updateMany({
     where: { id: budget.id, revision: budget.revision },
     data: {
-      reservedMinor: budget.reservedMinor + delta.reservedMinor,
-      spentMinor: budget.spentMinor + delta.spentMinor,
-      overageMinor: budget.overageMinor + delta.overageMinor,
+      reservedMinor,
+      spentMinor,
+      overageMinor,
       revision: budget.revision + 1,
     },
   });
@@ -212,6 +220,20 @@ async function correctSettledReceipt(
   });
 }
 
+/** Identify the immutable manifest receipt. Its final price is the latest absolute cost for this job. */
+function correctionPayload(step: Step, receipt: VideoReceipt): Json {
+  return {
+    key: step.key,
+    providerId: step.providerId,
+    providerJobId: step.providerJobId,
+    costBasis: receipt.costBasis,
+    seconds: receipt.seconds,
+    previousCostMinor: step.costMinor,
+    costMinor: receipt.costMinor,
+    adjustmentMinor: receipt.costMinor - step.costMinor!,
+  };
+}
+
 /** Keep the highest reported charge and the latest staged media for the accepted job. */
 export async function captureShotReceipt(
   store: RunsStore,
@@ -260,9 +282,7 @@ export async function captureShotReceipt(
         });
       return {
         value: await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } }),
-        payload: settled
-          ? { costMinor: cost, adjustmentMinor: cost - current.costMinor! }
-          : { costMinor: cost, overage },
+        payload: settled ? correctionPayload(current, receipt) : { costMinor: cost, overage },
         stepId: step.id,
       };
     },

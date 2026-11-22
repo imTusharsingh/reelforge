@@ -122,7 +122,17 @@ describe("V5 landed router bridge", () => {
       fps: 24,
       billedSeconds: 8,
     });
-    await expect(bridge.collectReceipt("fixture-job", shot)).rejects.toThrow("invalid 720p video");
+    const record = vi.fn();
+    await expect(bridge.collectReceipt("fixture-job", shot, { shot, record })).rejects.toThrow(
+      "invalid 720p video",
+    );
+    expect(record).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        seconds: 8,
+        costBasis: "BILLED",
+        media: null,
+      }),
+    );
   });
 });
 

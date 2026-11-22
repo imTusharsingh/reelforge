@@ -7,6 +7,7 @@ import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
 import { ReferenceLibraryService } from "../reference-library/reference-library.service.js";
 import { screenPlanningContent } from "../script/planning-guardrails.js";
+import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { CriticPipeline } from "./critic.pipeline.js";
 import { CriticEvidence } from "./critic-evidence.js";
 
@@ -249,9 +250,7 @@ export class RunCritic {
       technical:
         result.details.rubric.captionSync >= 5 &&
         result.details.hardGates.every((gate) => gate.passed),
-      budget:
-        budget.spentMinor + budget.reservedMinor <=
-        Math.min(budget.hardCapMinor, budget.baseEstimateMinor + budget.reshootReserveMinor),
+      budget: envelopeRoom(budget, 0),
       permission: true,
       score: result.criticPassed,
     };

@@ -7,6 +7,7 @@ import {
   type AutonomyLevel,
   type RunAutonomyStatus,
 } from "@reelforge/contracts";
+import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Scoped, Json } from "../runs/runs.types.js";
 import { EMERGENCY_STOP_PORT, type EmergencyStopPort } from "../admin/emergency-stop.types.js";
@@ -99,7 +100,7 @@ export class AutonomyService {
     context: Context,
     decision: "APPROVE" | "REJECT",
     automatic: boolean,
-  ): Promise<{ value: null; payload: Json }> {
+  ): Promise<{ value: null; payload: Json; eventType?: string }> {
     const id = current.id;
     const previous = await db.runEvent.findFirst({
       where: { runId: id, type: { in: ["approved", "auto_approved", "human_rejected"] } },
@@ -120,14 +121,16 @@ export class AutonomyService {
       orderBy: { attempt: "desc" },
     });
     const report = criticReport(step?.output);
-    if (
-      decision === "APPROVE" &&
-      (!(automatic ? criticGatesPass(report) : humanGatesPass(report)) ||
-        current.pauseReason !== null)
-    )
-      throw new ConflictException("Approval requires all hard gates and no unresolved pause");
     if (automatic && (current.effectiveAutonomy !== "L3" || current.approvedShortsAtStart < 10))
       throw new ConflictException("L3 is unavailable");
+    if (decision === "APPROVE") {
+      const budget = await db.budgetEnvelope.findFirst({ where: { runId: id } });
+      const gatesPass = automatic ? criticGatesPass(report) : humanGatesPass(report);
+      if (!gatesPass || current.pauseReason !== null || !budget || !envelopeRoom(budget, 0)) {
+        if (automatic) return this.fallback(db, current);
+        throw new ConflictException("Approval requires all hard gates and no unresolved pause");
+      }
+    }
     await db.videoRun.updateMany({
       where: { id },
       data:
@@ -159,11 +162,21 @@ export class AutonomyService {
       await this.decide(context, run.id, "APPROVE", true);
       return;
     }
-    await this.store.mutate(context, run.id, "autonomy_fallback", async (db, current) => {
-      if (current.state !== "AWAITING_APPROVAL" || current.effectiveAutonomy !== "L3")
-        throw new ConflictException("Run changed");
-      await db.videoRun.updateMany({ where: { id: run.id }, data: { effectiveAutonomy: "L2" } });
-      return { value: null, payload: { reason: "GATE_FAILED", from: "L3", to: "L2" } };
-    });
+    await this.store.mutate(context, run.id, "autonomy_fallback", (db, current) =>
+      this.fallback(db, current),
+    );
+  }
+  private async fallback(
+    db: Scoped,
+    current: Run,
+  ): Promise<{ value: null; payload: Json; eventType: string }> {
+    if (current.state !== "AWAITING_APPROVAL" || current.effectiveAutonomy !== "L3")
+      throw new ConflictException("Run changed");
+    await db.videoRun.updateMany({ where: { id: current.id }, data: { effectiveAutonomy: "L2" } });
+    return {
+      value: null,
+      eventType: "autonomy_fallback",
+      payload: { reason: "GATE_FAILED", from: "L3", to: "L2" },
+    };
   }
 }

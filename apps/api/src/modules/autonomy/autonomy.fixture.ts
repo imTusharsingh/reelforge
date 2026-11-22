@@ -45,10 +45,10 @@ export function fixture(): {
         _ctx: Context,
         _id: string,
         type: string,
-        work: (scoped: Scoped, current: Run) => Promise<{ payload: Json }>,
+        work: (scoped: Scoped, current: Run) => Promise<{ payload: Json; eventType?: string }>,
       ) => {
         const result = await work(db as unknown as Scoped, run);
-        db.events.push({ type, payload: result.payload });
+        db.events.push({ type: result.eventType ?? type, payload: result.payload });
         return result;
       },
     ),
@@ -63,6 +63,7 @@ function fakeDb(run: Run): {
     findFirst: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
   };
+  budgetEnvelope: { findFirst: ReturnType<typeof vi.fn> };
   videoRun: { updateMany: ReturnType<typeof vi.fn> };
   videoRunStep: { findFirst: ReturnType<typeof vi.fn> };
 } {
@@ -77,6 +78,15 @@ function fakeDb(run: Run): {
           null,
       ),
       findMany: vi.fn(async () => events),
+    },
+    budgetEnvelope: {
+      findFirst: vi.fn(async () => ({
+        spentMinor: 70,
+        reservedMinor: 0,
+        hardCapMinor: 400,
+        baseEstimateMinor: 70,
+        reshootReserveMinor: 7,
+      })),
     },
     videoRun: {
       updateMany: vi.fn(async ({ data }: { data: Partial<Run> }) => {

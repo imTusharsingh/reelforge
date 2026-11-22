@@ -26,6 +26,14 @@ export function stubShots(run: Run, brief: ChannelBrief): ShotSpec[] {
   void brief;
   throw new Error("V4 shot list required before generation");
 }
+export class InvalidVideoFormat extends Error {
+  public constructor(
+    public readonly providerId: string,
+    public readonly providerJobId: string,
+  ) {
+    super("Provider returned invalid 720p video");
+  }
+}
 export interface VideoGenPort {
   readonly providerId: string;
   readonly modelId?: string;

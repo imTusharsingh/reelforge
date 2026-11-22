@@ -19,6 +19,8 @@ import {
   activeSubmissionHold,
   unsettledShots,
 } from "../runs/run-outcomes.js";
+import { transitionLocked } from "../runs/runs.store.js";
+import { InvalidVideoFormat } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -136,6 +138,8 @@ export class VideoRunEngine {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
       if (error instanceof SubmissionOutcomeUnknown) throw error;
+      if (error instanceof InvalidVideoFormat)
+        return this.invalidClip(context, run.id, stepId, error);
       const current = await this.runs.store.get(context, run.id);
       if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
         await this.hold(context, run, error.message);
@@ -143,6 +147,41 @@ export class VideoRunEngine {
         await this.runs.move(context, current, "PAUSED_BUDGET", generationPause(error));
       throw error;
     }
+  }
+  private async invalidClip(
+    context: Context,
+    runId: string,
+    stepId: string,
+    error: InvalidVideoFormat,
+  ): Promise<null> {
+    const result = await this.runs.store.mutate(
+      context,
+      runId,
+      "transition",
+      async (db, current) => {
+        const attempt = await db.videoRunStep.findFirst({
+          where: {
+            id: stepId,
+            runId,
+            providerId: error.providerId,
+            providerJobId: error.providerJobId,
+          },
+          select: { state: true },
+        });
+        if (attempt?.state === "SUCCEEDED")
+          return {
+            value: null,
+            eventType: "redundant_clip_discarded",
+            stepId,
+            payload: { replay: true },
+          };
+        if (!attempt || current.state !== "GENERATING" || current.pauseReason) throw error;
+        return transitionLocked(db, current, "PAUSED_BUDGET", generationPause(error));
+      },
+    );
+    await this.runs.events?.publish(result.event);
+    if (result.event.type === "transition") throw error;
+    return null;
   }
   private async advance(context: Context, run: Run): Promise<number | null> {
     if (run.state === "PLANNING") {

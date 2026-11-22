@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ModuleRef } from "@nestjs/core";
 import { AssemblyManifestSchema, type PlanningPromptReceipt } from "@reelforge/contracts";
 import { runsFixture, generating } from "../runs/runs.fixture.js";
@@ -11,6 +12,7 @@ import { RunOutputs } from "../orchestration/video-run.outputs.js";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
+import { captureShotReceipt } from "../usage-budget/run-billing.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { ProvidersRuntime } from "../openai/providers.runtime.js";
@@ -147,6 +149,28 @@ describe.skipIf(
       orderBy: { key: "asc" },
     });
     for (const step of steps) await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
+    const render = renderer.render.bind(renderer);
+    let renderedChecksum: string | undefined;
+    const rendering = vi.spyOn(renderer, "render").mockImplementationOnce(async (input) => {
+      const result = await render(input);
+      renderedChecksum = createHash("sha256").update(result.video).digest("hex");
+      const { receipt } = input.clips[0]!;
+      const late = {
+        costMinor: receipt.costMinor + 14,
+        costBasis: "BILLED" as const,
+        seconds: receipt.seconds + 2,
+        providerDurationSeconds: null,
+        media: null,
+        modelId: receipt.modelId,
+        promptVersion: receipt.promptVersion,
+      };
+      // Receipt collection has finished, but the assembly manifest is not yet persisted.
+      const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
+      await captureShotReceipt(t.store, paid, t.context, settled, late);
+      await captureShotReceipt(t.store, paid, t.context, settled, late);
+      return result;
+    });
+
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
     const artifacts = await assembly.artifacts(t.context, t.run);
@@ -162,6 +186,38 @@ describe.skipIf(
         ).toString(),
       ),
     );
+    const shotReceipt = manifest.receipts.find((receipt) => receipt.key === steps[0]!.key)!;
+    const corrections = await t.db.runEvent.findMany({
+      where: {
+        workspaceId: manifest.workspaceId,
+        runId: manifest.runId,
+        type: "provider_receipt",
+        AND: [
+          { payload: { path: ["key"], equals: shotReceipt.key } },
+          { payload: { path: ["providerId"], equals: shotReceipt.providerId } },
+          { payload: { path: ["providerJobId"], equals: shotReceipt.providerJobId } },
+        ],
+      },
+    });
+    expect(corrections).toHaveLength(1);
+    const correction = z
+      .object({
+        previousCostMinor: z.literal(shotReceipt.costMinor),
+        adjustmentMinor: z.literal(14),
+        costMinor: z.literal(shotReceipt.costMinor + 14),
+      })
+      .parse(corrections[0]!.payload);
+    const request = await t.db.providerRequest.findFirstOrThrow({
+      where: { workspaceId: manifest.workspaceId, correlationId: steps[0]!.id },
+    });
+    expect(request.actualCost?.mul(100).toNumber()).toBe(correction.costMinor);
+    const reconciledTotal = manifest.receipts.reduce(
+      (sum, item) => sum + (item === shotReceipt ? correction.costMinor : item.costMinor),
+      0,
+    );
+    expect(reconciledTotal).toBe(manifest.totalCostMinor + correction.adjustmentMinor);
+    expect(manifest.videoChecksumSha256).toBe(renderedChecksum);
+    expect(artifacts.find((a) => a.kind === "final")?.checksumSha256).toBe(renderedChecksum);
     expect(manifest.durationSeconds).toBe(30);
     expect(manifest.totalCostMinor).toBeLessThanOrEqual(800);
     expect(manifest.receipts.filter((receipt) => receipt.key.startsWith("shot-"))).toHaveLength(6);
@@ -181,5 +237,6 @@ describe.skipIf(
         (artifact) => artifact.checksumSha256,
       ),
     ).toEqual(artifacts.map((artifact) => artifact.checksumSha256));
+    expect(rendering).toHaveBeenCalledOnce();
   }, 180000);
 });
