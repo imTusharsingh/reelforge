@@ -56,6 +56,8 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
         workspaceId,
         name: "m18-channel",
         timezone,
+        // The report scheduler in the parallel notifications suite discovers active channels across tenants.
+        status: "PAUSED",
         ...(schedule === null ? {} : { schedule: schedule as Prisma.InputJsonValue }),
       },
     });
