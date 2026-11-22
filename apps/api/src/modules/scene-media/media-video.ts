@@ -16,6 +16,7 @@ import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
 import {
   InvalidVideoFormat,
+  ShotBillingFailure,
   ShotMediaFailure,
   type VideoGenPort,
   type VideoReceipt,
@@ -163,20 +164,24 @@ export class RoutedMediaVideo implements VideoGenPort {
     billedSeconds: number | null,
     media: T,
   ): VideoReceipt & { media: T } {
-    const seconds = billedSeconds ?? shot.durationSeconds;
-    const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
-    const images = shot.references.length + this.frameCount;
-    return {
-      media,
-      costBasis: billedSeconds === null ? "RESERVATION" : "BILLED",
-      seconds,
-      providerDurationSeconds: media?.durationSeconds ?? null,
-      costMinor: reservationCents({
-        ...cost,
-        microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
-      }),
-      modelId: this.native.capabilities().modelId,
-      promptVersion: "art-director:v2",
-    };
+    try {
+      const seconds = billedSeconds ?? shot.durationSeconds;
+      const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
+      const images = shot.references.length + this.frameCount;
+      return {
+        media,
+        costBasis: billedSeconds === null ? "RESERVATION" : "BILLED",
+        seconds,
+        providerDurationSeconds: media?.durationSeconds ?? null,
+        costMinor: reservationCents({
+          ...cost,
+          microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
+        }),
+        modelId: this.native.capabilities().modelId,
+        promptVersion: "art-director:v2",
+      };
+    } catch (cause) {
+      return ShotBillingFailure.rethrow(cause);
+    }
   }
 }

@@ -26,6 +26,11 @@ export function stubShots(run: Run, brief: ChannelBrief): ShotSpec[] {
   void brief;
   throw new Error("V4 shot list required before generation");
 }
+export class ShotBillingFailure extends Error {
+  public static rethrow(cause: unknown): never {
+    throw new ShotBillingFailure("Could not record shot billing", { cause });
+  }
+}
 export class ShotMediaFailure extends Error {
   public constructor(
     public readonly providerId: string,

@@ -11,6 +11,8 @@ import {
   type Context,
   type Run,
   type RunJob,
+  type Scoped,
+  type Transaction,
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
 import {
@@ -20,7 +22,7 @@ import {
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { transitionLocked } from "../runs/runs.store.js";
-import { InvalidVideoFormat, ShotMediaFailure } from "./video-run.handlers.js";
+import { InvalidVideoFormat, ShotBillingFailure, ShotMediaFailure } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -101,7 +103,7 @@ export class VideoRunEngine {
                 error instanceof Error &&
                 error.message.startsWith("RECONCILE_REQUIRED")
               )
-                await this.hold(context, run, error.message);
+                return this.handleFailure(context, run, error);
               throw error;
             }
           },
@@ -109,26 +111,23 @@ export class VideoRunEngine {
         ),
     );
   }
-  private async hold(context: Context, run: Run, reason: string): Promise<void> {
-    const result = await this.runs.store.mutate(
-      context,
-      run.id,
-      "reconcile_required",
-      async (db, current, tx) => {
-        if (current.state === run.state && current.pauseReason !== "EMERGENCY_STOP") {
-          const hold = await activeSubmissionHold(db, tx, {
-            ...current,
-            pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
-              ? current.pauseReason
-              : reason,
-          });
-          if (hold && current.pauseReason !== hold)
-            await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
-        }
-        return { value: null, payload: { reason } };
-      },
-    );
-    await this.runs.events?.publish(result.event);
+  private async holdLocked(
+    db: Scoped,
+    tx: Transaction,
+    run: Run,
+    current: Run,
+    reason: string,
+  ): Promise<void> {
+    if (current.state === run.state && current.pauseReason !== "EMERGENCY_STOP") {
+      const hold = await activeSubmissionHold(db, tx, {
+        ...current,
+        pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
+          ? current.pauseReason
+          : reason,
+      });
+      if (hold && current.pauseReason !== hold)
+        await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
+    }
   }
   private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
     if (run.state === "GENERATING" && !run.pauseReason) await this.boundary.check(context, run);
@@ -138,51 +137,59 @@ export class VideoRunEngine {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
       if (error instanceof SubmissionOutcomeUnknown) throw error;
-      if (error instanceof ShotMediaFailure)
-        return this.mediaFailure(context, run.id, stepId, error);
-      const current = await this.runs.store.get(context, run.id);
-      if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
-        await this.hold(context, run, error.message);
-      else if (current.state === "GENERATING" && !current.pauseReason)
-        await this.runs.move(context, current, "PAUSED_BUDGET", generationPause(error));
-      throw error;
+      return this.handleFailure(context, run, error, stepId);
     }
   }
-  private async mediaFailure(
+  private async handleFailure(
     context: Context,
-    runId: string,
-    stepId: string,
-    error: ShotMediaFailure,
+    run: Run,
+    error: unknown,
+    stepId?: string,
   ): Promise<null> {
-    const cause = error instanceof InvalidVideoFormat ? error : error.cause;
+    const media = error instanceof ShotMediaFailure ? error : undefined;
+    const cause =
+      error instanceof ShotBillingFailure ||
+      (error instanceof ShotMediaFailure && !(error instanceof InvalidVideoFormat))
+        ? error.cause
+        : error;
+    const hold = cause instanceof Error && cause.message.startsWith("RECONCILE_REQUIRED");
     const result = await this.runs.store.mutate(
       context,
-      runId,
-      "transition",
-      async (db, current) => {
-        const attempt = await db.videoRunStep.findFirst({
-          where: {
-            id: stepId,
-            runId,
-            providerId: error.providerId,
-            providerJobId: error.providerJobId,
-          },
-          select: { state: true },
-        });
-        if (attempt?.state === "SUCCEEDED")
-          return {
-            value: null,
-            eventType: "redundant_clip_discarded",
-            stepId,
-            payload: { replay: true, reason: generationPause(cause) },
-          };
-        if (!attempt || current.state !== "GENERATING" || current.pauseReason) throw cause;
+      run.id,
+      hold ? "reconcile_required" : "transition",
+      async (db, current, tx) => {
+        if (stepId && !(error instanceof ShotBillingFailure)) {
+          // A retry with a different accepted job has its own step ID.
+          const attempt = await db.videoRunStep.findFirst({
+            where: {
+              id: stepId,
+              runId: run.id,
+              key: { startsWith: "shot-" },
+              providerId: media?.providerId ?? { not: null },
+              providerJobId: media?.providerJobId ?? { not: null },
+            },
+            select: { state: true },
+          });
+          if (attempt?.state === "SUCCEEDED")
+            return {
+              value: null,
+              eventType: "redundant_clip_discarded",
+              stepId,
+              payload: { replay: true, reason: generationPause(cause) },
+            };
+          if (media && !attempt) throw cause;
+        }
+        if (hold) {
+          await this.holdLocked(db, tx, run, current, cause.message);
+          return { value: null, payload: { reason: cause.message } };
+        }
+        if (current.state !== "GENERATING" || current.pauseReason) throw cause;
         return transitionLocked(db, current, "PAUSED_BUDGET", generationPause(cause));
       },
     );
     await this.runs.events?.publish(result.event);
-    if (result.event.type === "transition") throw cause;
-    return null;
+    if (result.event.type === "redundant_clip_discarded") return null;
+    throw cause;
   }
   private async advance(context: Context, run: Run): Promise<number | null> {
     if (run.state === "PLANNING") {

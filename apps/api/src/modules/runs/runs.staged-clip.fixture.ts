@@ -7,7 +7,13 @@ import { expect, vi, type Mock } from "vitest";
 import { generating, type Tenant } from "./runs.fixture.js";
 import type { ProcessRunner } from "@reelforge/media";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { capabilityCatalog, Interactions, OmniVideo, ProviderHttp } from "@reelforge/ai-providers";
+import {
+  capabilityCatalog,
+  GrokVideo,
+  Interactions,
+  OmniVideo,
+  ProviderHttp,
+} from "@reelforge/ai-providers";
 import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
@@ -34,6 +40,23 @@ export function completed(seconds?: number, clip: string | { uri: string } = "cl
   });
 }
 
+export const clipUri = "https://storage.googleapis.com/fixture/late.mp4";
+const providers = {
+  gemini: {
+    queued: (id?: string): Response => Response.json({ status: "queued", id }),
+    completed,
+    jobUrl: "https://generativelanguage.googleapis.com/v1beta/interactions/accepted",
+    centsPerSecond: 7,
+  },
+  xai: {
+    queued: (id?: string): Response => Response.json({ status: "pending", request_id: id }),
+    completed: (seconds: number): Response =>
+      Response.json({ status: "done", video: { duration: seconds, url: clipUri } }),
+    jobUrl: "https://api.x.ai/v1/videos/accepted",
+    centsPerSecond: 14,
+  },
+};
+
 export async function eightSecondShot(t: Tenant, runId: string, ordinal: number): Promise<Step> {
   const shot = await t.db.videoRunStep.findFirstOrThrow({
     where: { runId, key: `shot-${ordinal}` },
@@ -47,6 +70,7 @@ export async function eightSecondShot(t: Tenant, runId: string, ordinal: number)
 export async function stagedClip(
   t: Tenant,
   limit = 70,
+  provider: keyof typeof providers = "gemini",
 ): Promise<{
   t: Tenant;
   run: Run;
@@ -54,7 +78,8 @@ export async function stagedClip(
   job: RunJob;
   fetcher: Mock<typeof fetch>;
   probe: { fps: number; exitCode: number };
-  native: OmniVideo;
+  native: OmniVideo | GrokVideo;
+  wire: (typeof providers)[keyof typeof providers];
 }> {
   const run = await generating(t);
   const shot = await eightSecondShot(t, run.id, 0);
@@ -64,9 +89,14 @@ export async function stagedClip(
     reason: "receipt test",
   });
 
+  const wire = providers[provider];
   const fetcher = vi
     .fn<typeof fetch>()
-    .mockResolvedValueOnce(Response.json({ status: "queued", id: "accepted" }));
+    .mockImplementation(async (url) => {
+      expect(url).toBe(clipUri);
+      return new Response("clip");
+    })
+    .mockResolvedValueOnce(wire.queued("accepted"));
   const probe = { fps: 24, exitCode: 0 };
   const staging = new ProviderArtifacts(t.storage, run.workspaceId, {
     run: async (): ReturnType<ProcessRunner["run"]> => ({
@@ -82,25 +112,28 @@ export async function stagedClip(
           }),
     }),
   });
-  const native = new OmniVideo(
-    new Interactions(new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher), staging),
-    capabilityCatalog(
-      run.workspaceId,
-      { video: "fixture", xaiVideo: "", image: "", music: "", text: "", tts: "" },
-      { gemini: true, xai: false },
-    )[0]!,
-    { resolve: async (): Promise<[]> => [] },
-  );
+  const capability = capabilityCatalog(
+    run.workspaceId,
+    { video: "fixture", xaiVideo: "fixture", image: "", music: "", text: "", tts: "" },
+    { gemini: provider === "gemini", xai: provider === "xai" },
+  ).find((row) => row.providerId === provider && row.kind === "VIDEO")!;
+  const refs = { resolve: async (): Promise<[]> => [] };
+  const key = (provider === "gemini" ? "AIza" : "xai-") + "aB1".repeat(12);
+  const http = new ProviderHttp(key, provider, fetcher);
+  const native =
+    provider === "gemini"
+      ? new OmniVideo(new Interactions(http, staging), capability, refs)
+      : new GrokVideo(http, staging, capability, refs);
+  if (provider === "xai") t.generation.fallbackProvider = t.generation.provider;
   const jobs = new MediaJobs({} as MediaAccess, {} as MediaAccounts, t.storage);
   t.generation.provider = new RoutedMediaVideo(native, jobs, t.context, run);
   vi.spyOn(native, "submit");
   vi.spyOn(native, "fetch");
   const job = t.runs.job(t.context, run.id, shot.id);
-  return { t, run, shot, job, fetcher, probe, native };
+  return { t, run, shot, job, fetcher, probe, native, wire };
 }
 
-export const clipUri = "https://storage.googleapis.com/fixture/late.mp4";
-export const clipFailures = [
+const deliveryFailures = [
   { kind: "empty body", message: "empty media body", pause: "GENERATION_FAILED" },
   { kind: "nonzero probe", message: "Provider media process failed", pause: "GENERATION_FAILED" },
   { kind: "wrong fps", message: "invalid 720p video", pause: "GENERATION_FAILED" },
@@ -109,10 +142,20 @@ export const clipFailures = [
   { kind: "storage error", message: "storage offline", pause: "GENERATION_FAILED" },
 ] as const;
 
+export const clipFailures = [
+  ...deliveryFailures.map((failure) => ({ ...failure, provider: "gemini" as const })),
+  ...(["gemini", "xai"] as const).map((provider) => ({
+    provider,
+    kind: "job GET 503" as const,
+    message: "Provider outage (HTTP 503)",
+    pause: "PROVIDER_OUTAGE",
+  })),
+];
+
 export const lateClipCases = [
-  { kind: "valid" as const, seconds: 12, pause: null },
-  ...clipFailures.flatMap(({ kind, pause }) =>
-    [10, 12].map((seconds) => ({ kind, seconds, pause })),
+  { provider: "gemini" as const, kind: "valid" as const, seconds: 12, pause: null },
+  ...clipFailures.flatMap(({ provider, kind, pause }) =>
+    [10, 12].map((seconds) => ({ provider, kind, seconds, pause })),
   ),
 ];
 
@@ -121,6 +164,7 @@ export function failingClip(
   kind: (typeof clipFailures)[number]["kind"],
   seconds: number,
 ): Response {
+  if (kind === "job GET 503") return new Response(null, { status: 503 });
   fetcher.mockImplementationOnce(async () => {
     if (kind === "download error") throw new TypeError("connection reset");
     if (kind === "download denied") return new Response(null, { status: 403 });
@@ -134,20 +178,21 @@ export function failingClip(
 }
 
 export async function recoverBeforeLateFetch(
-  { t, shot, job, fetcher }: Awaited<ReturnType<typeof stagedClip>>,
+  { t, shot, job, fetcher, wire }: Awaited<ReturnType<typeof stagedClip>>,
   recoveredSeconds: number,
   lateSeconds: number,
   beforeDelivery: () => Promise<void | Response>,
+  pollSeconds = recoveredSeconds,
 ): Promise<Step> {
   const started = Promise.withResolvers<void>();
   const lateFetch = Promise.withResolvers<Response>();
   fetcher
-    .mockResolvedValueOnce(completed(recoveredSeconds))
+    .mockResolvedValueOnce(wire.completed(pollSeconds))
     .mockImplementationOnce(() => {
       started.resolve();
       return lateFetch.promise;
     })
-    .mockResolvedValueOnce(completed(recoveredSeconds));
+    .mockResolvedValueOnce(wire.completed(recoveredSeconds));
   let response = completed(lateSeconds, "late clip");
   const original = t.engine.process(job);
   try {
@@ -157,16 +202,68 @@ export async function recoverBeforeLateFetch(
         throw new Error("Original worker finished before its fetch was gated");
       }),
     ]);
+    expect(fetcher).toHaveBeenLastCalledWith(
+      wire.jobUrl,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
+      state: "WAITING_EXTERNAL",
+      providerJobId: "accepted",
+      output: { receipt: { costBasis: "BILLED", seconds: pollSeconds } },
+    });
     await t.engine.process(job);
     const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(settled.state).toBe("SUCCEEDED");
     response = (await beforeDelivery()) ?? response;
     return settled;
   } finally {
-    // Native fetch records the price first, then the collector delivers the priced descriptor.
     lateFetch.resolve(response);
-    await expect(original).resolves.toBeNull();
+    expect(await original).toBeNull();
   }
+}
+
+export async function expectSettled(
+  { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
+  seconds: number,
+  envelope = {
+    spentMinor: seconds * wire.centsPerSecond,
+    reservedMinor: 0,
+    overageMinor: Math.max(0, seconds * wire.centsPerSecond - 8 * wire.centsPerSecond),
+  },
+): Promise<void> {
+  const where = { workspaceId: shot.workspaceId, correlationId: shot.id };
+  const cost = seconds * wire.centsPerSecond;
+  const requests = await t.db.providerRequest.findMany({ where });
+  expect(requests).toMatchObject([{ status: "SUCCEEDED", errorCode: null }]);
+  expect(requests[0]!.actualCost?.mul(100).toString()).toBe(String(cost));
+  expect(await t.db.usageReservation.findMany({ where })).toMatchObject([
+    { status: "COMMITTED", committedMinor: BigInt(cost) },
+  ]);
+  expect(
+    await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: shot.runId } }),
+  ).toMatchObject(envelope);
+  expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
+    state: "SUCCEEDED",
+    providerJobId: "accepted",
+    costMinor: cost,
+    output: { receipt: { costBasis: "BILLED", seconds, costMinor: cost } },
+  });
+}
+
+export async function admitSibling({
+  t,
+  run,
+  fetcher,
+  wire,
+}: Awaited<ReturnType<typeof stagedClip>>): Promise<void> {
+  const sibling = await eightSecondShot(t, run.id, 1);
+  fetcher.mockResolvedValueOnce(wire.queued("sibling")).mockResolvedValueOnce(wire.queued());
+  expect(await t.engine.process(t.runs.job(t.context, run.id, sibling.id))).toBe(12000);
+  expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({
+    state: "WAITING_EXTERNAL",
+    providerJobId: "sibling",
+    costMinor: 8 * wire.centsPerSecond,
+  });
 }
 
 export async function postEditorApproval(t: Tenant): Promise<request.Response> {

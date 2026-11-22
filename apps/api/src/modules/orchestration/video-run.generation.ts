@@ -24,6 +24,7 @@ import { pinnedBudget, envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
+  ShotBillingFailure,
   ShotMediaFailure,
   UnconfiguredVideoPort,
   type MediaPortResolver,
@@ -121,7 +122,9 @@ export class RunGeneration {
   }
 
   private async reconcileBilling(context: Context, step: Step): Promise<null> {
-    await reconcilePricedReceipt(this.runs.store, this.paid, context, step);
+    await reconcilePricedReceipt(this.runs.store, this.paid, context, step).catch(
+      ShotBillingFailure.rethrow,
+    );
     const run = await this.runs.store.get(context, step.runId);
     if (run.state === "GENERATING" && !run.pauseReason) await this.runs.enqueue(context, run);
     return null;
@@ -333,7 +336,9 @@ export class RunGeneration {
     return {
       shot: ShotSpecSchema.parse(step.input),
       record: async (receipt): Promise<void> => {
-        await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+        await captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
+          ShotBillingFailure.rethrow,
+        );
       },
     };
   }
@@ -348,7 +353,9 @@ export class RunGeneration {
     const billing = this.billing(context, step);
     if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
       const receipt = await port.collectReceipt(step.providerJobId!, billing.shot, billing);
-      step = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+      step = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
+        ShotBillingFailure.rethrow,
+      );
       if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
     }
     const body = await withSpan(
@@ -362,10 +369,16 @@ export class RunGeneration {
       .catch((cause: unknown) => {
         throw new ShotMediaFailure(port.providerId, step.providerJobId!, cause);
       });
-    const result = await recordShotArtifact(this.runs.store, this.paid, context, step, artifact);
+    const result = await recordShotArtifact(
+      this.runs.store,
+      this.paid,
+      context,
+      step,
+      artifact,
+    ).catch(ShotBillingFailure.rethrow);
     await this.runs.events?.publish(result.event);
     if (result.event.type === "reconcile_required") {
-      if (!recovering) throw new ConflictException(billingHold(step.id));
+      if (!recovering) ShotBillingFailure.rethrow(new ConflictException(billingHold(step.id)));
       await this.reconcileBilling(context, step);
     }
     if (result.value) {
