@@ -1,3 +1,4 @@
+import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { RunOutputs } from "./video-run.outputs.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import {
@@ -49,7 +50,10 @@ export class RunPlanning {
         await scoped.videoRunStep.updateMany({
           where: { id: step.id, runId: run.id },
           data: {
-            output: json({ result: output, storageArtifacts: artifacts }),
+            output:
+              run.state === "ASSEMBLING"
+                ? await assemblyStageOutput(scoped, run.id, output, artifacts)
+                : json({ result: output, storageArtifacts: artifacts }),
             state: waiting ? "WAITING_APPROVAL" : "SUCCEEDED",
             finishedAt: new Date(),
           },
@@ -156,7 +160,7 @@ export class RunPlanning {
           where: { id: step.id },
           data: {
             state: "SUCCEEDED",
-            output: json({ result: output, storageArtifacts: artifacts }),
+            output: await assemblyStageOutput(scoped, run.id, output, artifacts),
             finishedAt: new Date(),
           },
         });

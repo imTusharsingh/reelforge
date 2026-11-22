@@ -1,3 +1,4 @@
+import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import { pinnedBudget } from "./run-envelope.js";
@@ -31,6 +32,8 @@ import type { RunPaidCalls } from "./run-paid.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
   awaitingBilling,
+  correctionPayload,
+  requireReceiptAttempt,
   mergeShotReceipt,
   pendingShotMedia,
   pricedOutput,
@@ -180,7 +183,7 @@ async function correctSettledReceipt(
   step: Step,
   previous: number | undefined,
   cost: number,
-): Promise<ReceiptBudget> {
+): Promise<ReceiptBudget | undefined> {
   const claim = await readAdmission(tx, context, step);
   const reservation = receiptReservation(run, step, claim);
   const { request } = claim;
@@ -196,9 +199,9 @@ async function correctSettledReceipt(
     reserved < 0
   )
     throw new ConflictException("Stored receipt differs from settled payment");
-  const budget = readReceiptBudget(step.output, reserved, previous);
-  const previousBuffer = budget.bufferMinor;
-  if (previous === cost) return { ...budget, bufferMinor: previousBuffer };
+  const budget = readReceiptBudget(step.output);
+  const admitted = budget?.admittedMinor ?? reserved;
+  if (previous === cost) return budget;
   await paid.usage.coverShotReceipt(
     tx,
     run.workspaceId,
@@ -218,28 +221,13 @@ async function correctSettledReceipt(
     data: { actualCost: new Prisma.Decimal(cost).div(100) },
   });
   if (updated.count !== 1) throw new ConflictException("Settled billing claim changed");
-  const nextBuffer = Math.max(0, budget.admittedMinor - cost);
+  const nextBuffer = budget ? Math.max(0, admitted - cost) : 0;
   await adjustEnvelope(db, run.id, {
     spentMinor: cost - previous,
-    overageMinor:
-      Math.max(0, cost - budget.admittedMinor) - Math.max(0, previous - budget.admittedMinor),
-    reservedMinor: nextBuffer - previousBuffer,
+    overageMinor: Math.max(0, cost - admitted) - Math.max(0, previous - admitted),
+    reservedMinor: nextBuffer - (budget?.bufferMinor ?? 0),
   });
-  return { ...budget, bufferMinor: nextBuffer };
-}
-
-/** Identify the immutable manifest receipt. Its final price is the latest absolute cost for this job. */
-function correctionPayload(step: Step, receipt: VideoReceipt): Json {
-  return {
-    key: step.key,
-    providerId: step.providerId,
-    providerJobId: step.providerJobId,
-    costBasis: receipt.costBasis,
-    seconds: receipt.seconds,
-    previousCostMinor: step.costMinor,
-    costMinor: receipt.costMinor,
-    adjustmentMinor: receipt.costMinor - step.costMinor!,
-  };
+  return budget && { ...budget, bufferMinor: nextBuffer };
 }
 
 /** Keep the highest reported charge and the latest staged media for the accepted job. */
@@ -256,26 +244,27 @@ export async function captureShotReceipt(
     "provider_receipt",
     async (db, run, tx) => {
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      if (
-        current.providerJobId !== step.providerJobId ||
-        current.providerId !== step.providerId ||
-        !step.providerJobId
-      )
-        throw new ConflictException("Provider job claim changed");
+      requireReceiptAttempt(current, step);
       const settled = current.state === "SUCCEEDED";
-      if (!settled && current.state !== "WAITING_EXTERNAL")
-        throw new ConflictException("Provider job claim changed");
       const merged = mergeShotReceipt(current, receipt);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
       const overage = cost > (current.costMinor ?? 0);
       let updatedOutput = output;
-      if (settled)
-        updatedOutput = withReceiptBudget(
-          output,
-          await correctSettledReceipt(db, tx, paid, context, run, current, previousCost, cost),
+      if (settled) {
+        const budget = await correctSettledReceipt(
+          db,
+          tx,
+          paid,
+          context,
+          run,
+          current,
+          previousCost,
+          cost,
         );
-      else if (
+        if (budget) updatedOutput = withReceiptBudget(output, budget);
+        await invalidateAssemblyManifests(db, run.id);
+      } else if (
         priceChanged &&
         !(await savePricedRequest(tx, context, run, current, receipt, previousCost, paid))
       )
@@ -342,11 +331,11 @@ async function settleReceipt(
   output: Json,
 ): Promise<void> {
   const reserved = step.costMinor ?? 0;
-  const budget = readReceiptBudget(step.output, reserved, cost);
-  const bufferMinor = Math.max(0, budget.admittedMinor - cost);
+  const budget = readReceiptBudget(step.output);
+  const bufferMinor = budget ? Math.max(0, budget.admittedMinor - cost) : 0;
   await paid.commitJob(tx, context, step, cost);
   await adjustEnvelope(db, run.id, {
-    reservedMinor: -Math.min(reserved, cost),
+    reservedMinor: bufferMinor - reserved,
     spentMinor: cost,
     overageMinor: Math.max(0, cost - reserved),
   });
@@ -356,7 +345,7 @@ async function settleReceipt(
       state: "SUCCEEDED",
       costMinor: cost,
       finishedAt: new Date(),
-      output: withReceiptBudget(output, { ...budget, bufferMinor }),
+      output: budget ? withReceiptBudget(output, { ...budget, bufferMinor }) : output,
       error: Prisma.DbNull,
     },
   });
@@ -370,11 +359,11 @@ export async function recordShotArtifact(
   context: Context,
   step: Step,
   artifact: Artifact,
-): Promise<{ value: boolean; event: import("../runs/runs.types.js").Event }> {
+): Promise<{ value: number | null; event: import("../runs/runs.types.js").Event }> {
   return store.mutate(context, step.runId, "step_completed", async (db, run, tx) => {
     const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (SETTLED_SHOTS.some((state) => state === current.state))
-      return { value: false, payload: { replay: true } };
+      return { value: null, payload: { replay: true } };
     if (
       current.state !== "WAITING_EXTERNAL" ||
       current.providerJobId !== step.providerJobId ||
@@ -383,12 +372,11 @@ export async function recordShotArtifact(
       throw new ConflictException("Provider job claim changed");
     const reserved = current.costMinor ?? 0;
     const pending = pendingShotMedia(current);
-    if (awaitingBilling(current) && !pending) return { value: false, payload: { replay: true } };
-    const cost =
-      pending?.receipt.costMinor ??
-      readReceiptBudget(current.output, reserved, 0).estimateMinor ??
-      reserved;
+    if (awaitingBilling(current) && !pending) return { value: null, payload: { replay: true } };
+    const receiptBudget = readReceiptBudget(current.output);
+    const cost = pending?.receipt.costMinor ?? receiptBudget?.estimateMinor ?? reserved;
     const output = json({
+      ...(receiptBudget && { receiptBudget }),
       storageArtifacts: [artifact],
       ...(pending && {
         receipt: {
@@ -403,7 +391,7 @@ export async function recordShotArtifact(
     if (cost > reserved) {
       await db.videoRunStep.updateMany({ where: { id: step.id }, data: { output } });
       return {
-        value: false,
+        value: null,
         eventType: "reconcile_required",
         stepId: step.id,
         payload: { reason: billingHold(step.id), costMinor: cost },
@@ -412,7 +400,7 @@ export async function recordShotArtifact(
     await settleReceipt(db, tx, paid, context, run, current, cost, output);
     const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
     return {
-      value: true,
+      value: cost,
       stepId: step.id,
       payload: { costMinor: cost, warn: budget.spentMinor > pinnedBudget(run).targetMinor },
     };

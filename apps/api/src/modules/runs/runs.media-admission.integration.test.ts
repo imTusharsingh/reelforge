@@ -81,6 +81,34 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     },
   );
 
+  it("uses the original estimate for a failed accepted job with no reported price", async () => {
+    const t = await fixture.tenant();
+    const run = await generating(t);
+    const step = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "shot-0" },
+    });
+    vi.spyOn(t.generation.provider, "estimate").mockReturnValue(56);
+    vi.spyOn(t.generation.provider, "poll").mockResolvedValue("failed");
+    await t.engine.process(t.runs.job(t.context, run.id, step.id));
+    const where = { workspaceId: run.workspaceId, correlationId: step.id };
+    expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+      status: "COMMITTED",
+      amountMinor: 70n,
+      committedMinor: 56n,
+    });
+    expect(await t.db.providerRequest.findFirstOrThrow({ where })).toMatchObject({
+      status: "FAILED",
+      actualCost: null,
+    });
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } })).toMatchObject({
+      state: "FAILED",
+      costMinor: 56,
+    });
+    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
+      spentMinor: 56,
+      reservedMinor: 0,
+    });
+  });
   it("retains an 84-cent receipt on a 56-cent shot while its sibling attaches and settles", async () => {
     const t = await fixture.tenant();
     const run = await generating(t);

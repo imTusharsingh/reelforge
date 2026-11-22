@@ -163,6 +163,7 @@ export class RunsService {
     await this.events?.publish(event);
   }
   public async detail(context: Context, id: string): Promise<unknown> {
+    await this.artifacts.refreshManifests(context, id);
     const run = await this.store.get(context, id),
       db = this.store.scoped(context);
     const [steps, envelope] = await Promise.all([

@@ -1,3 +1,5 @@
+import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import { readReceiptBudget } from "./run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
 import { clipMoney, overheadCents } from "../scene-media/media-prices.js";
@@ -44,17 +46,8 @@ export async function assertRunCap(
     select: { state: true, costMinor: true, output: true },
   });
   const cumulative = claims.reduce((total, claim) => {
-    const receiptBudget = z
-      .object({ receiptBudget: z.object({ bufferMinor: z.number().int().nonnegative() }) })
-      .passthrough()
-      .safeParse(claim.output);
-    return (
-      total +
-      (claim.costMinor ?? 0) +
-      (claim.state === "SUCCEEDED" && receiptBudget.success
-        ? receiptBudget.data.receiptBudget.bufferMinor
-        : 0)
-    );
+    const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
+    return total + (claim.costMinor ?? 0) + (retained ?? 0);
   }, amount);
   if (cumulative > pinnedBudget(run).hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
@@ -124,4 +117,27 @@ export function envelopeRoom(
     envelope.spentMinor + envelope.reservedMinor + amount <=
     Math.min(envelope.hardCapMinor, envelope.baseEstimateMinor + envelope.reshootReserveMinor)
   );
+}
+
+export function priceShot(
+  current: Run,
+  budget: Parameters<typeof envelopeRoom>[0] & Pick<BudgetEnvelope, "route">,
+  ports: { primary: VideoGenPort; fallback: VideoGenPort },
+  shot: ShotSpec,
+): { provider: VideoGenPort; amount: number; estimate: number } {
+  const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
+  provider.assertKey?.();
+  const estimate = provider.estimate(shot, budget.route === "FALLBACK");
+  const amount = estimate + shotReceiptBufferMinor(estimate);
+  if (
+    !envelopeRoom(
+      {
+        ...budget,
+        hardCapMinor: Math.min(budget.hardCapMinor, pinnedBudget(current).hardCapMinor),
+      },
+      amount,
+    )
+  )
+    throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
+  return { provider, amount, estimate };
 }

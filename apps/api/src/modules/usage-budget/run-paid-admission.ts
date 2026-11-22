@@ -1,3 +1,4 @@
+import { readReceiptBudget } from "./run-shot-receipt.js";
 import {
   ADMISSION_ORDERING,
   type Admission,
@@ -95,6 +96,7 @@ async function releaseAdmission(
     data: shot
       ? {
           state: "PENDING",
+          output: Prisma.DbNull,
           costMinor: null,
           providerId: null,
           startedAt: null,
@@ -185,7 +187,15 @@ export async function closeReleasedMedia(db: Scoped, run: Run, step: Step): Prom
     where: { runId: run.id, id: { not: step.id }, state: { in: ["RUNNING", "WAITING_EXTERNAL"] } },
     _sum: { costMinor: true },
   });
-  const outstanding = Math.max(0, budget.reservedMinor - (siblings._sum.costMinor ?? 0));
+  const settled = await db.videoRunStep.findMany({
+    where: { runId: run.id, key: { startsWith: "shot-" }, state: "SUCCEEDED" },
+    select: { output: true },
+  });
+  const retained = settled.reduce(
+    (sum, shot) => sum + (readReceiptBudget(shot.output)?.bufferMinor ?? 0),
+    0,
+  );
+  const outstanding = Math.max(0, budget.reservedMinor - retained - (siblings._sum.costMinor ?? 0));
   const refund = Math.min(step.costMinor, outstanding);
   if (refund)
     await db.budgetEnvelope.updateMany({

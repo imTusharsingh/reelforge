@@ -30,6 +30,7 @@ describe("V3 budget estimates", () => {
       route: "FALLBACK",
     });
     expect(fallbackEstimate(envelope, [], 50).reshootReserveMinor).toBe(157);
+    expect(() => fallbackEstimate(envelope, shots, 110)).toThrow("Fallback exceeds the run cap");
     expect(() => fallbackEstimate({ ...envelope, spentMinor: 800 }, shots)).toThrow();
   });
   it("checks outstanding reservations and the envelope as well as the hard cap", () => {
@@ -49,12 +50,10 @@ describe("V3 budget estimates", () => {
   it("retains the shot estimate explicitly and preserves unmarked legacy admissions", () => {
     expect(shotReceiptBufferMinor(53)).toBe(14);
     expect(
-      readReceiptBudget(
-        { receiptBudget: { admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 } },
-        67,
-        0,
-      ),
+      readReceiptBudget({
+        receiptBudget: { admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 },
+      }),
     ).toMatchObject({ admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 });
-    expect(readReceiptBudget(null, 67, 0)).toMatchObject({ admittedMinor: 67, bufferMinor: 67 });
+    expect(readReceiptBudget(null)).toBeUndefined();
   });
 });

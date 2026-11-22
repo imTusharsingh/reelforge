@@ -1,3 +1,4 @@
+import { readReceiptBudget } from "./run-shot-receipt.js";
 import {
   canConfirmRejection,
   BILLING_OVERAGE,
@@ -224,24 +225,25 @@ export class RunPaidCalls {
           Boolean(current.providerJobId) !== dispatched
         )
           throw new ConflictException("Dispatch claim changed");
-        await this.settleFailedRequest(tx, context, step, message, dispatched);
+        const amount = current.costMinor ?? 0;
+        const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
+        await this.settleFailedRequest(tx, context, current, message, dispatched, cost);
         await db.videoRunStep.updateMany({
           where: { id: step.id },
           data: {
             state: "FAILED",
-            costMinor: dispatched ? current.costMinor : 0,
+            costMinor: cost,
             finishedAt: new Date(),
             error: { code: reason, message },
           },
         });
-        const amount = current.costMinor ?? 0;
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
         if (budget)
           await db.budgetEnvelope.updateMany({
             where: { id: budget.id },
             data: {
               reservedMinor: budget.reservedMinor - amount,
-              spentMinor: budget.spentMinor + (dispatched ? amount : 0),
+              spentMinor: budget.spentMinor + cost,
               revision: budget.revision + 1,
             },
           });
@@ -262,6 +264,7 @@ export class RunPaidCalls {
     step: Step,
     message: string,
     dispatched: boolean,
+    cost: number,
   ): Promise<void> {
     if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
       throw new ConflictException("Paid dispatch outcome changed");
@@ -284,8 +287,7 @@ export class RunPaidCalls {
     const reservation = await tx.usageReservation.findFirstOrThrow({
       where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
     });
-    if (dispatched)
-      await this.usage.commit(context.workspaceId, reservation.id, step.costMinor ?? 0, tx);
+    if (dispatched) await this.usage.commit(context.workspaceId, reservation.id, cost, tx);
     else await this.usage.release(context.workspaceId, reservation.id, code, tx);
   }
   public async commitJob(
@@ -330,6 +332,7 @@ export class RunPaidCalls {
       step,
       providerFailureMessage(failure.kind, failure.http),
       false,
+      0,
     );
   }
 

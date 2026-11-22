@@ -5,7 +5,7 @@ import { report } from "../autonomy/autonomy.fixture.js";
 import {
   admitSibling,
   expectBillingReconciliation,
-  expectSiblingBlockedByBuffer,
+  expectExpiredShotCoverage,
   expectSettled,
   clipFailures,
   lateClipCases,
@@ -18,7 +18,6 @@ import {
   postEditorApproval,
 } from "./runs.staged-clip.fixture.js";
 import { runsFixture } from "./runs.fixture.js";
-import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () => {
   const fixture = runsFixture();
@@ -164,18 +163,18 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     },
   );
 
-  it("ignores a billing callback failure after recovery settled the clip", async () => {
+  it("surfaces a billing callback failure after recovery settled the clip", async () => {
     const f = await stagedClip(await fixture.tenant(), 200);
     const error = new Error("charge correction failed");
     await expect(
       recoverBeforeLateFetch(f, 10, 12, async () => {
         vi.spyOn(f.t.usage, "coverShotReceipt").mockRejectedValueOnce(error);
       }),
-    ).resolves.toMatchObject({ state: "SUCCEEDED" });
+    ).rejects.toBe(error);
     await expectSettled(f, 10);
     expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
-      state: "GENERATING",
-      pauseReason: null,
+      state: "PAUSED_BUDGET",
+      pauseReason: "GENERATION_FAILED",
     });
   });
 
@@ -184,7 +183,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     const { t, run, shot, job, native } = f;
     const put = vi.spyOn(t.artifacts, "put");
     const where = { runId: run.id };
-    const overageMinor = shotReceiptBufferMinor(56);
+    const overageMinor = 84 - 70;
     await t.db.budgetEnvelope.updateMany({
       where,
       data: {
@@ -197,13 +196,10 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     });
     const settled = await recoverBeforeLateFetch(f, 6, 12, async () => {
       await expectSettled(f, 6, { spentMinor: 344, reservedMinor: 28, overageMinor: 0 }, 70);
-      const envelope = await t.db.budgetEnvelope.findFirstOrThrow({ where });
-      expect(envelope).toMatchObject({
-        spentMinor: 344,
-        reservedMinor: 28,
-        overageMinor: 0,
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: "GENERATING",
+        pauseReason: null,
       });
-      await expectSiblingBlockedByBuffer(f, envelope);
     });
     await t.engine.process(job);
     await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor }, 84);
@@ -224,6 +220,10 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
           "adjustmentMinor" in e.payload,
       ),
     ).toMatchObject([{ payload: { previousCostMinor: 42, adjustmentMinor: 42, costMinor: 84 } }]);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "GENERATING",
+      pauseReason: null,
+    });
     const next = await eightSecondShot(t, run.id, 1);
     await expect(t.engine.process(t.runs.job(t.context, run.id, next.id))).rejects.toThrow(
       "Envelope exhausted",
@@ -352,6 +352,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
           receipt: { costMinor: recordedSeconds * wire.centsPerSecond, seconds: recordedSeconds },
         },
       });
+      await expectExpiredShotCoverage(f, recordedSeconds);
       if (kind === "job GET 503")
         expect(fetcher).toHaveBeenLastCalledWith(
           wire.jobUrl,

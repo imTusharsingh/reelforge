@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import type { Artifact } from "../runs/runs.types.js";
 import { ModuleRef } from "@nestjs/core";
 import { AssemblyManifestSchema, type PlanningPromptReceipt } from "@reelforge/contracts";
 import { runsFixture, generating } from "../runs/runs.fixture.js";
@@ -150,74 +150,92 @@ describe.skipIf(
     });
     for (const step of steps) await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
     const render = renderer.render.bind(renderer);
-    let renderedChecksum: string | undefined;
     const rendering = vi.spyOn(renderer, "render").mockImplementationOnce(async (input) => {
       const result = await render(input);
-      renderedChecksum = createHash("sha256").update(result.video).digest("hex");
-      const { receipt } = input.clips[0]!;
-      const late = {
-        costMinor: receipt.costMinor + 14,
-        costBasis: "BILLED" as const,
-        seconds: receipt.seconds + 2,
-        providerDurationSeconds: null,
+      const receipt = input.clips[0]!.receipt;
+      const shot = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
+      await captureShotReceipt(t.store, paid, t.context, shot, {
+        ...receipt,
+        costBasis: "BILLED",
+        seconds: receipt.seconds + 1,
+        costMinor: receipt.costMinor + 7,
         media: null,
-        modelId: receipt.modelId,
-        promptVersion: receipt.promptVersion,
-      };
-      // Receipt collection has finished, but the assembly manifest is not yet persisted.
-      const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
-      await captureShotReceipt(t.store, paid, t.context, settled, late);
-      await captureShotReceipt(t.store, paid, t.context, settled, late);
+        providerDurationSeconds: null,
+      });
       return result;
     });
-
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
-    const artifacts = await assembly.artifacts(t.context, t.run);
-    expect(artifacts.map((artifact) => artifact.kind)).toContain("final");
-    const manifestArtifact = artifacts.find((artifact) => artifact.kind === "manifest")!;
-    const manifest = AssemblyManifestSchema.parse(
-      JSON.parse(
-        (
-          await t.storage.getObject({
-            workspaceId: t.context.workspaceId,
-            objectKey: manifestArtifact.objectKey,
-          })
-        ).toString(),
+    const original = await assembly.artifacts(t.context, t.run);
+    const read = async (
+      artifacts: Artifact[],
+    ): Promise<ReturnType<typeof AssemblyManifestSchema.parse>> => {
+      const descriptor = artifacts.find((a) => a.kind === "manifest")!;
+      const bytes = await t.storage.getObject({
+        workspaceId: t.context.workspaceId,
+        objectKey: descriptor.objectKey,
+      });
+      expect(bytes.length).toBe(descriptor.byteSize);
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(descriptor.checksumSha256);
+      return AssemblyManifestSchema.parse(JSON.parse(bytes.toString()));
+    };
+    const before = await read(original);
+    const receipt = before.receipts.find((item) => item.key === steps[0]!.key)!;
+    expect(receipt.costMinor).toBe(rendering.mock.calls[0]![0].clips[0]!.receipt.costMinor + 7);
+    const late = {
+      ...receipt,
+      costBasis: "BILLED" as const,
+      costMinor: receipt.costMinor + 14,
+      seconds: receipt.seconds + 2,
+      media: null,
+      providerDurationSeconds: null,
+    };
+    const shot = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
+    const put = vi.spyOn(t.artifacts, "put");
+    await captureShotReceipt(t.store, paid, t.context, shot, late);
+    await captureShotReceipt(t.store, paid, t.context, shot, late);
+    const pending = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "ASSEMBLING" },
+    });
+    expect(t.artifacts.descriptors(pending.output).some((a) => a.kind === "manifest")).toBe(false);
+    put.mockRejectedValueOnce(new Error("manifest storage offline"));
+    await expect(assembly.execute(t.context, t.run, t.brief)).rejects.toThrow(
+      "manifest storage offline",
+    );
+    const artifacts = await assembly.execute(t.context, t.run, t.brief);
+    const manifest = await read(artifacts);
+    const descriptor = artifacts.find((a) => a.kind === "manifest")!;
+    expect(descriptor.objectKey).not.toBe(original.find((a) => a.kind === "manifest")!.objectKey);
+    expect(manifest.receipts).toEqual(
+      before.receipts.map((item) =>
+        item === receipt
+          ? { ...item, costBasis: "BILLED", costMinor: late.costMinor, seconds: late.seconds }
+          : item,
       ),
     );
-    const shotReceipt = manifest.receipts.find((receipt) => receipt.key === steps[0]!.key)!;
-    const corrections = await t.db.runEvent.findMany({
-      where: {
-        workspaceId: manifest.workspaceId,
-        runId: manifest.runId,
-        type: "provider_receipt",
-        AND: [
-          { payload: { path: ["key"], equals: shotReceipt.key } },
-          { payload: { path: ["providerId"], equals: shotReceipt.providerId } },
-          { payload: { path: ["providerJobId"], equals: shotReceipt.providerJobId } },
-        ],
-      },
-    });
-    expect(corrections).toHaveLength(1);
-    const correction = z
-      .object({
-        previousCostMinor: z.literal(shotReceipt.costMinor),
-        adjustmentMinor: z.literal(14),
-        costMinor: z.literal(shotReceipt.costMinor + 14),
-      })
-      .parse(corrections[0]!.payload);
-    const request = await t.db.providerRequest.findFirstOrThrow({
-      where: { workspaceId: manifest.workspaceId, correlationId: steps[0]!.id },
-    });
-    expect(request.actualCost?.mul(100).toNumber()).toBe(correction.costMinor);
-    const reconciledTotal = manifest.receipts.reduce(
-      (sum, item) => sum + (item === shotReceipt ? correction.costMinor : item.costMinor),
-      0,
+    expect(manifest.totalCostMinor).toBe(before.totalCostMinor + 14);
+    expect(manifest.totalCostMinor).toBe(
+      manifest.receipts.reduce((sum, item) => sum + item.costMinor, 0),
     );
-    expect(reconciledTotal).toBe(manifest.totalCostMinor + correction.adjustmentMinor);
-    expect(manifest.videoChecksumSha256).toBe(renderedChecksum);
-    expect(artifacts.find((a) => a.kind === "final")?.checksumSha256).toBe(renderedChecksum);
+    const request = await t.db.providerRequest.findFirstOrThrow({
+      where: { workspaceId: t.context.workspaceId, correlationId: shot.id },
+    });
+    expect(request.actualCost?.mul(100).toNumber()).toBe(late.costMinor);
+    expect(artifacts.filter((a) => a.kind !== "manifest")).toEqual(
+      original.filter((a) => a.kind !== "manifest"),
+    );
+    expect(manifest.videoChecksumSha256).toBe(before.videoChecksumSha256);
+    expect(manifest.videoChecksumSha256).toBe(
+      artifacts.find((a) => a.kind === "final")!.checksumSha256,
+    );
+    const stage = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "ASSEMBLING" },
+    });
+    expect(stage.output).toMatchObject({
+      storageArtifacts: artifacts,
+      result: { storageArtifacts: artifacts },
+    });
+    expect(put.mock.calls.map(([, kind]) => kind)).toEqual(["manifest", "manifest"]);
     expect(manifest.durationSeconds).toBe(30);
     expect(manifest.totalCostMinor).toBeLessThanOrEqual(800);
     expect(manifest.receipts.filter((receipt) => receipt.key.startsWith("shot-"))).toHaveLength(6);

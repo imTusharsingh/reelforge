@@ -1,7 +1,16 @@
+import { z } from "zod";
+import { json, type Step } from "./runs.types.js";
 import { describe, expect, it, vi } from "vitest";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { generateClips, generating, runsFixture } from "./runs.fixture.js";
-import { expectSettled, recoverBeforeLateFetch, stagedClip } from "./runs.staged-clip.fixture.js";
+import {
+  admitSibling,
+  completed,
+  eightSecondShot,
+  expectSettled,
+  recoverBeforeLateFetch,
+  stagedClip,
+} from "./runs.staged-clip.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
 import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
@@ -30,16 +39,118 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();
   it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
     const f = await stagedClip(await fixture.tenant(), 200);
-    const p2028 = Object.assign(new Error("Transaction timeout"), { code: "P2028" });
-    const settled = recoverBeforeLateFetch(f, 10, 12, async () => {
-      const mutate = f.t.store.mutate.bind(f.t.store);
-      vi.spyOn(f.t.store, "mutate").mockImplementationOnce((context, id, type, work) =>
-        type === "step_completed" ? Promise.reject(p2028) : mutate(context, id, type, work),
-      );
+    const { t, run, shot, job, fetcher } = f;
+    fetcher.mockResolvedValueOnce(completed(10)).mockResolvedValueOnce(completed(10));
+    const written = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const put = t.artifacts.put.bind(t.artifacts);
+    vi.spyOn(t.artifacts, "put").mockImplementationOnce(async (...args) => {
+      const artifact = await put(...args);
+      written.resolve();
+      await release.promise;
+      return artifact;
     });
-    await expect(settled).resolves.toMatchObject({ state: "SUCCEEDED" });
-    await expectSettled(f, 12);
-    expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
+    const original = t.engine.process(job);
+    const saved = (): Promise<Step> =>
+      t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
+    await Promise.race([
+      written.promise,
+      original.then(() => {
+        throw new Error("Clip was not gated");
+      }),
+    ]);
+    const p2028 = Object.assign(new Error("Transaction timeout"), { code: "P2028" });
+    const failReplay = vi.fn(() => {
+      throw p2028;
+    });
+    let winner: Step;
+    try {
+      expect(await saved()).toMatchObject({
+        state: "WAITING_EXTERNAL",
+        output: { receipt: { costMinor: 70 } },
+      });
+      await t.engine.process(job);
+      winner = await saved();
+      expect(winner).toMatchObject({ state: "SUCCEEDED", finishedAt: expect.any(Date) });
+      const mutate = t.store.mutate.bind(t.store);
+      vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
+        mutate(context, id, type, async (db, current, tx) => {
+          const result = await work(db, current, tx);
+          if (type === "step_completed") {
+            expect(result.payload).toEqual({ replay: true });
+            failReplay();
+          }
+          return result;
+        }),
+      );
+    } finally {
+      release.resolve();
+      await expect(original).resolves.toBeNull();
+    }
+    expect(failReplay).toHaveBeenCalledOnce();
+    expect(await saved()).toEqual(winner);
+    await expectSettled(f, 10);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "GENERATING",
+      pauseReason: null,
+    });
+    await admitSibling(f);
+  });
+
+  it("denies an otherwise affordable sibling at the cap while the settled receipt buffer is held", async () => {
+    const f = await stagedClip(await fixture.tenant(), 400);
+    const { t, run, native } = f;
+    await t.db.budgetEnvelope.updateMany({
+      where: { runId: run.id },
+      data: {
+        targetMinor: 372,
+        hardCapMinor: 372,
+        baseEstimateMinor: 372,
+        reshootReserveMinor: 0,
+        spentMinor: 302,
+      },
+    });
+    await recoverBeforeLateFetch(f, 6, 12, async () => {
+      await expectSettled(f, 6, { spentMinor: 344, reservedMinor: 28, overageMinor: 0 }, 70);
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: "GENERATING",
+        pauseReason: null,
+      });
+      const sibling = await eightSecondShot(t, run.id, 1);
+      // 20 cents plus five cents of buffer would fit if the retained 28 cents leaked.
+      vi.spyOn(t.generation.provider, "estimate").mockReturnValueOnce(20);
+      await expect(t.engine.process(t.runs.job(t.context, run.id, sibling.id))).rejects.toThrow(
+        "Envelope exhausted",
+      );
+      expect(
+        await t.db.videoRunStep.findUniqueOrThrow({ where: { id: sibling.id } }),
+      ).toMatchObject({ state: "PENDING", providerJobId: null });
+      expect(await t.db.usageReservation.count({ where: { correlationId: sibling.id } })).toBe(0);
+    });
+    await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor: 14 }, 84);
+    expect(native.submit).toHaveBeenCalledOnce();
+  });
+
+  it("corrects a pre-buffer settlement without consuming another reservation's headroom", async () => {
+    const f = await stagedClip(await fixture.tenant(), 200);
+    const { t, run, shot } = f;
+    const where = { correlationId: shot.id, workspaceId: run.workspaceId };
+    await recoverBeforeLateFetch(f, 6, 12, async () => {
+      const saved = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
+      const old = z
+        .object({ receipt: z.json(), storageArtifacts: z.array(z.json()) })
+        .parse(saved.output);
+      await t.db.$transaction([
+        t.db.videoRunStep.update({ where: { id: shot.id }, data: { output: json(old) } }),
+        t.db.budgetEnvelope.updateMany({ where: { runId: run.id }, data: { reservedMinor: 0 } }),
+        t.db.providerRequest.updateMany({ where, data: { estimatedCost: 0.56 } }),
+        t.db.usageReservation.updateMany({ where, data: { amountMinor: 56n } }),
+      ]);
+      expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(42);
+      await admitSibling(f);
+    });
+    await expectSettled(f, 12, { spentMinor: 84, reservedMinor: 70, overageMinor: 28 }, 154);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "GENERATING",
       pauseReason: null,
     });

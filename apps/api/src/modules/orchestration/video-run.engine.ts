@@ -1,3 +1,4 @@
+import { recordedShotPrice } from "../usage-budget/run-shot-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -12,6 +13,7 @@ import {
   type Run,
   type RunJob,
   type Scoped,
+  type Step,
   type Transaction,
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
@@ -159,26 +161,16 @@ export class VideoRunEngine {
       run.id,
       hold ? "reconcile_required" : "transition",
       async (db, current, tx) => {
-        if (stepId && (await this.settledShot(db, run.id, stepId)))
-          return {
-            value: null,
-            eventType: "redundant_clip_discarded",
-            stepId,
-            payload: { replay: true, reason: generationPause(cause) },
-          };
-        if (stepId && !(error instanceof ShotBillingFailure)) {
-          // A retry with a different accepted job has its own step ID.
+        if (stepId) {
           const attempt = await db.videoRunStep.findFirst({
             where: {
               id: stepId,
               runId: run.id,
               key: { startsWith: "shot-" },
-              providerId: media?.providerId ?? { not: null },
-              providerJobId: media?.providerJobId ?? { not: null },
+              ...(media && { providerId: media.providerId, providerJobId: media.providerJobId }),
             },
-            select: { state: true },
           });
-          if (attempt?.state === "SUCCEEDED")
+          if (attempt && this.redundantFailure(attempt, error))
             return {
               value: null,
               eventType: "redundant_clip_discarded",
@@ -199,12 +191,20 @@ export class VideoRunEngine {
     if (result.event.type === "redundant_clip_discarded") return null;
     throw cause;
   }
-  private async settledShot(db: Scoped, runId: string, stepId: string): Promise<boolean> {
-    const shot = await db.videoRunStep.findFirst({
-      where: { id: stepId, runId, key: { startsWith: "shot-" } },
-      select: { state: true },
-    });
-    return !!shot && SETTLED_SHOTS.some((state) => state === shot.state);
+  private redundantFailure(step: Step, error: unknown): boolean {
+    if (error instanceof ShotBillingFailure) {
+      const report = error.report;
+      // A settled job can still owe a new charge. Only discard proven receipt replays.
+      return (
+        !!report &&
+        step.state === "SUCCEEDED" &&
+        report.providerId === step.providerId &&
+        report.jobId === step.providerJobId &&
+        recordedShotPrice(step, report.receipt)
+      );
+    }
+    if (error instanceof ShotMediaFailure) return step.state === "SUCCEEDED";
+    return SETTLED_SHOTS.some((state) => state === step.state);
   }
   private async advance(context: Context, run: Run): Promise<number | null> {
     if (run.state === "PLANNING") {

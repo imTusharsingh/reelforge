@@ -280,15 +280,18 @@ export async function admitSibling({
   });
 }
 
-export async function expectSiblingBlockedByBuffer(
-  { t, run }: Awaited<ReturnType<typeof stagedClip>>,
-  envelope: { spentMinor: number; reservedMinor: number; hardCapMinor: number },
+export async function expectExpiredShotCoverage(
+  { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
+  recordedSeconds: number,
 ): Promise<void> {
-  const sibling = await eightSecondShot(t, run.id, 1);
-  const estimate = t.generation.provider.estimate(ShotSpecSchema.parse(sibling.input), false);
   expect(
-    envelope.spentMinor + envelope.reservedMinor + estimate + shotReceiptBufferMinor(estimate),
-  ).toBeGreaterThan(envelope.hardCapMinor);
+    await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), shot.workspaceId),
+  ).toBe(1);
+  const admitted = 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond);
+  const charge = recordedSeconds * wire.centsPerSecond;
+  expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
+    Math.max(admitted, charge),
+  );
 }
 
 export function expectBillingReconciliation(

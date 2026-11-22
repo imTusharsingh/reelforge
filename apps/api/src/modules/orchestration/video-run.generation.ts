@@ -24,11 +24,7 @@ import {
   withReceiptBudget,
 } from "../usage-budget/run-shot-receipt.js";
 import { billingHold } from "../runs/run-outcomes.js";
-import {
-  pinnedBudget,
-  envelopeRoom,
-  shotReceiptBufferMinor,
-} from "../usage-budget/run-envelope.js";
+import { priceShot } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
@@ -38,6 +34,7 @@ import {
   type MediaPortResolver,
   type VideoGenPort,
   type ShotBilling,
+  type VideoReceipt,
 } from "./video-run.handlers.js";
 
 @Injectable()
@@ -131,7 +128,9 @@ export class RunGeneration {
 
   private async reconcileBilling(context: Context, step: Step): Promise<null> {
     await reconcilePricedReceipt(this.runs.store, this.paid, context, step).catch(
-      ShotBillingFailure.rethrow,
+      (cause: unknown) => {
+        throw new ShotMediaFailure(step.providerId!, step.providerJobId!, cause);
+      },
     );
     const run = await this.runs.store.get(context, step.runId);
     if (run.state === "GENERATING" && !run.pauseReason) await this.runs.enqueue(context, run);
@@ -268,7 +267,7 @@ export class RunGeneration {
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const { provider, amount, estimate } = this.priceShot(current, budget, ports, shot);
+        const { provider, amount, estimate } = priceShot(current, budget, ports, shot);
         const claimed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
           data: {
@@ -305,28 +304,6 @@ export class RunGeneration {
     await this.runs.events?.publish(claim.event);
     return claim.value;
   }
-  private priceShot(
-    current: Run,
-    budget: import("@reelforge/database").Prisma.BudgetEnvelopeGetPayload<object>,
-    ports: { primary: VideoGenPort; fallback: VideoGenPort },
-    shot: ReturnType<typeof ShotSpecSchema.parse>,
-  ): { provider: VideoGenPort; amount: number; estimate: number } {
-    const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
-    provider.assertKey?.();
-    const estimate = provider.estimate(shot, budget.route === "FALLBACK");
-    const amount = estimate + shotReceiptBufferMinor(estimate);
-    if (
-      !envelopeRoom(
-        {
-          ...budget,
-          hardCapMinor: Math.min(budget.hardCapMinor, pinnedBudget(current).hardCapMinor),
-        },
-        amount,
-      )
-    )
-      throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
-    return { provider, amount, estimate };
-  }
   private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
     const registry = new Map(
       [ports.primary, ports.fallback].map((port) => [port.providerId, port]),
@@ -335,24 +312,33 @@ export class RunGeneration {
     if (!port) throw new ConflictException("RECONCILE_REQUIRED: stored provider is unavailable");
     return port;
   }
-  private recordSuccess(step: Step, started: number): void {
+  private recordSuccess(cost: number, step: Step, started: number): void {
     metrics
       .counter("run_provider_results", "Provider outcomes")
       .inc({ provider: step.providerId ?? "unconfigured", status: "succeeded" });
     metrics
       .counter("run_provider_cost_minor", "Provider cost in cents")
-      .inc({ provider: step.providerId ?? "unconfigured" }, step.costMinor ?? 0);
+      .inc({ provider: step.providerId ?? "unconfigured" }, cost);
     metrics
       .histogram("run_provider_latency_ms", "Provider latency")
       .observe({ provider: step.providerId ?? "unconfigured" }, Date.now() - started);
+  }
+  private capture(context: Context, step: Step, receipt: VideoReceipt): Promise<Step> {
+    return captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
+      (cause: unknown) => {
+        throw new ShotBillingFailure(cause, {
+          providerId: step.providerId,
+          jobId: step.providerJobId,
+          receipt,
+        });
+      },
+    );
   }
   private billing(context: Context, step: Step): ShotBilling {
     return {
       shot: ShotSpecSchema.parse(step.input),
       record: async (receipt): Promise<void> => {
-        await captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
-          ShotBillingFailure.rethrow,
-        );
+        await this.capture(context, step, receipt);
       },
     };
   }
@@ -367,9 +353,7 @@ export class RunGeneration {
     const billing = this.billing(context, step);
     if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
       const receipt = await port.collectReceipt(step.providerJobId!, billing.shot, billing);
-      step = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
-        ShotBillingFailure.rethrow,
-      );
+      step = await this.capture(context, step, receipt);
       if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
     }
     const body = await withSpan(
@@ -389,14 +373,21 @@ export class RunGeneration {
       context,
       step,
       artifact,
-    ).catch(ShotBillingFailure.rethrow);
+    ).catch((cause: unknown) => {
+      throw new ShotMediaFailure(port.providerId, step.providerJobId!, cause);
+    });
     await this.runs.events?.publish(result.event);
     if (result.event.type === "reconcile_required") {
-      if (!recovering) ShotBillingFailure.rethrow(new ConflictException(billingHold(step.id)));
+      if (!recovering)
+        throw new ShotMediaFailure(
+          port.providerId,
+          step.providerJobId!,
+          new ConflictException(billingHold(step.id)),
+        );
       await this.reconcileBilling(context, step);
     }
-    if (result.value) {
-      this.recordSuccess(step, started);
+    if (result.value !== null) {
+      this.recordSuccess(result.value, step, started);
     }
   }
 }

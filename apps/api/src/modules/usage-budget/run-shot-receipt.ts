@@ -13,15 +13,9 @@ const ReceiptBudgetSchema = z.object({
 
 export type ReceiptBudget = z.infer<typeof ReceiptBudgetSchema>;
 
-export function readReceiptBudget(
-  output: Json | null,
-  fallbackMinor: number,
-  previousCost: number,
-): ReceiptBudget {
-  const parsed = z.object({ receiptBudget: ReceiptBudgetSchema }).passthrough().safeParse(output);
-  return parsed.success
-    ? parsed.data.receiptBudget
-    : { admittedMinor: fallbackMinor, bufferMinor: Math.max(0, fallbackMinor - previousCost) };
+export function readReceiptBudget(output: Json | null): ReceiptBudget | undefined {
+  if (!output || typeof output !== "object" || !("receiptBudget" in output)) return undefined;
+  return ReceiptBudgetSchema.parse(output.receiptBudget);
 }
 
 export function withReceiptBudget(output: Json, budget: ReceiptBudget): Json {
@@ -137,10 +131,44 @@ export function mergeShotReceipt(
       providerDurationSeconds: pendingMedia?.durationSeconds ?? null,
     },
   });
+  const budget = readReceiptBudget(step.output);
   return {
     priceChanged,
     previousCost: pending?.receipt.costMinor,
     cost: output.receipt.costMinor,
-    output: json(output),
+    output: budget ? withReceiptBudget(json(output), budget) : json(output),
   };
+}
+
+export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
+  return {
+    key: step.key,
+    providerId: step.providerId,
+    providerJobId: step.providerJobId,
+    costBasis: receipt.costBasis,
+    seconds: receipt.seconds,
+    previousCostMinor: step.costMinor,
+    costMinor: receipt.costMinor,
+    adjustmentMinor: receipt.costMinor - step.costMinor!,
+  };
+}
+
+export function requireReceiptAttempt(current: Step, observed: Step): void {
+  if (
+    !observed.providerJobId ||
+    current.providerJobId !== observed.providerJobId ||
+    current.providerId !== observed.providerId ||
+    !["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state)
+  )
+    throw new ConflictException("Provider job claim changed");
+}
+
+export function recordedShotPrice(step: Step, receipt: VideoReceipt): boolean {
+  const saved = pricedOutput.safeParse(step.output);
+  return (
+    saved.success &&
+    saved.data.receipt.providerJobId === step.providerJobId &&
+    saved.data.receipt.costMinor === step.costMinor &&
+    !replacesPrice(saved.data.receipt, receipt)
+  );
 }

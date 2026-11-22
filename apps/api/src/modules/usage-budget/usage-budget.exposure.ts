@@ -9,16 +9,13 @@ import type { PeriodBounds } from "./usage-budget.time.js";
 
 type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
 
-const committedShotExposure = Prisma.sql`CASE
-  WHEN status = 'COMMITTED' AND EXISTS (
-    SELECT FROM video_run_steps s
-     WHERE s.workspace_id = ur.workspace_id
-       AND s.id = ur.correlation_id
-       AND s."key" LIKE 'shot-%'
-  ) THEN GREATEST(committed_minor, amount_minor)
-  WHEN status = 'COMMITTED' THEN committed_minor
-  ELSE amount_minor
-END`;
+// Historical settlements released their entire reservation. Only an explicitly retained
+// buffer on the same paid attempt can contribute to current admission exposure.
+const coveredMinor = Prisma.sql`CASE
+  WHEN ur.status <> 'COMMITTED' THEN ur.amount_minor
+  WHEN s.state = 'SUCCEEDED' THEN ur.committed_minor + COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0)
+  WHEN s.state = 'WAITING_EXTERNAL' AND s.output ? 'receiptBudget' THEN GREATEST(ur.amount_minor, ur.committed_minor)
+  ELSE ur.committed_minor END`;
 
 /** Coverage, uncovered requests and adjustments must see the same MVCC snapshot. */
 export async function budgetExposure(
@@ -34,19 +31,17 @@ export async function budgetExposure(
     AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}`;
   const rows = await db.$queryRaw<(Price & { minor: string | null; entries: bigint })[]>(Prisma.sql`
     WITH coverage AS (
-      SELECT correlation_id, currency, created_at, channel_id,
-             ${committedShotExposure} AS minor
+      SELECT ur.correlation_id, ur.currency, ur.created_at, ur.channel_id, ${coveredMinor} AS minor
         FROM usage_reservations ur
-       WHERE workspace_id = ${budget.workspaceId}::uuid AND (
-         status = 'COMMITTED' OR (status = 'RESERVED' AND expires_at > ${now})
-         OR (status IN ('RESERVED', 'EXPIRED') AND EXISTS (
-           SELECT FROM video_run_steps s WHERE s.workspace_id = ur.workspace_id
-             AND s.id = ur.correlation_id AND ur.idempotency_key = 'm08:' || s.idempotency_key
-             AND s.state IN ('RUNNING','WAITING_EXTERNAL')
-         ) AND NOT EXISTS (
-           SELECT FROM provider_requests pr WHERE pr.workspace_id = ur.workspace_id
-             AND pr.correlation_id = ur.correlation_id
-         ))
+        LEFT JOIN video_run_steps s ON s.workspace_id = ur.workspace_id AND s.id = ur.correlation_id
+          AND ur.idempotency_key = 'm08:' || s.idempotency_key
+       WHERE ur.workspace_id = ${budget.workspaceId}::uuid AND (
+         ur.status = 'COMMITTED' OR (ur.status = 'RESERVED' AND ur.expires_at > ${now})
+         OR (ur.status IN ('RESERVED', 'EXPIRED') AND s.state IN ('RUNNING','WAITING_EXTERNAL')
+             AND ((s.state = 'WAITING_EXTERNAL' AND s.output ? 'receiptBudget') OR NOT EXISTS (
+               SELECT FROM provider_requests pr WHERE pr.workspace_id = ur.workspace_id
+                 AND pr.correlation_id = ur.correlation_id
+             )))
        )
     )
     SELECT currency, actual_cost::text AS "actualCost", estimated_cost::text AS "estimatedCost",
