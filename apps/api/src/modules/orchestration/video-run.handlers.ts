@@ -30,8 +30,9 @@ export class InvalidVideoFormat extends Error {
   public constructor(
     public readonly providerId: string,
     public readonly providerJobId: string,
+    cause?: Error,
   ) {
-    super("Provider returned invalid 720p video");
+    super(cause?.message ?? "Provider returned invalid 720p video", { cause });
   }
 }
 export interface VideoGenPort {

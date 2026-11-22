@@ -10,6 +10,7 @@ import {
   type VideoRoutingState,
   type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
+import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
 import {
   InvalidVideoFormat,
@@ -85,7 +86,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     return this.native.poll(id, this.recordBilling(billing));
   }
   public async fetch(id: string, saved?: ClipArtifact, billing?: ShotBilling): Promise<Buffer> {
-    const media = saved ?? (await this.native.fetch(id, this.recordBilling(billing)));
+    const media = saved ?? (await this.fetchMedia(id, billing));
     let body: Buffer;
     try {
       await this.validateFormat(id, media, saved ? undefined : billing);
@@ -109,6 +110,15 @@ export class RoutedMediaVideo implements VideoGenPort {
     if (!this.trim) throw new Error("Extension tail extraction is not configured");
     return this.trim(body, this.options.extension.previousSeconds);
   }
+  private async fetchMedia(id: string, billing?: ShotBilling): Promise<ClipArtifact> {
+    try {
+      return await this.native.fetch(id, this.recordBilling(billing));
+    } catch (error) {
+      if (error instanceof MediaValidationError)
+        throw new InvalidVideoFormat(this.providerId, id, error);
+      throw error;
+    }
+  }
   private async validateFormat(
     id: string,
     media: ClipArtifact,
@@ -131,7 +141,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     shot: ShotSpec,
     billing?: ShotBilling,
   ): Promise<VideoReceipt & { media: ClipArtifact }> {
-    const media = await this.native.fetch(id, this.recordBilling(billing));
+    const media = await this.fetchMedia(id, billing);
     await this.validateFormat(id, media, billing);
     return this.price(shot, media.billedSeconds, media);
   }

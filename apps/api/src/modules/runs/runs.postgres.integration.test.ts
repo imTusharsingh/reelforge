@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderFailure, ProviderHttp } from "@reelforge/ai-providers";
+import { report } from "../autonomy/autonomy.fixture.js";
 import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
@@ -24,6 +25,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     await expect(t.runs.create(t.context, randomUUID(), t.run.idempotencyKey)).rejects.toThrow();
     await generating(t);
     await generateClips(t);
+    vi.spyOn(t.planning.handlers.CRITIC!, "execute").mockResolvedValueOnce(report);
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
     const run = await t.store.get(t.context, t.run.id);
     expect(run.state).toBe("AWAITING_APPROVAL");

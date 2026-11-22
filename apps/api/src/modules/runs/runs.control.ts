@@ -1,3 +1,4 @@
+import { writeDecisionLocked } from "../autonomy/run-decision.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { createReshoot, replayedReshoot } from "./run-reshoot.js";
 import { RunsService } from "./runs.service.js";
@@ -38,15 +39,9 @@ export class RunsControl {
     const run = await this.runs.store.get(context, id);
     await this.boundary.check(context, run);
     if (run.state === "AWAITING_APPROVAL") {
-      // Scheduling/publishing is V9; record the approval and preserve the locked transition map.
-      const result = await this.runs.store.mutate(context, id, "approved", async (db, current) => {
-        if (current.state !== "AWAITING_APPROVAL") throw new ConflictException("Already approved");
-        await db.videoRun.updateMany({
-          where: { id },
-          data: { state: "SCHEDULED", pauseReason: null },
-        });
-        return { value: null, payload: { from: "AWAITING_APPROVAL", to: "SCHEDULED" } };
-      });
+      const result = await this.runs.store.mutate(context, id, "approved", (db, current) =>
+        writeDecisionLocked(db, current, context, "APPROVE", false),
+      );
       await this.runs.events?.publish(result.event);
     } else {
       if (run.effectiveAutonomy !== "L1") throw new ConflictException("No stage approval required");

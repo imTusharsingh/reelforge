@@ -1,4 +1,9 @@
-import { vi, type Mock } from "vitest";
+import { randomUUID } from "node:crypto";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { hashSessionToken } from "../identity/auth.crypto.js";
+import { RunsModule } from "./runs.module.js";
+import { expect, vi, type Mock } from "vitest";
 import { generating, type Tenant } from "./runs.fixture.js";
 import type { ProcessRunner } from "@reelforge/media";
 import { ShotSpecSchema } from "@reelforge/contracts";
@@ -44,7 +49,7 @@ export async function stagedClip(
   shot: Step;
   job: RunJob;
   fetcher: Mock<typeof fetch>;
-  probe: { fps: number };
+  probe: { fps: number; exitCode: number };
   native: OmniVideo;
 }> {
   const run = await generating(t);
@@ -58,17 +63,19 @@ export async function stagedClip(
   const fetcher = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json({ status: "queued", id: "accepted" }));
-  const probe = { fps: 24 };
+  const probe = { fps: 24, exitCode: 0 };
   const staging = new ProviderArtifacts(t.storage, run.workspaceId, {
     run: async (): ReturnType<ProcessRunner["run"]> => ({
-      exitCode: 0,
-      stderr: "",
-      stdout: JSON.stringify({
-        streams: [
-          { codec_type: "video", width: 720, height: 1280, r_frame_rate: `${probe.fps}/1` },
-        ],
-        format: { duration: "7" },
-      }),
+      exitCode: probe.exitCode,
+      stderr: probe.exitCode ? "moov atom not found" : "",
+      stdout: probe.exitCode
+        ? ""
+        : JSON.stringify({
+            streams: [
+              { codec_type: "video", width: 720, height: 1280, r_frame_rate: `${probe.fps}/1` },
+            ],
+            format: { duration: "7" },
+          }),
     }),
   });
   const native = new OmniVideo(
@@ -86,4 +93,66 @@ export async function stagedClip(
   vi.spyOn(native, "fetch");
   const job = t.runs.job(t.context, run.id, shot.id);
   return { t, run, shot, job, fetcher, probe, native };
+}
+
+export async function recoverBeforeLateFetch(
+  { t, shot, job, fetcher }: Awaited<ReturnType<typeof stagedClip>>,
+  recoveredSeconds: number,
+  lateSeconds: number,
+  beforeDelivery: () => Promise<void>,
+): Promise<Step> {
+  const started = Promise.withResolvers<void>();
+  const lateFetch = Promise.withResolvers<Response>();
+  fetcher
+    .mockResolvedValueOnce(completed(recoveredSeconds))
+    .mockImplementationOnce(() => {
+      started.resolve();
+      return lateFetch.promise;
+    })
+    .mockResolvedValueOnce(completed(recoveredSeconds));
+  const original = t.engine.process(job);
+  try {
+    await Promise.race([
+      started.promise,
+      original.then(() => {
+        throw new Error("Original worker finished before its fetch was gated");
+      }),
+    ]);
+    await t.engine.process(job);
+    const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
+    expect(settled.state).toBe("SUCCEEDED");
+    await beforeDelivery();
+    return settled;
+  } finally {
+    // Native fetch records the price first, then the collector delivers the priced descriptor.
+    lateFetch.resolve(completed(lateSeconds, "late clip"));
+    await expect(original).resolves.toBeNull();
+  }
+}
+
+export async function postEditorApproval(t: Tenant): Promise<request.Response> {
+  const { userId, workspaceId } = t.context;
+  await t.db.workspaceMembership.update({
+    where: { workspaceId_userId: { workspaceId, userId } },
+    data: { role: "EDITOR" },
+  });
+  const token = randomUUID();
+  await t.db.session.create({
+    data: { userId, tokenHash: hashSessionToken(token), expiresAt: new Date(Date.now() + 60_000) },
+  });
+  const module = await Test.createTestingModule({ imports: [RunsModule] })
+    .overrideProvider("DATABASE")
+    .useValue(t.db)
+    .compile();
+  const app = module.createNestApplication();
+  try {
+    app.setGlobalPrefix("api/v1");
+    await app.init();
+    return await request(app.getHttpServer())
+      .post(`/api/v1/runs/${t.run.id}/approve`)
+      .query({ workspaceId })
+      .set("Authorization", `Bearer ${token}`);
+  } finally {
+    await app.close();
+  }
 }
