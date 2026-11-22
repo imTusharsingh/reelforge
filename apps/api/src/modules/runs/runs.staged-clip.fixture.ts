@@ -276,7 +276,7 @@ export async function admitSibling({
   expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({
     state: "WAITING_EXTERNAL",
     providerJobId: "sibling",
-    costMinor: 8 * wire.centsPerSecond,
+    costMinor: 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond),
   });
 }
 
@@ -289,6 +289,15 @@ export async function expectSiblingBlockedByBuffer(
   expect(
     envelope.spentMinor + envelope.reservedMinor + estimate + shotReceiptBufferMinor(estimate),
   ).toBeGreaterThan(envelope.hardCapMinor);
+}
+
+export function expectBillingReconciliation(
+  events: readonly { type: string }[],
+  expected: boolean,
+): void {
+  expect(events.filter((event) => event.type === "billing_reconciled")).toHaveLength(
+    expected ? 1 : 0,
+  );
 }
 
 export async function postEditorApproval(t: Tenant): Promise<request.Response> {

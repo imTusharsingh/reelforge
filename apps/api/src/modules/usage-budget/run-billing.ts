@@ -342,7 +342,8 @@ async function settleReceipt(
   output: Json,
 ): Promise<void> {
   const reserved = step.costMinor ?? 0;
-  const bufferMinor = Math.max(0, reserved - cost);
+  const budget = readReceiptBudget(step.output, reserved, cost);
+  const bufferMinor = Math.max(0, budget.admittedMinor - cost);
   await paid.commitJob(tx, context, step, cost);
   await adjustEnvelope(db, run.id, {
     reservedMinor: -Math.min(reserved, cost),
@@ -355,7 +356,7 @@ async function settleReceipt(
       state: "SUCCEEDED",
       costMinor: cost,
       finishedAt: new Date(),
-      output: withReceiptBudget(output, { admittedMinor: reserved, bufferMinor }),
+      output: withReceiptBudget(output, { ...budget, bufferMinor }),
       error: Prisma.DbNull,
     },
   });
@@ -383,7 +384,10 @@ export async function recordShotArtifact(
     const reserved = current.costMinor ?? 0;
     const pending = pendingShotMedia(current);
     if (awaitingBilling(current) && !pending) return { value: false, payload: { replay: true } };
-    const cost = pending?.receipt.costMinor ?? reserved;
+    const cost =
+      pending?.receipt.costMinor ??
+      readReceiptBudget(current.output, reserved, 0).estimateMinor ??
+      reserved;
     const output = json({
       storageArtifacts: [artifact],
       ...(pending && {

@@ -8,6 +8,7 @@ import { isBillingHold } from "./run-admission-state.js";
 const ReceiptBudgetSchema = z.object({
   admittedMinor: z.number().int().nonnegative(),
   bufferMinor: z.number().int().nonnegative(),
+  estimateMinor: z.number().int().nonnegative().optional(),
 });
 
 export type ReceiptBudget = z.infer<typeof ReceiptBudgetSchema>;

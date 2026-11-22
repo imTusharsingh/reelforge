@@ -10,7 +10,7 @@ import { withSpan, metrics } from "@reelforge/observability";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { type Context, type Run, type Step } from "../runs/runs.types.js";
+import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
 import {
@@ -18,7 +18,11 @@ import {
   recordShotArtifact,
   captureShotReceipt,
 } from "../usage-budget/run-billing.js";
-import { awaitingBilling, pendingShotMedia } from "../usage-budget/run-shot-receipt.js";
+import {
+  awaitingBilling,
+  pendingShotMedia,
+  withReceiptBudget,
+} from "../usage-budget/run-shot-receipt.js";
 import { billingHold } from "../runs/run-outcomes.js";
 import {
   pinnedBudget,
@@ -264,7 +268,7 @@ export class RunGeneration {
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const { provider, amount } = this.priceShot(current, budget, ports, shot);
+        const { provider, amount, estimate } = this.priceShot(current, budget, ports, shot);
         const claimed = await db.videoRunStep.updateMany({
           where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
           data: {
@@ -272,6 +276,11 @@ export class RunGeneration {
             startedAt: new Date(),
             costMinor: amount,
             providerId: provider.providerId,
+            output: withReceiptBudget(json({}), {
+              admittedMinor: amount,
+              bufferMinor: amount - estimate,
+              estimateMinor: estimate,
+            }),
           },
         });
         if (!claimed.count) throw new ConflictException("Step already claimed");
@@ -301,7 +310,7 @@ export class RunGeneration {
     budget: import("@reelforge/database").Prisma.BudgetEnvelopeGetPayload<object>,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
     shot: ReturnType<typeof ShotSpecSchema.parse>,
-  ): { provider: VideoGenPort; amount: number } {
+  ): { provider: VideoGenPort; amount: number; estimate: number } {
     const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
     provider.assertKey?.();
     const estimate = provider.estimate(shot, budget.route === "FALLBACK");
@@ -316,7 +325,7 @@ export class RunGeneration {
       )
     )
       throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
-    return { provider, amount };
+    return { provider, amount, estimate };
   }
   private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
     const registry = new Map(

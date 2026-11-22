@@ -31,7 +31,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(run.state).toBe("AWAITING_APPROVAL");
     expect(submit).toHaveBeenCalledTimes(6);
     const detail = await t.runs.detail(t.context, run.id);
-    expect(detail).toMatchObject({ envelope: { reservedMinor: 0, spentMinor: 318 } });
+    expect(detail).toMatchObject({ envelope: { reservedMinor: 84, spentMinor: 318 } });
     await t.control.approve(t.context, run.id);
     expect((await t.store.get(t.context, run.id)).state).toBe("SCHEDULED");
     await expect(t.control.approve(t.context, run.id)).rejects.toThrow();
@@ -92,7 +92,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(VIDEO_RUN_TRANSITIONS.PLANNING).toContain("CANCELED");
   });
   it("re-estimates a midrun predispatch outage at fallback rates", async () => {
-    const t = await fixture.tenant();
+    const t = await fixture.tenant("L2", 30);
     await generating(t);
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
@@ -113,7 +113,8 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       .scoped(t.context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
     expect(finished.spentMinor).toBeLessThanOrEqual(800);
-    expect(finished.reservedMinor).toBe(0);
+    expect(finished.reservedMinor).toBeGreaterThan(0);
+    expect(finished.spentMinor + finished.reservedMinor).toBeLessThanOrEqual(800);
   });
   it("pauses before an over-envelope reshoot and enforces emergency stop", async () => {
     const t = await fixture.tenant();
@@ -289,7 +290,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       {
         idempotencyKey: `m08:${step.idempotencyKey}`,
         status: "RELEASED",
-        amountMinor: BigInt(estimate),
+        amountMinor: BigInt(estimate + Math.ceil(estimate / 4)),
         committedMinor: null,
         releaseReason: "NOT_DISPATCHED",
       },

@@ -4,6 +4,7 @@ import { AutonomyService } from "../autonomy/autonomy.service.js";
 import { report } from "../autonomy/autonomy.fixture.js";
 import {
   admitSibling,
+  expectBillingReconciliation,
   expectSiblingBlockedByBuffer,
   expectSettled,
   clipFailures,
@@ -93,7 +94,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
         await t.db.runEvent.count({
           where: { runId: run.id, stepId: shot.id, type: "billing_reconciled" },
         }),
-      ).toBe(1);
+      ).toBe(0);
     },
   );
 
@@ -123,7 +124,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
         t.artifacts.descriptors(settled.output),
       );
       const events = await t.db.runEvent.findMany({ where: { runId: run.id, stepId: shot.id } });
-      expect(events.filter((e) => e.type === "billing_reconciled")).toHaveLength(1);
+      expectBillingReconciliation(events, kind === "job GET 503" && seconds > 10);
       const adjustments = events.filter(
         (e) =>
           e.type === "provider_receipt" &&
@@ -183,7 +184,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     const { t, run, shot, job, native } = f;
     const put = vi.spyOn(t.artifacts, "put");
     const where = { runId: run.id };
-    const receiptBuffer = shotReceiptBufferMinor(56);
+    const overageMinor = shotReceiptBufferMinor(56);
     await t.db.budgetEnvelope.updateMany({
       where,
       data: {
@@ -205,9 +206,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       await expectSiblingBlockedByBuffer(f, envelope);
     });
     await t.engine.process(job);
-    await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor: 14 }, 84);
-    const finalEnvelope = await t.db.budgetEnvelope.findFirstOrThrow({ where });
-    expect(finalEnvelope.overageMinor).toBeLessThanOrEqual(receiptBuffer);
+    await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor }, 84);
     expect(put).toHaveBeenCalledOnce();
     const corrected = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(corrected.finishedAt).toEqual(settled.finishedAt);

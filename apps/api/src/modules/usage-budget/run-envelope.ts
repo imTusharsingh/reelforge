@@ -41,7 +41,7 @@ export async function assertRunCap(
       state: { notIn: ["SKIPPED", "CANCELLED"] },
       ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
     },
-    select: { costMinor: true, output: true },
+    select: { state: true, costMinor: true, output: true },
   });
   const cumulative = claims.reduce((total, claim) => {
     const receiptBudget = z
@@ -51,7 +51,9 @@ export async function assertRunCap(
     return (
       total +
       (claim.costMinor ?? 0) +
-      (receiptBudget.success ? receiptBudget.data.receiptBudget.bufferMinor : 0)
+      (claim.state === "SUCCEEDED" && receiptBudget.success
+        ? receiptBudget.data.receiptBudget.bufferMinor
+        : 0)
     );
   }, amount);
   if (cumulative > pinnedBudget(run).hardCapMinor)
@@ -95,11 +97,13 @@ export function fallbackEstimate(
   overheadRemaining = 0,
   hardCapMinor = 800,
 ): Estimate {
+  const clips = clipEstimate(remaining, true);
+  const buffer = remaining.reduce(
+    (sum, shot) => sum + shotReceiptBufferMinor(reservationCents(clipMoney(shot, true))),
+    0,
+  );
   const baseEstimateMinor =
-    envelope.spentMinor +
-    envelope.reservedMinor +
-    clipEstimate(remaining, true) +
-    overheadRemaining;
+    envelope.spentMinor + envelope.reservedMinor + clips + buffer + overheadRemaining;
   if (baseEstimateMinor > hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "Fallback exceeds the run cap" });
   const reserve =

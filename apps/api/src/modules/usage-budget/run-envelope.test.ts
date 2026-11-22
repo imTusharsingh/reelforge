@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { clipEstimate, envelopeRoom, fallbackEstimate, runEstimate } from "./run-envelope.js";
+import {
+  clipEstimate,
+  envelopeRoom,
+  fallbackEstimate,
+  runEstimate,
+  shotReceiptBufferMinor,
+} from "./run-envelope.js";
+import { readReceiptBudget } from "./run-shot-receipt.js";
 
 describe("V3 budget estimates", () => {
   const shots = Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 }));
@@ -17,8 +24,8 @@ describe("V3 budget estimates", () => {
   });
   it("drops fallback reserve when necessary and rejects unaffordable remaining work", () => {
     const envelope = { spentMinor: 0, reservedMinor: 0, reshootReserveMinor: 157 };
-    expect(fallbackEstimate(envelope, shots, 110)).toEqual({
-      baseEstimateMinor: 746,
+    expect(fallbackEstimate(envelope, shots.slice(0, 5), 110)).toEqual({
+      baseEstimateMinor: 775,
       reshootReserveMinor: 0,
       route: "FALLBACK",
     });
@@ -38,5 +45,16 @@ describe("V3 budget estimates", () => {
     expect(envelopeRoom({ ...budget, baseEstimateMinor: 800 }, 251)).toBe(false);
     expect(() => envelopeRoom(budget, -1)).toThrow();
     expect(() => envelopeRoom(budget, 0.5)).toThrow();
+  });
+  it("retains the shot estimate explicitly and preserves unmarked legacy admissions", () => {
+    expect(shotReceiptBufferMinor(53)).toBe(14);
+    expect(
+      readReceiptBudget(
+        { receiptBudget: { admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 } },
+        67,
+        0,
+      ),
+    ).toMatchObject({ admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 });
+    expect(readReceiptBudget(null, 67, 0)).toMatchObject({ admittedMinor: 67, bufferMinor: 67 });
   });
 });

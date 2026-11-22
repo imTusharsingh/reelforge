@@ -112,12 +112,12 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       cut === "artifact write" || cut === "native storage" ? "storage offline" : "billing exceeded",
     );
     const request = await t.db.providerRequest.findFirstOrThrow({ where });
-    expect(request.actualCost?.toNumber()).toBe(0.84);
+    expect(request.actualCost?.toNumber()).toBe(cut === "native storage" ? 0.7 : 0.84);
     expect(request.estimatedCost?.toNumber()).toBe(0.7);
     expect(request).toMatchObject({
       currency: "USD",
       createdAt: reservation.createdAt,
-      errorCode: "VIDEO_RUN_BILLING_OVERAGE",
+      errorCode: cut === "native storage" ? null : "VIDEO_RUN_BILLING_OVERAGE",
     });
     const compete = (): ReturnType<typeof t.usage.reserve> =>
       t.usage.reserve(run.workspaceId, {
@@ -208,7 +208,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 0,
-      reservedMinor: 56,
+      reservedMinor: 70,
     });
     await t.engine.process(job);
     await t.engine.process(job);
