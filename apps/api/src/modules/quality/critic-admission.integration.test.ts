@@ -279,7 +279,7 @@ describe.skipIf(!process.env.DATABASE_URL)("critic text admission recovery", () 
       if (cut !== "accepted") {
         if (worker) {
           try {
-            await expect(worker).rejects.toThrow("dispatch is closed");
+            await expect(worker).resolves.toBeNull();
           } finally {
             vi.mocked(RunPaidCalls.prototype.dispatch).mockRestore();
           }

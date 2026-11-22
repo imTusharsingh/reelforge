@@ -178,23 +178,6 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     });
   });
 
-  it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
-    const f = await stagedClip(await fixture.tenant(), 200);
-    const p2028 = Object.assign(new Error("Transaction timeout"), { code: "P2028" });
-    const settled = recoverBeforeLateFetch(f, 10, 12, async () => {
-      const mutate = f.t.store.mutate.bind(f.t.store);
-      vi.spyOn(f.t.store, "mutate").mockImplementationOnce((context, id, type, work) =>
-        type === "step_completed" ? Promise.reject(p2028) : mutate(context, id, type, work),
-      );
-    });
-    await expect(settled).resolves.toMatchObject({ state: "SUCCEEDED" });
-    await expectSettled(f, 12);
-    expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
-      state: "GENERATING",
-      pauseReason: null,
-    });
-  });
-
   it("commits the full late receipt after a sibling reserves the released headroom", async () => {
     const f = await stagedClip(await fixture.tenant(), 400);
     const { t, run, shot, job, native } = f;

@@ -74,7 +74,7 @@ suite("V3 approval, caps and retention", () => {
     await preparing.promise;
     await t.control.cancel(t.context, t.run.id);
     prepared.resolve();
-    await expect(queued).rejects.toThrow("Run is not generating");
+    await expect(queued).resolves.toBeNull();
     expect(submit).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
   });

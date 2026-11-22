@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { generateClips, generating, runsFixture } from "./runs.fixture.js";
+import { expectSettled, recoverBeforeLateFetch, stagedClip } from "./runs.staged-clip.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
 
 function pricedClip(seconds = 10): VideoReceipt {
@@ -26,6 +27,23 @@ function pricedClip(seconds = 10): VideoReceipt {
 }
 describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();
+  it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
+    const f = await stagedClip(await fixture.tenant(), 200);
+    const p2028 = Object.assign(new Error("Transaction timeout"), { code: "P2028" });
+    const settled = recoverBeforeLateFetch(f, 10, 12, async () => {
+      const mutate = f.t.store.mutate.bind(f.t.store);
+      vi.spyOn(f.t.store, "mutate").mockImplementationOnce((context, id, type, work) =>
+        type === "step_completed" ? Promise.reject(p2028) : mutate(context, id, type, work),
+      );
+    });
+    await expect(settled).resolves.toMatchObject({ state: "SUCCEEDED" });
+    await expectSettled(f, 12);
+    expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
+      state: "GENERATING",
+      pauseReason: null,
+    });
+  });
+
   it.each([
     "missing request",
     "swept missing request",
