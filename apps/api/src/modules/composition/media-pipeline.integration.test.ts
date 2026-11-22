@@ -3,6 +3,8 @@ import type { RunCritic } from "../quality/run-critic.js";
 import { criticTextPort } from "../quality/critic-text-port.js";
 import { existsSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Interactions, ProviderHttp } from "@reelforge/ai-providers";
+import { RunsQueue } from "../runs/runs.queue.js";
 import { AssemblyManifestSchema, ShotSpecSchema } from "@reelforge/contracts";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
@@ -100,14 +102,50 @@ describe.skipIf(
     const download = vi.spyOn(native.omni, "fetch");
     const write = vi.spyOn(t.artifacts, "put");
     await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: {} } });
+    const http = vi.fn<typeof fetch>().mockImplementation(async () =>
+      Response.json({
+        status: "completed",
+        steps: [
+          {
+            type: "model_output",
+            content: [{ type: "video", mime_type: "video/mp4", data: "YQ==" }],
+          },
+        ],
+      }),
+    );
+    const interactions = new Interactions(
+      new ProviderHttp("AIza" + "abc".repeat(12), "gemini", http),
+      {
+        save: async (): Promise<never> => {
+          throw new Error("Unexpected download");
+        },
+      },
+    );
+    vi.mocked(native.omni.poll).mockImplementation((id) => interactions.poll(id));
     await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
-    await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
+    expect(http.mock.calls.map(([, init]) => init?.method)).toEqual(["GET"]);
+    const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
+    t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
+    for (let sweep = 0; sweep < 2; sweep++) {
+      enqueue.mockClear();
+      await t.engine.recover();
+      const jobs = enqueue.mock.calls.filter(([data]) => data.runId === t.run.id);
+      expect(jobs.map(([data]) => data.stepId)).toEqual([first.id]);
+      await expect(t.engine.process(jobs[0]![0])).rejects.toThrow(
+        "Missing admission video pricing",
+      );
+    }
+    t.runs.queue = null;
+    expect(http).toHaveBeenCalledTimes(1);
     expect(download).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toContain(first.id);
     await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow("Reconcile");
     await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: admitted.output! } });
     await expect(t.engine.process(firstJob)).resolves.toBeNull();
+    expect(http).toHaveBeenCalledTimes(2);
+    expect(download).toHaveBeenCalledOnce();
+    vi.mocked(native.omni.poll).mockRestore();
     await t.control.resume(t.context, t.run.id);
     expect(native.submitted).toHaveLength(1);
     await t.storage.putObject({ ...object, body, contentType: asset.mediaType });

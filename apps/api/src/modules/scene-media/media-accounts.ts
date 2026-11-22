@@ -214,8 +214,20 @@ export class MediaAccounts {
               revision: budget.revision + 1,
             },
           });
-        await clearResolvedSubmissionHold(db, tx, run, step.id);
-        return { value: null, payload: { refundedMinor: step.costMinor }, stepId: step.id };
+        const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
+        const settled =
+          run.state === "NEEDS_HUMAN" &&
+          step.key.startsWith("media:keyframe:") &&
+          (await failSettledGeneration(db, { ...run, pauseReason }));
+        return {
+          value: null,
+          eventType: settled ? "transition" : "media_not_dispatched",
+          payload: {
+            refundedMinor: step.costMinor,
+            ...(settled ? { from: run.state, to: "FAILED" } : {}),
+          },
+          stepId: step.id,
+        };
       },
     );
     await this.access.runs.events?.publish(result.event);

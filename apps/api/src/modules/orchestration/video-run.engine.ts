@@ -19,7 +19,8 @@ import {
   storedSubmissionHold,
   unsettledShots,
 } from "../runs/run-outcomes.js";
-import { AssemblyInterrupted, MissingVideoPricing } from "./video-run.handlers.js";
+import { AssemblyInterrupted } from "./video-run.handlers.js";
+import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -133,11 +134,7 @@ export class VideoRunEngine {
       if (error instanceof SubmissionOutcomeUnknown) throw error;
       const current = await this.runs.store.get(context, run.id);
       if (error instanceof MissingVideoPricing)
-        await this.hold(
-          context,
-          run,
-          `RECONCILE_REQUIRED: missing admission video pricing (${stepId})`,
-        );
+        await this.hold(context, run, MissingVideoPricing.hold(stepId));
       else if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
         await this.hold(context, run, error.message);
       else if (current.state === "GENERATING" && !current.pauseReason)

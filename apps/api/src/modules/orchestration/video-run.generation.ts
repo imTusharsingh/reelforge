@@ -14,6 +14,7 @@ import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { json, type Context, type Run, type Scoped, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, failSettledGeneration, keyframeKey } from "../runs/run-outcomes.js";
+import { MissingVideoPricing, savedVideoPricing } from "../scene-media/media-prices.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
@@ -92,14 +93,16 @@ export class RunGeneration {
       if (!step.providerJobId)
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
-    return this.poll(context, step, ports);
+    return this.poll(context, run, step, ports);
   }
 
   private async poll(
     context: Context,
+    run: Run,
     step: Step,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<number | null> {
+    if (run.pauseReason === MissingVideoPricing.hold(step.id)) savedVideoPricing(step.output);
     const status = await withSpan(
       "run.provider.poll",
       () => this.port(step, ports).poll(step.providerJobId!),

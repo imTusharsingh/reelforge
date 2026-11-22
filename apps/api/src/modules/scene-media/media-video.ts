@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   VideoRouter,
   ProviderLimiter,
@@ -11,15 +10,10 @@ import {
   type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
-import { MissingVideoPricing, type VideoGenPort } from "../orchestration/video-run.handlers.js";
+import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { MediaJobs } from "./media-jobs.js";
-import { imageSurcharge } from "./media-prices.js";
-const pricingSchema = z.object({
-  modelId: z.string().min(1),
-  microUsdPerSecond: z.int().nonnegative(),
-  inputImageMicroUsd: z.int().nonnegative(),
-});
+import { imageSurcharge, savedVideoPricing, videoPricingSchema } from "./media-prices.js";
 /** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
@@ -82,7 +76,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     return this.native.poll(id);
   }
   public async fetch(id: string, savedOutput: unknown): Promise<Buffer> {
-    this.savedPricing(savedOutput);
+    savedVideoPricing(savedOutput);
     const media = await this.native.fetch(id);
     this.receipts.set(id, media);
     if (
@@ -97,9 +91,9 @@ export class RoutedMediaVideo implements VideoGenPort {
     if (!this.trim) throw new Error("Extension tail extraction is not configured");
     return this.trim(body, this.options.extension.previousSeconds);
   }
-  public collectionPricing(shot: ShotSpec): z.infer<typeof pricingSchema> {
+  public collectionPricing(shot: ShotSpec): ReturnType<typeof savedVideoPricing> {
     const cap = this.native.capabilities();
-    return pricingSchema.parse({
+    return videoPricingSchema.parse({
       modelId: cap.modelId,
       microUsdPerSecond: cap.pricePerSecond["720p"],
       inputImageMicroUsd:
@@ -107,11 +101,6 @@ export class RoutedMediaVideo implements VideoGenPort {
           ? (shot.references.length + this.frameCount) * imageSurcharge()
           : 0,
     });
-  }
-  private savedPricing(savedOutput: unknown): z.infer<typeof pricingSchema> {
-    const pricingResult = z.object({ videoPricing: pricingSchema }).safeParse(savedOutput);
-    if (!pricingResult.success) throw new MissingVideoPricing("Missing admission video pricing");
-    return pricingResult.data.videoPricing;
   }
   public metadata(
     id: string,
@@ -127,7 +116,7 @@ export class RoutedMediaVideo implements VideoGenPort {
     const media = this.receipts.get(id);
     if (!media) throw new Error("Provider receipt unavailable");
     const seconds = media.billedSeconds ?? shot.durationSeconds;
-    const pricing = this.savedPricing(savedOutput);
+    const pricing = savedVideoPricing(savedOutput);
     const cost = secondsCost(seconds, pricing.microUsdPerSecond);
     return {
       seconds,

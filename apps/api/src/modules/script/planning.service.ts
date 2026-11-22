@@ -110,6 +110,7 @@ export class PlanningService {
       const where = { runId: request.runId, key: receiptKey, attempt: 1 };
       const saved = await scoped.videoRunStep.findFirst({ where });
       if (saved?.state === "SUCCEEDED") return resultSchema.parse(saved.output);
+      if (saved?.state === "FAILED") throw new ConflictException("Planning manifest failed");
       const startedAt = new Date();
       if (saved) {
         await scoped.videoRunStep.updateMany({
