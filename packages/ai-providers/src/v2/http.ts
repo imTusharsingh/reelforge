@@ -65,6 +65,13 @@ export class ProviderFailure extends Error {
   }
 }
 
+export class EmptyMediaResponse extends ProviderFailure {
+  public constructor() {
+    super("INVALID", true);
+    this.message = "Provider returned an empty media body";
+  }
+}
+
 const errorBodyLimit = 4096;
 const errorBodyDeadlineMs = 100;
 
@@ -162,7 +169,7 @@ export class ProviderHttp {
   public bytes(uri: string): Promise<Uint8Array> {
     return this.request(uri, async (response) => {
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (!bytes.length) throw new ProviderFailure("INVALID", true);
+      if (!bytes.length) throw new EmptyMediaResponse();
       return bytes;
     });
   }

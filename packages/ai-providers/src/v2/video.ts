@@ -6,6 +6,7 @@ import type {
   ArtifactStore,
   ClipArtifact,
   JobStatus,
+  MediaDeliveryFailure,
   RecordBilledSeconds,
   Money,
   ReferenceResolver,
@@ -71,8 +72,12 @@ export class OmniVideo implements VideoGenPort {
   public poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
     return this.client.poll(id, recordBilling);
   }
-  public fetch(id: string, recordBilling?: RecordBilledSeconds): Promise<ClipArtifact> {
-    return this.client.fetch(id, "video", undefined, recordBilling);
+  public fetch(
+    id: string,
+    recordBilling?: RecordBilledSeconds,
+    onMediaFailure?: MediaDeliveryFailure,
+  ): Promise<ClipArtifact> {
+    return this.client.fetch(id, "video", undefined, recordBilling, onMediaFailure);
   }
   private validate(spec: ShotSpec): void {
     if (
@@ -142,7 +147,11 @@ export class GrokVideo implements VideoGenPort {
     }
     throw new ProviderFailure("INVALID", true);
   }
-  public async fetch(id: string, recordBilling?: RecordBilledSeconds): Promise<ClipArtifact> {
+  public async fetch(
+    id: string,
+    recordBilling?: RecordBilledSeconds,
+    onMediaFailure?: MediaDeliveryFailure,
+  ): Promise<ClipArtifact> {
     const response = await this.get(id);
     if (response.status !== "done") throw new ProviderFailure("INVALID", true);
     const video = record(response.video);
@@ -151,8 +160,12 @@ export class GrokVideo implements VideoGenPort {
     if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0)
       throw new ProviderFailure("INVALID", true);
     await recordBilling?.(seconds);
-    const body = await this.http.bytes(requiredString(video.url));
-    return { ...(await this.store.save(body, "video/mp4")), billedSeconds: seconds };
+    const artifact = await this.download(video.url).catch(onMediaFailure);
+    return { ...artifact, billedSeconds: seconds };
+  }
+  private async download(url: unknown): ReturnType<ArtifactStore["save"]> {
+    const body = await this.http.bytes(requiredString(url));
+    return this.store.save(body, "video/mp4");
   }
   private get(id: string): Promise<Record<string, unknown>> {
     if (!id.trim()) throw new ProviderFailure("INVALID", false);

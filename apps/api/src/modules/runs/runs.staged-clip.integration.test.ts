@@ -4,7 +4,11 @@ import { AutonomyService } from "../autonomy/autonomy.service.js";
 import { report } from "../autonomy/autonomy.fixture.js";
 import type { Step } from "./runs.types.js";
 import {
+  clipFailures,
+  lateClipCases,
+  clipUri,
   completed,
+  failingClip,
   eightSecondShot,
   stagedClip,
   recoverBeforeLateFetch,
@@ -138,24 +142,16 @@ describe.skipIf(!process.env.DATABASE_URL)("Gemini shot receipts and staged clip
     });
   }
 
-  it.each([
-    { fps: 24, exitCode: 0, seconds: 12 },
-    { fps: 30, exitCode: 0, seconds: 10 },
-    { fps: 30, exitCode: 0, seconds: 12 },
-    { fps: 24, exitCode: 1, seconds: 10 },
-    { fps: 24, exitCode: 1, seconds: 12 },
-  ])(
-    "keeps the settled clip when the late probe exits $exitCode at $fps fps with $seconds billed seconds",
-    async ({ fps, seconds, exitCode }) => {
-      const invalid = fps !== 24 || exitCode !== 0;
-      const f = await stagedClip(await fixture.tenant(), invalid ? 200 : 84);
-      const { t, run, shot, job, native, probe } = f;
+  it.each(lateClipCases)(
+    "keeps the settled clip after a late $kind response with $seconds billed seconds",
+    async ({ kind, seconds, pause }) => {
+      const f = await stagedClip(await fixture.tenant(), kind === "valid" ? 84 : 200);
+      const { t, run, shot, job, native } = f;
       const put = vi.spyOn(t.artifacts, "put");
       const settled = await recoverBeforeLateFetch(f, 10, seconds, async () => {
         await expectSettled(t, shot, 10);
         expect((await t.store.get(t.context, run.id)).pauseReason).toBeNull();
-        probe.fps = fps;
-        probe.exitCode = exitCode;
+        if (kind !== "valid") return failingClip(f, kind, seconds);
       });
       await t.engine.process(job);
       await expectSettled(t, shot, seconds);
@@ -181,7 +177,11 @@ describe.skipIf(!process.env.DATABASE_URL)("Gemini shot receipts and staged clip
       );
       expect(put).toHaveBeenCalledOnce();
       expect(native.submit).toHaveBeenCalledOnce();
-      if (invalid) {
+      if (kind !== "valid") {
+        expect(f.fetcher).toHaveBeenLastCalledWith(clipUri, expect.anything());
+        expect(events.filter((e) => e.type === "redundant_clip_discarded")).toMatchObject([
+          { payload: { reason: pause } },
+        ]);
         expect(await t.store.get(t.context, run.id)).toMatchObject({
           state: "GENERATING",
           pauseReason: null,
@@ -342,26 +342,32 @@ describe.skipIf(!process.env.DATABASE_URL)("Gemini shot receipts and staged clip
     },
   );
 
-  it("pauses on an unreadable clip and recovers the unfinished job at its recorded price", async () => {
-    const { t, shot, job, fetcher, probe, native } = await stagedClip(await fixture.tenant());
-    fetcher.mockResolvedValueOnce(completed(6)).mockResolvedValueOnce(completed(8));
-    probe.exitCode = 1;
-    await expect(t.engine.process(job)).rejects.toThrow("Provider media process failed");
-    expect(await t.store.get(t.context, shot.runId)).toMatchObject({
-      state: "PAUSED_BUDGET",
-      pauseReason: "GENERATION_FAILED",
-    });
-    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
-      state: "WAITING_EXTERNAL",
-      providerJobId: "accepted",
-      output: { receipt: { costMinor: 56, seconds: 8 } },
-    });
-    probe.exitCode = 0;
-    fetcher.mockResolvedValueOnce(completed(6));
-    await t.engine.process(job);
-    await expectSettled(t, shot, 8);
-    expect(native.submit).toHaveBeenCalledOnce();
-  });
+  it.each(clipFailures)(
+    "surfaces $kind and recovers the unfinished job at its recorded price",
+    async ({ kind, message, pause }) => {
+      const f = await stagedClip(await fixture.tenant());
+      const { t, shot, job, fetcher, probe, native } = f;
+      fetcher
+        .mockResolvedValueOnce(completed(6))
+        .mockImplementationOnce(async () => failingClip(f, kind, 8));
+      await expect(t.engine.process(job)).rejects.toThrow(message);
+      expect(await t.store.get(t.context, shot.runId)).toMatchObject({
+        state: "PAUSED_BUDGET",
+        pauseReason: pause,
+      });
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
+        state: "WAITING_EXTERNAL",
+        providerJobId: "accepted",
+        output: { receipt: { costMinor: 56, seconds: 8 } },
+      });
+      probe.exitCode = 0;
+      probe.fps = 24;
+      fetcher.mockResolvedValueOnce(completed(6));
+      await t.engine.process(job);
+      await expectSettled(t, shot, 8);
+      expect(native.submit).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps the valid descriptor and higher liability across an invalid replacement", async () => {
     const { t, shot, job, fetcher, probe, native } = await stagedClip(await fixture.tenant(), 84);

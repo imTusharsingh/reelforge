@@ -20,7 +20,7 @@ import {
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { transitionLocked } from "../runs/runs.store.js";
-import { InvalidVideoFormat } from "./video-run.handlers.js";
+import { InvalidVideoFormat, ShotMediaFailure } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
 import { RunPlanning } from "./video-run.planning.js";
 
@@ -138,8 +138,8 @@ export class VideoRunEngine {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
       if (error instanceof SubmissionOutcomeUnknown) throw error;
-      if (error instanceof InvalidVideoFormat)
-        return this.invalidClip(context, run.id, stepId, error);
+      if (error instanceof ShotMediaFailure)
+        return this.mediaFailure(context, run.id, stepId, error);
       const current = await this.runs.store.get(context, run.id);
       if (error instanceof Error && error.message.startsWith("RECONCILE_REQUIRED"))
         await this.hold(context, run, error.message);
@@ -148,12 +148,13 @@ export class VideoRunEngine {
       throw error;
     }
   }
-  private async invalidClip(
+  private async mediaFailure(
     context: Context,
     runId: string,
     stepId: string,
-    error: InvalidVideoFormat,
+    error: ShotMediaFailure,
   ): Promise<null> {
+    const cause = error instanceof InvalidVideoFormat ? error : error.cause;
     const result = await this.runs.store.mutate(
       context,
       runId,
@@ -173,14 +174,14 @@ export class VideoRunEngine {
             value: null,
             eventType: "redundant_clip_discarded",
             stepId,
-            payload: { replay: true },
+            payload: { replay: true, reason: generationPause(cause) },
           };
-        if (!attempt || current.state !== "GENERATING" || current.pauseReason) throw error;
-        return transitionLocked(db, current, "PAUSED_BUDGET", generationPause(error));
+        if (!attempt || current.state !== "GENERATING" || current.pauseReason) throw cause;
+        return transitionLocked(db, current, "PAUSED_BUDGET", generationPause(cause));
       },
     );
     await this.runs.events?.publish(result.event);
-    if (result.event.type === "transition") throw error;
+    if (result.event.type === "transition") throw cause;
     return null;
   }
   private async advance(context: Context, run: Run): Promise<number | null> {

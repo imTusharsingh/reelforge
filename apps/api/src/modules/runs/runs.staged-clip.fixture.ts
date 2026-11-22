@@ -15,7 +15,7 @@ import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import type { Run, Step, RunJob } from "./runs.types.js";
 
-export function completed(seconds?: number, clip = "clip"): Response {
+export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
   return Response.json({
     status: "completed",
     ...(seconds !== undefined && { usage: { billed_seconds: seconds } }),
@@ -23,7 +23,11 @@ export function completed(seconds?: number, clip = "clip"): Response {
       {
         type: "model_output",
         content: [
-          { type: "video", mime_type: "video/mp4", data: Buffer.from(clip).toString("base64") },
+          {
+            type: "video",
+            mime_type: "video/mp4",
+            ...(typeof clip === "string" ? { data: Buffer.from(clip).toString("base64") } : clip),
+          },
         ],
       },
     ],
@@ -95,11 +99,45 @@ export async function stagedClip(
   return { t, run, shot, job, fetcher, probe, native };
 }
 
+export const clipUri = "https://storage.googleapis.com/fixture/late.mp4";
+export const clipFailures = [
+  { kind: "empty body", message: "empty media body", pause: "GENERATION_FAILED" },
+  { kind: "nonzero probe", message: "Provider media process failed", pause: "GENERATION_FAILED" },
+  { kind: "wrong fps", message: "invalid 720p video", pause: "GENERATION_FAILED" },
+  { kind: "download error", message: "Provider outage", pause: "PROVIDER_OUTAGE" },
+  { kind: "download denied", message: "Provider refusal (HTTP 403)", pause: "PROVIDER_REFUSED" },
+  { kind: "storage error", message: "storage offline", pause: "GENERATION_FAILED" },
+] as const;
+
+export const lateClipCases = [
+  { kind: "valid" as const, seconds: 12, pause: null },
+  ...clipFailures.flatMap(({ kind, pause }) =>
+    [10, 12].map((seconds) => ({ kind, seconds, pause })),
+  ),
+];
+
+export function failingClip(
+  { t, probe, fetcher }: Awaited<ReturnType<typeof stagedClip>>,
+  kind: (typeof clipFailures)[number]["kind"],
+  seconds: number,
+): Response {
+  fetcher.mockImplementationOnce(async () => {
+    if (kind === "download error") throw new TypeError("connection reset");
+    if (kind === "download denied") return new Response(null, { status: 403 });
+    return new Response(kind === "empty body" ? null : "late clip");
+  });
+  if (kind === "nonzero probe") probe.exitCode = 1;
+  if (kind === "wrong fps") probe.fps = 30;
+  if (kind === "storage error")
+    vi.spyOn(t.storage, "putObject").mockRejectedValueOnce(new Error("storage offline"));
+  return completed(seconds, { uri: clipUri });
+}
+
 export async function recoverBeforeLateFetch(
   { t, shot, job, fetcher }: Awaited<ReturnType<typeof stagedClip>>,
   recoveredSeconds: number,
   lateSeconds: number,
-  beforeDelivery: () => Promise<void>,
+  beforeDelivery: () => Promise<void | Response>,
 ): Promise<Step> {
   const started = Promise.withResolvers<void>();
   const lateFetch = Promise.withResolvers<Response>();
@@ -110,6 +148,7 @@ export async function recoverBeforeLateFetch(
       return lateFetch.promise;
     })
     .mockResolvedValueOnce(completed(recoveredSeconds));
+  let response = completed(lateSeconds, "late clip");
   const original = t.engine.process(job);
   try {
     await Promise.race([
@@ -121,11 +160,11 @@ export async function recoverBeforeLateFetch(
     await t.engine.process(job);
     const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(settled.state).toBe("SUCCEEDED");
-    await beforeDelivery();
+    response = (await beforeDelivery()) ?? response;
     return settled;
   } finally {
     // Native fetch records the price first, then the collector delivers the priced descriptor.
-    lateFetch.resolve(completed(lateSeconds, "late clip"));
+    lateFetch.resolve(response);
     await expect(original).resolves.toBeNull();
   }
 }

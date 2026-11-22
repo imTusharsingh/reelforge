@@ -26,13 +26,18 @@ export function stubShots(run: Run, brief: ChannelBrief): ShotSpec[] {
   void brief;
   throw new Error("V4 shot list required before generation");
 }
-export class InvalidVideoFormat extends Error {
+export class ShotMediaFailure extends Error {
   public constructor(
     public readonly providerId: string,
     public readonly providerJobId: string,
-    cause?: Error,
+    cause: unknown,
   ) {
-    super(cause?.message ?? "Provider returned invalid 720p video", { cause });
+    super(cause instanceof Error ? cause.message : "Could not collect shot media", { cause });
+  }
+}
+export class InvalidVideoFormat extends ShotMediaFailure {
+  public constructor(providerId: string, providerJobId: string, cause?: Error) {
+    super(providerId, providerJobId, cause ?? new Error("Provider returned invalid 720p video"));
   }
 }
 export interface VideoGenPort {

@@ -24,6 +24,7 @@ import { pinnedBudget, envelopeRoom } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
+  ShotMediaFailure,
   UnconfiguredVideoPort,
   type MediaPortResolver,
   type VideoGenPort,
@@ -356,7 +357,11 @@ export class RunGeneration {
         port.fetch(step.providerJobId!, pendingShotMedia(step)?.pendingMedia ?? undefined, billing),
       "CLIENT",
     );
-    const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");
+    const artifact = await this.artifacts
+      .put(context, "clips", body, "video/mp4")
+      .catch((cause: unknown) => {
+        throw new ShotMediaFailure(port.providerId, step.providerJobId!, cause);
+      });
     const result = await recordShotArtifact(this.runs.store, this.paid, context, step, artifact);
     await this.runs.events?.publish(result.event);
     if (result.event.type === "reconcile_required") {

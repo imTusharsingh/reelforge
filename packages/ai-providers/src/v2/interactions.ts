@@ -1,5 +1,11 @@
 import { ProviderFailure, ProviderHttp, record, requiredString, type Json } from "./http.js";
-import type { ArtifactStore, ClipArtifact, JobStatus, RecordBilledSeconds } from "./ports.js";
+import type {
+  ArtifactStore,
+  ClipArtifact,
+  JobStatus,
+  MediaDeliveryFailure,
+  RecordBilledSeconds,
+} from "./ports.js";
 
 /** REST Interactions boundary. Callers persist the returned id before scheduling polls. */
 export class Interactions {
@@ -38,6 +44,7 @@ export class Interactions {
     kind: "video" | "image" | "audio",
     trimSeconds?: number,
     recordBilling?: RecordBilledSeconds,
+    onMediaFailure?: MediaDeliveryFailure,
   ): Promise<ClipArtifact> {
     const response = await this.get(id);
     const status = this.status(response);
@@ -45,6 +52,15 @@ export class Interactions {
     if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
     const billedSeconds = this.billedSeconds(response);
     if (billedSeconds !== null) await recordBilling?.(billedSeconds);
+    const artifact = await this.download(response, kind, trimSeconds).catch(onMediaFailure);
+    return { ...artifact, billedSeconds };
+  }
+
+  private async download(
+    response: Json,
+    kind: "video" | "image" | "audio",
+    trimSeconds?: number,
+  ): ReturnType<ArtifactStore["save"]> {
     const content = this.outputs(response)
       .filter((item) => item.type === kind)
       .at(-1);
@@ -53,8 +69,7 @@ export class Interactions {
       typeof content.uri === "string"
         ? await this.http.bytes(content.uri)
         : this.decode(requiredString(content.data));
-    const artifact = await this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
-    return { ...artifact, billedSeconds };
+    return this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
   }
   private billedSeconds(response: Json): number | null {
     const seconds = response.usage === undefined ? null : record(response.usage).billed_seconds;

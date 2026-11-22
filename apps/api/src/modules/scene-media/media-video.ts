@@ -1,10 +1,12 @@
 import {
+  EmptyMediaResponse,
   ProviderFailure,
   VideoRouter,
   ProviderLimiter,
   reservationCents,
   secondsCost,
   type ClipArtifact,
+  type MediaDeliveryFailure,
   type VideoGenPort as NativeVideoPort,
   type VideoOptions,
   type VideoRoutingState,
@@ -14,6 +16,7 @@ import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
 import {
   InvalidVideoFormat,
+  ShotMediaFailure,
   type VideoGenPort,
   type VideoReceipt,
   type ShotBilling,
@@ -90,34 +93,41 @@ export class RoutedMediaVideo implements VideoGenPort {
     let body: Buffer;
     try {
       await this.validateFormat(id, media, saved ? undefined : billing);
-      body = await this.jobs.bytes(this.context, media);
+      body = await this.jobs.bytes(this.context, media).catch(this.mediaFailure(id));
     } catch (error) {
+      const cause = error instanceof ShotMediaFailure ? error.cause : error;
       if (
         !saved ||
         !billing ||
         !(
-          error instanceof StorageObjectNotFoundError ||
-          error instanceof MediaChecksumMismatch ||
+          cause instanceof StorageObjectNotFoundError ||
+          cause instanceof MediaChecksumMismatch ||
           error instanceof InvalidVideoFormat
         )
       )
         throw error;
       const receipt = await this.collectReceipt(id, billing.shot, billing);
-      body = await this.jobs.bytes(this.context, receipt.media);
+      body = await this.jobs.bytes(this.context, receipt.media).catch(this.mediaFailure(id));
       await billing.record(receipt);
     }
     if (!this.options.extension) return body;
-    if (!this.trim) throw new Error("Extension tail extraction is not configured");
-    return this.trim(body, this.options.extension.previousSeconds);
+    if (!this.trim)
+      throw new ShotMediaFailure(
+        this.providerId,
+        id,
+        new Error("Extension tail extraction is not configured"),
+      );
+    return this.trim(body, this.options.extension.previousSeconds).catch(this.mediaFailure(id));
   }
-  private async fetchMedia(id: string, billing?: ShotBilling): Promise<ClipArtifact> {
-    try {
-      return await this.native.fetch(id, this.recordBilling(billing));
-    } catch (error) {
-      if (error instanceof MediaValidationError)
-        throw new InvalidVideoFormat(this.providerId, id, error);
-      throw error;
-    }
+  private mediaFailure(id: string): MediaDeliveryFailure {
+    return (cause) => {
+      if (cause instanceof MediaValidationError || cause instanceof EmptyMediaResponse)
+        throw new InvalidVideoFormat(this.providerId, id, cause);
+      throw new ShotMediaFailure(this.providerId, id, cause);
+    };
+  }
+  private fetchMedia(id: string, billing?: ShotBilling): Promise<ClipArtifact> {
+    return this.native.fetch(id, this.recordBilling(billing), this.mediaFailure(id));
   }
   private async validateFormat(
     id: string,

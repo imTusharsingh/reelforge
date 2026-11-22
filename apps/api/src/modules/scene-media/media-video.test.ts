@@ -87,7 +87,11 @@ describe("V5 landed router bridge", () => {
     await expect(
       bridge.fetch("fixture-job", { ...valid, fps: 30 }, { shot, record }),
     ).resolves.toEqual(Buffer.from("valid"));
-    expect(port.fetch).toHaveBeenCalledExactlyOnceWith("fixture-job", expect.any(Function));
+    expect(port.fetch).toHaveBeenCalledExactlyOnceWith(
+      "fixture-job",
+      expect.any(Function),
+      expect.any(Function),
+    );
     expect(bytes).toHaveBeenCalledExactlyOnceWith(context, valid);
     expect(record).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ media: valid, costBasis: "BILLED" }),
