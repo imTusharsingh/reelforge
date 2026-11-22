@@ -19,6 +19,7 @@ import {
   collectibleFailedShots,
   failSettledGeneration,
   activeSubmissionHold,
+  SETTLED_SHOTS,
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { transitionLocked } from "../runs/runs.store.js";
@@ -158,6 +159,13 @@ export class VideoRunEngine {
       run.id,
       hold ? "reconcile_required" : "transition",
       async (db, current, tx) => {
+        if (stepId && (await this.settledShot(db, run.id, stepId)))
+          return {
+            value: null,
+            eventType: "redundant_clip_discarded",
+            stepId,
+            payload: { replay: true, reason: generationPause(cause) },
+          };
         if (stepId && !(error instanceof ShotBillingFailure)) {
           // A retry with a different accepted job has its own step ID.
           const attempt = await db.videoRunStep.findFirst({
@@ -190,6 +198,13 @@ export class VideoRunEngine {
     await this.runs.events?.publish(result.event);
     if (result.event.type === "redundant_clip_discarded") return null;
     throw cause;
+  }
+  private async settledShot(db: Scoped, runId: string, stepId: string): Promise<boolean> {
+    const shot = await db.videoRunStep.findFirst({
+      where: { id: stepId, runId, key: { startsWith: "shot-" } },
+      select: { state: true },
+    });
+    return !!shot && SETTLED_SHOTS.some((state) => state === shot.state);
   }
   private async advance(context: Context, run: Run): Promise<number | null> {
     if (run.state === "PLANNING") {

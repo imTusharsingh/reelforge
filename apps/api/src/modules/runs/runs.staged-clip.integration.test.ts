@@ -163,18 +163,35 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     },
   );
 
-  it("surfaces a billing callback failure after recovery settled the clip", async () => {
+  it("ignores a billing callback failure after recovery settled the clip", async () => {
     const f = await stagedClip(await fixture.tenant(), 200);
     const error = new Error("charge correction failed");
     await expect(
       recoverBeforeLateFetch(f, 10, 12, async () => {
         vi.spyOn(f.t.usage, "coverShotReceipt").mockRejectedValueOnce(error);
       }),
-    ).rejects.toBe(error);
+    ).resolves.toMatchObject({ state: "SUCCEEDED" });
     await expectSettled(f, 10);
     expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
-      state: "PAUSED_BUDGET",
-      pauseReason: "GENERATION_FAILED",
+      state: "GENERATING",
+      pauseReason: null,
+    });
+  });
+
+  it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
+    const f = await stagedClip(await fixture.tenant(), 200);
+    const p2028 = Object.assign(new Error("Transaction timeout"), { code: "P2028" });
+    const settled = recoverBeforeLateFetch(f, 10, 12, async () => {
+      const mutate = f.t.store.mutate.bind(f.t.store);
+      vi.spyOn(f.t.store, "mutate").mockImplementationOnce((context, id, type, work) =>
+        type === "step_completed" ? Promise.reject(p2028) : mutate(context, id, type, work),
+      );
+    });
+    await expect(settled).resolves.toMatchObject({ state: "SUCCEEDED" });
+    await expectSettled(f, 12);
+    expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
+      state: "GENERATING",
+      pauseReason: null,
     });
   });
 
