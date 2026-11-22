@@ -4,6 +4,7 @@ import { AutonomyService } from "../autonomy/autonomy.service.js";
 import { report } from "../autonomy/autonomy.fixture.js";
 import {
   admitSibling,
+  expectSiblingBlockedByBuffer,
   expectSettled,
   clipFailures,
   lateClipCases,
@@ -16,6 +17,7 @@ import {
   postEditorApproval,
 } from "./runs.staged-clip.fixture.js";
 import { runsFixture } from "./runs.fixture.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () => {
   const fixture = runsFixture();
@@ -32,7 +34,6 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
         vi.spyOn(t.storage, "putObject").mockRejectedValueOnce(new Error("storage offline"));
       else vi.spyOn(t.artifacts, "put").mockRejectedValueOnce(new Error("storage offline"));
       await expect(t.engine.process(job)).rejects.toThrow("storage offline");
-
       const checksumSha256 = createHash("sha256").update("clip").digest("hex");
       const staged = { workspaceId: run.workspaceId, objectKey: `providers/${checksumSha256}` };
       const where = { workspaceId: run.workspaceId, correlationId: shot.id };
@@ -63,7 +64,6 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
           contentType: "video/mp4",
           body: Buffer.from("corrupt"),
         });
-
       await t.engine.process(job);
       await t.engine.process(job);
       expect(native.submit).toHaveBeenCalledOnce();
@@ -84,7 +84,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       ).toMatchObject({
         reservedMinor: 0,
         spentMinor: 70,
-        overageMinor: 14,
+        overageMinor: 0,
       });
       expect(await t.db.usageReservation.findMany({ where })).toMatchObject([
         { status: "COMMITTED", committedMinor: 70n },
@@ -178,32 +178,36 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     });
   });
 
-  it("commits the full late receipt after a sibling reserves the released headroom", async () => {
+  it("bounds a late receipt overage and blocks siblings from consuming its buffer", async () => {
     const f = await stagedClip(await fixture.tenant(), 400);
     const { t, run, shot, job, native } = f;
     const put = vi.spyOn(t.artifacts, "put");
     const where = { runId: run.id };
+    const receiptBuffer = shotReceiptBufferMinor(56);
     await t.db.budgetEnvelope.updateMany({
       where,
       data: {
-        targetMinor: 400,
-        hardCapMinor: 400,
-        baseEstimateMinor: 400,
+        targetMinor: 372,
+        hardCapMinor: 372,
+        baseEstimateMinor: 372,
         reshootReserveMinor: 0,
         spentMinor: 302,
       },
     });
-    const settled = await recoverBeforeLateFetch(f, 6, 8, async () => {
-      await expectSettled(f, 6, { spentMinor: 344, reservedMinor: 0, overageMinor: 0 });
-      await admitSibling(f);
-      expect(await t.db.budgetEnvelope.findFirstOrThrow({ where })).toMatchObject({
+    const settled = await recoverBeforeLateFetch(f, 6, 12, async () => {
+      await expectSettled(f, 6, { spentMinor: 344, reservedMinor: 28, overageMinor: 0 }, 70);
+      const envelope = await t.db.budgetEnvelope.findFirstOrThrow({ where });
+      expect(envelope).toMatchObject({
         spentMinor: 344,
-        reservedMinor: 56,
+        reservedMinor: 28,
         overageMinor: 0,
       });
+      await expectSiblingBlockedByBuffer(f, envelope);
     });
     await t.engine.process(job);
-    await expectSettled(f, 8, { spentMinor: 358, reservedMinor: 56, overageMinor: 14 });
+    await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor: 14 }, 84);
+    const finalEnvelope = await t.db.budgetEnvelope.findFirstOrThrow({ where });
+    expect(finalEnvelope.overageMinor).toBeLessThanOrEqual(receiptBuffer);
     expect(put).toHaveBeenCalledOnce();
     const corrected = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(corrected.finishedAt).toEqual(settled.finishedAt);
@@ -220,12 +224,19 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
           typeof e.payload === "object" &&
           "adjustmentMinor" in e.payload,
       ),
-    ).toMatchObject([{ payload: { previousCostMinor: 42, adjustmentMinor: 14, costMinor: 56 } }]);
-    const next = await eightSecondShot(t, run.id, 2);
+    ).toMatchObject([{ payload: { previousCostMinor: 42, adjustmentMinor: 42, costMinor: 84 } }]);
+    const next = await eightSecondShot(t, run.id, 1);
     await expect(t.engine.process(t.runs.job(t.context, run.id, next.id))).rejects.toThrow(
       "Envelope exhausted",
     );
-    expect(native.submit).toHaveBeenCalledTimes(2);
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: next.id } })).toMatchObject({
+      state: "PENDING",
+    });
+    expect(native.submit).toHaveBeenCalledOnce();
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "PAUSED_BUDGET",
+      pauseReason: "BUDGET_CAP",
+    });
   });
 
   it.each(["L2", "L3"] as const)(

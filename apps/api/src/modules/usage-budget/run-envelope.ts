@@ -22,6 +22,12 @@ export function pinnedBudget(run: Run): ChannelBrief["budgetPolicy"] {
   };
 }
 
+export function shotReceiptBufferMinor(estimateMinor: number): number {
+  if (!Number.isSafeInteger(estimateMinor) || estimateMinor < 0)
+    throw new Error("Invalid shot estimate");
+  return Math.ceil(estimateMinor / 4);
+}
+
 /** Include paid work performed before envelope creation, and pre-existing envelopes with old defaults. */
 export async function assertRunCap(
   db: Scoped,
@@ -29,15 +35,25 @@ export async function assertRunCap(
   amount: number,
   excludingStepId?: string,
 ): Promise<number> {
-  const claims = await db.videoRunStep.aggregate({
+  const claims = await db.videoRunStep.findMany({
     where: {
       runId: run.id,
       state: { notIn: ["SKIPPED", "CANCELLED"] },
       ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
     },
-    _sum: { costMinor: true },
+    select: { costMinor: true, output: true },
   });
-  const cumulative = (claims._sum.costMinor ?? 0) + amount;
+  const cumulative = claims.reduce((total, claim) => {
+    const receiptBudget = z
+      .object({ receiptBudget: z.object({ bufferMinor: z.number().int().nonnegative() }) })
+      .passthrough()
+      .safeParse(claim.output);
+    return (
+      total +
+      (claim.costMinor ?? 0) +
+      (receiptBudget.success ? receiptBudget.data.receiptBudget.bufferMinor : 0)
+    );
+  }, amount);
   if (cumulative > pinnedBudget(run).hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
   return cumulative;

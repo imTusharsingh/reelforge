@@ -20,6 +20,7 @@ import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import type { Run, Step, RunJob } from "./runs.types.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
   return Response.json({
@@ -225,14 +226,17 @@ export async function recoverBeforeLateFetch(
 export async function expectSettled(
   { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
   seconds: number,
-  envelope = {
-    spentMinor: seconds * wire.centsPerSecond,
-    reservedMinor: 0,
-    overageMinor: Math.max(0, seconds * wire.centsPerSecond - 8 * wire.centsPerSecond),
+  envelope?: {
+    spentMinor: number;
+    reservedMinor: number;
+    overageMinor: number;
   },
+  budgetConsumedMinor?: number,
 ): Promise<void> {
   const where = { workspaceId: shot.workspaceId, correlationId: shot.id };
   const cost = seconds * wire.centsPerSecond;
+  const estimate = 8 * wire.centsPerSecond;
+  const admitted = estimate + shotReceiptBufferMinor(estimate);
   const requests = await t.db.providerRequest.findMany({ where });
   expect(requests).toMatchObject([{ status: "SUCCEEDED", errorCode: null }]);
   expect(requests[0]!.actualCost?.mul(100).toString()).toBe(String(cost));
@@ -241,13 +245,23 @@ export async function expectSettled(
   ]);
   expect(
     await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: shot.runId } }),
-  ).toMatchObject(envelope);
+  ).toMatchObject(
+    envelope ?? {
+      spentMinor: cost,
+      reservedMinor: Math.max(0, admitted - cost),
+      overageMinor: Math.max(0, cost - admitted),
+    },
+  );
   expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
     state: "SUCCEEDED",
     providerJobId: "accepted",
     costMinor: cost,
     output: { receipt: { costBasis: "BILLED", seconds, costMinor: cost } },
   });
+  if (budgetConsumedMinor !== undefined)
+    expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
+      budgetConsumedMinor,
+    );
 }
 
 export async function admitSibling({
@@ -264,6 +278,17 @@ export async function admitSibling({
     providerJobId: "sibling",
     costMinor: 8 * wire.centsPerSecond,
   });
+}
+
+export async function expectSiblingBlockedByBuffer(
+  { t, run }: Awaited<ReturnType<typeof stagedClip>>,
+  envelope: { spentMinor: number; reservedMinor: number; hardCapMinor: number },
+): Promise<void> {
+  const sibling = await eightSecondShot(t, run.id, 1);
+  const estimate = t.generation.provider.estimate(ShotSpecSchema.parse(sibling.input), false);
+  expect(
+    envelope.spentMinor + envelope.reservedMinor + estimate + shotReceiptBufferMinor(estimate),
+  ).toBeGreaterThan(envelope.hardCapMinor);
 }
 
 export async function postEditorApproval(t: Tenant): Promise<request.Response> {

@@ -9,6 +9,17 @@ import type { PeriodBounds } from "./usage-budget.time.js";
 
 type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
 
+const committedShotExposure = Prisma.sql`CASE
+  WHEN status = 'COMMITTED' AND EXISTS (
+    SELECT FROM video_run_steps s
+     WHERE s.workspace_id = ur.workspace_id
+       AND s.id = ur.correlation_id
+       AND s."key" LIKE 'shot-%'
+  ) THEN GREATEST(committed_minor, amount_minor)
+  WHEN status = 'COMMITTED' THEN committed_minor
+  ELSE amount_minor
+END`;
+
 /** Coverage, uncovered requests and adjustments must see the same MVCC snapshot. */
 export async function budgetExposure(
   db: LedgerReader,
@@ -24,7 +35,7 @@ export async function budgetExposure(
   const rows = await db.$queryRaw<(Price & { minor: string | null; entries: bigint })[]>(Prisma.sql`
     WITH coverage AS (
       SELECT correlation_id, currency, created_at, channel_id,
-             CASE WHEN status = 'COMMITTED' THEN committed_minor ELSE amount_minor END AS minor
+             ${committedShotExposure} AS minor
         FROM usage_reservations ur
        WHERE workspace_id = ${budget.workspaceId}::uuid AND (
          status = 'COMMITTED' OR (status = 'RESERVED' AND expires_at > ${now})

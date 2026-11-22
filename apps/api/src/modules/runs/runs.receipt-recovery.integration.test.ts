@@ -59,7 +59,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       orderBy: { key: "asc" },
     });
     const job = t.runs.job(t.context, run.id, shot!.id);
-    const collectReceipt = vi.fn(async () => pricedClip());
+    const collectReceipt = vi.fn(async () => pricedClip(12));
     const port = Object.assign(t.generation.provider, { collectReceipt });
     const submit = vi.spyOn(port, "submit");
     const poll = vi.spyOn(port, "poll").mockResolvedValueOnce("running");
@@ -72,7 +72,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await expect(t.engine.process(job)).resolves.toBe(12000);
     const where = { workspaceId: run.workspaceId, correlationId: shot!.id };
     const reservation = await t.db.usageReservation.findFirstOrThrow({ where });
-    expect(reservation.amountMinor).toBe(56n);
+    expect(reservation.amountMinor).toBe(70n);
     const enqueue = vi.fn<RunsQueue["enqueue"]>();
     t.runs.queue = { enqueue, fanout: vi.fn() } as unknown as RunsQueue;
     if (cut.endsWith("missing request")) await t.db.providerRequest.deleteMany({ where });
@@ -112,8 +112,8 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       cut === "artifact write" || cut === "native storage" ? "storage offline" : "billing exceeded",
     );
     const request = await t.db.providerRequest.findFirstOrThrow({ where });
-    expect(request.actualCost?.toNumber()).toBe(0.7);
-    expect(request.estimatedCost?.toNumber()).toBe(0.56);
+    expect(request.actualCost?.toNumber()).toBe(0.84);
+    expect(request.estimatedCost?.toNumber()).toBe(0.7);
     expect(request).toMatchObject({
       currency: "USD",
       createdAt: reservation.createdAt,
@@ -143,16 +143,16 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     expect(poll).toHaveBeenCalledTimes(2);
     expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot!.id } })).toMatchObject({
       state: "SUCCEEDED",
-      output: { storageArtifacts: [{ kind: "clips" }], receipt: { costMinor: 70 } },
+      output: { storageArtifacts: [{ kind: "clips" }], receipt: { costMinor: 84 } },
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      spentMinor: 70,
+      spentMinor: 84,
       reservedMinor: 0,
       overageMinor: 14,
     });
     expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
       status: "COMMITTED",
-      committedMinor: 70n,
+      committedMinor: 84n,
     });
     if (stopped) {
       expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
@@ -224,7 +224,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       output: { receipt: { costMinor: 56 }, storageArtifacts: [{ kind: "clips" }] },
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: 0,
+      reservedMinor: 14,
       spentMinor: 56,
       overageMinor: 0,
     });

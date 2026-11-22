@@ -5,6 +5,29 @@ import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { ArtifactSchema, json, type Json, type Step } from "../runs/runs.types.js";
 import { isBillingHold } from "./run-admission-state.js";
 
+const ReceiptBudgetSchema = z.object({
+  admittedMinor: z.number().int().nonnegative(),
+  bufferMinor: z.number().int().nonnegative(),
+});
+
+export type ReceiptBudget = z.infer<typeof ReceiptBudgetSchema>;
+
+export function readReceiptBudget(
+  output: Json | null,
+  fallbackMinor: number,
+  previousCost: number,
+): ReceiptBudget {
+  const parsed = z.object({ receiptBudget: ReceiptBudgetSchema }).passthrough().safeParse(output);
+  return parsed.success
+    ? parsed.data.receiptBudget
+    : { admittedMinor: fallbackMinor, bufferMinor: Math.max(0, fallbackMinor - previousCost) };
+}
+
+export function withReceiptBudget(output: Json, budget: ReceiptBudget): Json {
+  const fields = z.record(z.string(), z.unknown()).parse(output);
+  return json({ ...fields, receiptBudget: budget });
+}
+
 export const pricedOutput = z.object({
   receipt: z.object({
     providerJobId: z.string().min(1),

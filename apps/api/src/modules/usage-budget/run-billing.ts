@@ -34,7 +34,10 @@ import {
   mergeShotReceipt,
   pendingShotMedia,
   pricedOutput,
+  readReceiptBudget,
+  withReceiptBudget,
 } from "./run-shot-receipt.js";
+import type { ReceiptBudget } from "./run-shot-receipt.js";
 
 function receiptReservation(
   run: Run,
@@ -177,7 +180,7 @@ async function correctSettledReceipt(
   step: Step,
   previous: number | undefined,
   cost: number,
-): Promise<void> {
+): Promise<ReceiptBudget> {
   const claim = await readAdmission(tx, context, step);
   const reservation = receiptReservation(run, step, claim);
   const { request } = claim;
@@ -193,7 +196,9 @@ async function correctSettledReceipt(
     reserved < 0
   )
     throw new ConflictException("Stored receipt differs from settled payment");
-  if (previous === cost) return;
+  const budget = readReceiptBudget(step.output, reserved, previous);
+  const previousBuffer = budget.bufferMinor;
+  if (previous === cost) return { ...budget, bufferMinor: previousBuffer };
   await paid.usage.coverShotReceipt(
     tx,
     run.workspaceId,
@@ -213,11 +218,14 @@ async function correctSettledReceipt(
     data: { actualCost: new Prisma.Decimal(cost).div(100) },
   });
   if (updated.count !== 1) throw new ConflictException("Settled billing claim changed");
+  const nextBuffer = Math.max(0, budget.admittedMinor - cost);
   await adjustEnvelope(db, run.id, {
     spentMinor: cost - previous,
-    overageMinor: Math.max(0, cost - reserved) - Math.max(0, previous - reserved),
-    reservedMinor: 0,
+    overageMinor:
+      Math.max(0, cost - budget.admittedMinor) - Math.max(0, previous - budget.admittedMinor),
+    reservedMinor: nextBuffer - previousBuffer,
   });
+  return { ...budget, bufferMinor: nextBuffer };
 }
 
 /** Identify the immutable manifest receipt. Its final price is the latest absolute cost for this job. */
@@ -261,8 +269,12 @@ export async function captureShotReceipt(
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
       const overage = cost > (current.costMinor ?? 0);
+      let updatedOutput = output;
       if (settled)
-        await correctSettledReceipt(db, tx, paid, context, run, current, previousCost, cost);
+        updatedOutput = withReceiptBudget(
+          output,
+          await correctSettledReceipt(db, tx, paid, context, run, current, previousCost, cost),
+        );
       else if (
         priceChanged &&
         !(await savePricedRequest(tx, context, run, current, receipt, previousCost, paid))
@@ -271,7 +283,7 @@ export async function captureShotReceipt(
       await db.videoRunStep.updateMany({
         where: { id: step.id },
         data: {
-          output,
+          output: updatedOutput,
           ...(settled ? { costMinor: cost } : overage && { error: { code: BILLING_OVERAGE } }),
         },
       });
@@ -330,9 +342,10 @@ async function settleReceipt(
   output: Json,
 ): Promise<void> {
   const reserved = step.costMinor ?? 0;
+  const bufferMinor = Math.max(0, reserved - cost);
   await paid.commitJob(tx, context, step, cost);
   await adjustEnvelope(db, run.id, {
-    reservedMinor: -reserved,
+    reservedMinor: -Math.min(reserved, cost),
     spentMinor: cost,
     overageMinor: Math.max(0, cost - reserved),
   });
@@ -342,7 +355,7 @@ async function settleReceipt(
       state: "SUCCEEDED",
       costMinor: cost,
       finishedAt: new Date(),
-      output,
+      output: withReceiptBudget(output, { admittedMinor: reserved, bufferMinor }),
       error: Prisma.DbNull,
     },
   });
