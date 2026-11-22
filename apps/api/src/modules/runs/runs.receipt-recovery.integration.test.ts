@@ -3,6 +3,7 @@ import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { generateClips, generating, runsFixture } from "./runs.fixture.js";
 import { expectSettled, recoverBeforeLateFetch, stagedClip } from "./runs.staged-clip.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 function pricedClip(seconds = 10): VideoReceipt {
   return {
@@ -204,7 +205,13 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject({
       state: "WAITING_EXTERNAL",
       providerJobId: expect.any(String),
-      output: null,
+      output: {
+        receiptBudget: {
+          admittedMinor: 70,
+          bufferMinor: shotReceiptBufferMinor(56),
+          estimateMinor: 56,
+        },
+      },
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 0,
@@ -278,7 +285,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     const saved = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(saved).toMatchObject({ state: "SUCCEEDED", providerJobId: "accepted" });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: 0,
+      reservedMinor: baseline.reservedMinor + shotReceiptBufferMinor(saved.costMinor!),
       spentMinor: baseline.spentMinor + saved.costMinor!,
     });
     expect(

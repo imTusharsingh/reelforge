@@ -6,6 +6,7 @@ import { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import { ProviderHttp } from "@reelforge/ai-providers";
 import { ArtifactSchema } from "./runs.types.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 const suite = describe.skipIf(!process.env.DATABASE_URL);
 suite("V3 approval, caps and retention", () => {
@@ -389,11 +390,11 @@ suite("V3 approval, caps and retention", () => {
       .scoped(t.context)
       .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     expect(finished.state).toBe("SUCCEEDED");
-    expect(
-      await t.store
-        .scoped(t.context)
-        .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
-    ).toMatchObject({ reservedMinor: 0, spentMinor: finished.costMinor });
+    const finishedEnvelope = await t.store
+      .scoped(t.context)
+      .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
+    expect(finishedEnvelope.reservedMinor).toBe(shotReceiptBufferMinor(finished.costMinor!));
+    expect(finishedEnvelope.spentMinor).toBe(finished.costMinor);
     await generateClips(t);
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
     expect((await t.store.get(t.context, t.run.id)).state).toBe("AWAITING_APPROVAL");

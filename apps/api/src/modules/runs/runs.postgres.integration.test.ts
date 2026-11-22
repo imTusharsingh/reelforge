@@ -6,6 +6,7 @@ import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
 import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 function shotZero(t: Tenant): Promise<Step> {
   return t.store
@@ -305,7 +306,10 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(charge).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
     expect(submit).toHaveBeenCalledOnce();
-    expect(await envelope()).toMatchObject({ reservedMinor: 0, spentMinor: estimate });
+    expect(await envelope()).toMatchObject({
+      reservedMinor: shotReceiptBufferMinor(estimate),
+      spentMinor: estimate,
+    });
   });
   it("rolls back a shot when a pause interleaves between reserve and admission", async () => {
     const t = await fixture.tenant();

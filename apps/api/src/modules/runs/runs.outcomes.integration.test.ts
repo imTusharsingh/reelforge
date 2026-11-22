@@ -18,6 +18,7 @@ import { MediaPorts } from "../scene-media/media-ports.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 import { RunsBoundary } from "./runs.boundary.js";
 import type { Prisma } from "@reelforge/database";
 import type { Step } from "./runs.types.js";
@@ -249,19 +250,21 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
     await expect(t.engine.process(siblingJob)).resolves.toBeNull();
     expect(poll).toHaveBeenCalledTimes(2);
     expect(submit).toHaveBeenCalledOnce();
-    expect(await attempt(t, "shot-1")).toMatchObject({ state: "SUCCEEDED" });
+    const finishedShot = await attempt(t, "shot-1");
+    expect(finishedShot).toMatchObject({ state: "SUCCEEDED" });
     expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "FAILED",
       pauseReason: "PROVIDER_INVALID",
     });
     const finished = await accounting(t, sibling.id);
+    const receiptBuffer = shotReceiptBufferMinor(finishedShot.costMinor!);
     expect(finished.reservation).toMatchObject({
       status: "COMMITTED",
-      committedMinor: second.reservation.amountMinor,
+      committedMinor: BigInt(finishedShot.costMinor!),
     });
     expect(finished.envelope).toMatchObject({
-      reservedMinor: 0,
-      spentMinor: Number(second.reservation.amountMinor),
+      reservedMinor: receiptBuffer,
+      spentMinor: finishedShot.costMinor,
     });
   });
 
