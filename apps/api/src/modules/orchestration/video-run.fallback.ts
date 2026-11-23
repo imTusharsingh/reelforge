@@ -4,12 +4,8 @@ import { ShotSpecSchema } from "@reelforge/contracts";
 import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
-import {
-  clipEstimate,
-  fallbackEstimate,
-  pinnedBudget,
-  runEstimate,
-} from "../usage-budget/run-envelope.js";
+import { overheadCents } from "../scene-media/media-prices.js";
+import { fallbackEstimate, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 
 @Injectable()
@@ -99,10 +95,7 @@ export class RunFallback {
       where: { runId: run.id, key: { startsWith: "media:" }, state: "SUCCEEDED" },
     });
     const overheadSpent = mediaSteps.reduce((sum, item) => sum + (item.costMinor ?? 0), 0);
-    const overhead = Math.max(
-      0,
-      runEstimate(initial).baseEstimateMinor - clipEstimate(initial, false) - overheadSpent,
-    );
+    const overhead = Math.max(0, overheadCents(initial) - overheadSpent);
     try {
       return fallbackEstimate(
         { ...budget, reservedMinor: budget.reservedMinor - (failed.costMinor ?? 0) },

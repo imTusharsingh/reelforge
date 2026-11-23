@@ -1,3 +1,4 @@
+import { PENDING_RECEIPT_CORRECTION } from "./run-pending-receipt.js";
 import { Prisma } from "@reelforge/database";
 import {
   classifyCost,
@@ -9,11 +10,13 @@ import type { PeriodBounds } from "./usage-budget.time.js";
 
 type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
 
-// Historical settlements released their entire reservation. Only an explicitly retained
-// buffer on the same paid attempt can contribute to current admission exposure.
+// Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
   WHEN ur.status <> 'COMMITTED' THEN ur.amount_minor
-  WHEN s.state = 'SUCCEEDED' THEN ur.committed_minor + COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0)
+  WHEN s.state = 'SUCCEEDED' THEN GREATEST(
+    ur.committed_minor + COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0),
+    CASE WHEN s.error->>'code' = ${PENDING_RECEIPT_CORRECTION} THEN (s.error->>'costMinor')::bigint END
+  )
   WHEN s.state = 'WAITING_EXTERNAL' AND s.output ? 'receiptBudget' THEN GREATEST(ur.amount_minor, ur.committed_minor)
   ELSE ur.committed_minor END`;
 

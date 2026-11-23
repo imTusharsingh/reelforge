@@ -1,3 +1,4 @@
+import { correctionHold, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { criticPrefix } from "../usage-budget/critic-admission.js";
 import { QualityRubricSchema, type ShotSpec } from "@reelforge/contracts";
 import {
@@ -79,6 +80,11 @@ export async function remainingSubmissionHold(
   tx: Transaction,
   run: Run,
 ): Promise<string | null> {
+  const correction = await db.videoRunStep.findFirst({
+    where: { runId: run.id, ...pendingCorrectionWhere },
+    select: { id: true },
+  });
+  if (correction) return correctionHold(correction.id);
   const steps = await db.videoRunStep.findMany({
     where: {
       runId: run.id,
@@ -264,13 +270,13 @@ export async function collectibleFailedShots(
       runId: run.id,
       ...(id && { id }),
       key: { startsWith: "shot-" },
-      state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+      OR: [{ state: { in: ["RUNNING", "WAITING_EXTERNAL"] } }, pendingCorrectionWhere],
     },
   });
   const claims = await readAdmissions(db, tx, run.workspaceId, steps);
   return claims
     .filter(({ step, ...claim }) =>
-      step.state === "WAITING_EXTERNAL" ? !!step.providerJobId : !!jobIdFromAdmission(claim),
+      step.state === "RUNNING" ? !!jobIdFromAdmission(claim) : !!step.providerJobId,
     )
     .map(({ step }) => step);
 }

@@ -1,3 +1,4 @@
+import { pendingCorrection } from "./run-pending-receipt.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -181,9 +182,9 @@ async function correctSettledReceipt(
   context: Context,
   run: Run,
   step: Step,
-  previous: number | undefined,
-  cost: number,
+  merged: NonNullable<ReturnType<typeof mergeShotReceipt>>,
 ): Promise<ReceiptBudget | undefined> {
+  const { previousCost: previous, cost } = merged;
   const claim = await readAdmission(tx, context, step);
   const reservation = receiptReservation(run, step, claim);
   const { request } = claim;
@@ -246,22 +247,18 @@ export async function captureShotReceipt(
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       requireReceiptAttempt(current, step);
       const settled = current.state === "SUCCEEDED";
-      const merged = mergeShotReceipt(current, receipt);
+      const pending = pendingCorrection(current);
+      const price =
+        pending && (receipt.costBasis !== "BILLED" || pending.costMinor >= receipt.costMinor)
+          ? pending
+          : receipt;
+      const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
       const overage = cost > (current.costMinor ?? 0);
       let updatedOutput = output;
       if (settled) {
-        const budget = await correctSettledReceipt(
-          db,
-          tx,
-          paid,
-          context,
-          run,
-          current,
-          previousCost,
-          cost,
-        );
+        const budget = await correctSettledReceipt(db, tx, paid, context, run, current, merged);
         if (budget) updatedOutput = withReceiptBudget(output, budget);
         await invalidateAssemblyManifests(db, run.id);
       } else if (
@@ -273,9 +270,11 @@ export async function captureShotReceipt(
         where: { id: step.id },
         data: {
           output: updatedOutput,
+          ...(pending && { error: Prisma.DbNull }),
           ...(settled ? { costMinor: cost } : overage && { error: { code: BILLING_OVERAGE } }),
         },
       });
+      if (pending) await clearResolvedSubmissionHold(db, tx, run, step.id);
       if (!settled && priceChanged && overage && run.pauseReason !== "EMERGENCY_STOP")
         await db.videoRun.updateMany({
           where: { id: run.id },
@@ -283,7 +282,7 @@ export async function captureShotReceipt(
         });
       return {
         value: await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } }),
-        payload: settled ? correctionPayload(current, receipt) : { costMinor: cost, overage },
+        payload: settled ? correctionPayload(current, price) : { costMinor: cost, overage },
         stepId: step.id,
       };
     },

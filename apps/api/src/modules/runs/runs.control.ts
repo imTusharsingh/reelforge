@@ -241,9 +241,15 @@ export class RunsControl {
       }
       const clearedStop =
         current.pauseReason === "EMERGENCY_STOP" &&
-        ["PLANNING", "SCRIPTING", "SHOT_PLANNING", "GENERATING", "ASSEMBLING", "CRITIC"].includes(
-          current.state,
-        );
+        [
+          "PLANNING",
+          "SCRIPTING",
+          "SHOT_PLANNING",
+          "GENERATING",
+          "ASSEMBLING",
+          "CRITIC",
+          "AWAITING_APPROVAL",
+        ].includes(current.state);
       const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
       const resolved =
         current.pauseReason?.startsWith("RECONCILE_REQUIRED") &&

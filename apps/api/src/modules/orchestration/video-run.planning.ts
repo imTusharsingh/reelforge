@@ -119,7 +119,9 @@ export class RunPlanning {
           runId: run.id,
           targetMinor,
           hardCapMinor,
-          ...estimate,
+          baseEstimateMinor: estimate.baseEstimateMinor,
+          reshootReserveMinor: estimate.reshootReserveMinor,
+          route: estimate.route,
         },
       });
       for (const shot of shots)

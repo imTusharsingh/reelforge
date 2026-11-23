@@ -11,7 +11,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
   it.each(["DAY", "MONTH", "RUN"] as const)(
     "uses the pinned Brief before and after envelope creation for the %s limit",
     async (period) => {
-      const t = await fixture.tenant("L2", 24);
+      const t = await fixture.tenant("L2", 21);
       const policy = {
         ...t.brief.budgetPolicy,
         targetMinor: 6,

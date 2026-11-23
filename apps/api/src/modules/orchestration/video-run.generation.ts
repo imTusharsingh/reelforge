@@ -1,3 +1,4 @@
+import { pendingCorrection } from "../usage-budget/run-pending-receipt.js";
 import {
   canRollback,
   jobIdFromAdmission,
@@ -54,7 +55,11 @@ export class RunGeneration {
     const db = this.runs.store.scoped(context);
     const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!initial) throw new ConflictException("Step not found in run");
-    if (SETTLED_SHOTS.some((state) => state === initial.state)) return null;
+    if (SETTLED_SHOTS.some((state) => state === initial.state)) {
+      const pending = pendingCorrection(initial);
+      if (pending) await this.capture(context, initial, pending);
+      return null;
+    }
     if (awaitingBilling(initial) && !pendingShotMedia(initial))
       return this.reconcileBilling(context, initial);
     if (initial.key.startsWith("media:keyframe:")) {

@@ -17,9 +17,11 @@ import {
 import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
-import type { MediaAccounts } from "../scene-media/media-accounts.js";
+import { RunsBoundary } from "./runs.boundary.js";
+import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
-import type { Run, Step, RunJob } from "./runs.types.js";
+import type { Event, Run, Step, RunJob } from "./runs.types.js";
 import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
@@ -182,7 +184,7 @@ export async function recoverBeforeLateFetch(
   { t, shot, job, fetcher, wire }: Awaited<ReturnType<typeof stagedClip>>,
   recoveredSeconds: number,
   lateSeconds: number,
-  beforeDelivery: () => Promise<void | Response>,
+  beforeDelivery: (winner: Step) => Promise<void | Response>,
   pollSeconds = recoveredSeconds,
 ): Promise<Step> {
   const started = Promise.withResolvers<void>();
@@ -215,7 +217,7 @@ export async function recoverBeforeLateFetch(
     await t.engine.process(job);
     const settled = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(settled.state).toBe("SUCCEEDED");
-    response = (await beforeDelivery()) ?? response;
+    response = (await beforeDelivery(settled)) ?? response;
     return settled;
   } finally {
     lateFetch.resolve(response);
@@ -328,4 +330,64 @@ export async function postEditorApproval(t: Tenant): Promise<request.Response> {
   } finally {
     await app.close();
   }
+}
+
+export async function expectCompetingImageDenied(t: Tenant): Promise<void> {
+  const run = await t.runs.create(t.context, t.brief.id, randomUUID());
+  const access = {
+    runs: t.runs,
+    artifacts: t.artifacts,
+    paid: new RunPaidCalls(t.usage, t.store),
+    boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
+  } as MediaAccess;
+  const jobs = new MediaJobs(access, new MediaAccounts(access), t.storage);
+  const image = { submit: vi.fn(), poll: vi.fn(), fetch: vi.fn() };
+  await expect(
+    jobs.tick(t.context, run, "reference:style", image, {}, 4, "fixture", "v1"),
+  ).rejects.toMatchObject({
+    code: "BUDGET_EXHAUSTED",
+  });
+  expect(image.submit).not.toHaveBeenCalled();
+}
+
+export async function expectSameClip(t: Tenant, winner: Step): Promise<void> {
+  const step = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: winner.id } });
+  expect(step.finishedAt).toEqual(winner.finishedAt);
+  expect(t.artifacts.descriptors(step.output)).toEqual(t.artifacts.descriptors(winner.output));
+}
+
+export async function failLateCorrection(f: Awaited<ReturnType<typeof stagedClip>>): Promise<{
+  winner: Step;
+  commitment: { id: string; createdAt: Date; committedAt: Date | null };
+}> {
+  const { t, shot } = f;
+  let commitment!: { id: string; createdAt: Date; committedAt: Date | null };
+  let winner!: Step;
+  const failure = new Error("charge correction failed");
+  await expect(
+    recoverBeforeLateFetch(f, 10, 12, async (settled) => {
+      winner = settled;
+      const where = { workspaceId: shot.workspaceId, correlationId: shot.id };
+      commitment = await t.db.usageReservation.findFirstOrThrow({
+        where,
+        select: {
+          id: true,
+          createdAt: true,
+          committedAt: true,
+        },
+      });
+      vi.spyOn(t.usage, "coverShotReceipt").mockRejectedValueOnce(failure);
+    }),
+  ).rejects.toBe(failure);
+  return { winner, commitment };
+}
+
+export function receiptAdjustments(events: Event[]): Event[] {
+  return events.filter(
+    (e) =>
+      e.type === "provider_receipt" &&
+      e.payload &&
+      typeof e.payload === "object" &&
+      "adjustmentMinor" in e.payload,
+  );
 }

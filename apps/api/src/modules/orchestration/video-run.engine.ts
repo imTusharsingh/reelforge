@@ -1,3 +1,4 @@
+import { deferCorrection, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { recordedShotPrice } from "../usage-budget/run-shot-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
@@ -177,6 +178,9 @@ export class VideoRunEngine {
               stepId,
               payload: { replay: true, reason: generationPause(cause) },
             };
+          const report = error instanceof ShotBillingFailure ? error.report : undefined;
+          if (attempt?.state === "SUCCEEDED" && report)
+            return deferCorrection(db, current, attempt, report, generationPause(cause));
           if (media && !attempt) throw cause;
         }
         if (hold) {
@@ -301,6 +305,17 @@ export class VideoRunEngine {
       throw new ConflictException("Worker actor no longer authorized");
     return { workspaceId: job.workspaceId, userId: job.userId, role: membership.role };
   }
+  private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
+    const corrections = await db.videoRunStep.findMany({
+      where: { ...pendingCorrectionWhere, run: { state: { not: "FAILED" } } },
+      select: { id: true, runId: true, run: { select: { revision: true } } },
+    });
+    for (const step of corrections)
+      await this.runs.queue?.enqueue(
+        this.runs.job(context, step.runId, step.id),
+        step.run.revision,
+      );
+  }
   public async recover(): Promise<void> {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.
     const workspaces = await this.runs.store.db.workspace.findMany({ where: { archivedAt: null } });
@@ -311,7 +326,9 @@ export class VideoRunEngine {
         role: "OWNER",
       };
       await this.artifacts.sweep(context);
-      const runs = await this.runs.store.scoped(context).videoRun.findMany({
+      const db = this.runs.store.scoped(context);
+      await this.enqueuePendingCorrections(context, db);
+      const runs = await db.videoRun.findMany({
         where: {
           state: {
             in: [
@@ -338,7 +355,6 @@ export class VideoRunEngine {
           run.state === "NEEDS_HUMAN" ||
           run.pauseReason
         ) {
-          const db = this.runs.store.scoped(context);
           const admitted =
             run.state === "FAILED"
               ? await collectibleFailedShots(db, this.runs.store.db, run)

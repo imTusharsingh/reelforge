@@ -55,22 +55,34 @@ export async function assertRunCap(
 }
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
-export function clipEstimate(
-  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
+type PlanShot = Pick<ShotSpec, "durationSeconds"> &
+  Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>;
+
+function clipCoverage(
+  shots: readonly PlanShot[],
   fallback: boolean,
-): number {
-  return shots.reduce((sum, shot) => sum + reservationCents(clipMoney(shot, fallback)), 0);
+): {
+  clipsMinor: number;
+  receiptBufferMinor: number;
+} {
+  let clipsMinor = 0;
+  let receiptBufferMinor = 0;
+  for (const shot of shots) {
+    const quote = reservationCents(clipMoney(shot, fallback));
+    clipsMinor += quote;
+    receiptBufferMinor += shotReceiptBufferMinor(quote);
+  }
+  return { clipsMinor, receiptBufferMinor };
 }
+
 export function runEstimate(
-  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
+  shots: readonly PlanShot[],
   fallback = false,
   hardCapMinor = 800,
-): Estimate {
-  const clips = clipEstimate(shots, fallback);
-  const overhead = overheadCents(shots);
-  const baseEstimateMinor = clips + overhead;
+): Estimate & { expectedSpendMinor: number; receiptBufferMinor: number } {
+  const { clipsMinor, receiptBufferMinor } = clipCoverage(shots, fallback);
+  const expectedSpendMinor = clipsMinor + overheadCents(shots);
+  const baseEstimateMinor = expectedSpendMinor + receiptBufferMinor;
   if (baseEstimateMinor > hardCapMinor)
     throw new ConflictException({
       code: "BUDGET_CAP",
@@ -79,24 +91,25 @@ export function runEstimate(
     });
   return {
     baseEstimateMinor,
-    reshootReserveMinor: Math.min(Math.ceil(clips / 2), hardCapMinor - baseEstimateMinor),
+    expectedSpendMinor,
+    receiptBufferMinor,
+    reshootReserveMinor: Math.min(Math.ceil(clipsMinor / 2), hardCapMinor - baseEstimateMinor),
     route: fallback ? "FALLBACK" : "PRIMARY",
   };
 }
 export function fallbackEstimate(
   envelope: Pick<BudgetEnvelope, "spentMinor" | "reservedMinor" | "reshootReserveMinor">,
-  remaining: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
+  remaining: readonly PlanShot[],
   overheadRemaining = 0,
   hardCapMinor = 800,
 ): Estimate {
-  const clips = clipEstimate(remaining, true);
-  const buffer = remaining.reduce(
-    (sum, shot) => sum + shotReceiptBufferMinor(reservationCents(clipMoney(shot, true))),
-    0,
-  );
+  const { clipsMinor, receiptBufferMinor } = clipCoverage(remaining, true);
   const baseEstimateMinor =
-    envelope.spentMinor + envelope.reservedMinor + clips + buffer + overheadRemaining;
+    envelope.spentMinor +
+    envelope.reservedMinor +
+    clipsMinor +
+    receiptBufferMinor +
+    overheadRemaining;
   if (baseEstimateMinor > hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "Fallback exceeds the run cap" });
   const reserve =

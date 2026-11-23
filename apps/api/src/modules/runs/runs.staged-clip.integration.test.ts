@@ -7,6 +7,10 @@ import {
   expectBillingReconciliation,
   expectExpiredShotCoverage,
   expectSettled,
+  expectSameClip,
+  failLateCorrection,
+  receiptAdjustments,
+  expectCompetingImageDenied,
   clipFailures,
   lateClipCases,
   clipUri,
@@ -117,20 +121,10 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       );
       await t.engine.process(job);
       await expectSettled(f, seconds);
-      const corrected = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
-      expect(corrected.finishedAt).toEqual(settled.finishedAt);
-      expect(t.artifacts.descriptors(corrected.output)).toEqual(
-        t.artifacts.descriptors(settled.output),
-      );
+      await expectSameClip(t, settled);
       const events = await t.db.runEvent.findMany({ where: { runId: run.id, stepId: shot.id } });
       expectBillingReconciliation(events, kind === "job GET 503" && seconds > 10);
-      const adjustments = events.filter(
-        (e) =>
-          e.type === "provider_receipt" &&
-          e.payload &&
-          typeof e.payload === "object" &&
-          "adjustmentMinor" in e.payload,
-      );
+      const adjustments = receiptAdjustments(events);
       expect(adjustments).toMatchObject(
         seconds > recoveredSeconds ? [{ payload: { adjustmentMinor: 14, costMinor: 84 } }] : [],
       );
@@ -163,19 +157,29 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     },
   );
 
-  it("surfaces a billing callback failure after recovery settled the clip", async () => {
-    const f = await stagedClip(await fixture.tenant(), 200);
-    const error = new Error("charge correction failed");
-    await expect(
-      recoverBeforeLateFetch(f, 10, 12, async () => {
-        vi.spyOn(f.t.usage, "coverShotReceipt").mockRejectedValueOnce(error);
-      }),
-    ).rejects.toBe(error);
-    await expectSettled(f, 10);
-    expect(await f.t.store.get(f.t.context, f.run.id)).toMatchObject({
+  it("counts a failed late correction before competing admission and reconciles it across resume", async () => {
+    const f = await stagedClip(await fixture.tenant(), 84);
+    const { t, shot, run, job, native } = f;
+    const { winner, commitment } = await failLateCorrection(f);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "PAUSED_BUDGET",
       pauseReason: "GENERATION_FAILED",
     });
+    expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(84);
+    await expectCompetingImageDenied(t);
+    await t.engine.process(job);
+    await expectSettled(f, 12);
+    await t.control.resume(t.context, run.id);
+    await t.engine.process(job);
+    await expectCompetingImageDenied(t);
+    await expectSettled(f, 12, undefined, 84);
+    const where = { workspaceId: run.workspaceId, correlationId: shot.id };
+    expect(await t.db.usageReservation.findMany({ where })).toMatchObject([commitment]);
+    await expectSameClip(t, winner);
+    expect(await t.db.runEvent.count({ where: { stepId: shot.id, type: "step_completed" } })).toBe(
+      1,
+    );
+    expect(native.submit).toHaveBeenCalledOnce();
   });
 
   it("bounds a late receipt overage and blocks siblings from consuming its buffer", async () => {
@@ -204,22 +208,12 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     await t.engine.process(job);
     await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor }, 84);
     expect(put).toHaveBeenCalledOnce();
-    const corrected = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
-    expect(corrected.finishedAt).toEqual(settled.finishedAt);
-    expect(t.artifacts.descriptors(corrected.output)).toEqual(
-      t.artifacts.descriptors(settled.output),
-    );
+    await expectSameClip(t, settled);
     const events = await t.db.runEvent.findMany({ where: { ...where, stepId: shot.id } });
     expect(events.filter((e) => e.type === "step_completed")).toHaveLength(1);
-    expect(
-      events.filter(
-        (e) =>
-          e.type === "provider_receipt" &&
-          e.payload &&
-          typeof e.payload === "object" &&
-          "adjustmentMinor" in e.payload,
-      ),
-    ).toMatchObject([{ payload: { previousCostMinor: 42, adjustmentMinor: 42, costMinor: 84 } }]);
+    expect(receiptAdjustments(events)).toMatchObject([
+      { payload: { previousCostMinor: 42, adjustmentMinor: 42, costMinor: 84 } },
+    ]);
     expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "GENERATING",
       pauseReason: null,

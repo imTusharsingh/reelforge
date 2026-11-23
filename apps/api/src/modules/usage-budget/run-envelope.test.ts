@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  clipEstimate,
   envelopeRoom,
   fallbackEstimate,
   runEstimate,
@@ -12,15 +11,26 @@ describe("V3 budget estimates", () => {
   const shots = Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 }));
   it("uses micro-USD precision and includes all nonclip costs", () => {
     const estimate = runEstimate(shots);
-    expect(clipEstimate(shots, false)).toBe(318);
-    expect(estimate.baseEstimateMinor).toBe(428);
-    expect(estimate.reshootReserveMinor).toBe(159);
-    const fallback = runEstimate(shots, true);
-    expect(fallback.baseEstimateMinor).toBe(746);
-    expect(fallback.baseEstimateMinor + fallback.reshootReserveMinor).toBeLessThanOrEqual(800);
+    expect(estimate).toMatchObject({
+      expectedSpendMinor: 428,
+      receiptBufferMinor: 84,
+      baseEstimateMinor: 512,
+      reshootReserveMinor: 159,
+    });
+    expect(() => runEstimate(shots, true)).toThrow("$8");
     expect(() => runEstimate(Array.from({ length: 24 }, () => ({ durationSeconds: 7.5 })))).toThrow(
       "$8",
     );
+  });
+  it("requires each five-second shot's rounded buffer before allocating reshoot funds", () => {
+    const plan = Array.from({ length: 6 }, () => ({ durationSeconds: 5 }));
+    expect(() => runEstimate(plan, false, 373)).toThrow("pinned cap");
+    expect(runEstimate(plan, false, 374)).toMatchObject({
+      expectedSpendMinor: 320,
+      receiptBufferMinor: 54,
+      baseEstimateMinor: 374,
+      reshootReserveMinor: 0,
+    });
   });
   it("drops fallback reserve when necessary and rejects unaffordable remaining work", () => {
     const envelope = { spentMinor: 0, reservedMinor: 0, reshootReserveMinor: 157 };

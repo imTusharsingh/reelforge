@@ -30,21 +30,28 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
     const run = await t.store.get(t.context, t.run.id);
     expect(run.state).toBe("AWAITING_APPROVAL");
-    expect(submit).toHaveBeenCalledTimes(6);
     const detail = await t.runs.detail(t.context, run.id);
     expect(detail).toMatchObject({ envelope: { reservedMinor: 84, spentMinor: 318 } });
+    t.stop.stopped = true;
+    await expect(t.control.approve(t.context, run.id)).rejects.toThrow("halted");
+    expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
+    t.stop.stopped = false;
+    await expect(t.control.approve(t.context, run.id)).rejects.toThrow("hard gates");
+    await t.control.resume(t.context, run.id);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "AWAITING_APPROVAL",
+      pauseReason: null,
+    });
     await t.control.approve(t.context, run.id);
     expect((await t.store.get(t.context, run.id)).state).toBe("SCHEDULED");
     await expect(t.control.approve(t.context, run.id)).rejects.toThrow();
-    expect(
-      await t.store
-        .scoped(t.context)
-        .runEvent.count({ where: { runId: run.id, type: "approved" } }),
-    ).toBe(1);
     const events = await t.store.events(t.context, run.id, 0);
+    expect(events.filter((event) => event.type === "approved")).toHaveLength(1);
     expect(events.map((e) => e.sequence)).toEqual(events.map((_, i) => i + 1));
     const states = events.filter((e) => e.type === "transition").map((e) => e.payload);
-    expect(states.length).toBe(6);
+    expect(states).toHaveLength(7);
+    expect(states.at(-1)).toMatchObject({ from: "AWAITING_APPROVAL", to: "AWAITING_APPROVAL" });
+    expect(submit).toHaveBeenCalledTimes(6);
   });
   it("waits for script approval at L1 and rejects viewer actions", async () => {
     const t = await fixture.tenant("L1");

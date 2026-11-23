@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Artifact } from "../runs/runs.types.js";
 import { ModuleRef } from "@nestjs/core";
 import { AssemblyManifestSchema, type PlanningPromptReceipt } from "@reelforge/contracts";
-import { runsFixture, generating } from "../runs/runs.fixture.js";
+import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
 import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
 import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
@@ -45,7 +45,13 @@ describe.skipIf(
     vi.stubEnv("XAI_VIDEO_MODEL", "fixture-fallback");
   });
   afterEach(() => vi.unstubAllEnvs());
-  it("plans, generates six real clips, chains frames, assembles voice/music/captions and writes a complete <=$8 manifest", async () => {
+  async function pipeline(hardCapMinor: number): Promise<{
+    t: Tenant;
+    native: ReturnType<typeof fakeMediaPorts>;
+    paid: RunPaidCalls;
+    renderer: MediaRenderer;
+    assembly: MediaAssembly;
+  }> {
     const t = await fixture.tenant(
       "L2",
       30,
@@ -57,6 +63,23 @@ describe.skipIf(
       },
       false,
     );
+    const brief = {
+      ...t.brief,
+      id: randomUUID(),
+      version: 2,
+      budgetPolicy: { ...t.brief.budgetPolicy, targetMinor: 320, hardCapMinor },
+    };
+    await t.db.channelBrief.create({
+      data: {
+        id: brief.id,
+        workspaceId: brief.workspaceId,
+        channelId: brief.channelId,
+        version: brief.version,
+        document: brief,
+      },
+    });
+    t.brief = brief;
+    t.run = await t.runs.create(t.context, brief.id, randomUUID());
     const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
       (shot, ordinal) => ({
         ...shot,
@@ -143,12 +166,38 @@ describe.skipIf(
     const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);
     const binding = new MediaBindings(access, accounts, frames, ports, jobs, planning, assembly);
     binding.onModuleInit();
+    return { t, native, paid, renderer, assembly };
+  }
+  it("rejects a 330-cent plan before the first video submission", async () => {
+    const { t, native } = await pipeline(330);
+    await expect(generating(t)).rejects.toThrow("pinned cap");
+    expect(native.submitted).toHaveLength(0);
+    expect(
+      await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: t.run.id, key: "media:text:director" },
+      }),
+    ).toMatchObject({ state: "FAILED" });
+    expect(await t.db.budgetEnvelope.count({ where: { runId: t.run.id } })).toBe(0);
+  }, 180000);
+  it("plans, generates six real clips, chains frames, assembles voice/music/captions and writes a complete <=$8 manifest", async () => {
+    const { t, native, paid, renderer, assembly } = await pipeline(800);
     await generating(t);
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({
+      baseEstimateMinor: 374,
+      reshootReserveMinor: 105,
+    });
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
       orderBy: { key: "asc" },
     });
     for (const step of steps) await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
+    expect(native.submitted).toHaveLength(6);
+    const settled = await t.db.videoRunStep.findMany({
+      where: { id: { in: steps.map((step) => step.id) } },
+    });
+    expect(settled.map((step) => step.costMinor)).toEqual([35, 35, 35, 35, 35, 35]);
     const render = renderer.render.bind(renderer);
     const rendering = vi.spyOn(renderer, "render").mockImplementationOnce(async (input) => {
       const result = await render(input);

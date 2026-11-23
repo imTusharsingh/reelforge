@@ -17,7 +17,7 @@ import { PlanningReferenceAssetsService } from "../asset/planning-reference-asse
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
@@ -175,7 +175,7 @@ export class MediaPlanning {
         modelId,
       ));
     const result = await this.textResult(context, run, step, input, modelId, !!pending);
-    await this.validateAcceptedPlan(context, step, input.promptVersion.role, result.output);
+    await this.validateAcceptedPlan(context, run, step, input.promptVersion.role, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
@@ -228,12 +228,13 @@ export class MediaPlanning {
 
   private async validateAcceptedPlan(
     context: Context,
+    run: Run,
     step: Step,
     role: string,
     output: unknown,
   ): Promise<void> {
     try {
-      this.validatePlan(role, output);
+      this.validatePlan(run, role, output);
     } catch (error) {
       const accepted = await this.access.runs.store
         .scoped(context)
@@ -247,12 +248,12 @@ export class MediaPlanning {
       throw error;
     }
   }
-  private validatePlan(role: string, output: unknown): void {
+  private validatePlan(run: Run, role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);
       if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
         throw new Error("Omni requires integer-second shots");
-      runEstimate(shots);
+      runEstimate(shots, false, pinnedBudget(run).hardCapMinor);
     }
   }
   private async textReceipt(
