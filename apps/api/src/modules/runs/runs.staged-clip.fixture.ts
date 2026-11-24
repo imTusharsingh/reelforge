@@ -24,6 +24,7 @@ import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import type { Event, Run, Step, RunJob } from "./runs.types.js";
 import { maximumClipMoney } from "../scene-media/media-prices.js";
+import { CappedTestVideoPort } from "./runs.capped-video.fixture.js";
 
 export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
   return Response.json({
@@ -130,21 +131,12 @@ export async function stagedClip(
       : new GrokVideo(http, staging, capability, refs);
   if (provider === "xai") t.generation.fallbackProvider = t.generation.provider;
   const jobs = new MediaJobs({} as MediaAccess, {} as MediaAccounts, t.storage);
-  t.generation.provider = new RoutedMediaVideo(native, jobs, t.context, run);
+  const bridge = new RoutedMediaVideo(native, jobs, t.context, run);
+  t.generation.provider = new CappedTestVideoPort(bridge, native);
   vi.spyOn(native, "submit");
   vi.spyOn(native, "fetch");
   const job = t.runs.job(t.context, run.id, shot.id);
   return { t, run, shot, job, fetcher, probe, native, wire };
-}
-
-export async function downgradeToLegacyAdmission(t: Tenant, run: Run, shot: Step): Promise<void> {
-  const where = { workspaceId: run.workspaceId, correlationId: shot.id };
-  await t.db.$transaction([
-    t.db.videoRunStep.update({ where: { id: shot.id }, data: { costMinor: 70 } }),
-    t.db.usageReservation.updateMany({ where, data: { amountMinor: 70n } }),
-    t.db.providerRequest.updateMany({ where, data: { estimatedCost: 0.7 } }),
-    t.db.budgetEnvelope.updateMany({ where: { runId: run.id }, data: { reservedMinor: 70 } }),
-  ]);
 }
 
 const deliveryFailures = [

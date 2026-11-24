@@ -1,6 +1,6 @@
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
 import { clipMoney, maximumClipMoney, overheadCents } from "../scene-media/media-prices.js";
 import {
@@ -51,6 +51,16 @@ export async function assertRunCap(
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
 type PlanShot = Pick<ShotSpec, "durationSeconds"> &
   Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>;
+
+export function assertChargeCeilingEnforced(
+  provider: Pick<VideoGenPort, "providerId" | "enforcesPerCallChargeCeiling">,
+): void {
+  if (!provider.enforcesPerCallChargeCeiling)
+    throw new ServiceUnavailableException({
+      code: "BUDGET_POLICY_UNAVAILABLE",
+      message: `Paid video generation is disabled because ${provider.providerId} cannot enforce a per-call charge ceiling`,
+    });
+}
 
 function clipCoverage(
   shots: readonly PlanShot[],
@@ -134,6 +144,7 @@ export function priceShot(
   shot: ShotSpec,
 ): { provider: VideoGenPort; amount: number; estimate: number } {
   const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
+  assertChargeCeilingEnforced(provider);
   provider.assertKey?.();
   const estimate = provider.estimate(shot, budget.route === "FALLBACK");
   const amount = Math.max(

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { envelopeRoom, fallbackEstimate, runEstimate } from "./run-envelope.js";
+import {
+  assertChargeCeilingEnforced,
+  envelopeRoom,
+  fallbackEstimate,
+  runEstimate,
+} from "./run-envelope.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 
 describe("V3 budget estimates", () => {
@@ -58,5 +63,21 @@ describe("V3 budget estimates", () => {
       }),
     ).toMatchObject({ admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 });
     expect(readReceiptBudget(null)).toBeUndefined();
+  });
+  it("fails closed for providers without a per-call charge ceiling", () => {
+    for (const providerId of ["gemini", "xai"]) {
+      expect(() =>
+        assertChargeCeilingEnforced({
+          providerId,
+          enforcesPerCallChargeCeiling: false,
+        }),
+      ).toThrow("cannot enforce a per-call charge ceiling");
+    }
+    expect(() =>
+      assertChargeCeilingEnforced({
+        providerId: "test",
+        enforcesPerCallChargeCeiling: true,
+      }),
+    ).not.toThrow();
   });
 });

@@ -306,37 +306,36 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
     expect(submit).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    [401, "UNAUTHENTICATED"],
-    [403, "PERMISSION_DENIED"],
-  ] as const)(
-    "settles HTTP %s through the production video bridge without losing diagnostics",
-    async (status, code) => {
-      const t = await fixture.tenant("L2", 42);
-      await generating(t);
-      const step = await attempt(t, "shot-0");
-      const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(rejection(status, code));
-      const { video } = adapters(t, fetcher);
-      const access = { artifacts: t.artifacts } as MediaAccess;
-      t.generation.provider = new RoutedMediaVideo(
-        video,
-        new MediaJobs(access, new MediaAccounts(access), t.storage),
-        t.context,
-        t.run,
-      );
-      await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).resolves.toBeNull();
-      const saved = await accounting(t, step.id);
-      expect(saved.request).toMatchObject({
-        errorCode: "NOT_DISPATCHED",
-        errorMessage: `Provider refusal (HTTP ${status}, ${code})`,
-        responseMetadata: { dispatched: false, costKnown: true },
-      });
-      expect(saved.reservation.status).toBe("RELEASED");
-      expect(saved.envelope).toMatchObject({ reservedMinor: 0, spentMinor: 0 });
-      expect(await attempt(t, "shot-0")).toMatchObject({ state: "FAILED" });
-      expect(fetcher).toHaveBeenCalledOnce();
-    },
-  );
+  it("pauses before paid dispatch when the provider cannot enforce a charge ceiling", async () => {
+    const t = await fixture.tenant("L2", 42);
+    await generating(t);
+    const step = await attempt(t, "shot-0");
+    const fetcher = vi.fn<typeof fetch>();
+    const { video } = adapters(t, fetcher);
+    const access = { artifacts: t.artifacts } as MediaAccess;
+    t.generation.provider = new RoutedMediaVideo(
+      video,
+      new MediaJobs(access, new MediaAccounts(access), t.storage),
+      t.context,
+      t.run,
+    );
+    await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).rejects.toMatchObject({
+      response: { code: "BUDGET_POLICY_UNAVAILABLE" },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: "PAUSED_BUDGET",
+      pauseReason: "BUDGET_POLICY_UNAVAILABLE",
+    });
+    expect(await attempt(t, "shot-0")).toMatchObject({ state: "PENDING", providerJobId: null });
+    expect(await t.db.usageReservation.count({ where: { correlationId: step.id } })).toBe(0);
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({
+      reservedMinor: 0,
+      spentMinor: 0,
+    });
+  });
 
   it("closes the planning text attempt and fails closed on the next pass", async () => {
     const narrator = {

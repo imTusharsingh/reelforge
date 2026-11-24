@@ -58,9 +58,15 @@ export class InvalidVideoFormat extends ShotMediaFailure {
 export interface VideoGenPort {
   readonly providerId: string;
   readonly modelId?: string;
+  /** True only when submit passes the supplied limit to an enforceable provider-side cap. */
+  readonly enforcesPerCallChargeCeiling: boolean;
   assertKey?(): void;
   estimate(shot: ShotSpec, fallback: boolean): number;
-  submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
+  submit(
+    shot: ShotSpec,
+    idempotencyKey: string,
+    maximumCostMinor: number,
+  ): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;
   poll(
     providerJobId: string,
@@ -94,6 +100,7 @@ export type MediaPortResolver = (
 ) => Promise<{ primary: VideoGenPort; fallback: VideoGenPort } | null>;
 export class UnconfiguredVideoPort implements VideoGenPort {
   public readonly providerId = "unconfigured";
+  public readonly enforcesPerCallChargeCeiling = false;
   public estimate(): never {
     throw new Error("Video provider not configured");
   }

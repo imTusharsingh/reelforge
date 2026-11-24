@@ -6,11 +6,18 @@ import { reservationCents } from "@reelforge/ai-providers";
 import { clipMoney } from "./media-prices.js";
 /** Explicit test injection; runtime modules never import this file. */
 export class StubVideoGenPort implements VideoGenPort {
+  public readonly enforcesPerCallChargeCeiling = true;
   public constructor(public readonly providerId = "gemini") {}
   public estimate(shot: ShotSpec, fallback: boolean): number {
     return reservationCents(clipMoney(shot, fallback));
   }
-  public async submit(_shot: ShotSpec, key: string): Promise<{ providerJobId: string }> {
+  public async submit(
+    _shot: ShotSpec,
+    key: string,
+    maximumCostMinor: number,
+  ): Promise<{ providerJobId: string }> {
+    if (!Number.isSafeInteger(maximumCostMinor) || maximumCostMinor < 0)
+      throw new Error("Test provider requires a valid maximum charge");
     return { providerJobId: `fixture-${createHash("sha256").update(key).digest("hex")}` };
   }
   public async reconcile(key: string): Promise<{ providerJobId: string }> {

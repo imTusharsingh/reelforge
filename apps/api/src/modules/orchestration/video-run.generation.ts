@@ -189,7 +189,7 @@ export class RunGeneration {
       result = await this.paid.dispatch(context, claimed, () =>
         withSpan(
           "run.provider.submit",
-          () => selected.submit(shot, claimed.idempotencyKey),
+          () => selected.submit(shot, claimed.idempotencyKey, claimed.costMinor ?? 0),
           "CLIENT",
         ),
       );

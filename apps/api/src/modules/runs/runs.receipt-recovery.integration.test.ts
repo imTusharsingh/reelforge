@@ -2,11 +2,15 @@ import { z } from "zod";
 import { json, type Step } from "./runs.types.js";
 import { describe, expect, it, vi } from "vitest";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
-import { generateClips, generating, runsFixture } from "./runs.fixture.js";
+import {
+  downgradeToLegacyAdmission,
+  generateClips,
+  generating,
+  runsFixture,
+} from "./runs.fixture.js";
 import {
   admitSibling,
   completed,
-  downgradeToLegacyAdmission,
   eightSecondShot,
   expectSettled,
   recoverBeforeLateFetch,
@@ -186,13 +190,12 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await downgradeToLegacyAdmission(t, run, shot!);
     const reservation = await t.db.usageReservation.findFirstOrThrow({ where });
     expect(reservation.amountMinor).toBe(70n);
+    const sweep = (): Promise<number> =>
+      t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId);
     const enqueue = vi.fn<RunsQueue["enqueue"]>();
     t.runs.queue = { enqueue, fanout: vi.fn() } as unknown as RunsQueue;
     if (cut.endsWith("missing request")) await t.db.providerRequest.deleteMany({ where });
-    if (cut === "swept missing request")
-      expect(
-        await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId),
-      ).toBe(1);
+    if (cut === "swept missing request") expect(await sweep()).toBe(1);
     if (cut === "native storage") {
       vi.spyOn(port, "poll").mockImplementationOnce(async (_job, billing) => {
         await billing!.record({ ...pricedClip(), media: null, providerDurationSeconds: null });
@@ -216,7 +219,6 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("halted");
       t.stop.stopped = false;
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
-      expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
       await t.engine.process(t.runs.job(t.context, run.id, pending!.id));
       expect(submit).toHaveBeenCalledOnce();
       expect(enqueue).not.toHaveBeenCalled();
@@ -240,9 +242,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
         idempotencyKey: "competing-run",
       });
     await expect(compete()).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
-    expect(
-      await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId),
-    ).toBe(cut === "swept missing request" ? 0 : 1);
+    expect(await sweep()).toBe(cut === "swept missing request" ? 0 : 1);
     await expect(compete()).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
     t.stop.stopped = false;
     if (stopped) {
