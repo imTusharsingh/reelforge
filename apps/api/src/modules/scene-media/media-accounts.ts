@@ -2,7 +2,7 @@ import type { Prisma } from "@reelforge/database";
 type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
-import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { activeSubmissionHold, clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   BudgetExhaustedError,
@@ -37,6 +37,8 @@ export class MediaAccounts {
       "media_intent",
       async (db, current, tx) => {
         this.requireDispatchable(run, current);
+        if (await activeSubmissionHold(db, tx, current))
+          throw new ConflictException("Reconcile pending billing before media admission");
         const previous = await db.videoRunStep.findFirst({
           where: { runId: run.id, key },
           orderBy: { attempt: "desc" },

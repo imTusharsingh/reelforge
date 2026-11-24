@@ -1,4 +1,7 @@
-import { pendingCorrection } from "../usage-budget/run-pending-receipt.js";
+import {
+  pendingCorrection,
+  persistPendingCorrection,
+} from "../usage-budget/run-pending-receipt.js";
 import {
   canRollback,
   jobIdFromAdmission,
@@ -14,11 +17,8 @@ import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
 import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
-import {
-  reconcilePricedReceipt,
-  recordShotArtifact,
-  captureShotReceipt,
-} from "../usage-budget/run-billing.js";
+import { recordShotArtifact, captureShotReceipt } from "../usage-budget/run-billing.js";
+import { reconcileBilling, resumeAfterCorrection } from "./video-run.billing-recovery.js";
 import {
   awaitingBilling,
   pendingShotMedia,
@@ -53,20 +53,23 @@ export class RunGeneration {
   ) {}
   public async process(context: Context, run: Run, stepId: string): Promise<number | null> {
     const db = this.runs.store.scoped(context);
-    const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
-    if (!initial) throw new ConflictException("Step not found in run");
-    if (SETTLED_SHOTS.some((state) => state === initial.state)) {
-      const pending = pendingCorrection(initial);
-      if (pending) await this.capture(context, initial, pending);
+    const found = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
+    if (!found) throw new ConflictException("Step not found in run");
+    if (SETTLED_SHOTS.some((state) => state === found.state)) {
+      const pending = pendingCorrection(found);
+      if (pending) await this.capture(context, found, pending);
       return null;
     }
-    if (awaitingBilling(initial) && !pendingShotMedia(initial))
-      return this.reconcileBilling(context, initial);
-    if (initial.key.startsWith("media:keyframe:")) {
+    let step = found;
+    const pending = pendingCorrection(step);
+    if (pending) step = await this.capture(context, step, pending);
+    if (step.state === "SUCCEEDED") return null;
+    if (awaitingBilling(step) && !pendingShotMedia(step))
+      return reconcileBilling(this.runs, this.paid, context, step);
+    if (step.key.startsWith("media:keyframe:")) {
       if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
-      return this.recoverKeyframe(context, initial);
+      return this.recoverKeyframe(context, step);
     }
-    let step = initial;
     const paused = await this.waitAtBoundary(context, run, step);
     if (paused !== undefined) return paused;
     const shot = ShotSpecSchema.parse(step.input);
@@ -129,17 +132,6 @@ export class RunGeneration {
       await this.boundary.check(context, run);
     }
     return undefined;
-  }
-
-  private async reconcileBilling(context: Context, step: Step): Promise<null> {
-    await reconcilePricedReceipt(this.runs.store, this.paid, context, step).catch(
-      (cause: unknown) => {
-        throw new ShotMediaFailure(step.providerId!, step.providerJobId!, cause);
-      },
-    );
-    const run = await this.runs.store.get(context, step.runId);
-    if (run.state === "GENERATING" && !run.pauseReason) await this.runs.enqueue(context, run);
-    return null;
   }
 
   private async poll(
@@ -329,15 +321,23 @@ export class RunGeneration {
       .observe({ provider: step.providerId ?? "unconfigured" }, Date.now() - started);
   }
   private capture(context: Context, step: Step, receipt: VideoReceipt): Promise<Step> {
-    return captureShotReceipt(this.runs.store, this.paid, context, step, receipt).catch(
-      (cause: unknown) => {
+    return (async (): Promise<Step> => {
+      const correctionPending =
+        !!pendingCorrection(step) ||
+        (receipt.costBasis === "BILLED" && receipt.costMinor > (step.costMinor ?? 0));
+      try {
+        await persistPendingCorrection(this.runs.store, context, step, receipt);
+        const saved = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+        if (correctionPending) await resumeAfterCorrection(this.runs, context, step.runId);
+        return saved;
+      } catch (cause) {
         throw new ShotBillingFailure(cause, {
           providerId: step.providerId,
           jobId: step.providerJobId,
           receipt,
         });
-      },
-    );
+      }
+    })();
   }
   private billing(context: Context, step: Step): ShotBilling {
     return {
@@ -389,7 +389,7 @@ export class RunGeneration {
           step.providerJobId!,
           new ConflictException(billingHold(step.id)),
         );
-      await this.reconcileBilling(context, step);
+      await reconcileBilling(this.runs, this.paid, context, step);
     }
     if (result.value !== null) {
       this.recordSuccess(result.value, step, started);

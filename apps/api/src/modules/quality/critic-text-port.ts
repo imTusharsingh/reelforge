@@ -1,13 +1,13 @@
 import { QualityRubricSchema } from "@reelforge/contracts";
 import { ConflictException } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { reservationCents, type TextPort, type TextSpec } from "@reelforge/ai-providers";
+import { type TextPort, type TextSpec } from "@reelforge/ai-providers";
 import { z } from "zod";
 import type { Context, Run } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaPorts } from "../scene-media/media-ports.js";
-import { MEDIA_OVERHEAD } from "../scene-media/media-prices.js";
+import { textCallCents } from "../scene-media/media-prices.js";
 
 import { attachedTextResult, textResultSchema } from "../usage-budget/run-admission-state.js";
 
@@ -33,10 +33,7 @@ function verifyInput(input: unknown, fingerprint: string): void {
 }
 
 export function criticReservationCents(): number {
-  return reservationCents({
-    currency: "USD",
-    microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
-  });
+  return textCallCents();
 }
 
 type CriticDependencies = {

@@ -1,4 +1,4 @@
-import { pendingCorrection } from "./run-pending-receipt.js";
+import { correctionHold, pendingCorrection } from "./run-pending-receipt.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -263,7 +263,7 @@ export async function captureShotReceipt(
         await invalidateAssemblyManifests(db, run.id);
       } else if (
         priceChanged &&
-        !(await savePricedRequest(tx, context, run, current, receipt, previousCost, paid))
+        !(await savePricedRequest(tx, context, run, current, price, previousCost, paid))
       )
         return { value: current, payload: { replay: true } };
       await db.videoRunStep.updateMany({
@@ -363,6 +363,8 @@ export async function recordShotArtifact(
     const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (SETTLED_SHOTS.some((state) => state === current.state))
       return { value: null, payload: { replay: true } };
+    const correction = pendingCorrection(current);
+    if (correction) throw new ConflictException(correctionHold(step.id));
     if (
       current.state !== "WAITING_EXTERNAL" ||
       current.providerJobId !== step.providerJobId ||

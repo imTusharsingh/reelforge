@@ -10,7 +10,7 @@ describe("V5 prices use the landed V2 catalog and image-count estimator", () => 
       secondsCost(8, primary.pricePerSecond["720p"]!),
     );
     expect(reservationCents(clipMoney({ durationSeconds: 8 }, false))).toBe(56);
-    expect(overheadCents(Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 })))).toBe(110);
+    expect(overheadCents(Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 })))).toBe(138);
   });
   it("charges Grok per input image, including pinned first/last frames, never a flat shot fee", () => {
     const reference = { referenceAssetId: mediaCatalog()[0]!.id, version: 1 };

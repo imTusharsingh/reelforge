@@ -1,10 +1,12 @@
 import { ConflictException } from "@nestjs/common";
 import { criticReport, criticGatesPass, humanGatesPass } from "@reelforge/contracts";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
-import type { Context, Run, Scoped, Json } from "../runs/runs.types.js";
+import { activeSubmissionHold } from "../runs/run-outcomes.js";
+import type { Context, Run, Scoped, Json, Transaction } from "../runs/runs.types.js";
 
 export async function writeDecisionLocked(
   db: Scoped,
+  tx: Transaction,
   current: Run,
   context: Context,
   decision: "APPROVE" | "REJECT",
@@ -33,6 +35,11 @@ export async function writeDecisionLocked(
   if (automatic && (current.effectiveAutonomy !== "L3" || current.approvedShortsAtStart < 10))
     throw new ConflictException("L3 is unavailable");
   if (decision === "APPROVE") {
+    const hold = await activeSubmissionHold(db, tx, current);
+    if (hold) {
+      if (automatic) return fallbackToL2(db, current);
+      throw new ConflictException("Approval is blocked during billing reconciliation");
+    }
     const budget = await db.budgetEnvelope.findFirst({ where: { runId: id } });
     const gatesPass = automatic ? criticGatesPass(report) : humanGatesPass(report);
     if (!gatesPass || current.pauseReason !== null || !budget || !envelopeRoom(budget, 0)) {

@@ -90,7 +90,7 @@ export class AutonomyService {
       context,
       id,
       decision === "APPROVE" ? (automatic ? "auto_approved" : "approved") : "human_rejected",
-      (db, current) => writeDecisionLocked(db, current, context, decision, automatic),
+      (db, current, tx) => writeDecisionLocked(db, tx, current, context, decision, automatic),
     );
   }
   public async settle(context: Context, run: Run): Promise<void> {

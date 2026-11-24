@@ -1,4 +1,8 @@
-import { deferCorrection, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
+import {
+  deferCorrection,
+  pendingCorrection,
+  pendingCorrectionWhere,
+} from "../usage-budget/run-pending-receipt.js";
 import { recordedShotPrice } from "../usage-budget/run-shot-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
@@ -179,8 +183,8 @@ export class VideoRunEngine {
               payload: { replay: true, reason: generationPause(cause) },
             };
           const report = error instanceof ShotBillingFailure ? error.report : undefined;
-          if (attempt?.state === "SUCCEEDED" && report)
-            return deferCorrection(db, current, attempt, report, generationPause(cause));
+          if (attempt && report && pendingCorrection(attempt))
+            return deferCorrection(db, current, attempt, report);
           if (media && !attempt) throw cause;
         }
         if (hold) {
@@ -216,7 +220,8 @@ export class VideoRunEngine {
         const step = await this.planning.stage(context, run);
         if (step.state === "WAITING_APPROVAL") return null;
       }
-      await this.runs.move(context, await this.runs.store.get(context, run.id), "SCRIPTING");
+      if (!(await this.runs.move(context, await this.runs.store.get(context, run.id), "SCRIPTING")))
+        return 12000;
     } else if (["SCRIPTING", "SHOT_PLANNING", "ASSEMBLING", "CRITIC"].includes(run.state)) {
       if (run.state === "CRITIC") await this.planning.reedit(context, run);
       const step = await this.planning.stage(context, run);
@@ -229,11 +234,14 @@ export class VideoRunEngine {
         ASSEMBLING: "CRITIC",
         CRITIC: "AWAITING_APPROVAL",
       } as const;
-      await this.runs.move(
-        context,
-        await this.runs.store.get(context, run.id),
-        next[run.state as keyof typeof next],
-      );
+      if (
+        !(await this.runs.move(
+          context,
+          await this.runs.store.get(context, run.id),
+          next[run.state as keyof typeof next],
+        ))
+      )
+        return 12000;
     } else if (run.state === "GENERATING") return this.generate(context, run);
     else return null;
     await this.runs.enqueue(context, await this.runs.store.get(context, run.id));
@@ -308,13 +316,15 @@ export class VideoRunEngine {
   private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
     const corrections = await db.videoRunStep.findMany({
       where: { ...pendingCorrectionWhere, run: { state: { not: "FAILED" } } },
-      select: { id: true, runId: true, run: { select: { revision: true } } },
+      select: { id: true, runId: true },
     });
-    for (const step of corrections)
-      await this.runs.queue?.enqueue(
-        this.runs.job(context, step.runId, step.id),
-        step.run.revision,
-      );
+    for (const step of corrections) {
+      const run = await db.videoRun.findFirstOrThrow({
+        where: { id: step.runId },
+        select: { revision: true },
+      });
+      await this.runs.queue?.enqueue(this.runs.job(context, step.runId, step.id), run.revision);
+    }
   }
   public async recover(): Promise<void> {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.

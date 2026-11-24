@@ -98,16 +98,38 @@ export function maximumClipMoney(
   )!;
   return clipMoney({ ...shot, durationSeconds: capability.maxDurationSeconds }, fallback);
 }
-export function overheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
-  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+export function imageCallCents(): number {
+  return reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.imageMicroUsd });
+}
+export function textCallCents(): number {
   return reservationCents({
     currency: "USD",
-    microUsd: Math.ceil(
-      (MEDIA_OVERHEAD.initialImages + MEDIA_OVERHEAD.imagesPerShot * shots.length) *
-        MEDIA_OVERHEAD.imageMicroUsd +
-        MEDIA_OVERHEAD.textMicroUsd +
-        (seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd +
-        MEDIA_OVERHEAD.musicMicroUsd,
-    ),
+    microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
   });
+}
+function planningAllowanceCents(): number {
+  return MEDIA_OVERHEAD.initialImages * imageCallCents() + 3 * textCallCents();
+}
+function remainingOverheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
+  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+  return (
+    MEDIA_OVERHEAD.imagesPerShot * shots.length * imageCallCents() +
+    reservationCents({
+      currency: "USD",
+      microUsd: Math.ceil((seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd),
+    }) +
+    reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }) +
+    textCallCents()
+  );
+}
+export function overheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
+  return planningAllowanceCents() + remainingOverheadCents(shots);
+}
+export function plannedRunOverheadCents(
+  shots: readonly Pick<ShotSpec, "durationSeconds">[],
+  planningSpentMinor = 0,
+): number {
+  if (!Number.isSafeInteger(planningSpentMinor) || planningSpentMinor < 0)
+    throw new Error("Invalid recorded planning cost");
+  return Math.max(planningAllowanceCents(), planningSpentMinor) + remainingOverheadCents(shots);
 }

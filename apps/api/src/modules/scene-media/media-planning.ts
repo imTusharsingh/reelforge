@@ -17,12 +17,12 @@ import { PlanningReferenceAssetsService } from "../asset/planning-reference-asse
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, recordedPlanningMinor, runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
-import { MEDIA_OVERHEAD } from "./media-prices.js";
+import { MEDIA_OVERHEAD, textCallCents } from "./media-prices.js";
 type PlannedMedia = { script: PlanningScript; manifest: PlanningManifest };
 @Injectable()
 export class MediaPlanning {
@@ -153,10 +153,7 @@ export class MediaPlanning {
     });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
-    const cost = reservationCents({
-      currency: "USD",
-      microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
-    });
+    const cost = textCallCents();
     const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
     const pending =
       previous &&
@@ -234,7 +231,7 @@ export class MediaPlanning {
     output: unknown,
   ): Promise<void> {
     try {
-      this.validatePlan(run, role, output);
+      await this.validatePlan(context, run, role, output);
     } catch (error) {
       const accepted = await this.access.runs.store
         .scoped(context)
@@ -248,12 +245,21 @@ export class MediaPlanning {
       throw error;
     }
   }
-  private validatePlan(run: Run, role: string, output: unknown): void {
+  private async validatePlan(
+    context: Context,
+    run: Run,
+    role: string,
+    output: unknown,
+  ): Promise<void> {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);
       if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
         throw new Error("Omni requires integer-second shots");
-      runEstimate(shots, false, pinnedBudget(run).hardCapMinor);
+      const planningSpent = await recordedPlanningMinor(
+        this.access.runs.store.scoped(context),
+        run.id,
+      );
+      runEstimate(shots, false, pinnedBudget(run).hardCapMinor, planningSpent);
     }
   }
   private async textReceipt(

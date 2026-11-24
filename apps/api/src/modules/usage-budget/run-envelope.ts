@@ -1,8 +1,13 @@
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import { pendingCorrection } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
-import { clipMoney, maximumClipMoney, overheadCents } from "../scene-media/media-prices.js";
+import {
+  clipMoney,
+  maximumClipMoney,
+  plannedRunOverheadCents,
+} from "../scene-media/media-prices.js";
 import {
   BudgetPolicySchema,
   type ChannelBrief,
@@ -37,15 +42,27 @@ export async function assertRunCap(
       state: { notIn: ["SKIPPED", "CANCELLED"] },
       ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
     },
-    select: { state: true, costMinor: true, output: true },
   });
   const cumulative = claims.reduce((total, claim) => {
     const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
-    return total + (claim.costMinor ?? 0) + (retained ?? 0);
+    const covered = (claim.costMinor ?? 0) + (retained ?? 0);
+    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0);
   }, amount);
   if (cumulative > pinnedBudget(run).hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
   return cumulative;
+}
+
+export async function recordedPlanningMinor(db: Scoped, runId: string): Promise<number> {
+  const steps = await db.videoRunStep.findMany({
+    where: {
+      runId,
+      state: { notIn: ["SKIPPED", "CANCELLED"] },
+      OR: [{ key: { startsWith: "media:text:" } }, { key: { startsWith: "reference:" } }],
+    },
+    select: { costMinor: true },
+  });
+  return steps.reduce((total, step) => total + (step.costMinor ?? 0), 0);
 }
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
@@ -84,9 +101,10 @@ export function runEstimate(
   shots: readonly PlanShot[],
   fallback = false,
   hardCapMinor = 800,
+  planningSpentMinor = 0,
 ): Estimate & { expectedSpendMinor: number; receiptBufferMinor: number } {
   const { clipsMinor, receiptBufferMinor } = clipCoverage(shots, fallback);
-  const expectedSpendMinor = clipsMinor + overheadCents(shots);
+  const expectedSpendMinor = clipsMinor + plannedRunOverheadCents(shots, planningSpentMinor);
   const baseEstimateMinor = expectedSpendMinor + receiptBufferMinor;
   if (baseEstimateMinor > hardCapMinor)
     throw new ConflictException({

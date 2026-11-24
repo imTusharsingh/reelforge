@@ -92,7 +92,11 @@ export class RunFallback {
     const remaining = all.filter((s) => s.state === "PENDING" || s.id === failed.id);
     const initial = all.filter((s) => s.attempt === 1).map((s) => ShotSpecSchema.parse(s.input));
     const mediaSteps = await db.videoRunStep.findMany({
-      where: { runId: run.id, key: { startsWith: "media:" }, state: "SUCCEEDED" },
+      where: {
+        runId: run.id,
+        state: "SUCCEEDED",
+        OR: [{ key: { startsWith: "media:" } }, { key: { startsWith: "reference:" } }],
+      },
     });
     const overheadSpent = mediaSteps.reduce((sum, item) => sum + (item.costMinor ?? 0), 0);
     const overhead = Math.max(0, overheadCents(initial) - overheadSpent);

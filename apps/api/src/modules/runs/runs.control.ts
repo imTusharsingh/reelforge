@@ -39,20 +39,27 @@ export class RunsControl {
     const run = await this.runs.store.get(context, id);
     await this.boundary.check(context, run);
     if (run.state === "AWAITING_APPROVAL") {
-      const result = await this.runs.store.mutate(context, id, "approved", (db, current) =>
-        writeDecisionLocked(db, current, context, "APPROVE", false),
+      const result = await this.runs.store.mutate(context, id, "approved", (db, current, tx) =>
+        writeDecisionLocked(db, tx, current, context, "APPROVE", false),
       );
       await this.runs.events?.publish(result.event);
     } else {
       if (run.effectiveAutonomy !== "L1") throw new ConflictException("No stage approval required");
-      const result = await this.runs.store.mutate(context, id, "stage_approved", async (db) => {
-        const changed = await db.videoRunStep.updateMany({
-          where: { runId: id, key: run.state, state: "WAITING_APPROVAL" },
-          data: { state: "SUCCEEDED" },
-        });
-        if (!changed.count) throw new ConflictException("No stage awaiting approval");
-        return { value: null, payload: { stage: run.state } };
-      });
+      const result = await this.runs.store.mutate(
+        context,
+        id,
+        "stage_approved",
+        async (db, current, tx) => {
+          const hold = await activeSubmissionHold(db, tx, current);
+          if (hold) throw new ConflictException("Stage approval is blocked during reconciliation");
+          const changed = await db.videoRunStep.updateMany({
+            where: { runId: id, key: run.state, state: "WAITING_APPROVAL" },
+            data: { state: "SUCCEEDED" },
+          });
+          if (!changed.count) throw new ConflictException("No stage awaiting approval");
+          return { value: null, payload: { stage: run.state } };
+        },
+      );
       await this.runs.events?.publish(result.event);
       await this.runs.enqueue(context, await this.runs.store.get(context, id));
     }

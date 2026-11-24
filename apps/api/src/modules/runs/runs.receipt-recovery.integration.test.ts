@@ -39,6 +39,7 @@ function pricedClip(seconds = 10): VideoReceipt {
     },
   };
 }
+
 describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();
   it("ignores P2028 artifact attachment after recovery settled the clip", async () => {

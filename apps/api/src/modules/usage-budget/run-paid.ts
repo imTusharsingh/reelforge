@@ -19,13 +19,35 @@ import { ConflictException, Injectable, ServiceUnavailableException } from "@nes
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
-import type { Context, Event, Run, Step, Transaction } from "../runs/runs.types.js";
+import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
-import { submissionHold, remainingSubmissionHold, failRunIfSettled } from "../runs/run-outcomes.js";
+import {
+  activeSubmissionHold,
+  submissionHold,
+  remainingSubmissionHold,
+  failRunIfSettled,
+} from "../runs/run-outcomes.js";
 
 export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
 export class DispatchAdmissionError extends ConflictException {}
+
+async function assertReserveAdmission(
+  db: Scoped,
+  transaction: Transaction,
+  run: Run,
+  step: Step,
+  amount: number,
+  context: Context,
+): Promise<Awaited<ReturnType<typeof readAdmission>>> {
+  if (await activeSubmissionHold(db, transaction, run))
+    throw new ConflictException("Reconcile pending billing before paid admission");
+  await assertRunCap(db, run, amount, step.id);
+  const admission = await readAdmission(transaction, context, step);
+  if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
+    throw new ConflictException(submissionHold(step.id));
+  return admission;
+}
 
 /** Keep M08/M18 logical keys, with the UUID step id as the ledger correlation id. */
 @Injectable()
@@ -54,10 +76,8 @@ export class RunPaidCalls {
       );
       return result.value;
     }
-    await assertRunCap(this.store.scoped(context, transaction), run, amount, step.id);
-    const admission = await readAdmission(transaction, context, step);
-    if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
-      throw new ConflictException(submissionHold(step.id));
+    const db = this.store.scoped(context, transaction);
+    const admission = await assertReserveAdmission(db, transaction, run, step, amount, context);
     const result = await this.usage.reserve(
       context.workspaceId,
       {
@@ -111,6 +131,8 @@ export class RunPaidCalls {
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
           throw new DispatchAdmissionError("Paid dispatch is closed");
+        if (await activeSubmissionHold(db, tx, run))
+          throw new ConflictException("Reconcile pending billing before paid dispatch");
         await assertRunCap(db, run, current.costMinor ?? 0, current.id);
         await assertCriticRevision(db, tx, run, current);
         const { reservation, evidence } = await readAdmission(tx, context, current);

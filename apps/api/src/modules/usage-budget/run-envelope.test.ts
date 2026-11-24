@@ -12,10 +12,10 @@ describe("V3 budget estimates", () => {
   it("uses micro-USD precision and includes all nonclip costs", () => {
     const estimate = runEstimate(shots);
     expect(estimate).toMatchObject({
-      expectedSpendMinor: 428,
+      expectedSpendMinor: 456,
       receiptBufferMinor: 312,
-      baseEstimateMinor: 740,
-      reshootReserveMinor: 60,
+      baseEstimateMinor: 768,
+      reshootReserveMinor: 32,
     });
     expect(() => runEstimate(shots, true)).toThrow("$8");
     expect(() => runEstimate(Array.from({ length: 24 }, () => ({ durationSeconds: 7.5 })))).toThrow(
@@ -24,13 +24,26 @@ describe("V3 budget estimates", () => {
   });
   it("requires each five-second shot's rounded buffer before allocating reshoot funds", () => {
     const plan = Array.from({ length: 6 }, () => ({ durationSeconds: 5 }));
-    expect(() => runEstimate(plan, false, 739)).toThrow("pinned cap");
-    expect(runEstimate(plan, false, 740)).toMatchObject({
-      expectedSpendMinor: 320,
+    expect(() => runEstimate(plan, false, 766)).toThrow("pinned cap");
+    expect(runEstimate(plan, false, 767)).toMatchObject({
+      expectedSpendMinor: 347,
       receiptBufferMinor: 420,
-      baseEstimateMinor: 740,
+      baseEstimateMinor: 767,
       reshootReserveMinor: 0,
     });
+  });
+  it("funds individually rounded mandatory calls and the first critic before reshoots", () => {
+    const threeShots = Array.from({ length: 3 }, () => ({ durationSeconds: 10 }));
+    expect(() => runEstimate(threeShots, false, 353, 51)).toThrow("pinned cap");
+    expect(() => runEstimate(threeShots, false, 357, 51)).toThrow("pinned cap");
+    expect(() => runEstimate(threeShots, false, 427, 51)).toThrow("pinned cap");
+    expect(runEstimate(threeShots, false, 428, 51)).toMatchObject({
+      expectedSpendMinor: 323,
+      receiptBufferMinor: 105,
+      baseEstimateMinor: 428,
+      reshootReserveMinor: 0,
+    });
+    expect(runEstimate(threeShots, false, 440, 70).baseEstimateMinor).toBe(435);
   });
   it("drops fallback reserve when necessary and rejects maximum-duration exposure", () => {
     const envelope = { spentMinor: 700, reservedMinor: 0, reshootReserveMinor: 157 };
