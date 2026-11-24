@@ -87,6 +87,17 @@ export function clipMoney(
   const images = (shot.references?.length ?? 0) + (shot.firstFrameFrom ? 2 : 1);
   return { ...cost, microUsd: cost.microUsd + (fallback ? images * imageSurcharge() : 0) };
 }
+export function maximumClipMoney(
+  shot: Pick<ShotSpec, "durationSeconds"> &
+    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>,
+  fallback: boolean,
+): Money {
+  const providerId = fallback ? "xai" : "gemini";
+  const capability = mediaCatalog().find(
+    (row) => row.kind === "VIDEO" && row.providerId === providerId,
+  )!;
+  return clipMoney({ ...shot, durationSeconds: capability.maxDurationSeconds }, fallback);
+}
 export function overheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
   const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
   return reservationCents({

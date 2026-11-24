@@ -2,7 +2,7 @@ import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
-import { clipMoney, overheadCents } from "../scene-media/media-prices.js";
+import { clipMoney, maximumClipMoney, overheadCents } from "../scene-media/media-prices.js";
 import {
   BudgetPolicySchema,
   type ChannelBrief,
@@ -22,12 +22,6 @@ export function pinnedBudget(run: Run): ChannelBrief["budgetPolicy"] {
     hardCapMinor,
     targetMinor: Math.min(budgetPolicy.targetMinor, hardCapMinor),
   };
-}
-
-export function shotReceiptBufferMinor(estimateMinor: number): number {
-  if (!Number.isSafeInteger(estimateMinor) || estimateMinor < 0)
-    throw new Error("Invalid shot estimate");
-  return Math.ceil(estimateMinor / 4);
 }
 
 /** Include paid work performed before envelope creation, and pre-existing envelopes with old defaults. */
@@ -69,8 +63,9 @@ function clipCoverage(
   let receiptBufferMinor = 0;
   for (const shot of shots) {
     const quote = reservationCents(clipMoney(shot, fallback));
+    const maximum = reservationCents(maximumClipMoney(shot, fallback));
     clipsMinor += quote;
-    receiptBufferMinor += shotReceiptBufferMinor(quote);
+    receiptBufferMinor += Math.max(0, maximum - quote);
   }
   return { clipsMinor, receiptBufferMinor };
 }
@@ -141,7 +136,10 @@ export function priceShot(
   const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
   provider.assertKey?.();
   const estimate = provider.estimate(shot, budget.route === "FALLBACK");
-  const amount = estimate + shotReceiptBufferMinor(estimate);
+  const amount = Math.max(
+    estimate,
+    reservationCents(maximumClipMoney(shot, budget.route === "FALLBACK")),
+  );
   if (
     !envelopeRoom(
       {

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  envelopeRoom,
-  fallbackEstimate,
-  runEstimate,
-  shotReceiptBufferMinor,
-} from "./run-envelope.js";
+import { envelopeRoom, fallbackEstimate, runEstimate } from "./run-envelope.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 
 describe("V3 budget estimates", () => {
@@ -13,9 +8,9 @@ describe("V3 budget estimates", () => {
     const estimate = runEstimate(shots);
     expect(estimate).toMatchObject({
       expectedSpendMinor: 428,
-      receiptBufferMinor: 84,
-      baseEstimateMinor: 512,
-      reshootReserveMinor: 159,
+      receiptBufferMinor: 312,
+      baseEstimateMinor: 740,
+      reshootReserveMinor: 60,
     });
     expect(() => runEstimate(shots, true)).toThrow("$8");
     expect(() => runEstimate(Array.from({ length: 24 }, () => ({ durationSeconds: 7.5 })))).toThrow(
@@ -24,22 +19,21 @@ describe("V3 budget estimates", () => {
   });
   it("requires each five-second shot's rounded buffer before allocating reshoot funds", () => {
     const plan = Array.from({ length: 6 }, () => ({ durationSeconds: 5 }));
-    expect(() => runEstimate(plan, false, 373)).toThrow("pinned cap");
-    expect(runEstimate(plan, false, 374)).toMatchObject({
+    expect(() => runEstimate(plan, false, 739)).toThrow("pinned cap");
+    expect(runEstimate(plan, false, 740)).toMatchObject({
       expectedSpendMinor: 320,
-      receiptBufferMinor: 54,
-      baseEstimateMinor: 374,
+      receiptBufferMinor: 420,
+      baseEstimateMinor: 740,
       reshootReserveMinor: 0,
     });
   });
-  it("drops fallback reserve when necessary and rejects unaffordable remaining work", () => {
-    const envelope = { spentMinor: 0, reservedMinor: 0, reshootReserveMinor: 157 };
-    expect(fallbackEstimate(envelope, shots.slice(0, 5), 110)).toEqual({
-      baseEstimateMinor: 775,
+  it("drops fallback reserve when necessary and rejects maximum-duration exposure", () => {
+    const envelope = { spentMinor: 700, reservedMinor: 0, reshootReserveMinor: 157 };
+    expect(fallbackEstimate(envelope, [], 50)).toEqual({
+      baseEstimateMinor: 750,
       reshootReserveMinor: 0,
       route: "FALLBACK",
     });
-    expect(fallbackEstimate(envelope, [], 50).reshootReserveMinor).toBe(157);
     expect(() => fallbackEstimate(envelope, shots, 110)).toThrow("Fallback exceeds the run cap");
     expect(() => fallbackEstimate({ ...envelope, spentMinor: 800 }, shots)).toThrow();
   });
@@ -57,8 +51,7 @@ describe("V3 budget estimates", () => {
     expect(() => envelopeRoom(budget, -1)).toThrow();
     expect(() => envelopeRoom(budget, 0.5)).toThrow();
   });
-  it("retains the shot estimate explicitly and preserves unmarked legacy admissions", () => {
-    expect(shotReceiptBufferMinor(53)).toBe(14);
+  it("preserves unmarked legacy admissions", () => {
     expect(
       readReceiptBudget({
         receiptBudget: { admittedMinor: 67, bufferMinor: 14, estimateMinor: 53 },

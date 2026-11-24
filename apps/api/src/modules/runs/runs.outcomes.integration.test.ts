@@ -18,7 +18,6 @@ import { MediaPorts } from "../scene-media/media-ports.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
-import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 import { RunsBoundary } from "./runs.boundary.js";
 import type { Prisma } from "@reelforge/database";
 import type { Step } from "./runs.types.js";
@@ -257,7 +256,10 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
       pauseReason: "PROVIDER_INVALID",
     });
     const finished = await accounting(t, sibling.id);
-    const receiptBuffer = shotReceiptBufferMinor(finishedShot.costMinor!);
+    const reservation = await t.db.usageReservation.findFirstOrThrow({
+      where: { correlationId: sibling.id },
+    });
+    const receiptBuffer = Number(reservation.amountMinor) - finishedShot.costMinor!;
     expect(finished.reservation).toMatchObject({
       status: "COMMITTED",
       committedMinor: BigInt(finishedShot.costMinor!),

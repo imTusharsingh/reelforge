@@ -93,7 +93,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     const where = { workspaceId: run.workspaceId, correlationId: step.id };
     expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
       status: "COMMITTED",
-      amountMinor: 70n,
+      amountMinor: 105n,
       committedMinor: 56n,
     });
     expect(await t.db.providerRequest.findFirstOrThrow({ where })).toMatchObject({
@@ -147,7 +147,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     });
     await t.usage.upsertBudget(t.context, {
       currency: "USD",
-      monthlyLimitMinor: 154,
+      monthlyLimitMinor: 210,
       reason: "priced overage",
     });
     const shotJob = (stepId: string): ReturnType<typeof t.engine.process> =>
@@ -166,7 +166,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     expect(submit).toHaveBeenCalledTimes(2);
     const status = async (): Promise<number | undefined> =>
       (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
-    expect(await status()).toBe(154);
+    expect(await status()).toBe(210);
     await expect(
       t.usage.reserve(run.workspaceId, {
         category: "VIDEO_MEDIA",
@@ -178,11 +178,11 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     const fetch = vi.spyOn(provider, "fetch");
     await Promise.all([shotJob(a!.id), shotJob(a!.id)]);
     expect(fetch).not.toHaveBeenCalled();
-    expect(await status()).toBe(154);
+    expect(await status()).toBe(210);
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 140,
-      reservedMinor: 14,
-      overageMinor: 14,
+      reservedMinor: 70,
+      overageMinor: 0,
     });
     expect(
       await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: a!.id } }),

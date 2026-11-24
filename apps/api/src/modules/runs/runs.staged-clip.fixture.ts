@@ -13,6 +13,7 @@ import {
   Interactions,
   OmniVideo,
   ProviderHttp,
+  reservationCents,
 } from "@reelforge/ai-providers";
 import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
@@ -22,7 +23,7 @@ import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import type { Event, Run, Step, RunJob } from "./runs.types.js";
-import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
+import { maximumClipMoney } from "../scene-media/media-prices.js";
 
 export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
   return Response.json({
@@ -72,7 +73,7 @@ export async function eightSecondShot(t: Tenant, runId: string, ordinal: number)
 
 export async function stagedClip(
   t: Tenant,
-  limit = 70,
+  limit = 105,
   provider: keyof typeof providers = "gemini",
 ): Promise<{
   t: Tenant;
@@ -134,6 +135,16 @@ export async function stagedClip(
   vi.spyOn(native, "fetch");
   const job = t.runs.job(t.context, run.id, shot.id);
   return { t, run, shot, job, fetcher, probe, native, wire };
+}
+
+export async function downgradeToLegacyAdmission(t: Tenant, run: Run, shot: Step): Promise<void> {
+  const where = { workspaceId: run.workspaceId, correlationId: shot.id };
+  await t.db.$transaction([
+    t.db.videoRunStep.update({ where: { id: shot.id }, data: { costMinor: 70 } }),
+    t.db.usageReservation.updateMany({ where, data: { amountMinor: 70n } }),
+    t.db.providerRequest.updateMany({ where, data: { estimatedCost: 0.7 } }),
+    t.db.budgetEnvelope.updateMany({ where: { runId: run.id }, data: { reservedMinor: 70 } }),
+  ]);
 }
 
 const deliveryFailures = [
@@ -226,7 +237,7 @@ export async function recoverBeforeLateFetch(
 }
 
 export async function expectSettled(
-  { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
+  { t, shot, native, wire }: Awaited<ReturnType<typeof stagedClip>>,
   seconds: number,
   envelope?: {
     spentMinor: number;
@@ -237,8 +248,10 @@ export async function expectSettled(
 ): Promise<void> {
   const where = { workspaceId: shot.workspaceId, correlationId: shot.id };
   const cost = seconds * wire.centsPerSecond;
-  const estimate = 8 * wire.centsPerSecond;
-  const admitted = estimate + shotReceiptBufferMinor(estimate);
+  const maximum = reservationCents(
+    maximumClipMoney(ShotSpecSchema.parse(shot.input), native.capabilities().providerId === "xai"),
+  );
+  const admitted = maximum;
   const requests = await t.db.providerRequest.findMany({ where });
   expect(requests).toMatchObject([{ status: "SUCCEEDED", errorCode: null }]);
   expect(requests[0]!.actualCost?.mul(100).toString()).toBe(String(cost));
@@ -270,26 +283,35 @@ export async function admitSibling({
   t,
   run,
   fetcher,
+  native,
   wire,
 }: Awaited<ReturnType<typeof stagedClip>>): Promise<void> {
   const sibling = await eightSecondShot(t, run.id, 1);
   fetcher.mockResolvedValueOnce(wire.queued("sibling")).mockResolvedValueOnce(wire.queued());
   expect(await t.engine.process(t.runs.job(t.context, run.id, sibling.id))).toBe(12000);
+  const maximum = reservationCents(
+    maximumClipMoney(
+      ShotSpecSchema.parse(sibling.input),
+      native.capabilities().providerId === "xai",
+    ),
+  );
   expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({
     state: "WAITING_EXTERNAL",
     providerJobId: "sibling",
-    costMinor: 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond),
+    costMinor: maximum,
   });
 }
 
 export async function expectExpiredShotCoverage(
-  { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
+  { t, shot, native, wire }: Awaited<ReturnType<typeof stagedClip>>,
   recordedSeconds: number,
 ): Promise<void> {
   expect(
     await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), shot.workspaceId),
   ).toBe(1);
-  const admitted = 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond);
+  const admitted = reservationCents(
+    maximumClipMoney(ShotSpecSchema.parse(shot.input), native.capabilities().providerId === "xai"),
+  );
   const charge = recordedSeconds * wire.centsPerSecond;
   expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
     Math.max(admitted, charge),
