@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { json, type Step } from "./runs.types.js";
 import { describe, expect, it, vi } from "vitest";
-import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
+import { pricedClip } from "./runs.receipt-recovery.fixture.js";
 import {
   downgradeToLegacyAdmission,
   generateClips,
@@ -17,28 +17,6 @@ import {
   stagedClip,
 } from "./runs.staged-clip.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
-
-function pricedClip(seconds = 10): VideoReceipt {
-  return {
-    costBasis: "BILLED",
-    costMinor: seconds * 7,
-    seconds,
-    providerDurationSeconds: seconds,
-    modelId: "fixture-video",
-    promptVersion: "fixture",
-    media: {
-      objectKey: "provider-clip",
-      checksumSha256: "a".repeat(64),
-      byteSize: 16,
-      mimeType: "video/mp4",
-      width: 720,
-      height: 1280,
-      fps: 24,
-      billedSeconds: seconds,
-      durationSeconds: seconds,
-    },
-  };
-}
 
 describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();

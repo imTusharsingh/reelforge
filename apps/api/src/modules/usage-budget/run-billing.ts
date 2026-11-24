@@ -73,17 +73,14 @@ function matchesCommit({ request, reservation }: Admission, amount: bigint): boo
   );
 }
 
-function samePricedRequest(
+const samePricedRequest = (
   request: Admission["request"],
   errorCode: string | null,
   cost: number,
-): boolean {
-  return (
-    request?.status === "SUCCEEDED" &&
-    request.errorCode === errorCode &&
-    request.actualCost?.mul(100).equals(cost.toString()) === true
-  );
-}
+): boolean =>
+  request?.status === "SUCCEEDED" &&
+  request.errorCode === errorCode &&
+  request.actualCost?.mul(100).equals(cost.toString()) === true;
 
 /** Older workers could commit the fetched price before attaching the clip. */
 function verifyLegacyPayment(

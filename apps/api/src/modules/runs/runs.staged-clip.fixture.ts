@@ -1,8 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { Test } from "@nestjs/testing";
-import request from "supertest";
-import { hashSessionToken } from "../identity/auth.crypto.js";
-import { RunsModule } from "./runs.module.js";
 import { expect, vi, type Mock } from "vitest";
 import { generating, type Tenant } from "./runs.fixture.js";
 import type { ProcessRunner } from "@reelforge/media";
@@ -348,33 +344,6 @@ export function expectBillingReconciliation(
   expect(events.filter((event) => event.type === "billing_reconciled")).toHaveLength(
     expected ? 1 : 0,
   );
-}
-
-export async function postEditorApproval(t: Tenant): Promise<request.Response> {
-  const { userId, workspaceId } = t.context;
-  await t.db.workspaceMembership.update({
-    where: { workspaceId_userId: { workspaceId, userId } },
-    data: { role: "EDITOR" },
-  });
-  const token = randomUUID();
-  await t.db.session.create({
-    data: { userId, tokenHash: hashSessionToken(token), expiresAt: new Date(Date.now() + 60_000) },
-  });
-  const module = await Test.createTestingModule({ imports: [RunsModule] })
-    .overrideProvider("DATABASE")
-    .useValue(t.db)
-    .compile();
-  const app = module.createNestApplication();
-  try {
-    app.setGlobalPrefix("api/v1");
-    await app.init();
-    return await request(app.getHttpServer())
-      .post(`/api/v1/runs/${t.run.id}/approve`)
-      .query({ workspaceId })
-      .set("Authorization", `Bearer ${token}`);
-  } finally {
-    await app.close();
-  }
 }
 
 export async function expectCompetingImageDenied(t: Tenant): Promise<void> {
