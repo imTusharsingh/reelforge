@@ -1,22 +1,29 @@
 import { reservationCents } from "@reelforge/ai-providers";
-import { ShotSpecSchema } from "@reelforge/contracts";
+import { QualityRubricSchema, ShotSpecSchema, type QualityRubric } from "@reelforge/contracts";
+import type { TextSpec } from "@reelforge/ai-providers";
 import { z } from "zod";
 import { report } from "../autonomy/autonomy.fixture.js";
+import { criticReservationCents, criticTextPort } from "../quality/critic-text-port.js";
 import { fixtureShots } from "../scene-media/media-provider.fixture.js";
+import { MediaAccounts } from "../scene-media/media-accounts.js";
+import type { MediaAccess } from "../scene-media/media-access.js";
+import type { MediaPorts } from "../scene-media/media-ports.js";
 import { maximumClipMoney } from "../scene-media/media-prices.js";
 import { captureShotReceipt } from "../usage-budget/run-billing.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { persistPendingCorrection } from "../usage-budget/run-pending-receipt.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
+import { RunsBoundary } from "./runs.boundary.js";
 import { json, type Step } from "./runs.types.js";
 import {
   downgradeToLegacyAdmission,
+  generateClips,
   generating,
   runsFixture,
   type Tenant,
 } from "./runs.fixture.js";
 import { expectCompetingImageDenied, stagedClip } from "./runs.staged-clip.fixture.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 function pricedClip(seconds = 10): VideoReceipt {
   return {
@@ -62,6 +69,7 @@ async function installPendingCorrection(t: Tenant, shot: Step): Promise<void> {
 
 describe.skipIf(!process.env.DATABASE_URL)("pending receipt correction", () => {
   const fixture = runsFixture();
+  afterEach(() => vi.unstubAllEnvs());
 
   it.each(["open", "settled"] as const)(
     "protects a competing admission while a higher %s receipt correction times out",
@@ -291,5 +299,87 @@ describe.skipIf(!process.env.DATABASE_URL)("pending receipt correction", () => {
       reservedMinor: 0,
     });
     expect(envelope.baseEstimateMinor - maximumShotLiability).toBe(113);
+
+    vi.stubEnv("GEMINI_TEXT_MODEL", "critic-fixture");
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    await t.db.videoRun.update({
+      where: { id: run.id },
+      data: { state: "GENERATING" },
+    });
+    await generateClips(t);
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(submit.mock.calls.map(([, , maximumCostMinor]) => maximumCostMinor)).toEqual([
+      105, 105, 105,
+    ]);
+
+    const settledShots = await t.db.videoRunStep.findMany({
+      where: { runId: run.id, key: { startsWith: "shot-" } },
+      orderBy: { key: "asc" },
+    });
+    expect(settledShots).toMatchObject(
+      Array.from({ length: 3 }, () => ({ state: "SUCCEEDED", costMinor: 70 })),
+    );
+
+    const criticRun = await t.db.videoRun.update({
+      where: { id: run.id },
+      data: { state: "CRITIC" },
+    });
+    const access = {
+      runs: t.runs,
+      paid: new RunPaidCalls(t.usage, t.store),
+      artifacts: t.artifacts,
+      boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
+    } as MediaAccess;
+    const rubric: QualityRubric = QualityRubricSchema.parse({
+      hook: 8,
+      coherence: 8,
+      artifacts: 9,
+      captionSync: 8,
+      briefFit: 9,
+      policy: 10,
+    });
+    const complete = vi.fn(
+      async <T>(
+        spec: TextSpec<T>,
+      ): Promise<{ output: T; providerJobId: string; usage: Record<string, unknown> }> => ({
+        output: spec.parse(rubric),
+        providerJobId: "critic-fixture-job",
+        usage: {},
+      }),
+    );
+    const ports = { get: async () => ({ text: { complete } }) } as unknown as MediaPorts;
+    const critic = criticTextPort({
+      access,
+      accounts: new MediaAccounts(access),
+      ports,
+      context: t.context,
+      run: criticRun,
+      attempt: 1,
+    });
+    const result = await critic.complete(
+      {
+        prompt: "review",
+        jsonSchema: {},
+        parse: (value: unknown): QualityRubric => QualityRubricSchema.parse(value),
+      },
+      "critic",
+    );
+    expect(result.output).toEqual(rubric);
+    expect(complete).toHaveBeenCalledOnce();
+
+    const criticStep = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, key: "media:text:critic:1" },
+    });
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({
+        where: { idempotencyKey: `m08:${criticStep.idempotencyKey}` },
+      }),
+    ).toMatchObject({
+      status: "COMMITTED",
+      committedMinor: BigInt(criticReservationCents()),
+    });
+    const funded = await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+    expect(funded).toMatchObject({ spentMinor: 227, reservedMinor: 105 });
+    expect(funded.spentMinor + funded.reservedMinor).toBeLessThanOrEqual(funded.hardCapMinor);
   });
 });
