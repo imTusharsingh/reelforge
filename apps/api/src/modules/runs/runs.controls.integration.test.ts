@@ -250,9 +250,13 @@ suite("V3 approval, caps and retention", () => {
     expect(result.totals.currencies[0]).toMatchObject({ reservedMinor: 0, committedMinor: 20 });
   });
   it("limits full re-edits to one and shot reshoots to two", async () => {
-    const t = await fixture.tenant();
+    const t = await fixture.tenant("L2", 15);
     await generating(t);
     await generateClips(t);
+    await t.db.budgetEnvelope.updateMany({
+      where: { runId: t.run.id },
+      data: { reshootReserveMinor: 200 },
+    });
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
     expect((await t.store.get(t.context, t.run.id)).state).toBe("CRITIC");

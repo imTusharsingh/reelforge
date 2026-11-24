@@ -5,6 +5,7 @@ import type { ShotBillingFailure, VideoReceipt } from "../orchestration/video-ru
 import { transitionLocked } from "../runs/runs.store.js";
 import type { Context, Json, Run, Scoped, Step } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
+import { pendingShotMedia, pricedOutput } from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
 export const pendingCorrectionWhere = {
@@ -36,6 +37,22 @@ export function pendingCorrection(step: Step): VideoReceipt | null {
   return { ...price, providerDurationSeconds: null, media: null };
 }
 
+function recordedBilledMinor(step: Step): number | undefined {
+  const pending = pendingCorrection(step);
+  if (pending) return pending.costMinor;
+  const media = pendingShotMedia(step);
+  if (media?.receipt.costBasis === "BILLED") return media.receipt.costMinor;
+  const saved = pricedOutput.safeParse(step.output);
+  return saved.success && saved.data.receipt.costBasis === "BILLED"
+    ? saved.data.receipt.costMinor
+    : undefined;
+}
+
+export function isReceiptCorrection(step: Step, receipt: VideoReceipt): boolean {
+  const previous = recordedBilledMinor(step);
+  return receipt.costBasis === "BILLED" && previous !== undefined && receipt.costMinor > previous;
+}
+
 export function correctionHold(stepId: string): string {
   return `RECONCILE_REQUIRED: pending receipt correction (${stepId})`;
 }
@@ -64,7 +81,6 @@ export async function persistPendingCorrection(
 ): Promise<void> {
   if (receipt.costBasis !== "BILLED") return;
   const marker = receiptMarker(observed, receipt);
-  if (marker.costMinor <= (observed.costMinor ?? 0) && !pendingCorrection(observed)) return;
   await store.mutate(context, observed.runId, "receipt_observed", async (db, run) => {
     const current = await db.videoRunStep.findFirstOrThrow({
       where: { id: observed.id, runId: run.id },
@@ -78,7 +94,10 @@ export async function persistPendingCorrection(
     const previous = pendingCorrection(current);
     if (previous?.costMinor !== undefined && previous.costMinor >= marker.costMinor)
       return { value: null, payload: { replay: true } };
-    if (!previous && marker.costMinor <= (current.costMinor ?? 0))
+    const recorded = recordedBilledMinor(current);
+    if (!previous && recorded !== undefined && marker.costMinor <= recorded)
+      return { value: null, payload: { replay: true } };
+    if (!previous && recorded === undefined && marker.costMinor <= (current.costMinor ?? 0))
       return { value: null, payload: { replay: true } };
     await db.videoRunStep.updateMany({
       where: { id: current.id, providerId: marker.providerId, providerJobId: marker.providerJobId },

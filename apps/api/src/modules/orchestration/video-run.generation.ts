@@ -1,4 +1,5 @@
 import {
+  isReceiptCorrection,
   pendingCorrection,
   persistPendingCorrection,
 } from "../usage-budget/run-pending-receipt.js";
@@ -322,9 +323,7 @@ export class RunGeneration {
   }
   private capture(context: Context, step: Step, receipt: VideoReceipt): Promise<Step> {
     return (async (): Promise<Step> => {
-      const correctionPending =
-        !!pendingCorrection(step) ||
-        (receipt.costBasis === "BILLED" && receipt.costMinor > (step.costMinor ?? 0));
+      const correctionPending = !!pendingCorrection(step) || isReceiptCorrection(step, receipt);
       try {
         await persistPendingCorrection(this.runs.store, context, step, receipt);
         const saved = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);

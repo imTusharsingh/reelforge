@@ -16,17 +16,24 @@ const coveredMinor = Prisma.sql`CASE
     CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
          ELSE ur.amount_minor END,
     (s.error->>'costMinor')::bigint,
-    CASE WHEN s.state = 'SUCCEEDED' THEN
+    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0),
+    CASE WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL') THEN
       COALESCE(ur.committed_minor, 0) +
       COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0)
     ELSE 0 END
+  )
+  WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL') AND s.output ? 'receiptBudget' THEN GREATEST(
+    CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
+         ELSE ur.amount_minor END,
+    COALESCE(ur.committed_minor, 0) +
+      COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0),
+    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0)
   )
   WHEN ur.status <> 'COMMITTED' THEN ur.amount_minor
   WHEN s.state = 'SUCCEEDED' THEN GREATEST(
     ur.committed_minor + COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0),
     0
   )
-  WHEN s.state = 'WAITING_EXTERNAL' AND s.output ? 'receiptBudget' THEN GREATEST(ur.amount_minor, ur.committed_minor)
   ELSE ur.committed_minor END`;
 
 /** Coverage, uncovered requests and adjustments must see the same MVCC snapshot. */

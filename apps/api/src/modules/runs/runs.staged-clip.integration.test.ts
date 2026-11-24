@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { AutonomyService } from "../autonomy/autonomy.service.js";
 import { report } from "../autonomy/autonomy.fixture.js";
 import {
   admitSibling,
   expectBillingReconciliation,
   expectExpiredShotCoverage,
+  expectBudgetConsumption,
   expectSettled,
   expectSameClip,
   failLateCorrection,
@@ -104,7 +106,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
   it.each(lateClipCases)(
     "keeps the settled clip after a late $kind response from $provider with $seconds billed seconds",
     async ({ provider, kind, seconds, pause }) => {
-      const f = await stagedClip(await fixture.tenant(), kind === "valid" ? 120 : 400, provider);
+      const f = await stagedClip(await fixture.tenant(), kind === "valid" ? 118 : 400, provider);
       const { t, run, shot, job, native } = f;
       const put = vi.spyOn(t.artifacts, "put");
       const recoveredSeconds = kind === "job GET 503" ? seconds : 10;
@@ -123,14 +125,12 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       await expectSettled(f, seconds);
       await expectSameClip(t, settled);
       const events = await t.db.runEvent.findMany({ where: { runId: run.id, stepId: shot.id } });
-      expectBillingReconciliation(events, kind === "job GET 503" && seconds > 10);
+      expectBillingReconciliation(events, provider === "xai");
       const adjustments = receiptAdjustments(events);
       expect(adjustments).toMatchObject(
         seconds > recoveredSeconds ? [{ payload: { adjustmentMinor: 14, costMinor: 84 } }] : [],
       );
-      expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
-        seconds * f.wire.centsPerSecond,
-      );
+      await expectBudgetConsumption(f, seconds);
       expect(put).toHaveBeenCalledOnce();
       expect(native.submit).toHaveBeenCalledOnce();
       if (kind !== "valid") {
@@ -157,20 +157,18 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     },
   );
 
-  it("counts a failed late correction before competing admission and reconciles it across resume", async () => {
-    const f = await stagedClip(await fixture.tenant(), 120);
+  it("counts a failed late correction before competing admission and retries without manual resume", async () => {
+    const f = await stagedClip(await fixture.tenant(), 105);
     const { t, shot, run, job, native } = f;
     const { winner, commitment } = await failLateCorrection(f);
     expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "PAUSED_BUDGET",
-      pauseReason: "GENERATION_FAILED",
+      pauseReason: expect.stringMatching(/^RECONCILE_REQUIRED:/),
     });
     expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(105);
     await expectCompetingImageDenied(t);
     await t.engine.process(job);
-    await expectSettled(f, 12);
-    await t.control.resume(t.context, run.id);
-    await t.engine.process(job);
+    await expectSettled(f, 12, undefined, 105);
     await expectCompetingImageDenied(t);
     await expectSettled(f, 12, undefined, 105);
     const where = { workspaceId: run.workspaceId, correlationId: shot.id };
@@ -239,10 +237,32 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       const where = { runId: run.id };
       await t.db.budgetEnvelope.updateMany({
         where,
-        data: { baseEstimateMinor: 70, reshootReserveMinor: 7 },
+        data: { baseEstimateMinor: 105, reshootReserveMinor: 0 },
       });
       await recoverBeforeLateFetch(f, 10, 12, async () => {
         await expectSettled(f, 10);
+        const shot = await t.db.videoRunStep.findFirstOrThrow({
+          where: { runId: run.id, key: "shot-0" },
+        });
+        const output = z.record(z.string(), z.unknown()).parse(shot.output);
+        await t.db.videoRunStep.update({
+          where: { id: shot.id },
+          data: {
+            output: {
+              ...output,
+              receiptBudget: { admittedMinor: 70, bufferMinor: 0, estimateMinor: 56 },
+            },
+          },
+        });
+        await t.db.budgetEnvelope.updateMany({
+          where,
+          data: {
+            baseEstimateMinor: 70,
+            reshootReserveMinor: 7,
+            spentMinor: 70,
+            reservedMinor: 0,
+          },
+        });
         await t.db.videoRunStep.create({
           data: {
             ...where,
@@ -287,7 +307,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
           where: { ...where, type: { in: ["approved", "auto_approved"] } },
         }),
       ).toBe(0);
-      await expectSettled(f, 12);
+      await expectSettled(f, 12, { spentMinor: 84, reservedMinor: 0, overageMinor: 14 });
       const envelope = await t.db.budgetEnvelope.findFirstOrThrow({ where });
       expect(envelope.spentMinor).toBeGreaterThan(
         envelope.baseEstimateMinor + envelope.reshootReserveMinor,
@@ -354,6 +374,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
       probe.exitCode = 0;
       probe.fps = 24;
       fetcher.mockResolvedValueOnce(wire.completed(6));
+      if (wire.jobUrl.includes("api.x.ai")) fetcher.mockResolvedValueOnce(wire.completed(6));
       await t.engine.process(job);
       await expectSettled(f, recordedSeconds);
       expect(native.submit).toHaveBeenCalledOnce();
@@ -397,6 +418,6 @@ describe.skipIf(!process.env.DATABASE_URL)("Shot receipts and staged clips", () 
     expect(native.submit).toHaveBeenCalledOnce();
     expect(
       await t.db.runEvent.count({ where: { stepId: shot.id, type: "billing_reconciled" } }),
-    ).toBe(1);
+    ).toBe(0);
   });
 });

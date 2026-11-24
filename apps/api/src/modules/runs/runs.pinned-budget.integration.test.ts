@@ -15,7 +15,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       const policy = {
         ...t.brief.budgetPolicy,
         targetMinor: 6,
-        hardCapMinor: 300,
+        hardCapMinor: 428,
         dailyLimitMinor: period === "DAY" ? 15 : 2000,
         monthlyLimitMinor: period === "MONTH" ? 15 : 18000,
       };
@@ -35,7 +35,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       } as MediaAccess;
       const accounts = new MediaAccounts(access);
       await expect(
-        accounts.begin(t.context, run, "media:expensive", {}, 301, "fixture"),
+        accounts.begin(t.context, run, "media:expensive", {}, 429, "fixture"),
       ).rejects.toThrow("BUDGET_CAP");
       for (const key of ["script", "shots"]) {
         const step = await accounts.begin(t.context, run, `media:text:${key}`, {}, 4, "fixture");
@@ -75,7 +75,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       await t.planning.prepare(t.context, run);
       expect(
         await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
-      ).toMatchObject({ targetMinor: 6, hardCapMinor: 300 });
+      ).toMatchObject({ targetMinor: 6, hardCapMinor: 428 });
       expect(
         await t.db.runEvent.findFirstOrThrow({
           where: { runId: run.id, type: "budget_estimated" },
@@ -83,7 +83,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       ).toMatchObject({ payload: expect.objectContaining({ warn: true }) });
       if (period === "RUN") {
         await expect(
-          accounts.begin(t.context, run, "media:text:post", {}, 293, "fixture"),
+          accounts.begin(t.context, run, "media:text:post", {}, 421, "fixture"),
         ).rejects.toThrow("BUDGET_CAP");
         expect(
           await t.db.videoRunStep.count({ where: { runId: run.id, key: "media:text:post" } }),

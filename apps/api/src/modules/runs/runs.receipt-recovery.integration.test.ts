@@ -43,7 +43,7 @@ function pricedClip(seconds = 10): VideoReceipt {
 describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();
   it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
-    const f = await stagedClip(await fixture.tenant(), 200);
+    const f = await stagedClip(await fixture.tenant(), 300);
     const { t, run, shot, job, fetcher } = f;
     fetcher.mockResolvedValueOnce(completed(10)).mockResolvedValueOnce(completed(10));
     const written = Promise.withResolvers<void>();
@@ -227,6 +227,13 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await expect(t.engine.process(job)).rejects.toThrow(
       cut === "artifact write" || cut === "native storage" ? "storage offline" : "billing exceeded",
     );
+    if (cut === "artifact write") {
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot!.id } })).toMatchObject({
+        state: "WAITING_EXTERNAL",
+        error: { code: "VIDEO_RUN_BILLING_OVERAGE" },
+        output: { receipt: { costMinor: 84 } },
+      });
+    }
     const request = await t.db.providerRequest.findFirstOrThrow({ where });
     expect(request.actualCost?.toNumber()).toBe(cut === "native storage" ? 0.7 : 0.84);
     expect(request.estimatedCost?.toNumber()).toBe(0.7);
@@ -253,7 +260,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await t.engine.process(job);
     await t.engine.process(job);
     expect(submit).toHaveBeenCalledOnce();
-    expect(collectReceipt).toHaveBeenCalledOnce();
+    expect(collectReceipt).toHaveBeenCalledTimes(cut === "artifact write" ? 2 : 1);
     expect(poll).toHaveBeenCalledTimes(2);
     expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot!.id } })).toMatchObject({
       state: "SUCCEEDED",
@@ -328,7 +335,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 0,
-      reservedMinor: 70,
+      reservedMinor: 105,
     });
     await t.engine.process(job);
     await t.engine.process(job);

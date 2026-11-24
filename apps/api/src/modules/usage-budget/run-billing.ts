@@ -73,6 +73,18 @@ function matchesCommit({ request, reservation }: Admission, amount: bigint): boo
   );
 }
 
+function samePricedRequest(
+  request: Admission["request"],
+  errorCode: string | null,
+  cost: number,
+): boolean {
+  return (
+    request?.status === "SUCCEEDED" &&
+    request.errorCode === errorCode &&
+    request.actualCost?.mul(100).equals(cost.toString()) === true
+  );
+}
+
 /** Older workers could commit the fetched price before attaching the clip. */
 function verifyLegacyPayment(
   claim: Admission,
@@ -111,6 +123,7 @@ async function savePricedRequest(
     actualCost: new Prisma.Decimal(cost).div(100),
     responseMetadata: { providerJobId: step.providerJobId!, dispatched: true, costKnown: true },
   };
+  if (samePricedRequest(request, data.errorCode, cost)) return true;
   if (!request) {
     await tx.providerRequest.create({
       data: {

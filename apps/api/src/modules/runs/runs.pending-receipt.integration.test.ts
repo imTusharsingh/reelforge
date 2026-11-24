@@ -2,6 +2,7 @@ import { reservationCents } from "@reelforge/ai-providers";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { z } from "zod";
 import { report } from "../autonomy/autonomy.fixture.js";
+import { fixtureShots } from "../scene-media/media-provider.fixture.js";
 import { maximumClipMoney } from "../scene-media/media-prices.js";
 import { captureShotReceipt } from "../usage-budget/run-billing.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
@@ -141,7 +142,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pending receipt correction", () => {
         expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } })).toMatchObject(
           {
             state: "WAITING_EXTERNAL",
-            error: { code: "PENDING_RECEIPT_CORRECTION", costMinor: 84 },
+            error: { code: "VIDEO_RUN_BILLING_OVERAGE" },
           },
         );
         expect(await t.store.get(t.context, run.id)).toMatchObject({
@@ -244,23 +245,21 @@ describe.skipIf(!process.env.DATABASE_URL)("pending receipt correction", () => {
   });
 
   it("fits three maximum-liability shots and mandatory work at the exact minimum cap", async () => {
-    const t = await fixture.tenant("L2", 30);
+    const t = await fixture.tenant("L2", 30, null, false);
     const run = await t.store.get(t.context, t.run.id);
-    const rows = await t.db.shotSpec.findMany({
-      where: { runId: run.id },
-      orderBy: { ordinal: "asc" },
+    const specs = fixtureShots(run, t.brief)
+      .slice(0, 3)
+      .map((shot, ordinal) => ShotSpecSchema.parse({ ...shot, ordinal, durationSeconds: 10 }));
+    await t.db.shotSpec.createMany({
+      data: specs.map((spec) => ({
+        id: spec.id,
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        ordinal: spec.ordinal,
+        version: spec.version,
+        document: spec,
+      })),
     });
-    const specs = rows.slice(0, 3).map((row, ordinal) => ({
-      ...ShotSpecSchema.parse(row.document),
-      ordinal,
-      durationSeconds: 10,
-    }));
-    await t.db.shotSpec.deleteMany({ where: { runId: run.id, ordinal: { gte: 3 } } });
-    for (const [index, spec] of specs.entries())
-      await t.db.shotSpec.update({
-        where: { id: rows[index]!.id },
-        data: { ordinal: index, document: spec },
-      });
 
     const snapshot = z.record(z.string(), z.unknown()).parse(run.inputSnapshot);
     const brief = z.record(z.string(), z.unknown()).parse(snapshot.brief);

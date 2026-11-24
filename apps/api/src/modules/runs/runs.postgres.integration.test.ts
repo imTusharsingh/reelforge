@@ -99,7 +99,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(VIDEO_RUN_TRANSITIONS.PLANNING).toContain("CANCELED");
   });
   it("re-estimates a midrun predispatch outage at fallback rates", async () => {
-    const t = await fixture.tenant("L2", 30);
+    const t = await fixture.tenant("L2", 15);
     await generating(t);
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
