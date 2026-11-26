@@ -42,6 +42,8 @@ export async function reconcileBilling(
     throw new ShotMediaFailure(step.providerId!, step.providerJobId!, cause);
   });
   const run = await runs.store.get(context, step.runId);
-  if (run.state === "GENERATING" && !run.pauseReason) await runs.enqueue(context, run);
+  if (run.state === "PAUSED_BUDGET" && !run.pauseReason)
+    await resumeAfterCorrection(runs, context, run.id);
+  else if (run.state === "GENERATING" && !run.pauseReason) await runs.enqueue(context, run);
   return null;
 }

@@ -7,13 +7,12 @@ import {
   type ChannelBrief,
   type MediaReceipt,
 } from "@reelforge/contracts";
-import { reservationCents } from "@reelforge/ai-providers";
 import { json, type Context, type Run, type Artifact } from "../runs/runs.types.js";
 import { MediaAccess } from "../scene-media/media-access.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
-import { MEDIA_OVERHEAD } from "../scene-media/media-prices.js";
+import { audioCosts } from "../scene-media/media-prices.js";
 import { MediaRenderer } from "./media-render.js";
 @Injectable()
 export class MediaAssembly {
@@ -153,6 +152,7 @@ export class MediaAssembly {
     ].join(" ");
     const ports = await this.ports.get(context),
       seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    const costs = audioCosts(seconds);
     const [narration, music] = await Promise.all([
       this.jobs.wait(
         context,
@@ -160,10 +160,7 @@ export class MediaAssembly {
         "narration",
         ports.tts,
         { text: transcript, voice: brief.narratorVoice.voiceId },
-        reservationCents({
-          currency: "USD",
-          microUsd: Math.ceil((seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd),
-        }),
+        costs.narration,
         process.env.GEMINI_TTS_MODEL ?? "",
         "channel-narrator:v1",
         seconds,
@@ -179,7 +176,7 @@ export class MediaAssembly {
           instrumentalOnly: true,
           durationSeconds: seconds,
         },
-        reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }),
+        costs.music,
         process.env.GEMINI_MUSIC_MODEL ?? "",
         "instrumental-bed:v1",
         seconds,

@@ -93,7 +93,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     const where = { workspaceId: run.workspaceId, correlationId: step.id };
     expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
       status: "COMMITTED",
-      amountMinor: 105n,
+      amountMinor: 70n,
       committedMinor: 56n,
     });
     expect(await t.db.providerRequest.findFirstOrThrow({ where })).toMatchObject({
@@ -109,7 +109,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
       reservedMinor: 0,
     });
   });
-  it("retains an 84-cent receipt against maximum liability while its sibling settles", async () => {
+  it("retains an 84-cent receipt on a 56-cent shot while its sibling attaches and settles", async () => {
     const t = await fixture.tenant();
     const run = await generating(t);
     const [a, b, c] = await t.db.videoRunStep.findMany({
@@ -147,7 +147,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     });
     await t.usage.upsertBudget(t.context, {
       currency: "USD",
-      monthlyLimitMinor: 210,
+      monthlyLimitMinor: 154,
       reason: "priced overage",
     });
     const shotJob = (stepId: string): ReturnType<typeof t.engine.process> =>
@@ -155,17 +155,18 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     const sibling = shotJob(b!.id);
     try {
       await Promise.race([started.promise, sibling]);
-      await expect(shotJob(a!.id)).resolves.toBeNull();
+      await expect(shotJob(a!.id)).rejects.toThrow("billing exceeded");
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
     } finally {
       receipt.resolve({ providerJobId: "sibling" });
       await sibling;
     }
-    expect((await t.store.get(t.context, run.id)).pauseReason).toBeNull();
-    await expect(shotJob(c!.id)).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
+    expect((await t.store.get(t.context, run.id)).pauseReason).toContain(a!.id);
+    expect(await shotJob(c!.id)).toBeNull();
     expect(submit).toHaveBeenCalledTimes(2);
     const status = async (): Promise<number | undefined> =>
       (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
-    expect(await status()).toBe(210);
+    expect(await status()).toBe(154);
     await expect(
       t.usage.reserve(run.workspaceId, {
         category: "VIDEO_MEDIA",
@@ -177,16 +178,16 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     const fetch = vi.spyOn(provider, "fetch");
     await Promise.all([shotJob(a!.id), shotJob(a!.id)]);
     expect(fetch).not.toHaveBeenCalled();
-    expect(await status()).toBe(210);
+    expect(await status()).toBe(154);
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 140,
-      reservedMinor: 70,
-      overageMinor: 0,
+      reservedMinor: 14,
+      overageMinor: 14,
     });
     expect(
       await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: a!.id } }),
     ).toMatchObject({ status: "COMMITTED", committedMinor: 84n });
-    expect((await t.store.get(t.context, run.id)).pauseReason).toBe("BUDGET_EXHAUSTED");
+    expect((await t.store.get(t.context, run.id)).pauseReason).toBeNull();
   });
 
   it("recovers an admitted keyframe independently of its pending parent and resumes a stale hold", async () => {
@@ -299,7 +300,7 @@ describe.skipIf(!process.env.DATABASE_URL)("media submission holds", () => {
     ).toMatchObject({ status: "COMMITTED", committedMinor: 10n });
   });
   it("clears the in-flight primary hold before enqueueing the confirmed non-dispatch fallback", async () => {
-    const t = await fixture.tenant("L2", 15);
+    const t = await fixture.tenant("L2", 30);
     await generating(t);
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },

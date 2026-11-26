@@ -1,4 +1,8 @@
-import { correctionHold, pendingCorrection } from "./run-pending-receipt.js";
+import {
+  correctionHold,
+  pendingCorrection,
+  highestObservedReceipt,
+} from "./run-pending-receipt.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -12,7 +16,6 @@ import {
   failSettledGeneration,
 } from "../runs/run-outcomes.js";
 import {
-  ArtifactSchema,
   json,
   type Artifact,
   type Context,
@@ -34,10 +37,10 @@ import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
   awaitingBilling,
   correctionPayload,
+  deliveredShot,
   requireReceiptAttempt,
   mergeShotReceipt,
   pendingShotMedia,
-  pricedOutput,
   readReceiptBudget,
   withReceiptBudget,
 } from "./run-shot-receipt.js";
@@ -258,10 +261,7 @@ export async function captureShotReceipt(
       requireReceiptAttempt(current, step);
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
-      const price =
-        pending && (receipt.costBasis !== "BILLED" || pending.costMinor >= receipt.costMinor)
-          ? pending
-          : receipt;
+      const price = highestObservedReceipt(pending, receipt);
       const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
@@ -284,7 +284,8 @@ export async function captureShotReceipt(
           ...(settled ? { costMinor: cost } : overage && { error: { code: BILLING_OVERAGE } }),
         },
       });
-      if (pending) await clearResolvedSubmissionHold(db, tx, run, step.id);
+      if (pending && run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+        await clearResolvedSubmissionHold(db, tx, run, step.id);
       if (!settled && priceChanged && overage && run.pauseReason !== "EMERGENCY_STOP")
         await db.videoRun.updateMany({
           where: { id: run.id },
@@ -311,15 +312,12 @@ export async function reconcilePricedReceipt(
     const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
     const claim = await readAdmission(tx, context, current);
-    const { receipt } = pricedOutput.parse(current.output);
-    const cost = receipt.costMinor;
+    const cost = deliveredShot(current)?.receipt.costMinor;
     if (
       claim.evidence !== "billing-overage" ||
       !awaitingBilling(current) ||
-      !z.object({ storageArtifacts: z.array(ArtifactSchema).min(1) }).safeParse(current.output)
-        .success ||
+      cost === undefined ||
       current.state !== "WAITING_EXTERNAL" ||
-      receipt.providerJobId !== current.providerJobId ||
       !claim.request?.actualCost?.mul(100).equals(cost)
     )
       throw new ConflictException("Stored billing evidence changed");

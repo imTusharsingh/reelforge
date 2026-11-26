@@ -2,12 +2,7 @@ import { z } from "zod";
 import { json, type Step } from "./runs.types.js";
 import { describe, expect, it, vi } from "vitest";
 import { pricedClip } from "./runs.receipt-recovery.fixture.js";
-import {
-  downgradeToLegacyAdmission,
-  generateClips,
-  generating,
-  runsFixture,
-} from "./runs.fixture.js";
+import { generateClips, generating, runsFixture } from "./runs.fixture.js";
 import {
   admitSibling,
   completed,
@@ -17,11 +12,12 @@ import {
   stagedClip,
 } from "./runs.staged-clip.fixture.js";
 import type { RunsQueue } from "./runs.queue.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
   const fixture = runsFixture();
   it("ignores P2028 artifact attachment after recovery settled the clip", async () => {
-    const f = await stagedClip(await fixture.tenant(), 300);
+    const f = await stagedClip(await fixture.tenant(), 200);
     const { t, run, shot, job, fetcher } = f;
     fetcher.mockResolvedValueOnce(completed(10)).mockResolvedValueOnce(completed(10));
     const written = Promise.withResolvers<void>();
@@ -90,17 +86,17 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
         hardCapMinor: 372,
         baseEstimateMinor: 372,
         reshootReserveMinor: 0,
-        spentMinor: 267,
+        spentMinor: 302,
       },
     });
     await recoverBeforeLateFetch(f, 6, 12, async () => {
-      await expectSettled(f, 6, { spentMinor: 309, reservedMinor: 63, overageMinor: 0 }, 105);
+      await expectSettled(f, 6, { spentMinor: 344, reservedMinor: 28, overageMinor: 0 }, 70);
       expect(await t.store.get(t.context, run.id)).toMatchObject({
         state: "GENERATING",
         pauseReason: null,
       });
       const sibling = await eightSecondShot(t, run.id, 1);
-      // The provider maximum charge cannot fit while the original receipt's coverage is held.
+      // 20 cents plus five cents of buffer would fit if the retained 28 cents leaked.
       vi.spyOn(t.generation.provider, "estimate").mockReturnValueOnce(20);
       await expect(t.engine.process(t.runs.job(t.context, run.id, sibling.id))).rejects.toThrow(
         "Envelope exhausted",
@@ -110,7 +106,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       ).toMatchObject({ state: "PENDING", providerJobId: null });
       expect(await t.db.usageReservation.count({ where: { correlationId: sibling.id } })).toBe(0);
     });
-    await expectSettled(f, 12, { spentMinor: 351, reservedMinor: 21, overageMinor: 0 }, 105);
+    await expectSettled(f, 12, { spentMinor: 386, reservedMinor: 0, overageMinor: 14 }, 84);
     expect(native.submit).toHaveBeenCalledOnce();
   });
 
@@ -132,7 +128,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(42);
       await admitSibling(f);
     });
-    await expectSettled(f, 12, { spentMinor: 84, reservedMinor: 105, overageMinor: 28 }, 189);
+    await expectSettled(f, 12, { spentMinor: 84, reservedMinor: 70, overageMinor: 28 }, 154);
     expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "GENERATING",
       pauseReason: null,
@@ -146,7 +142,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     "native storage",
     "emergency stop",
     "legacy hold before stop",
-  ])("reconciles an older underestimated liability across %s", async (cut) => {
+  ])("preserves the full priced liability across %s", async (cut) => {
     const t = await fixture.tenant();
     const run = await generating(t);
     const [shot, pending] = await t.db.videoRunStep.findMany({
@@ -161,20 +157,20 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     vi.spyOn(port, "estimate").mockReturnValue(56);
     await t.usage.upsertBudget(t.context, {
       currency: "USD",
-      monthlyLimitMinor: 105,
+      monthlyLimitMinor: 70,
       reason: "overage test",
     });
     await expect(t.engine.process(job)).resolves.toBe(12000);
     const where = { workspaceId: run.workspaceId, correlationId: shot!.id };
-    await downgradeToLegacyAdmission(t, run, shot!);
     const reservation = await t.db.usageReservation.findFirstOrThrow({ where });
     expect(reservation.amountMinor).toBe(70n);
-    const sweep = (): Promise<number> =>
-      t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId);
     const enqueue = vi.fn<RunsQueue["enqueue"]>();
     t.runs.queue = { enqueue, fanout: vi.fn() } as unknown as RunsQueue;
     if (cut.endsWith("missing request")) await t.db.providerRequest.deleteMany({ where });
-    if (cut === "swept missing request") expect(await sweep()).toBe(1);
+    if (cut === "swept missing request")
+      expect(
+        await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId),
+      ).toBe(1);
     if (cut === "native storage") {
       vi.spyOn(port, "poll").mockImplementationOnce(async (_job, billing) => {
         await billing!.record({ ...pricedClip(), media: null, providerDurationSeconds: null });
@@ -198,6 +194,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("halted");
       t.stop.stopped = false;
       await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Reconcile");
+      expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
       await t.engine.process(t.runs.job(t.context, run.id, pending!.id));
       expect(submit).toHaveBeenCalledOnce();
       expect(enqueue).not.toHaveBeenCalled();
@@ -205,13 +202,6 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await expect(t.engine.process(job)).rejects.toThrow(
       cut === "artifact write" || cut === "native storage" ? "storage offline" : "billing exceeded",
     );
-    if (cut === "artifact write") {
-      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot!.id } })).toMatchObject({
-        state: "WAITING_EXTERNAL",
-        error: { code: "VIDEO_RUN_BILLING_OVERAGE" },
-        output: { receipt: { costMinor: 84 } },
-      });
-    }
     const request = await t.db.providerRequest.findFirstOrThrow({ where });
     expect(request.actualCost?.toNumber()).toBe(cut === "native storage" ? 0.7 : 0.84);
     expect(request.estimatedCost?.toNumber()).toBe(0.7);
@@ -224,11 +214,13 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       t.usage.reserve(run.workspaceId, {
         category: "VIDEO_MEDIA",
         currency: "USD",
-        amountMinor: 22,
+        amountMinor: 14,
         idempotencyKey: "competing-run",
       });
     await expect(compete()).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
-    expect(await sweep()).toBe(cut === "swept missing request" ? 0 : 1);
+    expect(
+      await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), run.workspaceId),
+    ).toBe(cut === "swept missing request" ? 0 : 1);
     await expect(compete()).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
     t.stop.stopped = false;
     if (stopped) {
@@ -238,7 +230,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     await t.engine.process(job);
     await t.engine.process(job);
     expect(submit).toHaveBeenCalledOnce();
-    expect(collectReceipt).toHaveBeenCalledTimes(cut === "artifact write" ? 2 : 1);
+    expect(collectReceipt).toHaveBeenCalledOnce();
     expect(poll).toHaveBeenCalledTimes(2);
     expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot!.id } })).toMatchObject({
       state: "SUCCEEDED",
@@ -246,7 +238,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 84,
-      reservedMinor: 21,
+      reservedMinor: 0,
       overageMinor: 14,
     });
     expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
@@ -305,15 +297,15 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       providerJobId: expect.any(String),
       output: {
         receiptBudget: {
-          admittedMinor: 105,
-          bufferMinor: 49,
+          admittedMinor: 70,
+          bufferMinor: shotReceiptBufferMinor(56),
           estimateMinor: 56,
         },
       },
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
       spentMinor: 0,
-      reservedMinor: 105,
+      reservedMinor: 70,
     });
     await t.engine.process(job);
     await t.engine.process(job);
@@ -329,7 +321,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
       output: { receipt: { costMinor: 56 }, storageArtifacts: [{ kind: "clips" }] },
     });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: 49,
+      reservedMinor: 14,
       spentMinor: 56,
       overageMinor: 0,
     });
@@ -383,7 +375,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot receipt recovery", () => {
     const saved = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
     expect(saved).toMatchObject({ state: "SUCCEEDED", providerJobId: "accepted" });
     expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: baseline.reservedMinor + (105 - saved.costMinor!),
+      reservedMinor: baseline.reservedMinor + shotReceiptBufferMinor(saved.costMinor!),
       spentMinor: baseline.spentMinor + saved.costMinor!,
     });
     expect(

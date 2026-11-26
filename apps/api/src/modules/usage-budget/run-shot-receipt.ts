@@ -81,25 +81,37 @@ function replacesPrice(previous: StoredPrice | undefined, price: VideoReceipt): 
   );
 }
 
+const deliveredOutput = z
+  .object({
+    receipt: pricedOutput.shape.receipt.extend({ providerId: z.string() }).passthrough(),
+    storageArtifacts: z.array(ArtifactSchema.passthrough()).min(1),
+  })
+  .passthrough();
+
+/** Delivered overages already have a winning artifact while their step is still open. */
+export function deliveredShot(step: Step): z.infer<typeof deliveredOutput> | null {
+  if (
+    step.state !== "SUCCEEDED" &&
+    !(step.output && typeof step.output === "object" && "storageArtifacts" in step.output)
+  )
+    return null;
+  const final = deliveredOutput.parse(step.output);
+  if (
+    final.receipt.providerJobId !== step.providerJobId ||
+    final.receipt.providerId !== step.providerId
+  )
+    throw new ConflictException("Stored receipt does not match shot");
+  return final;
+}
+
 export function mergeShotReceipt(
   step: Step,
   receipt: VideoReceipt,
 ): { output: Json; cost: number; previousCost: number | undefined; priceChanged: boolean } | null {
   const pending = pendingShotMedia(step);
   const { media, ...price } = receipt;
-  if (!pending && (awaitingBilling(step) || step.state === "SUCCEEDED")) {
-    const final = z
-      .object({
-        receipt: pricedOutput.shape.receipt.extend({ providerId: z.string() }).passthrough(),
-        storageArtifacts: z.array(ArtifactSchema.passthrough()).min(1),
-      })
-      .passthrough()
-      .parse(step.output);
-    if (
-      final.receipt.providerJobId !== step.providerJobId ||
-      final.receipt.providerId !== step.providerId
-    )
-      throw new ConflictException("Stored receipt does not match shot");
+  const final = deliveredShot(step);
+  if (final) {
     if (!replacesPrice(final.receipt, receipt)) return null;
     return {
       priceChanged: true,

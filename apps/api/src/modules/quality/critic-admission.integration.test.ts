@@ -10,6 +10,7 @@ import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaPorts } from "../scene-media/media-ports.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { criticReservationCents, criticTextPort } from "./critic-text-port.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 const rubric: QualityRubric = {
   hook: 8,
@@ -224,7 +225,7 @@ describe.skipIf(!process.env.DATABASE_URL)("critic text admission recovery", () 
         data: { state: "CRITIC" },
       });
       const c = critic(t, run);
-      const retainedClipBuffer = 6 * (105 - 53);
+      const retainedClipBuffer = 6 * shotReceiptBufferMinor(53);
       const started = Promise.withResolvers<void>();
       const gate = Promise.withResolvers<never>();
       c.complete.mockImplementationOnce(() => {
@@ -313,7 +314,7 @@ describe.skipIf(!process.env.DATABASE_URL)("critic text admission recovery", () 
       ).toMatchObject({ status: "COMMITTED" });
       expect(
         (await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).reservedMinor,
-      ).toBe(retainedClipBuffer + (105 - 53));
+      ).toBe(retainedClipBuffer + shotReceiptBufferMinor(53));
     },
   );
 

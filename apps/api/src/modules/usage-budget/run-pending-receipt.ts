@@ -37,15 +37,35 @@ export function pendingCorrection(step: Step): VideoReceipt | null {
   return { ...price, providerDurationSeconds: null, media: null };
 }
 
+/** A price-only marker must not discard a later delivery of the same provider job. */
+export function highestObservedReceipt(
+  pending: VideoReceipt | null,
+  received: VideoReceipt,
+): VideoReceipt {
+  if (!pending || (received.costBasis === "BILLED" && received.costMinor > pending.costMinor))
+    return received;
+  return {
+    ...pending,
+    media: received.media,
+    providerDurationSeconds: received.providerDurationSeconds,
+  };
+}
+
 function recordedBilledMinor(step: Step): number | undefined {
   const pending = pendingCorrection(step);
   if (pending) return pending.costMinor;
   const media = pendingShotMedia(step);
   if (media?.receipt.costBasis === "BILLED") return media.receipt.costMinor;
   const saved = pricedOutput.safeParse(step.output);
-  return saved.success && saved.data.receipt.costBasis === "BILLED"
+  return saved.success && saved.data.receipt.costBasis !== "RESERVATION"
     ? saved.data.receipt.costMinor
     : undefined;
+}
+
+export function needsReceiptMarker(step: Step, receipt: VideoReceipt): boolean {
+  if (receipt.costBasis !== "BILLED") return false;
+  const previous = recordedBilledMinor(step);
+  return previous === undefined || receipt.costMinor > previous;
 }
 
 export function isReceiptCorrection(step: Step, receipt: VideoReceipt): boolean {
@@ -72,7 +92,7 @@ function receiptMarker(step: Step, receipt: VideoReceipt): z.infer<typeof pendin
   });
 }
 
-/** Commit an over-reservation receipt before any budget-row correction can time out. */
+/** Persist the first or higher billed observation before any budget-row correction can time out. */
 export async function persistPendingCorrection(
   store: RunsStore,
   context: Context,
@@ -91,14 +111,7 @@ export async function persistPendingCorrection(
       !["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state)
     )
       throw new ConflictException("Provider job claim changed");
-    const previous = pendingCorrection(current);
-    if (previous?.costMinor !== undefined && previous.costMinor >= marker.costMinor)
-      return { value: null, payload: { replay: true } };
-    const recorded = recordedBilledMinor(current);
-    if (!previous && recorded !== undefined && marker.costMinor <= recorded)
-      return { value: null, payload: { replay: true } };
-    if (!previous && recorded === undefined && marker.costMinor <= (current.costMinor ?? 0))
-      return { value: null, payload: { replay: true } };
+    if (!needsReceiptMarker(current, receipt)) return { value: null, payload: { replay: true } };
     await db.videoRunStep.updateMany({
       where: { id: current.id, providerId: marker.providerId, providerJobId: marker.providerJobId },
       data: { error: marker },
@@ -111,7 +124,7 @@ export async function persistPendingCorrection(
   });
 }
 
-/** Persist the liability without reacquiring the budget lock that may have timed out. */
+/** Hold the run without reacquiring the budget lock that may have timed out. */
 export async function deferCorrection(
   db: Scoped,
   run: Run,
@@ -120,10 +133,10 @@ export async function deferCorrection(
 ): Promise<{ value: null; payload: Json; stepId?: string; eventType?: string }> {
   if (report.providerId !== step.providerId || report.jobId !== step.providerJobId)
     throw new ConflictException("Provider job claim changed");
-  const marker = receiptMarker(step, report.receipt);
-  const previous = pendingCorrection(step);
-  if (!previous || marker.costMinor > previous.costMinor)
+  if (needsReceiptMarker(step, report.receipt)) {
+    const marker = receiptMarker(step, report.receipt);
     await db.videoRunStep.updateMany({ where: { id: step.id }, data: { error: marker } });
+  }
   const hold = correctionHold(step.id);
   if (run.state === "GENERATING" && !run.pauseReason)
     return transitionLocked(db, run, "PAUSED_BUDGET", hold);

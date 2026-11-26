@@ -17,7 +17,7 @@ import { PlanningReferenceAssetsService } from "../asset/planning-reference-asse
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { pinnedBudget, recordedPlanningMinor, runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
@@ -231,7 +231,7 @@ export class MediaPlanning {
     output: unknown,
   ): Promise<void> {
     try {
-      await this.validatePlan(context, run, role, output);
+      this.validatePlan(run, role, output);
     } catch (error) {
       const accepted = await this.access.runs.store
         .scoped(context)
@@ -245,21 +245,12 @@ export class MediaPlanning {
       throw error;
     }
   }
-  private async validatePlan(
-    context: Context,
-    run: Run,
-    role: string,
-    output: unknown,
-  ): Promise<void> {
+  private validatePlan(run: Run, role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);
       if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
         throw new Error("Omni requires integer-second shots");
-      const planningSpent = await recordedPlanningMinor(
-        this.access.runs.store.scoped(context),
-        run.id,
-      );
-      runEstimate(shots, false, pinnedBudget(run).hardCapMinor, planningSpent);
+      runEstimate(shots, false, pinnedBudget(run).hardCapMinor);
     }
   }
   private async textReceipt(

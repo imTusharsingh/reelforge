@@ -357,7 +357,7 @@ suite("V3 approval, caps and retention", () => {
     const finishedEnvelope = await t.store
       .scoped(t.context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
-    expect(finishedEnvelope.reservedMinor).toBe(105 - finished.costMinor!);
+    expect(finishedEnvelope.reservedMinor).toBe(Math.ceil(finished.costMinor! / 4));
     expect(finishedEnvelope.spentMinor).toBe(finished.costMinor);
     await generateClips(t);
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));

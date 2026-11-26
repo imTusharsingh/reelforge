@@ -10,9 +10,12 @@ import type { PeriodBounds } from "./usage-budget.time.js";
 
 type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
 
+const pendingJob = Prisma.sql`s.error->>'code' = ${PENDING_RECEIPT_CORRECTION}
+  AND s.error->>'providerId' = s.provider_id AND s.error->>'providerJobId' = s.provider_job_id`;
+
 // Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
-  WHEN s.error->>'code' = ${PENDING_RECEIPT_CORRECTION} THEN GREATEST(
+  WHEN ${pendingJob} THEN GREATEST(
     CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
          ELSE ur.amount_minor END,
     (s.error->>'costMinor')::bigint,
@@ -57,7 +60,7 @@ export async function budgetExposure(
        WHERE ur.workspace_id = ${budget.workspaceId}::uuid AND (
          ur.status = 'COMMITTED' OR (ur.status = 'RESERVED' AND ur.expires_at > ${now})
          OR (ur.status IN ('RESERVED', 'EXPIRED') AND s.state IN ('RUNNING','WAITING_EXTERNAL')
-             AND ((s.state = 'WAITING_EXTERNAL' AND s.output ? 'receiptBudget') OR NOT EXISTS (
+             AND ((s.state = 'WAITING_EXTERNAL' AND (s.output ? 'receiptBudget' OR (${pendingJob}))) OR NOT EXISTS (
                SELECT FROM provider_requests pr WHERE pr.workspace_id = ur.workspace_id
                  AND pr.correlation_id = ur.correlation_id
              )))

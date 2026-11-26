@@ -14,8 +14,6 @@ export const MEDIA_OVERHEAD = Object.freeze({
   textMicroUsd: 500000,
   ttsPerTenSecondsMicroUsd: 2250,
   musicMicroUsd: 80000,
-  initialImages: 3,
-  imagesPerShot: 2,
 });
 const models = (): ProviderModels => ({
   video: process.env.GEMINI_VIDEO_MODEL ?? "",
@@ -87,17 +85,6 @@ export function clipMoney(
   const images = (shot.references?.length ?? 0) + (shot.firstFrameFrom ? 2 : 1);
   return { ...cost, microUsd: cost.microUsd + (fallback ? images * imageSurcharge() : 0) };
 }
-export function maximumClipMoney(
-  shot: Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>,
-  fallback: boolean,
-): Money {
-  const providerId = fallback ? "xai" : "gemini";
-  const capability = mediaCatalog().find(
-    (row) => row.kind === "VIDEO" && row.providerId === providerId,
-  )!;
-  return clipMoney({ ...shot, durationSeconds: capability.maxDurationSeconds }, fallback);
-}
 export function imageCallCents(): number {
   return reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.imageMicroUsd });
 }
@@ -107,29 +94,28 @@ export function textCallCents(): number {
     microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
   });
 }
-function planningAllowanceCents(): number {
-  return MEDIA_OVERHEAD.initialImages * imageCallCents() + 3 * textCallCents();
-}
-function remainingOverheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
-  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
-  return (
-    MEDIA_OVERHEAD.imagesPerShot * shots.length * imageCallCents() +
-    reservationCents({
+export function audioCosts(seconds: number): { narration: number; music: number } {
+  return {
+    narration: reservationCents({
       currency: "USD",
       microUsd: Math.ceil((seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd),
-    }) +
-    reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }) +
-    textCallCents()
-  );
+    }),
+    music: reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }),
+  };
 }
-export function overheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
-  return planningAllowanceCents() + remainingOverheadCents(shots);
-}
+
 export function plannedRunOverheadCents(
   shots: readonly Pick<ShotSpec, "durationSeconds">[],
-  planningSpentMinor = 0,
+  planningSpentMinor = 3 * textCallCents(),
 ): number {
   if (!Number.isSafeInteger(planningSpentMinor) || planningSpentMinor < 0)
     throw new Error("Invalid recorded planning cost");
-  return Math.max(planningAllowanceCents(), planningSpentMinor) + remainingOverheadCents(shots);
+  const audio = audioCosts(shots.reduce((sum, shot) => sum + shot.durationSeconds, 0));
+  return (
+    planningSpentMinor +
+    shots.length * imageCallCents() +
+    audio.narration +
+    audio.music +
+    textCallCents()
+  );
 }

@@ -271,7 +271,7 @@ describe.skipIf(!process.env.DATABASE_URL)("shot admission recovery", () => {
       }
       const submit = vi.spyOn(t.generation.provider, "submit");
       await paid.dispatch(t.context, step, () =>
-        submit(ShotSpecSchema.parse(step.input), step.idempotencyKey, step.costMinor ?? 0),
+        submit(ShotSpecSchema.parse(step.input), step.idempotencyKey),
       );
       const where = { workspaceId: run.workspaceId, correlationId: step.id };
       const event = { runId: run.id, stepId: step.id, type: "provider_dispatch" };

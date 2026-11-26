@@ -1,5 +1,6 @@
 import {
   deferCorrection,
+  needsReceiptMarker,
   pendingCorrection,
   pendingCorrectionWhere,
 } from "../usage-budget/run-pending-receipt.js";
@@ -183,7 +184,11 @@ export class VideoRunEngine {
               payload: { replay: true, reason: generationPause(cause) },
             };
           const report = error instanceof ShotBillingFailure ? error.report : undefined;
-          if (attempt && report && pendingCorrection(attempt))
+          if (
+            attempt &&
+            report &&
+            (pendingCorrection(attempt) || needsReceiptMarker(attempt, report.receipt))
+          )
             return deferCorrection(db, current, attempt, report);
           if (media && !attempt) throw cause;
         }
@@ -208,6 +213,7 @@ export class VideoRunEngine {
         step.state === "SUCCEEDED" &&
         report.providerId === step.providerId &&
         report.jobId === step.providerJobId &&
+        !pendingCorrection(step) &&
         recordedShotPrice(step, report.receipt)
       );
     }

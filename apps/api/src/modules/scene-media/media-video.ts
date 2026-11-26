@@ -1,13 +1,17 @@
 import {
   EmptyMediaResponse,
+  ProviderFailure,
+  VideoRouter,
+  ProviderLimiter,
   reservationCents,
   secondsCost,
   type ClipArtifact,
   type MediaDeliveryFailure,
   type VideoGenPort as NativeVideoPort,
   type VideoOptions,
+  type VideoRoutingState,
+  type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
-import { ServiceUnavailableException } from "@nestjs/common";
 import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
 import {
@@ -23,19 +27,21 @@ import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
 import { MediaJobs, MediaChecksumMismatch } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
 
-/** V2 media delivery under V3 accounting; submission stays closed without provider charge limits. */
+/** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
   public readonly modelId: string;
-  public readonly enforcesPerCallChargeCeiling = false;
   public constructor(
     private readonly native: NativeVideoPort,
     private readonly jobs: MediaJobs,
     private readonly context: Context,
     _run: Run,
     private readonly options: VideoOptions = {},
+    private readonly limiter: ProviderLimiter = new ProviderLimiter(),
     private readonly trim?: (body: Buffer, from: number) => Promise<Buffer>,
     private readonly validateKey?: () => void,
+    private readonly videoState?: VideoRoutingState,
+    private readonly recordOutcome?: RecordVideoOutcome,
     private readonly frameCount = Number(!!options.firstFrame) + Number(!!options.lastFrame),
   ) {
     void _run;
@@ -53,18 +59,29 @@ export class RoutedMediaVideo implements VideoGenPort {
         estimate.microUsd + (this.providerId === "xai" ? this.frameCount * imageSurcharge() : 0),
     });
   }
-  public async submit(
-    shot: ShotSpec,
-    key: string,
-    maximumCostMinor: number,
-  ): Promise<{ providerJobId: string }> {
-    void shot;
-    void key;
-    void maximumCostMinor;
-    throw new ServiceUnavailableException({
-      code: "BUDGET_POLICY_UNAVAILABLE",
-      message: `Paid video generation is disabled because ${this.providerId} cannot enforce a per-call charge ceiling`,
-    });
+  public async submit(shot: ShotSpec, key: string): Promise<{ providerJobId: string }> {
+    const router = new VideoRouter(
+      [{ port: this.native, tier: 0 }],
+      {
+        submit: (port, spec, id): Promise<{ providerJobId: string }> =>
+          this.limiter.run(
+            port.estimate(spec),
+            () => port.submit(spec, id, this.options),
+            port.capabilities().providerId === "gemini",
+          ),
+        allowFallback: async (): Promise<void> => {
+          throw new Error("V3 must re-estimate the envelope before fallback");
+        },
+      },
+      async (): Promise<never> => {
+        throw new ProviderFailure("NEEDS_HUMAN", true);
+      },
+      Date.now,
+      this.videoState,
+      this.recordOutcome,
+    );
+    const job = await router.submit(shot, key, [this.providerId]);
+    return { providerJobId: job.providerJobId };
   }
   public async reconcile(): Promise<null> {
     return null;

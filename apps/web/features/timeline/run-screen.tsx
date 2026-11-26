@@ -194,7 +194,8 @@ function RunOperatorControls({
               Abandon {step.key}
             </Button>
           ))}
-      {detail.run.pauseReason === "OPERATOR_ABANDONED" && (
+      {(detail.run.pauseReason === "OPERATOR_ABANDONED" ||
+        detail.run.pauseReason === "EMERGENCY_STOP") && (
         <Button disabled={busy} onClick={() => void action("resume")}>
           Resume run
         </Button>

@@ -1,3 +1,4 @@
+import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import type { Prisma } from "@reelforge/database";
 type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
 import { ProviderFailure } from "@reelforge/ai-providers";
@@ -313,21 +314,13 @@ export class MediaAccounts {
       async (db) => {
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
         if (!budget) return { value: null, payload: { pending: true } };
-        const steps = await db.videoRunStep.findMany({
-          where: { runId: run.id, key: { startsWith: "media:" }, state: "SUCCEEDED" },
-        });
-        const unaccounted = steps.filter((s) => !this.accounted(s.output));
-        const cost = unaccounted.reduce((sum, s) => sum + (s.costMinor ?? 0), 0);
-        if (!envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
-        for (const step of unaccounted)
-          await db.videoRunStep.updateMany({
-            where: { id: step.id },
-            data: { output: json({ ...this.record(step.output), budgetAccounted: true }) },
-          });
+        // Historical envelopes may already include unmarked planning steps or a duplicate sync.
+        const spentMinor = await settledMediaSpend(db, run.id);
+        const cost = spentMinor - budget.spentMinor;
         if (cost)
           await db.budgetEnvelope.updateMany({
             where: { id: budget.id },
-            data: { spentMinor: budget.spentMinor + cost, revision: budget.revision + 1 },
+            data: { spentMinor, revision: budget.revision + 1 },
           });
         return { value: null, payload: { costMinor: cost } };
       },
@@ -338,8 +331,5 @@ export class MediaAccounts {
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  }
-  private accounted(value: unknown): boolean {
-    return this.record(value).budgetAccounted === true;
   }
 }

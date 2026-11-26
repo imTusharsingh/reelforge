@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { capabilityCatalog, secondsCost, type VideoGenPort } from "@reelforge/ai-providers";
+import {
+  ProviderFailure,
+  capabilityCatalog,
+  secondsCost,
+  type VideoGenPort,
+} from "@reelforge/ai-providers";
 import { planningFixture, shotsFixture } from "../script/planning.fixture.js";
 import type { MediaJobs } from "./media-jobs.js";
 import type { Run } from "../runs/runs.types.js";
@@ -39,7 +44,7 @@ function native(providerId = "gemini"): VideoGenPort {
 describe("V5 landed router bridge", () => {
   const shot = { ...shotsFixture(planningFixture())[0]!, durationSeconds: 8 };
   const context = { workspaceId: shot.workspaceId, userId: "user", role: "OWNER" as const };
-  it("refuses paid submission when the provider has no enforceable charge ceiling", async () => {
+  it("uses the V2 router, forwards image/extension options and retains real provider metadata", async () => {
     const port = native(),
       bytes = vi.fn().mockResolvedValue(Buffer.from("fixture-video"));
     const options = {
@@ -53,12 +58,9 @@ describe("V5 landed router bridge", () => {
       options,
     );
     expect(bridge.providerId).toBe("gemini");
-    expect(bridge.enforcesPerCallChargeCeiling).toBe(false);
     expect(bridge.estimate(shot)).toBe(56);
-    await expect(bridge.submit(shot, "durable-key", 105)).rejects.toMatchObject({
-      response: { code: "BUDGET_POLICY_UNAVAILABLE" },
-    });
-    expect(port.submit).not.toHaveBeenCalled();
+    await bridge.submit(shot, "durable-key");
+    expect(port.submit).toHaveBeenCalledWith(shot, "durable-key:gemini", options);
     expect(await bridge.poll("fixture-job")).toBe("succeeded");
     const receipt = await bridge.collectReceipt("fixture-job", shot);
     expect(await bridge.fetch("fixture-job", receipt.media!)).toEqual(Buffer.from("fixture-video"));
@@ -94,6 +96,15 @@ describe("V5 landed router bridge", () => {
     expect(record).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ media: valid, costBasis: "BILLED" }),
     );
+  });
+  it("does not resubmit uncertain calls, rewrite without a reservation, or switch vendors on refusal/429", async () => {
+    for (const kind of ["OUTAGE", "RATE_LIMIT", "REFUSAL"] as const) {
+      const port = native();
+      vi.mocked(port.submit).mockRejectedValue(new ProviderFailure(kind, false));
+      const bridge = new RoutedMediaVideo(port, {} as MediaJobs, context, {} as Run);
+      await expect(bridge.submit(shot, "key")).rejects.toBeInstanceOf(ProviderFailure);
+      expect(port.submit).toHaveBeenCalledOnce();
+    }
   });
   it("rejects invalid video metadata and counts additional Grok input frames", async () => {
     const port = native("xai");
@@ -141,6 +152,7 @@ it("extracts only the newly generated extension tail before assembly", async () 
     { workspaceId: shot.workspaceId, userId: "user", role: "OWNER" },
     {} as Run,
     { extension: { providerJobId: "previous-own-job", previousSeconds: 8 } },
+    undefined,
     trim,
   );
   expect(await bridge.fetch("extended-job")).toEqual(Buffer.from("new-extension-tail"));

@@ -1,10 +1,10 @@
 import { type ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { clearResolvedSubmissionHold, keyframeKey } from "../runs/run-outcomes.js";
 import { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
-import { overheadCents } from "../scene-media/media-prices.js";
+import { audioCosts, imageCallCents, textCallCents } from "../scene-media/media-prices.js";
 import { fallbackEstimate, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 
@@ -94,12 +94,19 @@ export class RunFallback {
     const mediaSteps = await db.videoRunStep.findMany({
       where: {
         runId: run.id,
-        state: "SUCCEEDED",
-        OR: [{ key: { startsWith: "media:" } }, { key: { startsWith: "reference:" } }],
+        key: { startsWith: "media:" },
+        state: { in: ["SUCCEEDED", "RUNNING", "WAITING_EXTERNAL"] },
       },
+      select: { key: true },
     });
-    const overheadSpent = mediaSteps.reduce((sum, item) => sum + (item.costMinor ?? 0), 0);
-    const overhead = Math.max(0, overheadCents(initial) - overheadSpent);
+    const covered = new Set(mediaSteps.map((step) => step.key));
+    const audio = audioCosts(initial.reduce((sum, shot) => sum + shot.durationSeconds, 0));
+    const overhead =
+      initial.filter((shot) => !covered.has(`media:${keyframeKey(shot)}`)).length *
+        imageCallCents() +
+      (covered.has("media:narration") ? 0 : audio.narration) +
+      (covered.has("media:music") ? 0 : audio.music) +
+      (covered.has("media:text:critic:1") ? 0 : textCallCents());
     try {
       return fallbackEstimate(
         { ...budget, reservedMinor: budget.reservedMinor - (failed.costMinor ?? 0) },

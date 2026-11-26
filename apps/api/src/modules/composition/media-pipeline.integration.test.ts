@@ -1,3 +1,9 @@
+import type { ReferenceResolver, VideoRoutingState } from "@reelforge/ai-providers";
+import { CriticEvidence } from "../quality/critic-evidence.js";
+import { CriticPipeline } from "../quality/critic.pipeline.js";
+import { CriticStep } from "../quality/critic.step.js";
+import { MediaProbe } from "../quality/media-probe.js";
+import { RunCritic } from "../quality/run-critic.js";
 import { existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,7 +11,6 @@ import type { Artifact } from "../runs/runs.types.js";
 import { ModuleRef } from "@nestjs/core";
 import { AssemblyManifestSchema, type PlanningPromptReceipt } from "@reelforge/contracts";
 import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
-import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
 import { RunGeneration } from "../orchestration/video-run.generation.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
@@ -31,7 +36,7 @@ import { MediaBindings } from "../scene-media/media-pipeline.module.js";
 import { MediaAssembly } from "./media-assembly.js";
 import { MediaRenderer } from "./media-render.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
-import { fakeMediaPorts, fixtureMedia } from "./media-fixture.fixture.js";
+import { pipelineProviders } from "./media-fixture.fixture.js";
 
 describe.skipIf(
   !process.env.DATABASE_URL ||
@@ -45,9 +50,13 @@ describe.skipIf(
     vi.stubEnv("XAI_VIDEO_MODEL", "fixture-fallback");
   });
   afterEach(() => vi.unstubAllEnvs());
-  async function pipeline(hardCapMinor: number): Promise<{
+  async function pipeline(
+    hardCapMinor: number,
+    shotCount = 6,
+    primaryOutage = false,
+  ): Promise<{
     t: Tenant;
-    native: ReturnType<typeof fakeMediaPorts>;
+    native: Awaited<ReturnType<typeof pipelineProviders>>;
     paid: RunPaidCalls;
     renderer: MediaRenderer;
     assembly: MediaAssembly;
@@ -80,25 +89,7 @@ describe.skipIf(
     });
     t.brief = brief;
     t.run = await t.runs.create(t.context, brief.id, randomUUID());
-    const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
-      (shot, ordinal) => ({
-        ...shot,
-        workspaceId: t.context.workspaceId,
-        runId: t.run.id,
-        durationSeconds: 5,
-        transition: ordinal === 0 ? "crossfade" : "cut",
-      }),
-    );
-    const bytes = await fixtureMedia();
-    const native = fakeMediaPorts(t.context.workspaceId, t.storage, bytes, [
-      scriptFixture(),
-      shots,
-      {
-        character: null,
-        styleFrame: "Original blue leaf illustration",
-        keyframePrompts: shots.map(() => "Blue leaf, portrait 9:16"),
-      },
-    ]);
+    const native = await pipelineProviders(t, shotCount);
     const paid = new RunPaidCalls(new UsageBudgetService(t.db, () => new Date()), t.store);
     const mapping = new Map<unknown, unknown>([
       [RunsService, t.runs],
@@ -142,11 +133,18 @@ describe.skipIf(
     } as unknown as ModuleRef);
     const accounts = new MediaAccounts(access),
       jobs = new MediaJobs(access, accounts, t.storage);
+    const state: VideoRoutingState = new Map();
+    if (primaryOutage)
+      state.set("gemini", { failures: 3, openUntil: Date.now() + 60000, accepted: 0, calls: 3 });
     const ports = new MediaPorts(
       access,
       {
-        ports: async () => ({ ...native, assertKey: (): void => {} }),
-        videoState: () => new Map(),
+        ports: async (_context: unknown, refs: ReferenceResolver) => ({
+          ...native,
+          ...native.video(refs),
+          assertKey: (): void => {},
+        }),
+        videoState: () => state,
         videoOutcome: () => async (): Promise<void> => {},
       } as unknown as ProvidersRuntime,
       jobs,
@@ -166,6 +164,16 @@ describe.skipIf(
     const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);
     const binding = new MediaBindings(access, accounts, frames, ports, jobs, planning, assembly);
     binding.onModuleInit();
+    const evidence = new CriticEvidence(
+      assembly,
+      jobs,
+      planning,
+      new MediaProbe(new SpawnProcessRunner()),
+    );
+    new CriticStep(
+      access.modules,
+      () => new RunCritic(access, accounts, ports, evidence, new CriticPipeline()),
+    ).onModuleInit();
     return { t, native, paid, renderer, assembly };
   }
   it("rejects a 330-cent plan before the first video submission", async () => {
@@ -179,13 +187,88 @@ describe.skipIf(
     ).toMatchObject({ state: "FAILED" });
     expect(await t.db.budgetEnvelope.count({ where: { runId: t.run.id } })).toBe(0);
   }, 180000);
+  it("rejects three ten-second shots when the generated reference takes the plan past 353 cents", async () => {
+    const { t, native } = await pipeline(353, 3);
+    await expect(generating(t)).rejects.toThrow("pinned cap");
+    expect(native.submitted).toHaveLength(0);
+    expect(await t.db.budgetEnvelope.count({ where: { runId: t.run.id } })).toBe(0);
+  }, 180000);
+
+  it("funds three clips, assembly and one paid critic at exactly 357 cents", async () => {
+    const { t, native } = await pipeline(357, 3);
+    await generating(t);
+    const where = { runId: t.run.id };
+    const envelope = (): ReturnType<typeof t.db.budgetEnvelope.findFirstOrThrow> =>
+      t.db.budgetEnvelope.findFirstOrThrow({ where });
+    expect(await envelope()).toMatchObject({
+      baseEstimateMinor: 357,
+      reshootReserveMinor: 0,
+      spentMinor: 55,
+    });
+    const charges = await t.db.videoRunStep.findMany({
+      where: { ...where, key: { startsWith: "media:" } },
+    });
+    expect(charges).toHaveLength(4);
+    for (const step of charges) expect(step.output).toMatchObject({ budgetAccounted: true });
+    // A historical sync could already have added the unmarked text calls a second time.
+    await t.db.budgetEnvelope.updateMany({ where, data: { spentMinor: 106 } });
+    const shots = await t.db.videoRunStep.findMany({
+      where: { ...where, key: { startsWith: "shot-" } },
+      orderBy: { key: "asc" },
+    });
+    for (const shot of shots) await t.engine.process(t.runs.job(t.context, t.run.id, shot.id));
+    expect(native.submitted).toHaveLength(3);
+    expect(await envelope()).toMatchObject({ spentMinor: 277, reservedMinor: 54 });
+    for (let advance = 0; advance < 3; advance++)
+      await t.engine.process(t.runs.job(t.context, t.run.id));
+    expect((await t.store.get(t.context, t.run.id)).state).toBe("AWAITING_APPROVAL");
+    expect(
+      await t.db.videoRunStep.findMany({ where: { ...where, key: "media:text:critic:1" } }),
+    ).toMatchObject([{ state: "SUCCEEDED", costMinor: 17 }]);
+    const ledger = await t.db.usageReservation.aggregate({
+      where: { workspaceId: t.run.workspaceId, status: "COMMITTED" },
+      _sum: { committedMinor: true },
+    });
+    expect(ledger._sum.committedMinor).toBe(303n);
+    expect(await envelope()).toMatchObject({ spentMinor: 303, reservedMinor: 54 });
+  }, 180000);
+
+  it("reprices a pre-dispatch primary outage and submits the pinned frames to xAI once", async () => {
+    const { t, native } = await pipeline(800, 3, true);
+    await generating(t);
+    const where = { runId: t.run.id, key: "shot-0" };
+    const first = await t.db.videoRunStep.findFirstOrThrow({ where });
+    await t.engine.process(t.runs.job(t.context, t.run.id, first.id));
+    const retry = await t.db.videoRunStep.findFirstOrThrow({ where: { ...where, attempt: 2 } });
+    const job = t.runs.job(t.context, t.run.id, retry.id);
+    await t.engine.process(job);
+    await t.engine.process(job);
+    expect(native.submitted).toMatchObject([
+      {
+        key: `${retry.idempotencyKey}:xai`,
+        body: {
+          image: { url: expect.stringContaining("data:image/") },
+          reference_images: [{ url: expect.stringContaining("data:image/") }],
+        },
+      },
+    ]);
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: retry.id } })).toMatchObject({
+      state: "SUCCEEDED",
+      costMinor: 142,
+      output: { receiptBudget: { admittedMinor: 178, bufferMinor: 36 } },
+    });
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({ route: "FALLBACK", baseEstimateMinor: 629 });
+  }, 180000);
+
   it("plans, generates six real clips, chains frames, assembles voice/music/captions and writes a complete <=$8 manifest", async () => {
     const { t, native, paid, renderer, assembly } = await pipeline(800);
     await generating(t);
     expect(
       await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
     ).toMatchObject({
-      baseEstimateMinor: 374,
+      baseEstimateMinor: 369,
       reshootReserveMinor: 105,
     });
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
@@ -290,8 +373,13 @@ describe.skipIf(
     expect(manifest.receipts.filter((receipt) => receipt.key.startsWith("shot-"))).toHaveLength(6);
     expect(manifest.promptVersions).toHaveLength(3);
     expect(native.submitted).toHaveLength(6);
-    expect(native.submitted.every((call) => !!call.options.firstFrame)).toBe(true);
-    expect(native.submitted.slice(1).every((call) => !!call.options.lastFrame)).toBe(true);
+    native.submitted.forEach((call, index) => {
+      const frame = { type: "image", mime_type: "image/png", data: expect.any(String) };
+      expect(call).toMatchObject({
+        key: `${steps[index]!.idempotencyKey}:gemini`,
+        body: { input: [frame, frame, ...(index ? [frame] : []), { type: "text" }] },
+      });
+    });
     const receipts = await t.db.providerRequest.findMany({
       where: { workspaceId: t.context.workspaceId },
     });

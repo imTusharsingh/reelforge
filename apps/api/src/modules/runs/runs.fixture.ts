@@ -26,7 +26,7 @@ import { RunFallback } from "../orchestration/video-run.fallback.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
 import { VideoRunEngine } from "../orchestration/video-run.engine.js";
-import type { Context, Run, Step } from "./runs.types.js";
+import type { Context, Run } from "./runs.types.js";
 
 export function runsFixture(maxConnections?: number): {
   tenant: (
@@ -197,15 +197,6 @@ export type Tenant = {
   stop: { stopped: boolean; scope: null; reason: null };
   connect: () => void;
 };
-export async function downgradeToLegacyAdmission(t: Tenant, run: Run, shot: Step): Promise<void> {
-  const where = { workspaceId: run.workspaceId, correlationId: shot.id };
-  await t.db.$transaction([
-    t.db.videoRunStep.update({ where: { id: shot.id }, data: { costMinor: 70 } }),
-    t.db.usageReservation.updateMany({ where, data: { amountMinor: 70n } }),
-    t.db.providerRequest.updateMany({ where, data: { estimatedCost: 0.7 } }),
-    t.db.budgetEnvelope.updateMany({ where: { runId: run.id }, data: { reservedMinor: 70 } }),
-  ]);
-}
 export async function generating(t: Tenant): Promise<Run> {
   for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
   return t.store.get(t.context, t.run.id);

@@ -6,6 +6,7 @@ import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
 import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 function shotZero(t: Tenant): Promise<Step> {
   return t.store
@@ -30,7 +31,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     const run = await t.store.get(t.context, t.run.id);
     expect(run.state).toBe("AWAITING_APPROVAL");
     const detail = await t.runs.detail(t.context, run.id);
-    expect(detail).toMatchObject({ envelope: { reservedMinor: 312, spentMinor: 318 } });
+    expect(detail).toMatchObject({ envelope: { reservedMinor: 84, spentMinor: 318 } });
     t.stop.stopped = true;
     await expect(t.control.approve(t.context, run.id)).rejects.toThrow("halted");
     expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
@@ -99,7 +100,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(VIDEO_RUN_TRANSITIONS.PLANNING).toContain("CANCELED");
   });
   it("re-estimates a midrun predispatch outage at fallback rates", async () => {
-    const t = await fixture.tenant("L2", 15);
+    const t = await fixture.tenant("L2", 30);
     await generating(t);
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
@@ -297,7 +298,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       {
         idempotencyKey: `m08:${step.idempotencyKey}`,
         status: "RELEASED",
-        amountMinor: 105n,
+        amountMinor: BigInt(estimate + Math.ceil(estimate / 4)),
         committedMinor: null,
         releaseReason: "NOT_DISPATCHED",
       },
@@ -313,7 +314,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(release).toHaveBeenCalledOnce();
     expect(submit).toHaveBeenCalledOnce();
     expect(await envelope()).toMatchObject({
-      reservedMinor: 105 - estimate,
+      reservedMinor: shotReceiptBufferMinor(estimate),
       spentMinor: estimate,
     });
   });

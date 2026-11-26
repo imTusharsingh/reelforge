@@ -1,13 +1,9 @@
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { pendingCorrection } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
-import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
-import {
-  clipMoney,
-  maximumClipMoney,
-  plannedRunOverheadCents,
-} from "../scene-media/media-prices.js";
+import { clipMoney, plannedRunOverheadCents } from "../scene-media/media-prices.js";
 import {
   BudgetPolicySchema,
   type ChannelBrief,
@@ -53,30 +49,14 @@ export async function assertRunCap(
   return cumulative;
 }
 
-export async function recordedPlanningMinor(db: Scoped, runId: string): Promise<number> {
-  const steps = await db.videoRunStep.findMany({
-    where: {
-      runId,
-      state: { notIn: ["SKIPPED", "CANCELLED"] },
-      OR: [{ key: { startsWith: "media:text:" } }, { key: { startsWith: "reference:" } }],
-    },
-    select: { costMinor: true },
-  });
-  return steps.reduce((total, step) => total + (step.costMinor ?? 0), 0);
-}
-
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
 type PlanShot = Pick<ShotSpec, "durationSeconds"> &
   Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>;
 
-export function assertChargeCeilingEnforced(
-  provider: Pick<VideoGenPort, "providerId" | "enforcesPerCallChargeCeiling">,
-): void {
-  if (!provider.enforcesPerCallChargeCeiling)
-    throw new ServiceUnavailableException({
-      code: "BUDGET_POLICY_UNAVAILABLE",
-      message: `Paid video generation is disabled because ${provider.providerId} cannot enforce a per-call charge ceiling`,
-    });
+export function shotReceiptBufferMinor(estimateMinor: number): number {
+  if (!Number.isSafeInteger(estimateMinor) || estimateMinor < 0)
+    throw new Error("Invalid shot estimate");
+  return Math.ceil(estimateMinor / 4);
 }
 
 function clipCoverage(
@@ -90,9 +70,8 @@ function clipCoverage(
   let receiptBufferMinor = 0;
   for (const shot of shots) {
     const quote = reservationCents(clipMoney(shot, fallback));
-    const maximum = reservationCents(maximumClipMoney(shot, fallback));
     clipsMinor += quote;
-    receiptBufferMinor += Math.max(0, maximum - quote);
+    receiptBufferMinor += shotReceiptBufferMinor(quote);
   }
   return { clipsMinor, receiptBufferMinor };
 }
@@ -101,7 +80,7 @@ export function runEstimate(
   shots: readonly PlanShot[],
   fallback = false,
   hardCapMinor = 800,
-  planningSpentMinor = 0,
+  planningSpentMinor?: number,
 ): Estimate & { expectedSpendMinor: number; receiptBufferMinor: number } {
   const { clipsMinor, receiptBufferMinor } = clipCoverage(shots, fallback);
   const expectedSpendMinor = clipsMinor + plannedRunOverheadCents(shots, planningSpentMinor);
@@ -162,13 +141,9 @@ export function priceShot(
   shot: ShotSpec,
 ): { provider: VideoGenPort; amount: number; estimate: number } {
   const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
-  assertChargeCeilingEnforced(provider);
   provider.assertKey?.();
   const estimate = provider.estimate(shot, budget.route === "FALLBACK");
-  const amount = Math.max(
-    estimate,
-    reservationCents(maximumClipMoney(shot, budget.route === "FALLBACK")),
-  );
+  const amount = estimate + shotReceiptBufferMinor(estimate);
   if (
     !envelopeRoom(
       {

@@ -3,7 +3,6 @@ import {
   admitSibling,
   clipUri,
   expectBillingReconciliation,
-  expectBudgetConsumption,
   expectSameClip,
   expectSettled,
   failingClip,
@@ -20,7 +19,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Late video receipts and delivery fai
   it.each(lateClipCases)(
     "keeps the settled clip after a late $kind response from $provider with $seconds billed seconds",
     async ({ provider, kind, seconds, pause }) => {
-      const f = await stagedClip(await fixture.tenant(), kind === "valid" ? 118 : 400, provider);
+      const f = await stagedClip(await fixture.tenant(), kind === "valid" ? 84 : 400, provider);
       const { t, run, shot, job, native } = f;
       const put = vi.spyOn(t.artifacts, "put");
       const recoveredSeconds = kind === "job GET 503" ? seconds : 10;
@@ -39,12 +38,14 @@ describe.skipIf(!process.env.DATABASE_URL)("Late video receipts and delivery fai
       await expectSettled(f, seconds);
       await expectSameClip(t, settled);
       const events = await t.db.runEvent.findMany({ where: { runId: run.id, stepId: shot.id } });
-      expectBillingReconciliation(events, provider === "xai");
+      expectBillingReconciliation(events, kind === "job GET 503" && seconds > 10);
       const adjustments = receiptAdjustments(events);
       expect(adjustments).toMatchObject(
         seconds > recoveredSeconds ? [{ payload: { adjustmentMinor: 14, costMinor: 84 } }] : [],
       );
-      await expectBudgetConsumption(f, seconds);
+      expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
+        seconds * f.wire.centsPerSecond,
+      );
       expect(put).toHaveBeenCalledOnce();
       expect(native.submit).toHaveBeenCalledOnce();
       if (kind !== "valid") {

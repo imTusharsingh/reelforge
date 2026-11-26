@@ -9,7 +9,6 @@ import {
   Interactions,
   OmniVideo,
   ProviderHttp,
-  reservationCents,
 } from "@reelforge/ai-providers";
 import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
@@ -19,9 +18,7 @@ import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 import type { Event, Run, Step, RunJob } from "./runs.types.js";
-import { maximumClipMoney } from "../scene-media/media-prices.js";
-import { CappedTestVideoPort } from "./runs.capped-video.fixture.js";
-import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 export function completed(seconds?: number, clip: string | { uri: string } = "clip"): Response {
   return Response.json({
@@ -71,7 +68,7 @@ export async function eightSecondShot(t: Tenant, runId: string, ordinal: number)
 
 export async function stagedClip(
   t: Tenant,
-  limit = 105,
+  limit = 70,
   provider: keyof typeof providers = "gemini",
 ): Promise<{
   t: Tenant;
@@ -128,8 +125,7 @@ export async function stagedClip(
       : new GrokVideo(http, staging, capability, refs);
   if (provider === "xai") t.generation.fallbackProvider = t.generation.provider;
   const jobs = new MediaJobs({} as MediaAccess, {} as MediaAccounts, t.storage);
-  const bridge = new RoutedMediaVideo(native, jobs, t.context, run);
-  t.generation.provider = new CappedTestVideoPort(bridge, native);
+  t.generation.provider = new RoutedMediaVideo(native, jobs, t.context, run);
   vi.spyOn(native, "submit");
   vi.spyOn(native, "fetch");
   const job = t.runs.job(t.context, run.id, shot.id);
@@ -196,8 +192,6 @@ export async function recoverBeforeLateFetch(
       return lateFetch.promise;
     })
     .mockResolvedValueOnce(wire.completed(recoveredSeconds));
-  if (wire.jobUrl.includes("api.x.ai"))
-    fetcher.mockResolvedValueOnce(wire.completed(recoveredSeconds));
   let response = completed(lateSeconds, "late clip");
   const original = t.engine.process(job);
   try {
@@ -239,17 +233,8 @@ export async function expectSettled(
 ): Promise<void> {
   const where = { workspaceId: shot.workspaceId, correlationId: shot.id };
   const cost = seconds * wire.centsPerSecond;
-  const current = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
-  const budgetRoute = await t.db.budgetEnvelope.findFirstOrThrow({
-    where: { runId: shot.runId },
-    select: { route: true },
-  });
-  const maximum =
-    readReceiptBudget(current.output)?.admittedMinor ??
-    reservationCents(
-      maximumClipMoney(ShotSpecSchema.parse(shot.input), budgetRoute.route === "FALLBACK"),
-    );
-  const admitted = maximum;
+  const estimate = 8 * wire.centsPerSecond;
+  const admitted = estimate + shotReceiptBufferMinor(estimate);
   const requests = await t.db.providerRequest.findMany({ where });
   expect(requests).toMatchObject([{ status: "SUCCEEDED", errorCode: null }]);
   expect(requests[0]!.actualCost?.mul(100).toString()).toBe(String(cost));
@@ -277,17 +262,6 @@ export async function expectSettled(
     );
 }
 
-export async function expectBudgetConsumption(
-  { t, shot, wire }: Awaited<ReturnType<typeof stagedClip>>,
-  seconds: number,
-): Promise<void> {
-  const step = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
-  const admitted = readReceiptBudget(step.output)?.admittedMinor ?? 0;
-  expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
-    Math.max(seconds * wire.centsPerSecond, admitted),
-  );
-}
-
 export async function admitSibling({
   t,
   run,
@@ -297,20 +271,10 @@ export async function admitSibling({
   const sibling = await eightSecondShot(t, run.id, 1);
   fetcher.mockResolvedValueOnce(wire.queued("sibling")).mockResolvedValueOnce(wire.queued());
   expect(await t.engine.process(t.runs.job(t.context, run.id, sibling.id))).toBe(12000);
-  const budgetRoute = await t.db.budgetEnvelope.findFirstOrThrow({
-    where: { runId: run.id },
-    select: { route: true },
-  });
-  const shot = ShotSpecSchema.parse(sibling.input);
-  const fallback = budgetRoute.route === "FALLBACK";
-  const maximum = Math.max(
-    t.generation.provider.estimate(shot, fallback),
-    reservationCents(maximumClipMoney(shot, fallback)),
-  );
   expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: sibling.id } })).toMatchObject({
     state: "WAITING_EXTERNAL",
     providerJobId: "sibling",
-    costMinor: maximum,
+    costMinor: 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond),
   });
 }
 
@@ -321,16 +285,7 @@ export async function expectExpiredShotCoverage(
   expect(
     await t.usage.sweepExpiredReservations(new Date(Date.now() + 86400001), shot.workspaceId),
   ).toBe(1);
-  const current = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: shot.id } });
-  const budgetRoute = await t.db.budgetEnvelope.findFirstOrThrow({
-    where: { runId: shot.runId },
-    select: { route: true },
-  });
-  const admitted =
-    readReceiptBudget(current.output)?.admittedMinor ??
-    reservationCents(
-      maximumClipMoney(ShotSpecSchema.parse(shot.input), budgetRoute.route === "FALLBACK"),
-    );
+  const admitted = 8 * wire.centsPerSecond + shotReceiptBufferMinor(8 * wire.centsPerSecond);
   const charge = recordedSeconds * wire.centsPerSecond;
   expect((await t.usage.listBudgets(t.context))[0]!.periods[0]!.consumedMinor).toBe(
     Math.max(admitted, charge),

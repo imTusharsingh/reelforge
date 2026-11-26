@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { reservationCents, secondsCost } from "@reelforge/ai-providers";
-import { clipMoney, imageSurcharge, mediaCatalog, overheadCents } from "./media-prices.js";
+import {
+  clipMoney,
+  imageSurcharge,
+  mediaCatalog,
+  plannedRunOverheadCents,
+} from "./media-prices.js";
 describe("V5 prices use the landed V2 catalog and image-count estimator", () => {
   it("uses current catalog rates and one reservation rounding per paid clip", () => {
     const primary = mediaCatalog().find(
@@ -10,7 +15,9 @@ describe("V5 prices use the landed V2 catalog and image-count estimator", () => 
       secondsCost(8, primary.pricePerSecond["720p"]!),
     );
     expect(reservationCents(clipMoney({ durationSeconds: 8 }, false))).toBe(56);
-    expect(overheadCents(Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 })))).toBe(138);
+    expect(
+      plannedRunOverheadCents(Array.from({ length: 6 }, () => ({ durationSeconds: 7.5 }))),
+    ).toBe(102);
   });
   it("charges Grok per input image, including pinned first/last frames, never a flat shot fee", () => {
     const reference = { referenceAssetId: mediaCatalog()[0]!.id, version: 1 };

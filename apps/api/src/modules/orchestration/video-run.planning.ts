@@ -1,3 +1,4 @@
+import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { RunOutputs } from "./video-run.outputs.js";
 import { ConflictException, Injectable } from "@nestjs/common";
@@ -9,7 +10,7 @@ import {
 } from "@reelforge/contracts";
 import { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { pinnedBudget, recordedPlanningMinor, runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.js";
 
 @Injectable()
@@ -111,9 +112,11 @@ export class RunPlanning {
       : stubShots(run, this.brief(run));
     this.validateShots(run, shots);
     const { targetMinor, hardCapMinor } = pinnedBudget(run);
-    const planningSpentMinor = await recordedPlanningMinor(scoped, run.id);
-    const estimate = runEstimate(shots, false, hardCapMinor, planningSpentMinor);
     const result = await this.runs.store.mutate(context, run.id, "budget_estimated", async (db) => {
+      if (await db.budgetEnvelope.findFirst({ where: { runId: run.id } }))
+        return { value: null, payload: json({ replay: true }) };
+      const planningSpentMinor = await settledMediaSpend(db, run.id, true);
+      const estimate = runEstimate(shots, false, hardCapMinor, planningSpentMinor);
       await db.budgetEnvelope.create({
         data: {
           workspaceId: context.workspaceId,
