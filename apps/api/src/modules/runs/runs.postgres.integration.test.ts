@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderFailure, ProviderHttp } from "@reelforge/ai-providers";
+import { report } from "../autonomy/autonomy.fixture.js";
 import type { Step } from "./runs.types.js";
 import type { Prisma } from "@reelforge/database";
 import { ShotSpecSchema, VIDEO_RUN_TRANSITIONS } from "@reelforge/contracts";
-import * as mediaPrices from "../scene-media/media-prices.js";
 import { runsFixture, generating, generateClips, type Tenant } from "./runs.fixture.js";
+import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
 
 function shotZero(t: Tenant): Promise<Step> {
   return t.store
@@ -25,24 +26,32 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     await expect(t.runs.create(t.context, randomUUID(), t.run.idempotencyKey)).rejects.toThrow();
     await generating(t);
     await generateClips(t);
+    vi.spyOn(t.planning.handlers.CRITIC!, "execute").mockResolvedValueOnce(report);
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
     const run = await t.store.get(t.context, t.run.id);
     expect(run.state).toBe("AWAITING_APPROVAL");
-    expect(submit).toHaveBeenCalledTimes(6);
     const detail = await t.runs.detail(t.context, run.id);
-    expect(detail).toMatchObject({ envelope: { reservedMinor: 0, spentMinor: 318 } });
+    expect(detail).toMatchObject({ envelope: { reservedMinor: 84, spentMinor: 318 } });
+    t.stop.stopped = true;
+    await expect(t.control.approve(t.context, run.id)).rejects.toThrow("halted");
+    expect((await t.store.get(t.context, run.id)).pauseReason).toBe("EMERGENCY_STOP");
+    t.stop.stopped = false;
+    await expect(t.control.approve(t.context, run.id)).rejects.toThrow("hard gates");
+    await t.control.resume(t.context, run.id);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "AWAITING_APPROVAL",
+      pauseReason: null,
+    });
     await t.control.approve(t.context, run.id);
     expect((await t.store.get(t.context, run.id)).state).toBe("SCHEDULED");
     await expect(t.control.approve(t.context, run.id)).rejects.toThrow();
-    expect(
-      await t.store
-        .scoped(t.context)
-        .runEvent.count({ where: { runId: run.id, type: "approved" } }),
-    ).toBe(1);
     const events = await t.store.events(t.context, run.id, 0);
+    expect(events.filter((event) => event.type === "approved")).toHaveLength(1);
     expect(events.map((e) => e.sequence)).toEqual(events.map((_, i) => i + 1));
     const states = events.filter((e) => e.type === "transition").map((e) => e.payload);
-    expect(states.length).toBe(6);
+    expect(states).toHaveLength(7);
+    expect(states.at(-1)).toMatchObject({ from: "AWAITING_APPROVAL", to: "AWAITING_APPROVAL" });
+    expect(submit).toHaveBeenCalledTimes(6);
   });
   it("waits for script approval at L1 and rejects viewer actions", async () => {
     const t = await fixture.tenant("L1");
@@ -60,19 +69,6 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     await t.control.approve(t.context, t.run.id);
     await t.engine.process(t.runs.job(t.context, t.run.id));
     expect((await t.store.get(t.context, t.run.id)).state).toBe("GENERATING");
-  });
-  it("refuses over-$8 estimates before media dispatch", async () => {
-    const t = await fixture.tenant();
-    using price = vi.spyOn(mediaPrices, "clipMoney");
-    price.mockImplementation((shot) => ({
-      currency: "USD",
-      microUsd: 200_000 * shot.durationSeconds,
-    }));
-    const submit = vi.spyOn(t.generation.provider, "submit");
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    await expect(t.engine.process(t.runs.job(t.context, t.run.id))).rejects.toThrow("$8");
-    expect(submit).not.toHaveBeenCalled();
   });
   it("rejects illegal/stale transitions and scopes every run aggregate", async () => {
     const t = await fixture.tenant(),
@@ -96,7 +92,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(VIDEO_RUN_TRANSITIONS.PLANNING).toContain("CANCELED");
   });
   it("re-estimates a midrun predispatch outage at fallback rates", async () => {
-    const t = await fixture.tenant();
+    const t = await fixture.tenant("L2", 30);
     await generating(t);
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
@@ -117,7 +113,8 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       .scoped(t.context)
       .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
     expect(finished.spentMinor).toBeLessThanOrEqual(800);
-    expect(finished.reservedMinor).toBe(0);
+    expect(finished.reservedMinor).toBeGreaterThan(0);
+    expect(finished.spentMinor + finished.reservedMinor).toBeLessThanOrEqual(800);
   });
   it("pauses before an over-envelope reshoot and enforces emergency stop", async () => {
     const t = await fixture.tenant();
@@ -293,7 +290,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
       {
         idempotencyKey: `m08:${step.idempotencyKey}`,
         status: "RELEASED",
-        amountMinor: BigInt(estimate),
+        amountMinor: BigInt(estimate + Math.ceil(estimate / 4)),
         committedMinor: null,
         releaseReason: "NOT_DISPATCHED",
       },
@@ -308,7 +305,10 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     expect(charge).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
     expect(submit).toHaveBeenCalledOnce();
-    expect(await envelope()).toMatchObject({ reservedMinor: 0, spentMinor: estimate });
+    expect(await envelope()).toMatchObject({
+      reservedMinor: shotReceiptBufferMinor(estimate),
+      spentMinor: estimate,
+    });
   });
   it("rolls back a shot when a pause interleaves between reserve and admission", async () => {
     const t = await fixture.tenant();

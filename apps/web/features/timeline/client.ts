@@ -17,7 +17,7 @@ export async function runRequest(
     ? `workspaces/${encodeURIComponent(workspaceId)}/${path}`
     : path;
   const response = await fetch(
-    `/api/v1/${scopedPath}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    `/api/v1/${scopedPath}${scopedPath.includes("?") ? "&" : "?"}workspaceId=${encodeURIComponent(workspaceId)}`,
     withCsrf({
       credentials: "include",
       ...(body === undefined
@@ -100,6 +100,8 @@ const eventTypes = [
   "dispatch_reserved",
   "dispatch_released",
   "provider_dispatch",
+  "provider_receipt",
+  "billing_reconciled",
   "reconcile_required",
   "step_abandoned",
   "resumed",

@@ -1,3 +1,4 @@
+import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
 import { ShotSpecSchema } from "@reelforge/contracts";
@@ -92,12 +93,14 @@ async function recordRefusal(
   { providerJobId, retry }: { providerJobId: string | null; retry: boolean },
 ): Promise<void> {
   const amount = current.costMinor ?? 0;
+  const cost = readReceiptBudget(current.output)?.estimateMinor ?? amount;
   await paid.settleFailedRequest(
     tx,
     context,
     current,
     "Video provider refused the shot",
     true,
+    cost,
     providerJobId,
   );
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: current.runId } });
@@ -105,7 +108,7 @@ async function recordRefusal(
     where: { id: budget.id },
     data: {
       reservedMinor: budget.reservedMinor - amount,
-      spentMinor: budget.spentMinor + amount,
+      spentMinor: budget.spentMinor + cost,
       revision: budget.revision + 1,
     },
   });
@@ -113,7 +116,7 @@ async function recordRefusal(
     where: { id: current.id },
     data: {
       state: retry ? "SKIPPED" : "FAILED",
-      costMinor: amount,
+      costMinor: cost,
       providerJobId,
       finishedAt: new Date(),
       error: { code: "PROVIDER_REFUSED", rewriteCount: Number(!!refusalRewrite(current)) },

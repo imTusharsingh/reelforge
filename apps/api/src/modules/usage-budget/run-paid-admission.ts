@@ -1,10 +1,15 @@
+import { refusalRewrite } from "../orchestration/video-run.refusal.js";
+import { readReceiptBudget } from "./run-shot-receipt.js";
 import {
   ADMISSION_ORDERING,
+  type Admission,
   canRollback,
   OUTCOME_UNKNOWN,
   readAdmission,
 } from "./run-admission-state.js";
 import { ConflictException } from "@nestjs/common";
+import { Prisma } from "@reelforge/database";
+import { minorUnitExponent } from "./usage-budget.money.js";
 import { randomUUID } from "node:crypto";
 import { clearResolvedSubmissionHold, submissionHold } from "../runs/run-outcomes.js";
 import type { RunsStore } from "../runs/runs.store.js";
@@ -33,7 +38,12 @@ export async function rollbackAdmission(
       if (!unchanged) return { value: null, payload: { replay: true } };
       const admission = await readAdmission(tx, context, current);
       if (admission.evidence === "ambiguous")
-        return holdAmbiguousAdmission(db, tx, run, current, admission.request !== null);
+        return holdAmbiguousAdmission(db, tx, run, current, admission);
+      if (admission.evidence === "released-nondispatch") {
+        await closeReleasedMedia(db, run, current);
+        await clearResolvedSubmissionHold(db, tx, run, current.id);
+        return { value: null, payload: { closedBy: "PROVIDER_NOT_DISPATCHED" }, stepId: step.id };
+      }
       if (!canRollback(admission)) return { value: null, payload: { replay: true } };
       const amount = await releaseAdmission(
         db,
@@ -67,6 +77,7 @@ async function releaseAdmission(
 ): Promise<number> {
   const where = { workspaceId: context.workspaceId, correlationId: step.id };
   const shot = step.key.startsWith("shot-");
+  const rewrite = refusalRewrite(step);
   if (reservationId) await releaseReservation(tx, usage, context, reservationId);
   await tx.providerRequest.updateMany({
     where: { ...where, errorCode: "PENDING" },
@@ -77,6 +88,8 @@ async function releaseAdmission(
         admissionOrdering: ADMISSION_ORDERING,
         dispatched: false,
         costKnown: true,
+        stepId: step.id,
+        idempotencyKey: step.idempotencyKey,
       },
     },
   });
@@ -85,6 +98,7 @@ async function releaseAdmission(
     data: shot
       ? {
           state: "PENDING",
+          output: rewrite ? { refusalRewrite: rewrite } : Prisma.DbNull,
           costMinor: null,
           providerId: null,
           startedAt: null,
@@ -112,11 +126,11 @@ async function holdAmbiguousAdmission(
   tx: Transaction,
   run: Run,
   step: Step,
-  hasRequest: boolean,
+  admission: Admission,
 ): Promise<{ value: string; payload: { reason: string }; stepId: string; eventType: string }> {
   const reason = submissionHold(step.id);
   const where = { workspaceId: run.workspaceId, correlationId: step.id };
-  if (hasRequest)
+  if (admission.request)
     await tx.providerRequest.update({
       where: { workspaceId_correlationId: where },
       data: { errorCode: OUTCOME_UNKNOWN },
@@ -131,11 +145,65 @@ async function holdAmbiguousAdmission(
         capabilityId: "video",
         status: "FAILED",
         errorCode: OUTCOME_UNKNOWN,
+        ...unknownPrice(admission, step),
       },
     });
-  if (!run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+  if (run.pauseReason !== "EMERGENCY_STOP" && !run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
   return { value: reason, payload: { reason }, stepId: step.id, eventType: "reconcile_required" };
+}
+
+function unknownPrice(
+  { reservation }: Admission,
+  step: Step,
+): Pick<Prisma.ProviderRequestCreateManyInput, "estimatedCost" | "currency" | "createdAt"> {
+  if (!reservation)
+    return {
+      estimatedCost: step.costMinor == null ? null : step.costMinor / 100,
+      currency: "USD",
+      createdAt: step.startedAt ?? step.createdAt,
+    };
+  return {
+    estimatedCost: new Prisma.Decimal(reservation.amountMinor.toString()).div(
+      new Prisma.Decimal(10).pow(minorUnitExponent(reservation.currency)),
+    ),
+    currency: reservation.currency,
+    createdAt: reservation.createdAt,
+  };
+}
+
+/** The provider and M18 already closed their halves of this legacy media claim. */
+export async function closeReleasedMedia(db: Scoped, run: Run, step: Step): Promise<void> {
+  const closed = await db.videoRunStep.updateMany({
+    where: { id: step.id, runId: run.id, state: "RUNNING", providerJobId: null },
+    data: {
+      state: "CANCELLED",
+      finishedAt: new Date(),
+      output: { closedBy: "PROVIDER_NOT_DISPATCHED" },
+    },
+  });
+  if (!closed.count || !step.costMinor) return;
+  const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
+  if (!budget) return;
+  const siblings = await db.videoRunStep.aggregate({
+    where: { runId: run.id, id: { not: step.id }, state: { in: ["RUNNING", "WAITING_EXTERNAL"] } },
+    _sum: { costMinor: true },
+  });
+  const settled = await db.videoRunStep.findMany({
+    where: { runId: run.id, key: { startsWith: "shot-" }, state: "SUCCEEDED" },
+    select: { output: true },
+  });
+  const retained = settled.reduce(
+    (sum, shot) => sum + (readReceiptBudget(shot.output)?.bufferMinor ?? 0),
+    0,
+  );
+  const outstanding = Math.max(0, budget.reservedMinor - retained - (siblings._sum.costMinor ?? 0));
+  const refund = Math.min(step.costMinor, outstanding);
+  if (refund)
+    await db.budgetEnvelope.updateMany({
+      where: { id: budget.id },
+      data: { reservedMinor: budget.reservedMinor - refund, revision: budget.revision + 1 },
+    });
 }
 
 async function releaseReservation(
@@ -149,5 +217,41 @@ async function releaseReservation(
   await tx.usageReservation.update({
     where: { id: reservationId },
     data: { correlationId: null },
+  });
+}
+
+export async function recordReservation(
+  db: Transaction,
+  context: Context,
+  run: Run,
+  step: Step,
+  amount: number,
+  createdAt: Date,
+  rolledBackId: string | undefined,
+): Promise<void> {
+  const request = {
+    providerId: step.providerId ?? "v3-stub",
+    capabilityId: "video",
+    status: "FAILED" as const,
+    estimatedCost: amount / 100,
+    actualCost: null,
+    currency: "USD",
+    responseMetadata: {
+      admissionOrdering: ADMISSION_ORDERING,
+      dispatched: false,
+      costKnown: false,
+    },
+    errorCode: "PENDING",
+  };
+  const where = { workspaceId: context.workspaceId, correlationId: step.id };
+  if (rolledBackId) {
+    // Archive by the immutable request UUID. The rollback metadata retains the step and logical key.
+    await db.providerRequest.update({
+      where: { workspaceId_correlationId: where, errorCode: "ADMISSION_ROLLED_BACK" },
+      data: { correlationId: rolledBackId },
+    });
+  }
+  await db.providerRequest.create({
+    data: { ...where, channelId: run.channelId, createdAt, ...request },
   });
 }

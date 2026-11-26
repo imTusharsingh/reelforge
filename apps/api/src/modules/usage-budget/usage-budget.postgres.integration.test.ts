@@ -56,6 +56,8 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
         workspaceId,
         name: "m18-channel",
         timezone,
+        // The report scheduler in the parallel notifications suite discovers active channels across tenants.
+        status: "PAUSED",
         ...(schedule === null ? {} : { schedule: schedule as Prisma.InputJsonValue }),
       },
     });
@@ -158,6 +160,56 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     expect(burst.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const [status] = await service().listBudgets(t.viewer);
     expect(status?.periods[0]).toMatchObject({ consumedMinor: 900, remainingMinor: 100 });
+  });
+
+  it("admits the exact remainder while a swept covered request settles on another connection", async () => {
+    if (!db || !secondDb) throw new Error("Expected disposable database");
+    const t = await tenant();
+    const usage = service();
+    await usage.upsertBudget(t.owner, {
+      currency: "USD",
+      monthlyLimitMinor: 100,
+      reason: "late settlement",
+    });
+    const correlationId = randomUUID();
+    const input = {
+      currency: "USD",
+      category: "VIDEO_MEDIA",
+      amountMinor: 56,
+      idempotencyKey: "late",
+      correlationId,
+    };
+    const held = await usage.reserve(t.workspaceId, { ...input, ttlMs: 60000 });
+    if (held.decision !== "RESERVED") throw new Error("Expected reservation");
+    await ledgerRow(t, { correlationId, estimatedCost: "0.56" });
+    clockMs += 61000;
+    await usage.sweepExpiredReservations(clock(), t.workspaceId);
+    let settled = false;
+    const late = service(secondDb);
+    const interleaved = db.$extends({
+      query: {
+        async $queryRaw({ args, query }): Promise<unknown> {
+          const result = await query(args);
+          if (!settled && "sql" in args && String(args.sql).includes("provider_requests")) {
+            settled = true;
+            await late.commit(t.workspaceId, held.reservation.id, 56);
+          }
+          return result;
+        },
+      },
+    });
+    const other = await new UsageBudgetService(interleaved as unknown as typeof db, clock).reserve(
+      t.workspaceId,
+      {
+        currency: "USD",
+        category: "VIDEO_MEDIA",
+        amountMinor: 44,
+        idempotencyKey: "remainder",
+      },
+    );
+    expect(settled).toBe(true);
+    expect(other.decision).toBe("RESERVED");
+    expect((await usage.listBudgets(t.viewer))[0]?.periods[0]?.consumedMinor).toBe(100);
   });
 
   it("commits the actual amount and releases unused reservations", async () => {

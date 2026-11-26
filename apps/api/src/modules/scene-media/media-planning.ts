@@ -17,13 +17,13 @@ import { PlanningCharacterService } from "../character/planning-character.servic
 import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { planningPromptReceiptSchema, PlanningService } from "../script/planning.service.js";
-import type { Context, Run, Step } from "../runs/runs.types.js";
-import { runEstimate } from "../usage-budget/run-envelope.js";
+import { type Context, type Run, type Step } from "../runs/runs.types.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
-import { MEDIA_OVERHEAD } from "./media-prices.js";
+import { MEDIA_OVERHEAD, textCallCents } from "./media-prices.js";
 const textIntent = z.object({
   modelId: z.string().min(1),
   spec: z.object({ promptVersion: planningPromptReceiptSchema }),
@@ -165,15 +165,12 @@ export class MediaPlanning {
     });
     if (previous?.state === "SUCCEEDED") {
       const { output, promptVersion } = this.output(previous.output);
-      await this.validateAcceptedPlan(context, previous, input, output);
+      await this.validateAcceptedPlan(context, run, previous, input, output);
       input.onPromptUsed?.(planningPromptReceiptSchema.parse(promptVersion));
       return output;
     }
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
-    const cost = reservationCents({
-      currency: "USD",
-      microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
-    });
+    const cost = textCallCents();
     const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
     const pending =
       previous &&
@@ -192,7 +189,7 @@ export class MediaPlanning {
         modelId,
       ));
     const result = await this.textResult(context, run, step, input, modelId, !!pending);
-    await this.validateAcceptedPlan(context, step, input, result.output);
+    await this.validateAcceptedPlan(context, run, step, input, result.output);
     const admitted = textIntent.parse(step.input);
     const { artifact, receipt } = await this.textReceipt(
       context,
@@ -227,7 +224,7 @@ export class MediaPlanning {
           usage: z.record(z.string(), z.unknown()),
         })
         .safeParse(step.output);
-      if (!saved.success)
+      if (!saved.success || !step.providerJobId || saved.data.providerJobId !== step.providerJobId)
         throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
       return saved.data;
     }
@@ -247,13 +244,14 @@ export class MediaPlanning {
 
   private async validateAcceptedPlan(
     context: Context,
+    run: Run,
     step: Step,
     input: Parameters<TextPort["generate"]>[0],
     output: unknown,
   ): Promise<void> {
     try {
       input.validateOutput?.(output);
-      this.validatePlan(input.promptVersion.role, output);
+      this.validatePlan(run, input.promptVersion.role, output);
     } catch (error) {
       if (step.state === "SUCCEEDED") {
         await this.rejectSavedOutput(context, step);
@@ -306,12 +304,12 @@ export class MediaPlanning {
     );
     await this.access.runs.events?.publish(result.event);
   }
-  private validatePlan(role: string, output: unknown): void {
+  private validatePlan(run: Run, role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);
       if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
         throw new Error("Omni requires integer-second shots");
-      runEstimate(shots);
+      runEstimate(shots, false, pinnedBudget(run).hardCapMinor);
     }
   }
   private async textReceipt(

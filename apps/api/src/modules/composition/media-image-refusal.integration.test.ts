@@ -4,7 +4,7 @@ import type { RunJob } from "../runs/runs.types.js";
 import { generating, runsFixture } from "../runs/runs.fixture.js";
 import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
 import { bindMedia } from "./media-bindings.fixture.js";
-import { fakeMediaPorts } from "./media-fixture.fixture.js";
+import { fakeMediaPorts } from "./media-recovery.fixture.js";
 
 const narrator = {
   providerId: "gemini" as const,

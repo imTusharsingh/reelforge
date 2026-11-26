@@ -1,4 +1,5 @@
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
+import { currentPrices, shotReceipts } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
@@ -8,13 +9,12 @@ import {
   type ChannelBrief,
   type MediaReceipt,
 } from "@reelforge/contracts";
-import { reservationCents } from "@reelforge/ai-providers";
 import { json, type Context, type Run, type Step, type Artifact } from "../runs/runs.types.js";
 import { MediaAccess } from "../scene-media/media-access.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
-import { MEDIA_OVERHEAD } from "../scene-media/media-prices.js";
+import { audioCosts } from "../scene-media/media-prices.js";
 import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import { MediaRenderer } from "./media-render.js";
 type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
@@ -31,7 +31,11 @@ export class MediaAssembly {
   ) {}
   public async execute(context: Context, run: Run, brief: ChannelBrief): Promise<Artifact[]> {
     const existing = await this.artifacts(context, run);
-    if (existing.length) return existing;
+    if (existing.length) {
+      if (!existing.some((a) => a.kind === "manifest"))
+        throw new Error("Assembly manifest exceeds delivery budget");
+      return existing;
+    }
     const plan = await this.planning.saved(context, run, brief);
     if (!plan || !brief.narratorVoice) throw new Error("Pinned plan and channel voice required");
     const { transcript, narration, music } = await this.audio(context, run, brief, plan);
@@ -89,19 +93,57 @@ export class MediaAssembly {
     receipts: MediaReceipt[],
     rendered: Awaited<ReturnType<MediaRenderer["render"]>>,
   ): Promise<Artifact[]> {
-    const budget = await this.access.runs.store
-      .scoped(context)
-      .budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-    const manifest = this.manifest(
+    const artifacts = await this.storeRender(context, rendered);
+    const saved = await this.access.runs.store.mutate<Artifact[] | null>(
       context,
-      run,
-      brief,
-      plan,
-      budget.spentMinor,
-      receipts,
-      rendered,
+      run.id,
+      "assembly_created",
+      async (db) => {
+        const cached = await db.videoRunStep.findFirst({
+          where: { runId: run.id, key: "local:assembly" },
+        });
+        if (cached) return { value: null, payload: { replay: true } };
+        const prices = currentPrices(receipts, await shotReceipts(db, run.id));
+        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+        const manifest = this.manifest(
+          context,
+          run,
+          brief,
+          plan,
+          budget.spentMinor,
+          prices,
+          rendered,
+        );
+        const descriptor = await this.access.artifacts.put(
+          context,
+          "manifest",
+          Buffer.from(JSON.stringify(manifest)),
+          "application/json",
+        );
+        const storageArtifacts = [...artifacts, descriptor];
+        await db.videoRunStep.create({
+          data: {
+            workspaceId: context.workspaceId,
+            runId: run.id,
+            key: "local:assembly",
+            idempotencyKey: `${run.id}:local:assembly:1`,
+            attempt: 1,
+            state: "SUCCEEDED",
+            input: {},
+            output: json({ storageArtifacts }),
+            finishedAt: new Date(),
+          },
+        });
+        return { value: storageArtifacts, payload: {} };
+      },
     );
-    const artifacts = await Promise.all([
+    return saved.value ?? this.artifacts(context, run);
+  }
+  private async storeRender(
+    context: Context,
+    rendered: Awaited<ReturnType<MediaRenderer["render"]>>,
+  ): Promise<Artifact[]> {
+    return Promise.all([
       this.access.artifacts.put(context, "final", rendered.video, "video/mp4"),
       this.access.artifacts.put(context, "refs", rendered.cover, "image/jpeg"),
       this.access.artifacts.put(
@@ -110,27 +152,7 @@ export class MediaAssembly {
         Buffer.from(JSON.stringify(rendered.words)),
         "application/json",
       ),
-      this.access.artifacts.put(
-        context,
-        "manifest",
-        Buffer.from(JSON.stringify(manifest)),
-        "application/json",
-      ),
     ]);
-    await this.access.runs.store.scoped(context).videoRunStep.create({
-      data: {
-        workspaceId: context.workspaceId,
-        runId: run.id,
-        key: "local:assembly",
-        idempotencyKey: `${run.id}:local:assembly:1`,
-        attempt: 1,
-        state: "SUCCEEDED",
-        input: {},
-        output: json({ storageArtifacts: artifacts }),
-        finishedAt: new Date(),
-      },
-    });
-    return artifacts;
   }
   private async audio(
     context: Context,
@@ -147,6 +169,7 @@ export class MediaAssembly {
     ].join(" ");
     const ports = await this.ports.get(context),
       seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    const costs = audioCosts(seconds);
     await this.drainFailedAudio(context, run, ports, seconds);
     const [narration, music] = await Promise.allSettled([
       this.jobs.tick(
@@ -155,10 +178,7 @@ export class MediaAssembly {
         "narration",
         ports.tts,
         { text: transcript, voice: brief.narratorVoice.voiceId },
-        reservationCents({
-          currency: "USD",
-          microUsd: Math.ceil((seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd),
-        }),
+        costs.narration,
         process.env.GEMINI_TTS_MODEL ?? "",
         "channel-narrator:v1",
         seconds,
@@ -174,7 +194,7 @@ export class MediaAssembly {
           instrumentalOnly: true,
           durationSeconds: seconds,
         },
-        reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }),
+        costs.music,
         process.env.GEMINI_MUSIC_MODEL ?? "",
         "instrumental-bed:v1",
         seconds,
@@ -294,6 +314,7 @@ export class MediaAssembly {
     throw new AssemblyInterrupted(result.value ? 12000 : null);
   }
   public async artifacts(context: Context, run: Run): Promise<Artifact[]> {
+    await this.access.artifacts.refreshManifests(context, run.id);
     const step = await this.access.runs.store.scoped(context).videoRunStep.findFirst({
       where: { runId: run.id, key: "local:assembly", state: "SUCCEEDED" },
     });

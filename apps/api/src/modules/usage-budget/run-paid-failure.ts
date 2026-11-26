@@ -1,3 +1,5 @@
+import { readReceiptBudget } from "./run-shot-receipt.js";
+import { failRunIfSettled as settleRunFailure } from "../runs/run-outcomes.js";
 import { closeSteps } from "../runs/run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { ConflictException } from "@nestjs/common";
@@ -32,25 +34,26 @@ export async function finalizeFailed(
       current.idempotencyKey !== step.idempotencyKey
     )
       throw new ConflictException("Dispatch claim changed");
-    await paid.settleFailedRequest(tx, context, step, message, dispatched, providerJobId);
+    const amount = current.costMinor ?? 0;
+    const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
+    await paid.settleFailedRequest(tx, context, current, message, dispatched, cost, providerJobId);
     await db.videoRunStep.updateMany({
       where: { id: step.id },
       data: {
         state: "FAILED",
         providerJobId,
-        costMinor: dispatched ? current.costMinor : 0,
+        costMinor: cost,
         finishedAt: new Date(),
         error: { code: reason, message },
       },
     });
-    const amount = current.costMinor ?? 0;
     const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
     if (budget)
       await db.budgetEnvelope.updateMany({
         where: { id: budget.id },
         data: {
           reservedMinor: budget.reservedMinor - amount,
-          spentMinor: budget.spentMinor + (dispatched ? amount : 0),
+          spentMinor: budget.spentMinor + cost,
           revision: budget.revision + 1,
         },
       });
@@ -72,6 +75,7 @@ async function failRunIfSettled(
   step: Step,
   error: { code: string; message: string },
 ): Promise<void> {
+  if (step.key.startsWith("media:text:critic:")) return settleRunFailure(db, tx, run, step, error);
   const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
   if (run.state === "CANCELED") return;
   const frame = /^media:keyframe:(\d+):v(\d+)$/.exec(step.key);
@@ -145,7 +149,7 @@ async function closeGeneration(
       OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:keyframe:" } }],
     },
   });
-  const hold = await closeSteps(context, db, tx, run.id, undispatched, "GENERATION_FAILED");
+  const hold = await closeSteps(context, db, tx, run, undispatched, "GENERATION_FAILED");
   const draining = {
     state: "NEEDS_HUMAN" as const,
     pauseReason:

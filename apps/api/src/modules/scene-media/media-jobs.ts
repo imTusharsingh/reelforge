@@ -19,6 +19,8 @@ import {
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 class TerminalMediaJobFailure extends ConflictException {}
+export class MediaChecksumMismatch extends Error {}
+
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
 @Injectable()
 export class MediaJobs {
@@ -206,7 +208,7 @@ export class MediaJobs {
       objectKey: media.objectKey,
     });
     if (createHash("sha256").update(body).digest("hex") !== media.checksumSha256)
-      throw new Error("Media checksum mismatch");
+      throw new MediaChecksumMismatch("Media checksum mismatch");
     return body;
   }
   public completed(value: unknown): CompletedMedia {

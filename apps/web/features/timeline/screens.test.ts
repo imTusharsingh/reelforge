@@ -27,7 +27,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   FakeEventSource.instances = [];
 });
-function fakeFetch(): ReturnType<typeof vi.fn> {
+function fakeFetch(runDetail = detail()): ReturnType<typeof vi.fn> {
   const fetcher = vi.fn(async (url: string): Promise<Response> => {
     if (url.includes("/autonomy"))
       return Response.json({
@@ -39,7 +39,7 @@ function fakeFetch(): ReturnType<typeof vi.fn> {
         recommended: true,
       });
     if (url.includes("/run-experience?")) return Response.json([detail().run]);
-    return Response.json(detail());
+    return Response.json(runDetail);
   });
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
@@ -125,6 +125,21 @@ describe("V8 mounted experience with fake HTTP", () => {
     remainingReshoots["shot-0"] = 0;
     await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
     expect(redo()?.disabled).toBe(true);
+  });
+  it("offers resume at final review after an emergency stop", async () => {
+    const data = detail();
+    data.run.pauseReason = "EMERGENCY_STOP";
+    const fetcher = fakeFetch(data);
+    await act(async () => root.render(createElement(RunScreen, { id: runId, review: true })));
+    const resume = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Resume run",
+    );
+    expect(resume).toBeDefined();
+    await act(async () => resume!.click());
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/v1/runs/${runId}/resume?workspaceId=${workspaceId}`,
+      expect.objectContaining({ method: "POST" }),
+    );
   });
   it("routes review cards to review and shows costs on the dashboard", async () => {
     fakeFetch();

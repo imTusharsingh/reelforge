@@ -348,6 +348,7 @@ export const BudgetEnvelopeSchema = owned
     route: z.enum(["PRIMARY", "FALLBACK"]),
     reservedMinor: z.int().nonnegative(),
     spentMinor: z.int().nonnegative(),
+    overageMinor: z.int().nonnegative().optional(),
     revision: z.int().nonnegative(),
   })
   .strict()
@@ -355,7 +356,8 @@ export const BudgetEnvelopeSchema = owned
     if (
       value.baseEstimateMinor + value.reshootReserveMinor > value.hardCapMinor ||
       value.targetMinor > value.hardCapMinor ||
-      value.reservedMinor + value.spentMinor > value.hardCapMinor
+      (value.overageMinor ?? 0) > value.spentMinor ||
+      value.reservedMinor + value.spentMinor - (value.overageMinor ?? 0) > value.hardCapMinor
     )
       context.addIssue({ code: "custom", message: "Budget exceeds hard cap" });
   });

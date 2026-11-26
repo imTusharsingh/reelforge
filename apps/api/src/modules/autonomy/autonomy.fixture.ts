@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { vi } from "vitest";
 import { AutonomyService } from "./autonomy.service.js";
 import type { RunsStore } from "../runs/runs.store.js";
-import type { Context, Run, Scoped, Json } from "../runs/runs.types.js";
+import type { Context, Run, Scoped, Json, Transaction } from "../runs/runs.types.js";
 export const context: Context = {
   workspaceId: "00000000-0000-4000-8000-000000000001",
   userId: "00000000-0000-4000-8000-000000000002",
@@ -45,10 +45,14 @@ export function fixture(): {
         _ctx: Context,
         _id: string,
         type: string,
-        work: (scoped: Scoped, current: Run) => Promise<{ payload: Json }>,
+        work: (
+          scoped: Scoped,
+          current: Run,
+          tx: Transaction,
+        ) => Promise<{ payload: Json; eventType?: string }>,
       ) => {
-        const result = await work(db as unknown as Scoped, run);
-        db.events.push({ type, payload: result.payload });
+        const result = await work(db as unknown as Scoped, run, db as unknown as Transaction);
+        db.events.push({ type: result.eventType ?? type, payload: result.payload });
         return result;
       },
     ),
@@ -63,8 +67,12 @@ function fakeDb(run: Run): {
     findFirst: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
   };
+  budgetEnvelope: { findFirst: ReturnType<typeof vi.fn> };
   videoRun: { updateMany: ReturnType<typeof vi.fn> };
-  videoRunStep: { findFirst: ReturnType<typeof vi.fn> };
+  videoRunStep: {
+    findFirst: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
 } {
   const events: Array<{ type: string; payload: Json }> = [];
   return {
@@ -78,12 +86,26 @@ function fakeDb(run: Run): {
       ),
       findMany: vi.fn(async () => events),
     },
+    budgetEnvelope: {
+      findFirst: vi.fn(async () => ({
+        spentMinor: 70,
+        reservedMinor: 0,
+        hardCapMinor: 400,
+        baseEstimateMinor: 70,
+        reshootReserveMinor: 7,
+      })),
+    },
     videoRun: {
       updateMany: vi.fn(async ({ data }: { data: Partial<Run> }) => {
         Object.assign(run, data);
         return { count: 1 };
       }),
     },
-    videoRunStep: { findFirst: vi.fn(async () => ({ output: { result: report } })) },
+    videoRunStep: {
+      findFirst: vi.fn(async (args?: { where?: { key?: string } }) =>
+        args?.where?.key === "CRITIC" ? { output: { result: report } } : null,
+      ),
+      findMany: vi.fn(async () => []),
+    },
   };
 }

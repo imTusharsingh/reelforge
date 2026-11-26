@@ -1,32 +1,43 @@
+import type { ReferenceResolver, VideoRoutingState } from "@reelforge/ai-providers";
+import { CriticEvidence } from "../quality/critic-evidence.js";
+import { CriticPipeline } from "../quality/critic.pipeline.js";
 import { CriticStep } from "../quality/critic.step.js";
-import type { RunCritic } from "../quality/run-critic.js";
-import { criticTextPort } from "../quality/critic-text-port.js";
+import { MediaProbe } from "../quality/media-probe.js";
+import { RunCritic } from "../quality/run-critic.js";
 import { existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Interactions, ProviderHttp } from "@reelforge/ai-providers";
-import { RunsQueue } from "../runs/runs.queue.js";
-import { AssemblyManifestSchema, ShotSpecSchema } from "@reelforge/contracts";
-import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
-import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
+import type { Artifact } from "../runs/runs.types.js";
+import { ModuleRef } from "@nestjs/core";
+import { AssemblyManifestSchema, type PlanningPromptReceipt } from "@reelforge/contracts";
+import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
+import { RunGeneration } from "../orchestration/video-run.generation.js";
+import { RunPlanning } from "../orchestration/video-run.planning.js";
+import { RunOutputs } from "../orchestration/video-run.outputs.js";
+import { RunsService } from "../runs/runs.service.js";
+import { RunsBoundary } from "../runs/runs.boundary.js";
+import { RunsArtifacts } from "../runs/runs.artifacts.js";
+import { captureShotReceipt } from "../usage-budget/run-billing.js";
+import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { ProvidersRuntime } from "../openai/providers.runtime.js";
 import { ReferenceLibraryService } from "../reference-library/reference-library.service.js";
+import { PlanningPromptService } from "../config/planning-prompt.service.js";
+import { PlanningReferenceAssetsService } from "../asset/planning-reference-assets.service.js";
+import { PlanningCharacterService } from "../character/planning-character.service.js";
 import { AssetService } from "../asset/asset.service.js";
-import { fakeMediaPorts, fixtureMedia } from "./media-fixture.fixture.js";
-import { bindMedia } from "./media-bindings.fixture.js";
+import { MediaAccess } from "../scene-media/media-access.js";
+import { MediaAccounts } from "../scene-media/media-accounts.js";
+import { MediaJobs } from "../scene-media/media-jobs.js";
+import { MediaPorts } from "../scene-media/media-ports.js";
+import { MediaFrames } from "../scene-media/media-frames.js";
+import { MediaPlanning } from "../scene-media/media-planning.js";
+import { MediaBindings } from "../scene-media/media-pipeline.module.js";
+import { MediaAssembly } from "./media-assembly.js";
+import { MediaRenderer } from "./media-render.js";
+import { SpawnProcessRunner } from "./composition.engine.js";
+import { pipelineProviders } from "./media-fixture.fixture.js";
 
-const narrator = {
-  providerId: "gemini" as const,
-  voiceId: "fixture-voice",
-  language: "English",
-  pace: 1,
-};
-function offline(t: Tenant, outputs: unknown[] = []): ReturnType<typeof fakeMediaPorts> {
-  return fakeMediaPorts(
-    t.context.workspaceId,
-    t.storage,
-    { audio: Buffer.from("audio"), clip: Buffer.from("clip"), image: Buffer.from("image") },
-    outputs,
-  );
-}
 describe.skipIf(
   !process.env.DATABASE_URL ||
     !existsSync(process.env.FFMPEG_PATH ?? "/usr/bin/ffmpeg") ||
@@ -39,153 +50,336 @@ describe.skipIf(
     vi.stubEnv("XAI_VIDEO_MODEL", "fixture-fallback");
   });
   afterEach(() => vi.unstubAllEnvs());
-  it("plans, generates six real clips, chains frames, assembles voice/music/captions and writes a complete <=$8 manifest", async () => {
-    const t = await fixture.tenant("L2", 30, narrator, false);
-    const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
-      (shot, ordinal) => ({
-        ...shot,
-        workspaceId: t.context.workspaceId,
-        runId: t.run.id,
-        durationSeconds: 5,
-        transition: ordinal === 0 ? "crossfade" : "cut",
-      }),
-    );
-    const bytes = await fixtureMedia();
-    const native = fakeMediaPorts(t.context.workspaceId, t.storage, bytes, [
-      scriptFixture(),
-      shots,
+  async function pipeline(
+    hardCapMinor: number,
+    shotCount = 6,
+    primaryOutage = false,
+  ): Promise<{
+    t: Tenant;
+    native: Awaited<ReturnType<typeof pipelineProviders>>;
+    paid: RunPaidCalls;
+    renderer: MediaRenderer;
+    assembly: MediaAssembly;
+  }> {
+    const t = await fixture.tenant(
+      "L2",
+      30,
       {
-        character: null,
-        styleFrame: "Original blue leaf illustration",
-        keyframePrompts: shots.map(() => "Blue leaf, portrait 9:16"),
+        providerId: "gemini",
+        voiceId: "fixture-voice",
+        language: "English",
+        pace: 1,
       },
-      { verdict: "reshoot" },
-      { verdict: "accept" },
-    ]);
-    const original = bindMedia(t, native);
-    // Stop after attaching the writer result, before writing its final receipt.
-    const job = t.runs.job(t.context, t.run.id);
-    await t.engine.process(job);
-    vi.spyOn(original.accounts, "complete").mockRejectedValueOnce(new Error("worker stopped"));
-    await expect(t.engine.process(job)).rejects.toThrow("worker stopped");
-    const writer = await t.db.videoRunStep.findFirstOrThrow({
-      where: { runId: t.run.id, key: "media:text:scriptwriter" },
+      false,
+    );
+    const brief = {
+      ...t.brief,
+      id: randomUUID(),
+      version: 2,
+      budgetPolicy: { ...t.brief.budgetPolicy, targetMinor: 320, hardCapMinor },
+    };
+    await t.db.channelBrief.create({
+      data: {
+        id: brief.id,
+        workspaceId: brief.workspaceId,
+        channelId: brief.channelId,
+        version: brief.version,
+        document: brief,
+      },
     });
-    vi.stubEnv("GEMINI_TEXT_MODEL", "changed-text-model");
-    bindMedia(t, native);
+    t.brief = brief;
+    t.run = await t.runs.create(t.context, brief.id, randomUUID());
+    const native = await pipelineProviders(t, shotCount);
+    const paid = new RunPaidCalls(new UsageBudgetService(t.db, () => new Date()), t.store);
+    const mapping = new Map<unknown, unknown>([
+      [RunsService, t.runs],
+      [RunPaidCalls, paid],
+      [RunsArtifacts, t.artifacts],
+      [
+        RunsBoundary,
+        new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
+      ],
+      [RunGeneration, t.generation],
+      [RunPlanning, t.planning],
+      [RunOutputs, t.outputs],
+      [AssetService, new AssetService(t.db, t.storage)],
+      [ReferenceLibraryService, new ReferenceLibraryService(t.db)],
+      [PlanningReferenceAssetsService, new PlanningReferenceAssetsService(t.db, t.storage)],
+      [PlanningCharacterService, new PlanningCharacterService(t.db)],
+      [
+        PlanningPromptService,
+        {
+          capture: async (
+            _context: unknown,
+            _channel: unknown,
+            role: PlanningPromptReceipt["role"],
+          ): Promise<{ prompt: string; receipt: PlanningPromptReceipt }> => ({
+            prompt: `fixture ${role}`,
+            receipt: {
+              role,
+              version: 2,
+              templateVersionId: randomUUID(),
+              promptSnapshotId: randomUUID(),
+              configSnapshotId: randomUUID(),
+              fingerprintSha256: "a".repeat(64),
+            },
+          }),
+          format: async (): Promise<{ key: string }> => ({ key: "explainer" }),
+        },
+      ],
+    ]);
+    const access = new MediaAccess({
+      get: (token: unknown): unknown => mapping.get(token),
+    } as unknown as ModuleRef);
+    const accounts = new MediaAccounts(access),
+      jobs = new MediaJobs(access, accounts, t.storage);
+    const state: VideoRoutingState = new Map();
+    if (primaryOutage)
+      state.set("gemini", { failures: 3, openUntil: Date.now() + 60000, accepted: 0, calls: 3 });
+    const ports = new MediaPorts(
+      access,
+      {
+        ports: async (_context: unknown, refs: ReferenceResolver) => ({
+          ...native,
+          ...native.video(refs),
+          assertKey: (): void => {},
+        }),
+        videoState: () => state,
+        videoOutcome: () => async (): Promise<void> => {},
+      } as unknown as ProvidersRuntime,
+      jobs,
+    );
+    const frames = new MediaFrames(access, jobs, ports, new SpawnProcessRunner()),
+      planning = new MediaPlanning(access, accounts, jobs, ports);
+    const aligner = {
+      align: async (
+        _path: string,
+        text: string,
+      ): Promise<{ text: string; start: number; end: number }[]> =>
+        text
+          .split(/\s+/)
+          .map((word, index) => ({ text: word, start: index * 0.3, end: index * 0.3 + 0.25 })),
+    };
+    const renderer = new MediaRenderer(t.storage, new SpawnProcessRunner(), aligner);
+    const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);
+    const binding = new MediaBindings(access, accounts, frames, ports, jobs, planning, assembly);
+    binding.onModuleInit();
+    const evidence = new CriticEvidence(
+      assembly,
+      jobs,
+      planning,
+      new MediaProbe(new SpawnProcessRunner()),
+    );
+    new CriticStep(
+      access.modules,
+      () => new RunCritic(access, accounts, ports, evidence, new CriticPipeline()),
+    ).onModuleInit();
+    return { t, native, paid, renderer, assembly };
+  }
+  it("rejects a 330-cent plan before the first video submission", async () => {
+    const { t, native } = await pipeline(330);
+    await expect(generating(t)).rejects.toThrow("pinned cap");
+    expect(native.submitted).toHaveLength(0);
+    expect(
+      await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: t.run.id, key: "media:text:director" },
+      }),
+    ).toMatchObject({ state: "FAILED" });
+    expect(await t.db.budgetEnvelope.count({ where: { runId: t.run.id } })).toBe(0);
+  }, 180000);
+  it("rejects three ten-second shots when the generated reference takes the plan past 353 cents", async () => {
+    const { t, native } = await pipeline(353, 3);
+    await expect(generating(t)).rejects.toThrow("pinned cap");
+    expect(native.submitted).toHaveLength(0);
+    expect(await t.db.budgetEnvelope.count({ where: { runId: t.run.id } })).toBe(0);
+  }, 180000);
+
+  it("funds three clips, assembly and one paid critic at exactly 357 cents", async () => {
+    const { t, native } = await pipeline(357, 3);
+    await generating(t);
+    const where = { runId: t.run.id };
+    const envelope = (): ReturnType<typeof t.db.budgetEnvelope.findFirstOrThrow> =>
+      t.db.budgetEnvelope.findFirstOrThrow({ where });
+    expect(await envelope()).toMatchObject({
+      baseEstimateMinor: 357,
+      reshootReserveMinor: 0,
+      spentMinor: 55,
+    });
+    const charges = await t.db.videoRunStep.findMany({
+      where: { ...where, key: { startsWith: "media:" } },
+    });
+    expect(charges).toHaveLength(4);
+    for (const step of charges) expect(step.output).toMatchObject({ budgetAccounted: true });
+    // A historical sync could already have added the unmarked text calls a second time.
+    await t.db.budgetEnvelope.updateMany({ where, data: { spentMinor: 106 } });
+    const shots = await t.db.videoRunStep.findMany({
+      where: { ...where, key: { startsWith: "shot-" } },
+      orderBy: { key: "asc" },
+    });
+    for (const shot of shots) await t.engine.process(t.runs.job(t.context, t.run.id, shot.id));
+    expect(native.submitted).toHaveLength(3);
+    expect(await envelope()).toMatchObject({ spentMinor: 277, reservedMinor: 54 });
+    for (let advance = 0; advance < 3; advance++)
+      await t.engine.process(t.runs.job(t.context, t.run.id));
+    expect((await t.store.get(t.context, t.run.id)).state).toBe("AWAITING_APPROVAL");
+    expect(
+      await t.db.videoRunStep.findMany({ where: { ...where, key: "media:text:critic:1" } }),
+    ).toMatchObject([{ state: "SUCCEEDED", costMinor: 17 }]);
+    const ledger = await t.db.usageReservation.aggregate({
+      where: { workspaceId: t.run.workspaceId, status: "COMMITTED" },
+      _sum: { committedMinor: true },
+    });
+    expect(ledger._sum.committedMinor).toBe(303n);
+    expect(await envelope()).toMatchObject({ spentMinor: 303, reservedMinor: 54 });
+  }, 180000);
+
+  it("reprices a pre-dispatch primary outage and submits the pinned frames to xAI once", async () => {
+    const { t, native } = await pipeline(800, 3, true);
+    await generating(t);
+    const where = { runId: t.run.id, key: "shot-0" };
+    const first = await t.db.videoRunStep.findFirstOrThrow({ where });
+    await t.engine.process(t.runs.job(t.context, t.run.id, first.id));
+    const retry = await t.db.videoRunStep.findFirstOrThrow({ where: { ...where, attempt: 2 } });
+    const job = t.runs.job(t.context, t.run.id, retry.id);
     await t.engine.process(job);
     await t.engine.process(job);
-    const savedWriter = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: writer.id } });
-    expect(savedWriter.output).toMatchObject({ result: { receipt: { modelId: "fixture-TEXT" } } });
+    expect(native.submitted).toMatchObject([
+      {
+        key: `${retry.idempotencyKey}:xai`,
+        body: {
+          image: { url: expect.stringContaining("data:image/") },
+          reference_images: [{ url: expect.stringContaining("data:image/") }],
+        },
+      },
+    ]);
+    expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: retry.id } })).toMatchObject({
+      state: "SUCCEEDED",
+      costMinor: 142,
+      output: { receiptBudget: { admittedMinor: 178, bufferMinor: 36 } },
+    });
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({ route: "FALLBACK", baseEstimateMinor: 629 });
+  }, 180000);
+
+  it("plans, generates six real clips, chains frames, assembles voice/music/captions and writes a complete <=$8 manifest", async () => {
+    const { t, native, paid, renderer, assembly } = await pipeline(800);
+    await generating(t);
+    expect(
+      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
+    ).toMatchObject({
+      baseEstimateMinor: 369,
+      reshootReserveMinor: 105,
+    });
     const steps = await t.store.scoped(t.context).videoRunStep.findMany({
       where: { runId: t.run.id, key: { startsWith: "shot-" } },
       orderBy: { key: "asc" },
     });
-    const first = steps[0]!;
-    const firstJob = t.runs.job(t.context, t.run.id, first.id);
-    vi.spyOn(native.omni, "poll").mockResolvedValueOnce("running");
-    expect(await t.engine.process(firstJob)).toBe(12000);
-    const shot = ShotSpecSchema.parse(first.input);
-    const [reference] = await original.access.modules
-      .get(ReferenceLibraryService, { strict: false })
-      .resolve(t.context, shot.references);
-    const asset = await original.access.modules
-      .get(AssetService, { strict: false })
-      .getReference(t.context, { assetId: reference!.assetId!, version: reference!.assetVersion! });
-    const object = { workspaceId: t.context.workspaceId, objectKey: asset.objectKey };
-    const body = await t.storage.getObject(object);
-    await t.storage.deleteObject(object);
-    const { assembly, renderer, access, accounts, ports } = bindMedia(t, native);
-    const render = vi.spyOn(renderer, "render");
-    await expect(ports.get(t.context, shot)).rejects.toThrow();
-    const admitted = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: first.id } });
-    const download = vi.spyOn(native.omni, "fetch");
-    const write = vi.spyOn(t.artifacts, "put");
-    await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: {} } });
-    const http = vi.fn<typeof fetch>().mockImplementation(async () =>
-      Response.json({
-        status: "completed",
-        steps: [
-          {
-            type: "model_output",
-            content: [{ type: "video", mime_type: "video/mp4", data: "YQ==" }],
-          },
-        ],
-      }),
-    );
-    const interactions = new Interactions(
-      new ProviderHttp("AIza" + "abc".repeat(12), "gemini", http),
-      {
-        save: async (): Promise<never> => {
-          throw new Error("Unexpected download");
-        },
-      },
-    );
-    vi.mocked(native.omni.poll).mockImplementation((id) => interactions.poll(id));
-    await expect(t.engine.process(firstJob)).rejects.toThrow("Missing admission video pricing");
-    expect(http.mock.calls.map(([, init]) => init?.method)).toEqual(["GET"]);
-    const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
-    t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
-    for (let sweep = 0; sweep < 2; sweep++) {
-      enqueue.mockClear();
-      await t.engine.recover();
-      const jobs = enqueue.mock.calls.filter(([data]) => data.runId === t.run.id);
-      expect(jobs.map(([data]) => data.stepId)).toEqual([first.id]);
-      await expect(t.engine.process(jobs[0]![0])).rejects.toThrow(
-        "Missing admission video pricing",
-      );
-    }
-    t.runs.queue = null;
-    expect(http).toHaveBeenCalledTimes(1);
-    expect(download).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-    expect((await t.store.get(t.context, t.run.id)).pauseReason).toContain(first.id);
-    await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow("Reconcile");
-    await t.db.videoRunStep.update({ where: { id: first.id }, data: { output: admitted.output! } });
-    await expect(t.engine.process(firstJob)).resolves.toBeNull();
-    expect(http).toHaveBeenCalledTimes(2);
-    expect(download).toHaveBeenCalledOnce();
-    vi.mocked(native.omni.poll).mockRestore();
-    await t.control.resume(t.context, t.run.id);
-    expect(native.submitted).toHaveLength(1);
-    await t.storage.putObject({ ...object, body, contentType: asset.mediaType });
-    vi.spyOn(native.omni, "poll").mockResolvedValueOnce("refused");
-    await t.engine.process(t.runs.job(t.context, t.run.id, steps[1]!.id));
-    const rewritten = await t.db.videoRunStep.findFirstOrThrow({
-      where: { runId: t.run.id, key: steps[1]!.key, attempt: 2 },
+    for (const step of steps) await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
+    expect(native.submitted).toHaveLength(6);
+    const settled = await t.db.videoRunStep.findMany({
+      where: { id: { in: steps.map((step) => step.id) } },
     });
-    await t.engine.process(t.runs.job(t.context, t.run.id, rewritten.id));
-    for (const step of steps.slice(2))
-      await t.engine.process(t.runs.job(t.context, t.run.id, step.id));
+    expect(settled.map((step) => step.costMinor)).toEqual([35, 35, 35, 35, 35, 35]);
+    const render = renderer.render.bind(renderer);
+    const rendering = vi.spyOn(renderer, "render").mockImplementationOnce(async (input) => {
+      const result = await render(input);
+      const receipt = input.clips[0]!.receipt;
+      const shot = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
+      await captureShotReceipt(t.store, paid, t.context, shot, {
+        ...receipt,
+        costBasis: "BILLED",
+        seconds: receipt.seconds + 1,
+        costMinor: receipt.costMinor + 7,
+        media: null,
+        providerDurationSeconds: null,
+      });
+      return result;
+    });
     await t.engine.process(t.runs.job(t.context, t.run.id));
     await t.engine.process(t.runs.job(t.context, t.run.id));
-    const artifacts = await assembly.artifacts(t.context, t.run);
-    expect(artifacts.map((artifact) => artifact.kind)).toContain("final");
-    const manifestArtifact = artifacts.find((artifact) => artifact.kind === "manifest")!;
-    const manifest = AssemblyManifestSchema.parse(
-      JSON.parse(
-        (
-          await t.storage.getObject({
-            workspaceId: t.context.workspaceId,
-            objectKey: manifestArtifact.objectKey,
-          })
-        ).toString(),
+    const original = await assembly.artifacts(t.context, t.run);
+    const read = async (
+      artifacts: Artifact[],
+    ): Promise<ReturnType<typeof AssemblyManifestSchema.parse>> => {
+      const descriptor = artifacts.find((a) => a.kind === "manifest")!;
+      const bytes = await t.storage.getObject({
+        workspaceId: t.context.workspaceId,
+        objectKey: descriptor.objectKey,
+      });
+      expect(bytes.length).toBe(descriptor.byteSize);
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(descriptor.checksumSha256);
+      return AssemblyManifestSchema.parse(JSON.parse(bytes.toString()));
+    };
+    const before = await read(original);
+    const receipt = before.receipts.find((item) => item.key === steps[0]!.key)!;
+    expect(receipt.costMinor).toBe(rendering.mock.calls[0]![0].clips[0]!.receipt.costMinor + 7);
+    const late = {
+      ...receipt,
+      costBasis: "BILLED" as const,
+      costMinor: receipt.costMinor + 14,
+      seconds: receipt.seconds + 2,
+      media: null,
+      providerDurationSeconds: null,
+    };
+    const shot = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: steps[0]!.id } });
+    const put = vi.spyOn(t.artifacts, "put");
+    await captureShotReceipt(t.store, paid, t.context, shot, late);
+    await captureShotReceipt(t.store, paid, t.context, shot, late);
+    const pending = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "ASSEMBLING" },
+    });
+    expect(t.artifacts.descriptors(pending.output).some((a) => a.kind === "manifest")).toBe(false);
+    put.mockRejectedValueOnce(new Error("manifest storage offline"));
+    await expect(assembly.execute(t.context, t.run, t.brief)).rejects.toThrow(
+      "manifest storage offline",
+    );
+    const artifacts = await assembly.execute(t.context, t.run, t.brief);
+    const manifest = await read(artifacts);
+    const descriptor = artifacts.find((a) => a.kind === "manifest")!;
+    expect(descriptor.objectKey).not.toBe(original.find((a) => a.kind === "manifest")!.objectKey);
+    expect(manifest.receipts).toEqual(
+      before.receipts.map((item) =>
+        item === receipt
+          ? { ...item, costBasis: "BILLED", costMinor: late.costMinor, seconds: late.seconds }
+          : item,
       ),
     );
+    expect(manifest.totalCostMinor).toBe(before.totalCostMinor + 14);
+    expect(manifest.totalCostMinor).toBe(
+      manifest.receipts.reduce((sum, item) => sum + item.costMinor, 0),
+    );
+    const request = await t.db.providerRequest.findFirstOrThrow({
+      where: { workspaceId: t.context.workspaceId, correlationId: shot.id },
+    });
+    expect(request.actualCost?.mul(100).toNumber()).toBe(late.costMinor);
+    expect(artifacts.filter((a) => a.kind !== "manifest")).toEqual(
+      original.filter((a) => a.kind !== "manifest"),
+    );
+    expect(manifest.videoChecksumSha256).toBe(before.videoChecksumSha256);
+    expect(manifest.videoChecksumSha256).toBe(
+      artifacts.find((a) => a.kind === "final")!.checksumSha256,
+    );
+    const stage = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: t.run.id, key: "ASSEMBLING" },
+    });
+    expect(stage.output).toMatchObject({
+      storageArtifacts: artifacts,
+      result: { storageArtifacts: artifacts },
+    });
+    expect(put.mock.calls.map(([, kind]) => kind)).toEqual(["manifest", "manifest"]);
     expect(manifest.durationSeconds).toBe(30);
     expect(manifest.totalCostMinor).toBeLessThanOrEqual(800);
     expect(manifest.receipts.filter((receipt) => receipt.key.startsWith("shot-"))).toHaveLength(6);
     expect(manifest.promptVersions).toHaveLength(3);
-    expect(native.submitted).toHaveLength(7);
-    expect(writer.input).toMatchObject({ spec: { promptVersion: manifest.promptVersions[0] } });
-    expect(
-      await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
-    ).toMatchObject({ spentMinor: manifest.totalCostMinor });
-    expect(manifest.totalCostMinor).toBe(
-      manifest.receipts.reduce((sum, r) => sum + r.costMinor, 0) + 35,
-    );
-    expect(native.submitted.every((call) => !!call.options.firstFrame)).toBe(true);
-    expect(native.submitted.slice(1).every((call) => !!call.options.lastFrame)).toBe(true);
+    expect(native.submitted).toHaveLength(6);
+    native.submitted.forEach((call, index) => {
+      const frame = { type: "image", mime_type: "image/png", data: expect.any(String) };
+      expect(call).toMatchObject({
+        key: `${steps[index]!.idempotencyKey}:gemini`,
+        body: { input: [frame, frame, ...(index ? [frame] : []), { type: "text" }] },
+      });
+    });
     const receipts = await t.db.providerRequest.findMany({
       where: { workspaceId: t.context.workspaceId },
     });
@@ -198,206 +392,6 @@ describe.skipIf(
         (artifact) => artifact.checksumSha256,
       ),
     ).toEqual(artifacts.map((artifact) => artifact.checksumSha256));
-    const current = await t.store.get(t.context, t.run.id);
-    const review = vi.fn(async (_context, run, _brief, _step, attempt: number) => {
-      await criticTextPort({ access, accounts, ports, context: t.context, run, attempt }).complete(
-        {
-          prompt: "Check editing",
-          jsonSchema: {},
-          parse: (value) => value,
-        },
-        "critic-fixture",
-      );
-      return {
-        report: {
-          recommendation: "APPROVE",
-          summary: "Fixture review",
-          gates: {
-            policy: true,
-            rights: true,
-            technical: true,
-            budget: true,
-            permission: true,
-            score: true,
-          },
-        },
-        redo: { shots: attempt === 1 ? ["1"] : [], reedit: false },
-      };
-    });
-    new CriticStep(
-      access.modules,
-      () => ({ execute: review }) as unknown as RunCritic,
-    ).onModuleInit();
-    await expect(t.engine.process(job)).rejects.toThrow("processes the reshoot");
-    const rows = t.store.scoped(t.context).videoRunStep;
-    const reshoot = await rows.findFirstOrThrow({
-      where: { runId: current.id, key: "shot-1", attempt: 3 },
-    });
-    await t.engine.process(t.runs.job(t.context, current.id, reshoot.id));
-    await t.engine.process(job);
-    await t.engine.process(job);
-    await t.engine.process(job);
-    expect(review.mock.calls.map((call) => call[4])).toEqual([1, 2]);
-    expect(await t.runs.detail(t.context, current.id)).toMatchObject({
-      remainingReshoots: { "shot-1": 1, "shot-0": 2 },
-    });
-    expect(
-      await t.db.runEvent.count({
-        where: { runId: current.id, type: "critic_assembly_invalidated" },
-      }),
-    ).toBe(1);
-    const refreshed = await assembly.artifacts(t.context, current);
-    const refreshedManifest = AssemblyManifestSchema.parse(
-      JSON.parse(
-        (
-          await t.storage.getObject({
-            workspaceId: t.context.workspaceId,
-            objectKey: refreshed.find((item) => item.kind === "manifest")!.objectKey,
-          })
-        ).toString(),
-      ),
-    );
-    expect(refreshedManifest.promptVersions).toEqual(manifest.promptVersions);
-    expect(render).toHaveBeenCalledTimes(2);
-    await rows.updateMany({
-      where: { runId: current.id, key: "local:assembly" },
-      data: { key: "quality:assembly-history:2", idempotencyKey: "second-assembly" },
-    });
-    await rows.updateMany({
-      where: { runId: current.id, key: "media:text:director" },
-      data: { output: { result: { promptVersion: { role: "director" } } } },
-    });
-    await expect(assembly.execute(t.context, current, t.brief)).rejects.toThrow();
-    expect(render).toHaveBeenCalledTimes(2);
+    expect(rendering).toHaveBeenCalledOnce();
   }, 180000);
-  it.each(["fresh", "legacy"] as const)(
-    "closes SCRIPTING for a %s invalid paid script",
-    async (kind) => {
-      const t = await fixture.tenant("L2", 30, narrator, false);
-      const invalid = { ...scriptFixture(), wordCount: 1 };
-      const native = offline(t, [invalid]);
-      const { accounts } = bindMedia(t, native);
-      const submit = vi.spyOn(native.text, "complete");
-      const job = t.runs.job(t.context, t.run.id);
-      await t.engine.process(job);
-      if (kind === "legacy") {
-        const run = await t.store.get(t.context, t.run.id);
-        const step = await accounts.begin(
-          t.context,
-          run,
-          "media:text:scriptwriter",
-          {},
-          17,
-          "fixture-TEXT",
-        );
-        await accounts.prepare(t.context, run, step, "fixture-TEXT");
-        const result = await accounts.dispatchText(t.context, step, () =>
-          native.text.complete(
-            {
-              prompt: "write",
-              jsonSchema: {},
-              parse: (value) => value,
-            },
-            step.idempotencyKey,
-          ),
-        );
-        await accounts.complete(t.context, step, result);
-      }
-      await expect(t.engine.process(job)).rejects.toThrow("Incorrect script word count");
-      await expect(t.engine.process(job)).resolves.toBeNull();
-      const steps = await t.store
-        .scoped(t.context)
-        .videoRunStep.findMany({ where: { runId: t.run.id, state: "FAILED" } });
-      expect(steps.map((step) => step.key).sort()).toEqual([
-        "SCRIPTING",
-        "media:text:scriptwriter",
-        "planning:manifest:v1",
-      ]);
-      const writer = steps.find((step) => step.key === "media:text:scriptwriter")!;
-      expect(writer.providerJobId).toBe("fixture-text-1");
-      expect(writer.output).toMatchObject(
-        kind === "legacy" ? { result: { output: invalid } } : { output: invalid },
-      );
-      expect(await t.store.get(t.context, t.run.id)).toMatchObject({
-        state: "FAILED",
-        pauseReason: "PROVIDER_INVALID",
-      });
-      expect(
-        await t.db.usageReservation.findMany({ where: { workspaceId: t.context.workspaceId } }),
-      ).toMatchObject([{ status: "COMMITTED", committedMinor: 17n }]);
-      expect(submit).toHaveBeenCalledOnce();
-    },
-  );
-
-  it("settles a schema-valid art plan with the wrong keyframe count once", async () => {
-    const t = await fixture.tenant("L2", 30, narrator, false);
-    const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
-      (shot) => ({ ...shot, workspaceId: t.context.workspaceId, durationSeconds: 5 }),
-    );
-    const native = offline(t, [
-      scriptFixture(),
-      shots,
-      { character: null, styleFrame: "Leaves", keyframePrompts: shots.slice(1).map(() => "Leaf") },
-    ]);
-    bindMedia(t, native);
-    const job = t.runs.job(t.context, t.run.id);
-    const submit = vi.spyOn(native.text, "complete");
-    await t.engine.process(job);
-    await expect(t.engine.process(job)).rejects.toThrow("One keyframe prompt per shot required");
-    bindMedia(t, native);
-    await t.engine.process(job);
-    expect(submit).toHaveBeenCalledTimes(3);
-    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
-      state: "FAILED",
-      pauseReason: "PROVIDER_INVALID",
-    });
-    expect(
-      await t.db.videoRunStep.findFirstOrThrow({
-        where: { runId: t.run.id, key: "media:text:art-director" },
-      }),
-    ).toMatchObject({ state: "FAILED", providerJobId: "fixture-text-3" });
-    expect(
-      await t.db.usageReservation.count({
-        where: { workspaceId: t.context.workspaceId, status: "COMMITTED" },
-      }),
-    ).toBe(3);
-  });
-  it.each([
-    [29, 30],
-    [30, 30],
-    [45, 45],
-    [46, 45],
-  ] as const)(
-    "checks a %is saved shot list before generation for its %is target",
-    async (total, target) => {
-      const t = await fixture.tenant("L2", target, narrator, false);
-      const shots = shotsFixture({ ...planningFixture(), runId: t.run.id }).map((shot, index) => ({
-        ...shot,
-        workspaceId: t.context.workspaceId,
-        durationSeconds: Math.floor(total / 6) + Number(index < total % 6),
-      }));
-      await t.db.shotSpec.createMany({
-        data: shots.map((shot) => ({
-          id: shot.id,
-          workspaceId: shot.workspaceId,
-          runId: t.run.id,
-          ordinal: shot.ordinal,
-          version: 1,
-          document: shot,
-        })),
-      });
-      const prepare = t.planning.prepare(t.context, t.run);
-      const accepted = total === target;
-      if (accepted) await prepare;
-      else await expect(prepare).rejects.toThrow("Invalid shot list");
-      expect(
-        await t.store
-          .scoped(t.context)
-          .videoRunStep.count({ where: { runId: t.run.id, key: { startsWith: "shot-" } } }),
-      ).toBe(accepted ? 6 : 0);
-      expect(
-        await t.db.providerRequest.count({ where: { workspaceId: t.context.workspaceId } }),
-      ).toBe(0);
-    },
-  );
 });

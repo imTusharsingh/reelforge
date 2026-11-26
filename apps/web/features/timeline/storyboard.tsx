@@ -11,7 +11,7 @@ export function Storyboard({
   busy,
 }: {
   detail: TimelineDetail;
-  onRedo?: ((ordinal: number) => void) | undefined;
+  onRedo?: ((ordinal: number, sourceStepId: string) => void) | undefined;
   busy: boolean;
 }): JSX.Element {
   const latest = new Map<string, TimelineDetail["steps"][number]>();
@@ -57,7 +57,7 @@ function ShotCard({
   step: TimelineDetail["steps"][number];
   remaining: number;
   media: TimelineDetail["artifactUrls"][number]["artifacts"];
-  onRedo: ((ordinal: number) => void) | undefined;
+  onRedo: ((ordinal: number, sourceStepId: string) => void) | undefined;
   busy: boolean;
 }): JSX.Element {
   const shot = ShotSpecSchema.safeParse(step.input);
@@ -81,7 +81,7 @@ function ShotCard({
         <Button
           tone="secondary"
           disabled={busy || remaining === 0}
-          onClick={() => onRedo(shot.data.ordinal)}
+          onClick={() => onRedo(shot.data.ordinal, step.id)}
         >
           Redo shot
         </Button>

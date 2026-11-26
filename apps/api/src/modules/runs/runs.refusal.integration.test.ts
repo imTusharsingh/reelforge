@@ -243,7 +243,7 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
       });
       expect(await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
         spentMinor: spent,
-        reservedMinor: 0,
+        reservedMinor: charged ? 0 : 13,
       });
       const reservations = await t.db.usageReservation.findMany({
         where: { workspaceId: run.workspaceId },
@@ -359,7 +359,7 @@ describe.skipIf(!process.env.DATABASE_URL)("polled video refusals", () => {
     });
     expect(submit).toHaveBeenCalledTimes(3);
     expect(await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: 0,
+      reservedMinor: 14,
     });
   });
 });

@@ -1,3 +1,4 @@
+import { refreshAssemblyManifests } from "../composition/assembly-receipts.js";
 import {
   deliveryChunkHashes,
   maxDeliveryBytes,
@@ -93,9 +94,7 @@ export class RunsArtifacts {
     )
       throw new ForbiddenException("Invalid artifact signature");
     await this.store.get(context, runId);
-    const step = await this.store
-      .scoped(context)
-      .videoRunStep.findFirst({ where: { id: stepId, runId } });
+    const step = await this.deliveryStep(context, runId, stepId, checksum);
     const artifacts = this.descriptors(step?.output);
     const artifact = artifacts.find((item) => item.checksumSha256 === checksum);
     if (!artifact || (artifact.expiresAt && Date.parse(artifact.expiresAt) < Date.now()))
@@ -117,6 +116,25 @@ export class RunsArtifacts {
       await this.indexLegacy(context, step, artifacts, artifact, legacyHashes);
     const { contentType, byteSize } = artifact;
     return { body, bodyOffset, contentType, byteSize };
+  }
+  private async deliveryStep(
+    context: Context,
+    runId: string,
+    stepId: string,
+    checksum: string,
+  ): Promise<Step | null> {
+    const readStep = (): Promise<Step | null> =>
+      this.store.scoped(context).videoRunStep.findFirst({ where: { id: stepId, runId } });
+    let step = await readStep();
+    if (
+      this.descriptors(step?.output).some(
+        (item) => item.kind === "manifest" && item.checksumSha256 === checksum,
+      )
+    ) {
+      await this.refreshManifests(context, runId);
+      step = await readStep();
+    }
+    return step;
   }
   private async getHistorical(
     context: Context,
@@ -176,6 +194,15 @@ export class RunsArtifacts {
           objectKey: artifact.objectKey,
         });
     }
+  }
+  public async refreshManifests(context: Context, runId: string): Promise<void> {
+    await refreshAssemblyManifests(
+      this.store,
+      this,
+      this.storage,
+      { ...context, userId: RECOVERY_PRINCIPAL, role: "OWNER" },
+      runId,
+    );
   }
   public descriptors(output: unknown): Artifact[] {
     const parsed = z

@@ -1,3 +1,5 @@
+import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
+import type { Tenant } from "../runs/runs.fixture.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,13 +9,21 @@ import type {
   MediaJobPort,
   VideoGenPort,
   TextPort,
-  VideoOptions,
+  ReferenceResolver,
 } from "@reelforge/ai-providers";
-import { capabilityCatalog, secondsCost } from "@reelforge/ai-providers";
-import type { ShotSpec } from "@reelforge/contracts";
+import {
+  capabilityCatalog,
+  OmniVideo,
+  GrokVideo,
+  Interactions,
+  ProviderHttp,
+} from "@reelforge/ai-providers";
+import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
-export async function fixtureMedia(): Promise<{ clip: Buffer; image: Buffer; audio: Buffer }> {
+export async function fixtureMedia(
+  seconds = 5,
+): Promise<{ clip: Buffer; image: Buffer; audio: Buffer }> {
   const root = await mkdtemp(join(tmpdir(), "reelforge-v5-fixture-"));
   const runner = new SpawnProcessRunner();
   const call = async (argv: string[]): Promise<void> => {
@@ -28,11 +38,11 @@ export async function fixtureMedia(): Promise<{ clip: Buffer; image: Buffer; aud
       "-f",
       "lavfi",
       "-i",
-      "testsrc2=size=720x1280:rate=24:duration=5",
+      `testsrc2=size=720x1280:rate=24:duration=${seconds}`,
       "-f",
       "lavfi",
       "-i",
-      "sine=frequency=440:duration=5",
+      `sine=frequency=440:duration=${seconds}`,
       "-c:v",
       "libx264",
       "-preset",
@@ -73,21 +83,21 @@ export async function fixtureMedia(): Promise<{ clip: Buffer; image: Buffer; aud
     await rm(root, { recursive: true, force: true });
   }
 }
-export function fakeMediaPorts(
+function fakeMediaPorts(
   workspaceId: string,
   storage: StoragePort,
   bytes: { clip: Buffer; image: Buffer; audio: Buffer },
   outputs: unknown[],
+  seconds: number,
 ): {
-  omni: VideoGenPort;
-  grok: VideoGenPort;
+  video: (refs: ReferenceResolver) => { omni: VideoGenPort; grok: VideoGenPort };
   image: MediaJobPort<{ prompt: string }>;
   tts: MediaJobPort<{ text: string; voice: string }>;
   music: MediaJobPort<{ prompt: string }>;
   text: TextPort;
-  submitted: { spec: ShotSpec; options: VideoOptions }[];
+  submitted: { key: string | null; body: unknown }[];
 } {
-  const submitted: { spec: ShotSpec; options: VideoOptions }[] = [];
+  const submitted: { key: string | null; body: unknown }[] = [];
   const catalog = capabilityCatalog(
     workspaceId,
     {
@@ -123,25 +133,47 @@ export function fakeMediaPorts(
     poll: async () => "succeeded",
     fetch: async () => save(body, mime, duration),
   });
-  const video = (providerId: string): VideoGenPort => ({
-    capabilities: () =>
-      catalog.find((cap) => cap.providerId === providerId && cap.kind === "VIDEO")!,
-    estimate: (spec) =>
-      secondsCost(
-        spec.durationSeconds,
-        catalog.find((cap) => cap.providerId === providerId && cap.kind === "VIDEO")!
-          .pricePerSecond["720p"]!,
-      ),
-    submit: async (spec, _key, options = {}): Promise<{ providerJobId: string }> => {
-      submitted.push({ spec, options });
-      return { providerJobId: `fixture-video-${++id}` };
-    },
-    poll: async () => "succeeded",
-    fetch: async () => save(bytes.clip, "video/mp4", 5),
-  });
+  const artifacts = new ProviderArtifacts(storage, workspaceId);
+  const uri = "https://storage.googleapis.com/fixture/clip.mp4";
+  const http = (vendor: "gemini" | "xai"): ProviderHttp =>
+    new ProviderHttp(
+      (vendor === "gemini" ? "AIza" : "xai-") + "aB1".repeat(12),
+      vendor,
+      async (url, init) => {
+        if (init?.method === "POST") {
+          submitted.push({
+            key: new Headers(init.headers).get("Idempotency-Key"),
+            body: JSON.parse(String(init.body)) as unknown,
+          });
+          const job = `fixture-video-${++id}`;
+          return Response.json(
+            vendor === "gemini" ? { id: job, status: "queued" } : { request_id: job },
+          );
+        }
+        if (url === uri) return new Response(new Uint8Array(bytes.clip));
+        return Response.json(
+          vendor === "gemini"
+            ? {
+                status: "completed",
+                usage: { billed_seconds: seconds },
+                steps: [
+                  {
+                    type: "model_output",
+                    content: [{ type: "video", mime_type: "video/mp4", uri }],
+                  },
+                ],
+              }
+            : { status: "done", video: { duration: seconds, url: uri } },
+        );
+      },
+    );
+  const capability = (vendor: string): ReturnType<VideoGenPort["capabilities"]> =>
+    catalog.find((cap) => cap.providerId === vendor && cap.kind === "VIDEO")!;
   return {
-    omni: video("gemini"),
-    grok: video("xai"),
+    video: (refs) => ({
+      omni: new OmniVideo(new Interactions(http("gemini"), artifacts), capability("gemini"), refs),
+      grok: new GrokVideo(http("xai"), artifacts, capability("xai"), refs),
+    }),
     image: media(bytes.image, "image/png", 0),
     tts: media(bytes.audio, "audio/wav", 30),
     music: media(bytes.audio, "audio/wav", 30),
@@ -156,4 +188,43 @@ export function fakeMediaPorts(
     },
     submitted,
   };
+}
+
+export async function pipelineProviders(
+  t: Tenant,
+  shotCount: number,
+): Promise<ReturnType<typeof fakeMediaPorts>> {
+  const scriptShots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief });
+  const seconds = 30 / shotCount;
+  const shots = scriptShots.slice(0, shotCount).map((shot, ordinal) => ({
+    ...shot,
+    workspaceId: t.context.workspaceId,
+    runId: t.run.id,
+    durationSeconds: seconds,
+    voLine:
+      shotCount === 3
+        ? scriptShots
+            .slice(ordinal * 2, ordinal * 2 + 2)
+            .map((s) => s.voLine)
+            .join(" ")
+        : shot.voLine,
+    transition: ordinal === 0 ? "crossfade" : "cut",
+  }));
+  const bytes = await fixtureMedia(seconds);
+  return fakeMediaPorts(
+    t.context.workspaceId,
+    t.storage,
+    bytes,
+    [
+      scriptFixture(),
+      shots,
+      {
+        character: null,
+        styleFrame: "Original blue leaf illustration",
+        keyframePrompts: shots.map(() => "Blue leaf, portrait 9:16"),
+      },
+      { hook: 9, coherence: 9, artifacts: 9, captionSync: 9, briefFit: 9, policy: 10 },
+    ],
+    seconds,
+  );
 }

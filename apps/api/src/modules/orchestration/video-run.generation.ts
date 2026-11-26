@@ -1,4 +1,10 @@
+import { claimPendingShot, shotPort } from "./video-run.claim.js";
 import { refusalRewrite, settleVideoRefusal } from "./video-run.refusal.js";
+import {
+  isReceiptCorrection,
+  pendingCorrection,
+  persistPendingCorrection,
+} from "../usage-budget/run-pending-receipt.js";
 import {
   canRollback,
   jobIdFromAdmission,
@@ -6,22 +12,30 @@ import {
 } from "../usage-budget/run-admission-state.js";
 import { ProviderFailure, SubmissionRefused } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
-import { ShotSpecSchema, type ShotSpec } from "@reelforge/contracts";
+import { ShotSpecSchema } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { json, type Context, type Run, type Scoped, type Step } from "../runs/runs.types.js";
+import { type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
-import { SETTLED_SHOTS, failSettledGeneration, keyframeKey } from "../runs/run-outcomes.js";
-import { MissingVideoPricing, savedVideoPricing } from "../scene-media/media-prices.js";
-import { envelopeRoom } from "../usage-budget/run-envelope.js";
+import { savedVideoPricing } from "../scene-media/media-prices.js";
+import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
+import { recordShotArtifact, captureShotReceipt } from "../usage-budget/run-billing.js";
+import { reconcileBilling, resumeAfterCorrection } from "./video-run.billing-recovery.js";
+import { awaitingBilling, pendingShotMedia } from "../usage-budget/run-shot-receipt.js";
+import { billingHold } from "../runs/run-outcomes.js";
+import { priceShot } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
+  ShotBillingFailure,
+  ShotMediaFailure,
   UnconfiguredVideoPort,
   type MediaPortResolver,
   type VideoGenPort,
+  type ShotBilling,
+  type VideoReceipt,
 } from "./video-run.handlers.js";
 
 @Injectable()
@@ -39,38 +53,25 @@ export class RunGeneration {
   ) {}
   public async process(context: Context, run: Run, stepId: string): Promise<number | null> {
     const db = this.runs.store.scoped(context);
-    const initial = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
-    if (!initial) throw new ConflictException("Step not found in run");
-    if (SETTLED_SHOTS.some((state) => state === initial.state)) return null;
-    if (initial.key.startsWith("media:keyframe:")) {
+    const found = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
+    if (!found) throw new ConflictException("Step not found in run");
+    if (SETTLED_SHOTS.some((state) => state === found.state)) {
+      const pending = pendingCorrection(found);
+      if (pending) await this.capture(context, found, pending);
+      return null;
+    }
+    let step = found;
+    const pending = pendingCorrection(step);
+    if (pending) step = await this.capture(context, step, pending);
+    if (step.state === "SUCCEEDED") return null;
+    if (awaitingBilling(step) && !pendingShotMedia(step))
+      return reconcileBilling(this.runs, this.paid, context, step);
+    if (step.key.startsWith("media:keyframe:")) {
       if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
-      return this.recoverKeyframe(context, initial);
+      return this.recoverKeyframe(context, step);
     }
-    let step = initial;
-    if (!step.providerJobId && step.state !== "RUNNING") {
-      const stopped =
-        run.state === "CANCELED" ||
-        (run.state === "NEEDS_HUMAN" && run.pauseReason === "PROVIDER_REFUSED") ||
-        run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-        run.pauseReason === "OPERATOR_ABANDONED";
-      if (stopped || run.state !== "GENERATING") {
-        const frame = await db.videoRunStep.findFirst({
-          where: {
-            runId: run.id,
-            key: `media:${keyframeKey(ShotSpecSchema.parse(step.input))}`,
-            state: "WAITING_EXTERNAL",
-            providerJobId: { not: null },
-          },
-          orderBy: { attempt: "desc" },
-        });
-        if (frame && this.recoverKeyframe) {
-          const delay = await this.recoverKeyframe(context, frame);
-          if (delay) return delay;
-        }
-        return stopped ? null : 12000;
-      }
-      await this.boundary.check(context, run);
-    }
+    const paused = await this.waitAtBoundary(context, run, step);
+    if (paused !== undefined) return paused;
     const shot = ShotSpecSchema.parse(step.input);
     const delay = await waitForShotContinuity(this.runs, context, run, step, shot.firstFrameFrom);
     if (delay !== undefined) return delay;
@@ -93,19 +94,56 @@ export class RunGeneration {
       if (!step.providerJobId)
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
-    return this.poll(context, run, step, ports);
+    if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
+    if (pendingShotMedia(step)) {
+      await this.complete(context, step, ports);
+      return null;
+    }
+    return this.poll(context, step, ports);
+  }
+
+  private async waitAtBoundary(
+    context: Context,
+    run: Run,
+    step: Step,
+  ): Promise<number | null | undefined> {
+    const db = this.runs.store.scoped(context);
+    if (!step.providerJobId && step.state !== "RUNNING") {
+      const stopped =
+        run.state === "CANCELED" ||
+        (run.state === "NEEDS_HUMAN" && run.pauseReason === "PROVIDER_REFUSED") ||
+        run.pauseReason === "EMERGENCY_STOP" ||
+        run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+        run.pauseReason === "OPERATOR_ABANDONED";
+      if (stopped || run.state !== "GENERATING") {
+        const frame = await db.videoRunStep.findFirst({
+          where: {
+            runId: run.id,
+            key: `media:${keyframeKey(ShotSpecSchema.parse(step.input))}`,
+            state: "WAITING_EXTERNAL",
+            providerJobId: { not: null },
+          },
+          orderBy: { attempt: "desc" },
+        });
+        if (frame && this.recoverKeyframe) {
+          const delay = await this.recoverKeyframe(context, frame);
+          if (delay) return delay;
+        }
+        return stopped ? null : 12000;
+      }
+      await this.boundary.check(context, run);
+    }
+    return undefined;
   }
 
   private async poll(
     context: Context,
-    run: Run,
     step: Step,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<number | null> {
-    if (run.pauseReason === MissingVideoPricing.hold(step.id)) savedVideoPricing(step.output);
     const status = await withSpan(
       "run.provider.poll",
-      () => this.port(step, ports).poll(step.providerJobId!),
+      () => shotPort(step, ports).poll(step.providerJobId!, this.billing(context, step)),
       "CLIENT",
     );
     if (status === "queued" || status === "running") return 12000;
@@ -181,7 +219,11 @@ export class RunGeneration {
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<Step> {
     const admission = await readAdmission(this.runs.store.db, context, step);
-    if (canRollback(admission) || admission.evidence === "ambiguous") {
+    if (
+      canRollback(admission) ||
+      admission.evidence === "ambiguous" ||
+      admission.evidence === "released-nondispatch"
+    ) {
       await this.paid.rollbackAdmission(context, step);
       return this.runs.store
         .scoped(context)
@@ -197,7 +239,7 @@ export class RunGeneration {
       return step;
     const recovered = await withSpan(
       "run.provider.reconcile",
-      () => this.port(step, ports).reconcile(step.idempotencyKey),
+      () => shotPort(step, ports).reconcile(step.idempotencyKey),
       "CLIENT",
     );
     if (!recovered) {
@@ -221,22 +263,25 @@ export class RunGeneration {
       async (db, current, tx) => {
         if (
           current.state !== "GENERATING" ||
+          current.pauseReason === "EMERGENCY_STOP" ||
           current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
           current.pauseReason === "OPERATOR_ABANDONED"
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         const rewrite = refusalRewrite(step);
-        const provider = rewrite
-          ? this.port({ ...step, providerId: rewrite.providerId }, ports)
-          : budget.route === "FALLBACK"
-            ? ports.fallback
-            : ports.primary;
-        provider.assertKey?.();
-        const amount = provider.estimate(shot, provider === ports.fallback);
-        if (!envelopeRoom(budget, amount))
-          throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
-        await this.claimPending(db, step, provider, shot, amount);
+        const route = rewrite
+          ? shotPort({ ...step, providerId: rewrite.providerId }, ports) === ports.fallback
+            ? "FALLBACK"
+            : "PRIMARY"
+          : budget.route;
+        const { provider, amount, estimate } = priceShot(
+          current,
+          { ...budget, route },
+          ports,
+          shot,
+        );
+        await claimPendingShot(db, step, provider, shot, amount, estimate);
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id, revision: budget.revision },
           data: { reservedMinor: budget.reservedMinor + amount, revision: budget.revision + 1 },
@@ -258,74 +303,42 @@ export class RunGeneration {
     await this.runs.events?.publish(claim.event);
     return claim.value;
   }
-  private async claimPending(
-    db: Scoped,
-    step: Step,
-    provider: VideoGenPort,
-    shot: ShotSpec,
-    amount: number,
-  ): Promise<void> {
-    const rewrite = refusalRewrite(step);
-    const claimed = await db.videoRunStep.updateMany({
-      where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
-      data: {
-        state: "RUNNING",
-        startedAt: new Date(),
-        costMinor: amount,
-        providerId: provider.providerId,
-        ...(provider.collectionPricing
-          ? {
-              output: json({
-                ...(rewrite ? { refusalRewrite: rewrite } : {}),
-                videoPricing: provider.collectionPricing(shot),
-              }),
-            }
-          : {}),
-      },
-    });
-    if (!claimed.count) throw new ConflictException("Step already claimed");
-  }
-  private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
-    const registry = new Map(
-      [ports.primary, ports.fallback].map((port) => [port.providerId, port]),
-    );
-    const port = step.providerId ? registry.get(step.providerId) : undefined;
-    if (!port) throw new ConflictException("RECONCILE_REQUIRED: stored provider is unavailable");
-    return port;
-  }
-  private completionOutput(
-    step: Step,
-    artifact: import("../runs/runs.types.js").Artifact,
-    meta: ReturnType<NonNullable<VideoGenPort["metadata"]>> | undefined,
-  ): ReturnType<typeof json> {
-    return json({
-      ...(refusalRewrite(step) ? { refusalRewrite: refusalRewrite(step) } : {}),
-      storageArtifacts: [artifact],
-      ...(meta
-        ? {
-            receipt: {
-              key: step.key,
-              providerId: step.providerId,
-              providerJobId: step.providerJobId,
-              ...meta,
-              objectKey: artifact.objectKey,
-              checksumSha256: artifact.checksumSha256,
-              mimeType: "video/mp4",
-            },
-          }
-        : {}),
-    });
-  }
-  private recordSuccess(step: Step, started: number): void {
+  private recordSuccess(cost: number, step: Step, started: number): void {
     metrics
       .counter("run_provider_results", "Provider outcomes")
       .inc({ provider: step.providerId ?? "unconfigured", status: "succeeded" });
     metrics
       .counter("run_provider_cost_minor", "Provider cost in cents")
-      .inc({ provider: step.providerId ?? "unconfigured" }, step.costMinor ?? 0);
+      .inc({ provider: step.providerId ?? "unconfigured" }, cost);
     metrics
       .histogram("run_provider_latency_ms", "Provider latency")
       .observe({ provider: step.providerId ?? "unconfigured" }, Date.now() - started);
+  }
+  private capture(context: Context, step: Step, receipt: VideoReceipt): Promise<Step> {
+    return (async (): Promise<Step> => {
+      const correctionPending = !!pendingCorrection(step) || isReceiptCorrection(step, receipt);
+      try {
+        await persistPendingCorrection(this.runs.store, context, step, receipt);
+        const saved = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
+        if (correctionPending) await resumeAfterCorrection(this.runs, context, step.runId);
+        return saved;
+      } catch (cause) {
+        throw new ShotBillingFailure(cause, {
+          providerId: step.providerId,
+          jobId: step.providerJobId,
+          receipt,
+        });
+      }
+    })();
+  }
+  private billing(context: Context, step: Step): ShotBilling {
+    return {
+      savedOutput: step.output,
+      shot: ShotSpecSchema.parse(step.input),
+      record: async (receipt): Promise<void> => {
+        await this.capture(context, step, receipt);
+      },
+    };
   }
   private async complete(
     context: Context,
@@ -333,57 +346,46 @@ export class RunGeneration {
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<void> {
     const started = step.startedAt?.getTime() ?? Date.now();
+    const port = shotPort(step, ports);
+    const recovering = !!pendingShotMedia(step);
+    const billing = this.billing(context, step);
+    if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
+      const receipt = await port.collectReceipt(step.providerJobId!, billing.shot, billing);
+      step = await this.capture(context, step, receipt);
+      if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
+    }
     const body = await withSpan(
       "run.provider.fetch",
-      () => this.port(step, ports).fetch(step.providerJobId!, step.output),
+      () =>
+        port.fetch(step.providerJobId!, pendingShotMedia(step)?.pendingMedia ?? undefined, billing),
       "CLIENT",
     );
-    const artifact = await this.artifacts.put(context, "clips", body, "video/mp4");
-    const meta = this.port(step, ports).metadata?.(
-      step.providerJobId!,
-      ShotSpecSchema.parse(step.input),
-      step.output,
-    );
-    if (meta && meta.costMinor > (step.costMinor ?? 0))
-      throw new ConflictException("RECONCILE_REQUIRED: provider billing exceeded reservation");
-    const result = await this.runs.store.mutate(
+    const artifact = await this.artifacts
+      .put(context, "clips", body, "video/mp4")
+      .catch((cause: unknown) => {
+        throw new ShotMediaFailure(port.providerId, step.providerJobId!, cause);
+      });
+    const result = await recordShotArtifact(
+      this.runs.store,
+      this.paid,
       context,
-      step.runId,
-      "step_completed",
-      async (db, run, tx) => {
-        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        if (SETTLED_SHOTS.some((state) => state === current.state))
-          return { value: false, payload: { replay: true } };
-        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: step.runId } });
-        const reserved = step.costMinor ?? 0;
-        const cost = meta?.costMinor ?? reserved;
-        await this.paid.commitJob(tx, context, current, cost);
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: {
-            state: "SUCCEEDED",
-            costMinor: cost,
-            finishedAt: new Date(),
-            output: this.completionOutput(step, artifact, meta),
-          },
-        });
-        await db.budgetEnvelope.updateMany({
-          where: { id: budget.id },
-          data: {
-            reservedMinor: budget.reservedMinor - reserved,
-            spentMinor: budget.spentMinor + cost,
-            revision: budget.revision + 1,
-          },
-        });
-        await failSettledGeneration(db, run);
-        return {
-          value: true,
-          payload: { costMinor: cost, warn: budget.spentMinor + cost > 600 },
-          stepId: step.id,
-        };
-      },
-    );
-    if (result.value) this.recordSuccess(step, started);
+      step,
+      artifact,
+    ).catch((cause: unknown) => {
+      throw new ShotMediaFailure(port.providerId, step.providerJobId!, cause);
+    });
     await this.runs.events?.publish(result.event);
+    if (result.event.type === "reconcile_required") {
+      if (!recovering)
+        throw new ShotMediaFailure(
+          port.providerId,
+          step.providerJobId!,
+          new ConflictException(billingHold(step.id)),
+        );
+      await reconcileBilling(this.runs, this.paid, context, step);
+    }
+    if (result.value !== null) {
+      this.recordSuccess(result.value, step, started);
+    }
   }
 }

@@ -20,12 +20,20 @@ export class RunsBoundary {
       run.id,
       "emergency_stop",
       async (db, current) => {
-        if (!current.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+        const entered = current.pauseReason !== "EMERGENCY_STOP";
+        if (entered)
           await db.videoRun.updateMany({
             where: { id: run.id },
             data: { pauseReason: "EMERGENCY_STOP" },
           });
-        return { value: null, payload: { reason: "EMERGENCY_STOP" } };
+        return {
+          value: null,
+          payload: {
+            reason: "EMERGENCY_STOP",
+            entered,
+            ...(entered && { priorPauseReason: current.pauseReason }),
+          },
+        };
       },
     );
     await this.runs.events?.publish(result.event);

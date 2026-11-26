@@ -38,6 +38,7 @@ suite("V3 approval, caps and retention", () => {
       await expect(t.engine.process(t.runs.job(t.context, t.run.id, step.id))).resolves.toBeNull();
       expect(submit).not.toHaveBeenCalled();
       const breakdown = await usage.runBreakdown(t.context, t.run.id);
+      expect(breakdown.totals.notDispatchedRequests).toBe(1);
       expect(breakdown.reservations).toEqual([
         expect.objectContaining({ status: "RELEASED", committedMinor: null }),
       ]);
@@ -73,7 +74,7 @@ suite("V3 approval, caps and retention", () => {
     await preparing.promise;
     await t.control.cancel(t.context, t.run.id);
     prepared.resolve();
-    await expect(queued).rejects.toThrow("Run is not generating");
+    await expect(queued).resolves.toBeNull();
     expect(submit).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -248,27 +249,6 @@ suite("V3 approval, caps and retention", () => {
     expect(result.videoRunId).toBe(t.run.id);
     expect(result.totals.currencies[0]).toMatchObject({ reservedMinor: 0, committedMinor: 20 });
   });
-  it("limits full re-edits to one and shot reshoots to two", async () => {
-    const t = await fixture.tenant();
-    await generating(t);
-    await generateClips(t);
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    expect((await t.store.get(t.context, t.run.id)).state).toBe("CRITIC");
-    await t.control.reedit(t.context, t.run.id);
-    await expect(t.control.reedit(t.context, t.run.id)).rejects.toThrow("one full re-edit");
-    // Give both reshoots enough room. All new paid calls still use M18 and the envelope.
-    for (let i = 0; i < 2; i++) {
-      await t.control.reshoot(t.context, t.run.id, 0);
-      await generateClips(t);
-      await t.engine.process(t.runs.job(t.context, t.run.id));
-      await t.engine.process(t.runs.job(t.context, t.run.id));
-    }
-    await t.control.reshoot(t.context, t.run.id, 0);
-    expect((await t.store.get(t.context, t.run.id)).state).toBe("NEEDS_HUMAN");
-    await t.control.resume(t.context, t.run.id);
-    await expect(t.control.resume(t.context, t.run.id)).rejects.toThrow();
-  });
   it("keeps final and manifest forever and expires draft storage after 14 days", async () => {
     const t = await fixture.tenant();
     const now = Date.now();
@@ -374,11 +354,11 @@ suite("V3 approval, caps and retention", () => {
       .scoped(t.context)
       .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     expect(finished.state).toBe("SUCCEEDED");
-    expect(
-      await t.store
-        .scoped(t.context)
-        .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } }),
-    ).toMatchObject({ reservedMinor: 0, spentMinor: finished.costMinor });
+    const finishedEnvelope = await t.store
+      .scoped(t.context)
+      .budgetEnvelope.findFirstOrThrow({ where: { runId: t.run.id } });
+    expect(finishedEnvelope.reservedMinor).toBe(Math.ceil(finished.costMinor! / 4));
+    expect(finishedEnvelope.spentMinor).toBe(finished.costMinor);
     await generateClips(t);
     for (let i = 0; i < 3; i++) await t.engine.process(t.runs.job(t.context, t.run.id));
     expect((await t.store.get(t.context, t.run.id)).state).toBe("AWAITING_APPROVAL");

@@ -48,6 +48,7 @@ export const COST_KIND_LABELS: Readonly<Record<CostKind, string>> = {
  */
 export const PRE_DISPATCH_ERROR_CODES: readonly string[] = [
   "NOT_DISPATCHED",
+  "ADMISSION_ROLLED_BACK",
   "BUDGET_EXHAUSTED",
   "BUDGET_CURRENCY_MISMATCH",
   "BUDGET_TIMEZONE_INVALID",

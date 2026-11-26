@@ -1,4 +1,5 @@
 import { completedRedos, shotReshoots } from "../runs/shot-reshoots.js";
+import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import type { ModuleRef } from "@nestjs/core";
 import { RunCriticReportSchema, type ChannelBrief } from "@reelforge/contracts";
@@ -109,7 +110,7 @@ export class CriticStep implements StepHandler {
         !envelopeRoom(budget, (previous.costMinor ?? 0) + criticReservationCents())
       )
         continue;
-      await control.reshoot(context, run.id, ordinal);
+      await control.reshoot(context, run.id, ordinal, previous.id);
       throw new ConflictException("Critic deferred while V3 processes the reshoot");
     }
     if (
@@ -159,11 +160,19 @@ export class CriticStep implements StepHandler {
     }
     const assembly = this.modules.get(MediaAssembly, { strict: false });
     const artifacts = await assembly.execute(context, run, brief);
-    await db.videoRunStep.updateMany({
-      where: { runId: run.id, key: { in: ["ASSEMBLING", "REEDIT"] }, state: "SUCCEEDED" },
-      data: {
-        output: json({ result: { storageArtifacts: artifacts }, storageArtifacts: artifacts }),
-      },
+    await runs.store.mutate(context, run.id, "critic_assembly_refreshed", async (scoped) => {
+      await scoped.videoRunStep.updateMany({
+        where: { runId: run.id, key: { in: ["ASSEMBLING", "REEDIT"] }, state: "SUCCEEDED" },
+        data: {
+          output: await assemblyStageOutput(
+            scoped,
+            run.id,
+            json({ storageArtifacts: artifacts }),
+            artifacts,
+          ),
+        },
+      });
+      return { value: null, payload: {} };
     });
   }
 }

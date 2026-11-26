@@ -20,10 +20,10 @@ export async function shotReshoots(
 }
 
 /** A refused or abandoned reshoot can produce its usable clip on a later physical attempt. */
-export function completedRedos(
-  steps: Step[],
+export function completedRedos<T extends Pick<Step, "state" | "key" | "attempt">>(
+  steps: T[],
   requests: Awaited<ReturnType<typeof shotReshoots>>,
-): Step[] {
+): T[] {
   const successes = steps
     .filter((step) => step.state === "SUCCEEDED")
     .sort((a, b) => a.attempt - b.attempt);

@@ -65,7 +65,11 @@ describe("Gemini media fake-fetch contracts", () => {
       fetcher.mockResolvedValueOnce(
         json(completed(kind === "image" ? "image" : kind === "omni" ? "video" : "audio")),
       );
-      expect(await (port as NanoBanana).fetch("job", 8)).toMatchObject({
+      expect(
+        kind === "omni"
+          ? await (port as OmniVideo).fetch("job")
+          : await (port as NanoBanana).fetch("job", 8),
+      ).toMatchObject({
         checksumSha256: "hash",
         billedSeconds: 8,
       });
@@ -105,6 +109,40 @@ describe("Gemini media fake-fetch contracts", () => {
     await expect(client.fetch("job", "video")).resolves.toMatchObject({ billedSeconds: null });
     expect(fetcher.mock.calls[1]![1]!.headers).toEqual({ "Api-Revision": "2026-05-20" });
   });
+  it.each(["omni", "grok"])(
+    "records the %s billed duration before media storage can fail",
+    async (kind) => {
+      const { client, store, fetcher } = fixture();
+      const recordBilling = vi
+        .fn<(seconds: number) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      store.save.mockImplementationOnce(async () => {
+        expect(recordBilling).toHaveBeenCalledExactlyOnceWith(10);
+        throw new Error("artifact write failed");
+      });
+      const resolver = { resolve: async (): Promise<[]> => [] };
+      const port =
+        kind === "omni"
+          ? new OmniVideo(client, catalog[0]!, resolver)
+          : new GrokVideo(
+              new ProviderHttp("xai-" + "bC2".repeat(12), "xai", fetcher, 5),
+              store,
+              catalog[1]!,
+              resolver,
+            );
+      if (kind === "omni")
+        fetcher.mockResolvedValueOnce(
+          json({ ...completed("video"), usage: { billed_seconds: 10 } }),
+        );
+      else
+        fetcher
+          .mockResolvedValueOnce(
+            json({ status: "done", video: { url: "https://vidgen.x.ai/video.mp4", duration: 10 } }),
+          )
+          .mockResolvedValueOnce(new Response("clip"));
+      await expect(port.fetch("job", recordBilling)).rejects.toThrow("artifact write failed");
+    },
+  );
   it("validates media requests before dispatch", async () => {
     const { client, fetcher } = fixture();
     const omni = new OmniVideo(client, catalog[0]!, { resolve: async (): Promise<[]> => [] });

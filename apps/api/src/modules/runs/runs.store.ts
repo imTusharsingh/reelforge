@@ -80,22 +80,9 @@ export class RunsStore {
     state: VideoRunState,
     reason: string | null = null,
   ): Promise<Event> {
-    const result = await this.mutate(context, id, "transition", async (db, run) => {
-      if (run.revision !== expectedRevision || !VIDEO_RUN_TRANSITIONS[run.state].includes(state))
-        throw new ConflictException("Illegal or stale run transition");
-      await db.videoRun.updateMany({
-        where: { id },
-        data: {
-          state,
-          pauseReason: reason,
-          ...(run.effectiveAutonomy === "L3" &&
-          ["PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(state)
-            ? { effectiveAutonomy: "L2" }
-            : {}),
-        },
-      });
-      return { value: null, payload: { from: run.state, to: state, reason } };
-    });
+    const result = await this.mutate(context, id, "transition", (db, run) =>
+      transitionLocked(db, run, state, reason, expectedRevision),
+    );
     return result.event;
   }
   public async events(context: Context, id: string, after: number): Promise<Event[]> {
@@ -106,4 +93,30 @@ export class RunsStore {
       take: 500,
     });
   }
+}
+
+/** Apply a transition inside the caller's run mutation. */
+export async function transitionLocked(
+  db: Scoped,
+  run: Run,
+  state: VideoRunState,
+  reason: string | null,
+  expectedRevision = run.revision,
+): Promise<{ value: null; payload: Json }> {
+  if (run.pauseReason === "EMERGENCY_STOP")
+    throw new ConflictException("Run halted at step boundary");
+  if (run.revision !== expectedRevision || !VIDEO_RUN_TRANSITIONS[run.state].includes(state))
+    throw new ConflictException("Illegal or stale run transition");
+  await db.videoRun.updateMany({
+    where: { id: run.id },
+    data: {
+      state,
+      pauseReason: reason,
+      ...(run.effectiveAutonomy === "L3" &&
+      ["PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(state)
+        ? { effectiveAutonomy: "L2" }
+        : {}),
+    },
+  });
+  return { value: null, payload: { from: run.state, to: state, reason } };
 }

@@ -2793,6 +2793,7 @@ model BudgetEnvelope {
   hardCapMinor        Int         @default(800) @map("hard_cap_minor")
   reservedMinor       Int         @default(0) @map("reserved_minor")
   spentMinor          Int         @default(0) @map("spent_minor")
+  overageMinor        Int         @default(0) @map("overage_minor")
   revision            Int         @default(0)
   run                 VideoRun    @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)

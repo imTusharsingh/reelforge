@@ -27,7 +27,7 @@ import { MediaBindings } from "../scene-media/media-pipeline.module.js";
 import { MediaAssembly } from "./media-assembly.js";
 import { MediaRenderer } from "./media-render.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
-import type { fakeMediaPorts } from "./media-fixture.fixture.js";
+import type { fakeMediaPorts } from "./media-recovery.fixture.js";
 
 export function bindMedia(
   t: Tenant,
