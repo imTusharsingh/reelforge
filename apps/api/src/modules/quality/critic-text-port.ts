@@ -1,19 +1,17 @@
+import { QualityRubricSchema } from "@reelforge/contracts";
 import { ConflictException } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { reservationCents, type TextPort, type TextSpec } from "@reelforge/ai-providers";
+import { type TextPort, type TextSpec } from "@reelforge/ai-providers";
 import { z } from "zod";
 import type { Context, Run } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import type { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaPorts } from "../scene-media/media-ports.js";
-import { MEDIA_OVERHEAD } from "../scene-media/media-prices.js";
+import { textCallCents } from "../scene-media/media-prices.js";
 
-const textResult = z.object({
-  output: z.unknown(),
-  providerJobId: z.string().min(1),
-  usage: z.record(z.string(), z.unknown()),
-});
-const savedResult = z.object({ result: textResult });
+import { attachedTextResult, textResultSchema } from "../usage-budget/run-admission-state.js";
+
+const savedResult = z.object({ result: textResultSchema });
 function inputFingerprint<T>(spec: TextSpec<T>): string {
   return createHash("sha256")
     .update(
@@ -35,21 +33,40 @@ function verifyInput(input: unknown, fingerprint: string): void {
 }
 
 export function criticReservationCents(): number {
-  return reservationCents({
-    currency: "USD",
-    microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
-  });
+  return textCallCents();
 }
 
-/** Adapts V2 text to the existing durable V5 paid-call and run-envelope boundary. */
-export function criticTextPort(deps: {
+type CriticDependencies = {
   access: MediaAccess;
   accounts: MediaAccounts;
   ports: MediaPorts;
   context: Context;
   run: Run;
   attempt: number;
-}): TextPort {
+};
+
+async function drainEarlierReviews(
+  { access, accounts, context, run }: CriticDependencies,
+  key: string,
+): Promise<void> {
+  const steps = await access.runs.store.scoped(context).videoRunStep.findMany({
+    where: {
+      runId: run.id,
+      key: { startsWith: "media:text:critic:", not: key },
+      state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+    },
+  });
+  for (const step of steps) {
+    if (await accounts.recoverUndispatched(context, step)) continue;
+    const saved = attachedTextResult(step);
+    if (!saved || !QualityRubricSchema.safeParse(saved.output).success)
+      await accounts.reconcilePending(context, step);
+    else await accounts.complete(context, step, saved);
+  }
+}
+
+/** Adapts V2 text to the existing durable V5 paid-call and run-envelope boundary. */
+export function criticTextPort(deps: CriticDependencies): TextPort {
   return {
     async complete<T>(
       spec: TextSpec<T>,
@@ -60,6 +77,7 @@ export function criticTextPort(deps: {
       const key = `media:text:critic:${attempt}`;
       const fingerprint = inputFingerprint(spec);
       const db = access.runs.store.scoped(context);
+      if (attempt > 1) await drainEarlierReviews(deps, key);
       const previous = await db.videoRunStep.findFirst({
         where: { runId: run.id, key },
         orderBy: { attempt: "desc" },
@@ -76,10 +94,9 @@ export function criticTextPort(deps: {
         !accounts.abandoned(previous) &&
         !(await accounts.recoverUndispatched(context, previous))
       ) {
-        const saved = textResult.safeParse(previous.output);
-        if (!saved.success || saved.data.providerJobId !== previous.providerJobId)
-          return accounts.reconcilePending(context, previous);
-        const result = { ...saved.data, output: spec.parse(saved.data.output) };
+        const saved = attachedTextResult(previous);
+        if (!saved) return accounts.reconcilePending(context, previous);
+        const result = { ...saved, output: spec.parse(saved.output) };
         await accounts.complete(context, previous, result);
         return result;
       }
@@ -89,7 +106,14 @@ export function criticTextPort(deps: {
       if (!budget) throw new ConflictException("Critic budget envelope is unavailable");
       const native = await ports.get(context);
       const cost = criticReservationCents();
-      const step = await accounts.begin(context, run, key, { fingerprint }, cost, modelId);
+      const step = await accounts.begin(
+        context,
+        run,
+        key,
+        { fingerprint, assemblyRevision: attempt },
+        cost,
+        modelId,
+      );
       await accounts.prepare(context, run, step, modelId);
       const result = await accounts.dispatchText(context, step, () =>
         native.text.complete(spec, step.idempotencyKey),

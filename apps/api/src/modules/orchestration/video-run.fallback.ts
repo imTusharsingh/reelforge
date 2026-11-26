@@ -1,10 +1,11 @@
 import { type ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { clearResolvedSubmissionHold, keyframeKey } from "../runs/run-outcomes.js";
 import { RunsService } from "../runs/runs.service.js";
 import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
-import { clipEstimate, fallbackEstimate, runEstimate } from "../usage-budget/run-envelope.js";
+import { audioCosts, imageCallCents, textCallCents } from "../scene-media/media-prices.js";
+import { fallbackEstimate, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 
 @Injectable()
@@ -26,11 +27,12 @@ export class RunFallback {
       "fallback",
       async (db, current, tx) => {
         const step = await db.videoRunStep.findFirstOrThrow({ where: { id: failed.id } });
-        if (step.state !== "RUNNING") return { value: true, payload: { replay: true } };
+        if (step.state !== "RUNNING" || step.idempotencyKey !== failed.idempotencyKey)
+          return { value: true, payload: { replay: true } };
         if (current.state === "CANCELED") return { value: false, payload: { canceled: true } };
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         const estimate = await this.estimate(db, run, step, budget);
-        if (!estimate) return { value: false, payload: { fallbackBudgetDenied: true } };
+        if (!estimate) return { value: false, payload: { fallbackUnavailable: true } };
         await this.paid.settleRejectedRequest(tx, context, step, failure);
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id },
@@ -61,7 +63,8 @@ export class RunFallback {
           },
         });
         await clearResolvedSubmissionHold(db, tx, current, step.id);
-        return { value: true, payload: { ...estimate, warning: estimate.baseEstimateMinor > 600 } };
+        const warning = estimate.baseEstimateMinor > pinnedBudget(run).targetMinor;
+        return { value: true, payload: { ...estimate, warning } };
       },
     );
     await this.runs.events?.publish(result.event);
@@ -77,24 +80,39 @@ export class RunFallback {
     failed: Step,
     budget: Parameters<typeof fallbackEstimate>[0],
   ): Promise<ReturnType<typeof fallbackEstimate> | null> {
+    if (
+      await db.videoRunStep.findFirst({
+        where: { runId: run.id, key: { startsWith: "media:text:critic:" }, state: "FAILED" },
+      })
+    )
+      return null;
     const all = await db.videoRunStep.findMany({
       where: { runId: run.id, key: { startsWith: "shot-" } },
     });
     const remaining = all.filter((s) => s.state === "PENDING" || s.id === failed.id);
     const initial = all.filter((s) => s.attempt === 1).map((s) => ShotSpecSchema.parse(s.input));
     const mediaSteps = await db.videoRunStep.findMany({
-      where: { runId: run.id, key: { startsWith: "media:" }, state: "SUCCEEDED" },
+      where: {
+        runId: run.id,
+        key: { startsWith: "media:" },
+        state: { in: ["SUCCEEDED", "RUNNING", "WAITING_EXTERNAL"] },
+      },
+      select: { key: true },
     });
-    const overheadSpent = mediaSteps.reduce((sum, item) => sum + (item.costMinor ?? 0), 0);
-    const overhead = Math.max(
-      0,
-      runEstimate(initial).baseEstimateMinor - clipEstimate(initial, false) - overheadSpent,
-    );
+    const covered = new Set(mediaSteps.map((step) => step.key));
+    const audio = audioCosts(initial.reduce((sum, shot) => sum + shot.durationSeconds, 0));
+    const overhead =
+      initial.filter((shot) => !covered.has(`media:${keyframeKey(shot)}`)).length *
+        imageCallCents() +
+      (covered.has("media:narration") ? 0 : audio.narration) +
+      (covered.has("media:music") ? 0 : audio.music) +
+      (covered.has("media:text:critic:1") ? 0 : textCallCents());
     try {
       return fallbackEstimate(
         { ...budget, reservedMinor: budget.reservedMinor - (failed.costMinor ?? 0) },
         remaining.map((s) => ShotSpecSchema.parse(s.input)),
         overhead,
+        pinnedBudget(run).hardCapMinor,
       );
     } catch (error) {
       if (!(error instanceof ConflictException)) throw error;

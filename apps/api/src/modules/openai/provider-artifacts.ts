@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { ArtifactStore, ClipArtifact } from "@reelforge/ai-providers";
 import type { StoragePort } from "../asset/storage/storage.port.js";
-import type { ProcessRunner } from "@reelforge/media";
+import { MediaValidationError, type ProcessRunner } from "@reelforge/media";
 import { SpawnProcessRunner } from "../composition/composition.engine.js";
 const probeSchema = z.object({
   streams: z.array(
@@ -82,7 +82,10 @@ export class ProviderArtifacts implements ArtifactStore {
     argv: readonly string[],
   ): Promise<{ stdout: string }> {
     const result = await this.runner.run({ executable, argv, signal: AbortSignal.timeout(30000) });
-    if (result.exitCode !== 0) throw new Error("Provider media process failed");
+    if (result.exitCode !== 0) {
+      if (executable === "ffprobe") throw new MediaValidationError("Provider media process failed");
+      throw new Error("Provider media process failed");
+    }
     return result;
   }
   private async probe(
@@ -98,7 +101,12 @@ export class ProviderArtifacts implements ArtifactStore {
       "json",
       path,
     ]);
-    const probe = probeSchema.parse(JSON.parse(stdout) as unknown);
+    let probe: z.infer<typeof probeSchema>;
+    try {
+      probe = probeSchema.parse(JSON.parse(stdout) as unknown);
+    } catch (cause) {
+      throw new MediaValidationError("Invalid provider media probe report", { cause });
+    }
     const video = probe.streams.find((stream) => stream.codec_type === "video");
     const audio = probe.streams.some((stream) => stream.codec_type === "audio");
     const [numerator, denominator] = (video?.r_frame_rate ?? "0/1").split("/").map(Number);
@@ -112,7 +120,7 @@ export class ProviderArtifacts implements ArtifactStore {
       (mimeType.startsWith("audio/") && (!audio || durationSeconds <= 0)) ||
       (mimeType.startsWith("image/") && !video)
     )
-      throw new Error("Invalid probed provider media");
+      throw new MediaValidationError("Invalid probed provider media");
     return { durationSeconds, width: video?.width ?? 0, height: video?.height ?? 0, fps };
   }
 }
@@ -123,5 +131,5 @@ function validateInput(input: Uint8Array, mimeType: string): void {
     input.length > 100 * 1024 * 1024 ||
     !["video/mp4", "image/png", "image/jpeg", "audio/wav", "audio/mpeg"].includes(mimeType)
   )
-    throw new Error("Invalid provider media");
+    throw new MediaValidationError("Invalid provider media");
 }

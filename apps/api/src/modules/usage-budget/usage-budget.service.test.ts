@@ -80,6 +80,40 @@ describe("M18 ledger classification", () => {
     });
   });
 
+  it("reports confirmed null and zero non-dispatch separately from contradictory positive cost", () => {
+    const totals = new UsageTotals(now);
+    for (const actualCost of [null, "0.00000000", "0.001"])
+      totals.addLedger(
+        row({ status: "FAILED", errorCode: "NOT_DISPATCHED", estimatedCost: "1", actualCost }),
+      );
+    const result = totals.view();
+    expect(result.notDispatchedRequests).toBe(2);
+    expect(result.currencies[0]).toMatchObject({
+      actualMinor: 1,
+      byCategory: [expect.objectContaining({ ledgerRequests: 1 })],
+    });
+  });
+
+  it.each(["CRITIC_SUPERSEDED", "RUN_CANCELED", "OPERATOR_ABANDONED"])(
+    "excludes only proven zero-cost %s closures from the actual count",
+    (errorCode) => {
+      const totals = new UsageTotals(now);
+      const closed = { status: "FAILED", errorCode, actualCost: "0", confirmedNonDispatch: true };
+      for (const value of [
+        closed,
+        { ...closed, actualCost: "0.01" },
+        { ...closed, confirmedNonDispatch: false },
+      ])
+        totals.addLedger(row(value));
+      const result = totals.view();
+      expect(result.notDispatchedRequests).toBe(1);
+      expect(result.currencies[0]).toMatchObject({
+        actualMinor: 1,
+        byCategory: [expect.objectContaining({ ledgerRequests: 2 })],
+      });
+    },
+  );
+
   it("maps scene output kind first, then capability keywords, else UNCATEGORIZED", () => {
     expect(categorize(row({ sceneKind: "VIDEO", capabilityId: "llm" }))).toBe("IMAGE_MEDIA");
     expect(categorize(row({ sceneKind: "DIALOGUE" }))).toBe("TTS");

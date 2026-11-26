@@ -133,11 +133,19 @@ export class RunsController {
     @Param("id") id: string,
     @Param("ordinal") ordinal: string,
     @Query("workspaceId") workspaceId: string,
-  ): Promise<void> {
+    @Query("sourceStepId") sourceStepId: string,
+  ): Promise<{ stepId: string | null }> {
     const number = Number(ordinal);
     if (!Number.isSafeInteger(number) || number < 0)
       throw new BadRequestException("Invalid shot ordinal");
-    await this.control.reshoot(await this.context(request, workspaceId), this.id(id), number);
+    return {
+      stepId: await this.control.reshoot(
+        await this.context(request, workspaceId),
+        this.id(id),
+        number,
+        this.id(sourceStepId),
+      ),
+    };
   }
   @Get(":id/artifacts/:stepId/:checksum")
   public async content(

@@ -1,25 +1,36 @@
 import {
+  EmptyMediaResponse,
   ProviderFailure,
   VideoRouter,
   ProviderLimiter,
   reservationCents,
   secondsCost,
   type ClipArtifact,
+  type MediaDeliveryFailure,
   type VideoGenPort as NativeVideoPort,
   type VideoOptions,
   type VideoRoutingState,
   type RecordVideoOutcome,
 } from "@reelforge/ai-providers";
+import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
-import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import {
+  InvalidVideoFormat,
+  ShotBillingFailure,
+  ShotMediaFailure,
+  type VideoGenPort,
+  type VideoReceipt,
+  type ShotBilling,
+} from "../orchestration/video-run.handlers.js";
 import type { Context, Run } from "../runs/runs.types.js";
-import { MediaJobs } from "./media-jobs.js";
+import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
+import { MediaJobs, MediaChecksumMismatch } from "./media-jobs.js";
 import { imageSurcharge } from "./media-prices.js";
+
 /** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
   public readonly providerId: string;
   public readonly modelId: string;
-  private readonly receipts = new Map<string, ClipArtifact>();
   public constructor(
     private readonly native: NativeVideoPort,
     private readonly jobs: MediaJobs,
@@ -75,48 +86,102 @@ export class RoutedMediaVideo implements VideoGenPort {
   public async reconcile(): Promise<null> {
     return null;
   }
-  public poll(id: string): ReturnType<NativeVideoPort["poll"]> {
-    return this.native.poll(id);
+  public poll(id: string, billing?: ShotBilling): ReturnType<NativeVideoPort["poll"]> {
+    return this.native.poll(id, this.recordBilling(billing));
   }
-  public async fetch(id: string): Promise<Buffer> {
-    const media = await this.native.fetch(id);
-    this.receipts.set(id, media);
+  public async fetch(id: string, saved?: ClipArtifact, billing?: ShotBilling): Promise<Buffer> {
+    const media = saved ?? (await this.fetchMedia(id, billing));
+    let body: Buffer;
+    try {
+      await this.validateFormat(id, media, saved ? undefined : billing);
+      body = await this.jobs.bytes(this.context, media).catch(this.mediaFailure(id));
+    } catch (error) {
+      const cause = error instanceof ShotMediaFailure ? error.cause : error;
+      if (
+        !saved ||
+        !billing ||
+        !(
+          cause instanceof StorageObjectNotFoundError ||
+          cause instanceof MediaChecksumMismatch ||
+          error instanceof InvalidVideoFormat
+        )
+      )
+        throw error;
+      const receipt = await this.collectReceipt(id, billing.shot, billing);
+      body = await this.jobs.bytes(this.context, receipt.media).catch(this.mediaFailure(id));
+      await billing.record(receipt);
+    }
+    if (!this.options.extension) return body;
+    if (!this.trim)
+      throw new ShotMediaFailure(
+        this.providerId,
+        id,
+        new Error("Extension tail extraction is not configured"),
+      );
+    return this.trim(body, this.options.extension.previousSeconds).catch(this.mediaFailure(id));
+  }
+  private mediaFailure(id: string): MediaDeliveryFailure {
+    return (cause) => {
+      if (cause instanceof MediaValidationError || cause instanceof EmptyMediaResponse)
+        throw new InvalidVideoFormat(this.providerId, id, cause);
+      throw new ShotMediaFailure(this.providerId, id, cause);
+    };
+  }
+  private fetchMedia(id: string, billing?: ShotBilling): Promise<ClipArtifact> {
+    return this.native.fetch(id, this.recordBilling(billing), this.mediaFailure(id));
+  }
+  private async validateFormat(
+    id: string,
+    media: ClipArtifact,
+    billing?: ShotBilling,
+  ): Promise<void> {
     if (
       media.mimeType !== "video/mp4" ||
       media.width !== 720 ||
       media.height !== 1280 ||
       media.fps !== 24
-    )
-      throw new Error("Provider returned invalid 720p video");
-    const body = await this.jobs.bytes(this.context, media);
-    if (!this.options.extension) return body;
-    if (!this.trim) throw new Error("Extension tail extraction is not configured");
-    return this.trim(body, this.options.extension.previousSeconds);
+    ) {
+      // Some ports supply billed seconds only on the fetched descriptor.
+      if (billing && media.billedSeconds !== null)
+        await billing.record(this.price(billing.shot, media.billedSeconds, null));
+      throw new InvalidVideoFormat(this.providerId, id);
+    }
   }
-  public metadata(
+  public async collectReceipt(
     id: string,
     shot: ShotSpec,
-  ): {
-    seconds: number;
-    providerDurationSeconds: number;
-    costMinor: number;
-    modelId: string;
-    promptVersion: string;
-  } {
-    const media = this.receipts.get(id);
-    if (!media) throw new Error("Provider receipt unavailable");
-    const seconds = media.billedSeconds ?? shot.durationSeconds;
-    const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
-    const images = shot.references.length + this.frameCount;
-    return {
-      seconds,
-      providerDurationSeconds: media.durationSeconds,
-      costMinor: reservationCents({
-        ...cost,
-        microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
-      }),
-      modelId: this.native.capabilities().modelId,
-      promptVersion: "art-director:v2",
-    };
+    billing?: ShotBilling,
+  ): Promise<VideoReceipt & { media: ClipArtifact }> {
+    const media = await this.fetchMedia(id, billing);
+    await this.validateFormat(id, media, billing);
+    return this.price(shot, media.billedSeconds, media);
+  }
+  private recordBilling(billing?: ShotBilling): ((seconds: number) => Promise<void>) | undefined {
+    if (billing) return (seconds) => billing.record(this.price(billing.shot, seconds, null));
+  }
+  private price<T extends ClipArtifact | null>(
+    shot: ShotSpec,
+    billedSeconds: number | null,
+    media: T,
+  ): VideoReceipt & { media: T } {
+    try {
+      const seconds = billedSeconds ?? shot.durationSeconds;
+      const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
+      const images = shot.references.length + this.frameCount;
+      return {
+        media,
+        costBasis: billedSeconds === null ? "RESERVATION" : "BILLED",
+        seconds,
+        providerDurationSeconds: media?.durationSeconds ?? null,
+        costMinor: reservationCents({
+          ...cost,
+          microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
+        }),
+        modelId: this.native.capabilities().modelId,
+        promptVersion: "art-director:v2",
+      };
+    } catch (cause) {
+      return ShotBillingFailure.rethrow(cause);
+    }
   }
 }

@@ -9,8 +9,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { autonomyPolicy, StoredChannelBriefSchema, type VideoRunState } from "@reelforge/contracts";
-import { clearResolvedSubmissionHold } from "./run-outcomes.js";
-import { RunsStore } from "./runs.store.js";
+import { activeSubmissionHold, clearResolvedSubmissionHold } from "./run-outcomes.js";
+import { RunsStore, transitionLocked } from "./runs.store.js";
 import { json, type Context, type Run, type RunJob, type Step, type Json } from "./runs.types.js";
 import type { RunQueueHealth, RunsQueue } from "./runs.queue.js";
 import type { RunsEvents } from "./runs.events.js";
@@ -135,6 +135,7 @@ export class RunsService {
   public async enqueue(context: Context, run: Run): Promise<void> {
     if (
       run.state === "CANCELED" ||
+      run.pauseReason === "EMERGENCY_STOP" ||
       run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
       run.pauseReason === "OPERATOR_ABANDONED"
     )
@@ -157,11 +158,44 @@ export class RunsService {
     run: Run,
     state: VideoRunState,
     reason: string | null = null,
-  ): Promise<void> {
-    const event = await this.store.transition(context, run.id, run.revision, state, reason);
-    await this.events?.publish(event);
+  ): Promise<boolean> {
+    const result = await this.store.mutate(
+      context,
+      run.id,
+      "transition",
+      async (db, current, tx) => {
+        const advances =
+          state === "SCRIPTING" ||
+          state === "SHOT_PLANNING" ||
+          state === "GENERATING" ||
+          state === "ASSEMBLING" ||
+          state === "CRITIC" ||
+          state === "AWAITING_APPROVAL";
+        const hold = advances ? await activeSubmissionHold(db, tx, current) : null;
+        if (hold) {
+          if (
+            current.pauseReason !== "EMERGENCY_STOP" &&
+            !current.pauseReason?.startsWith("RECONCILE_REQUIRED")
+          )
+            await db.videoRun.updateMany({
+              where: { id: current.id },
+              data: { pauseReason: hold },
+            });
+          return {
+            value: false,
+            payload: { reason: hold },
+            eventType: "reconcile_required",
+          };
+        }
+        await transitionLocked(db, current, state, reason, run.revision);
+        return { value: true, payload: { from: current.state, to: state, reason } };
+      },
+    );
+    await this.events?.publish(result.event);
+    return result.value;
   }
   public async detail(context: Context, id: string): Promise<unknown> {
+    await this.artifacts.refreshManifests(context, id);
     const run = await this.store.get(context, id),
       db = this.store.scoped(context);
     const [steps, envelope] = await Promise.all([

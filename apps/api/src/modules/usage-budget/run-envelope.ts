@@ -1,46 +1,123 @@
+import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
+import { pendingCorrection } from "./run-pending-receipt.js";
+import { readReceiptBudget } from "./run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { reservationCents } from "@reelforge/ai-providers";
-import { clipMoney, overheadCents } from "../scene-media/media-prices.js";
-import type { BudgetEnvelope, ShotSpec } from "@reelforge/contracts";
+import { clipMoney, plannedRunOverheadCents } from "../scene-media/media-prices.js";
+import {
+  BudgetPolicySchema,
+  type ChannelBrief,
+  type BudgetEnvelope,
+  type ShotSpec,
+} from "@reelforge/contracts";
+
+import { z } from "zod";
+import type { Run, Scoped } from "../runs/runs.types.js";
+
+const snapshotPolicy = z.object({ brief: z.object({ budgetPolicy: BudgetPolicySchema }) });
+export function pinnedBudget(run: Run): ChannelBrief["budgetPolicy"] {
+  const { budgetPolicy } = snapshotPolicy.parse(run.inputSnapshot).brief;
+  const hardCapMinor = Math.min(800, budgetPolicy.hardCapMinor);
+  return {
+    ...budgetPolicy,
+    hardCapMinor,
+    targetMinor: Math.min(budgetPolicy.targetMinor, hardCapMinor),
+  };
+}
+
+/** Include paid work performed before envelope creation, and pre-existing envelopes with old defaults. */
+export async function assertRunCap(
+  db: Scoped,
+  run: Run,
+  amount: number,
+  excludingStepId?: string,
+): Promise<number> {
+  const claims = await db.videoRunStep.findMany({
+    where: {
+      runId: run.id,
+      state: { notIn: ["SKIPPED", "CANCELLED"] },
+      ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
+    },
+  });
+  const cumulative = claims.reduce((total, claim) => {
+    const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
+    const covered = (claim.costMinor ?? 0) + (retained ?? 0);
+    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0);
+  }, amount);
+  if (cumulative > pinnedBudget(run).hardCapMinor)
+    throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
+  return cumulative;
+}
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;
-export function clipEstimate(
-  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
-  fallback: boolean,
-): number {
-  return shots.reduce((sum, shot) => sum + reservationCents(clipMoney(shot, fallback)), 0);
+type PlanShot = Pick<ShotSpec, "durationSeconds"> &
+  Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>;
+
+export function shotReceiptBufferMinor(estimateMinor: number): number {
+  if (!Number.isSafeInteger(estimateMinor) || estimateMinor < 0)
+    throw new Error("Invalid shot estimate");
+  return Math.ceil(estimateMinor / 4);
 }
+
+function clipCoverage(
+  shots: readonly PlanShot[],
+  fallback: boolean,
+): {
+  clipsMinor: number;
+  receiptBufferMinor: number;
+} {
+  let clipsMinor = 0;
+  let receiptBufferMinor = 0;
+  for (const shot of shots) {
+    const quote = reservationCents(clipMoney(shot, fallback));
+    clipsMinor += quote;
+    receiptBufferMinor += shotReceiptBufferMinor(quote);
+  }
+  return { clipsMinor, receiptBufferMinor };
+}
+
 export function runEstimate(
-  shots: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
+  shots: readonly PlanShot[],
   fallback = false,
-): Estimate {
-  const clips = clipEstimate(shots, fallback);
-  const overhead = overheadCents(shots);
-  const baseEstimateMinor = clips + overhead;
-  if (baseEstimateMinor > 800) throw new ConflictException("Run estimate exceeds $8");
+  hardCapMinor = 800,
+  planningSpentMinor?: number,
+): Estimate & { expectedSpendMinor: number; receiptBufferMinor: number } {
+  const { clipsMinor, receiptBufferMinor } = clipCoverage(shots, fallback);
+  const expectedSpendMinor = clipsMinor + plannedRunOverheadCents(shots, planningSpentMinor);
+  const baseEstimateMinor = expectedSpendMinor + receiptBufferMinor;
+  if (baseEstimateMinor > hardCapMinor)
+    throw new ConflictException({
+      code: "BUDGET_CAP",
+      message:
+        hardCapMinor === 800 ? "Run estimate exceeds $8" : "Run estimate exceeds the pinned cap",
+    });
   return {
     baseEstimateMinor,
-    reshootReserveMinor: Math.min(Math.ceil(clips / 2), 800 - baseEstimateMinor),
+    expectedSpendMinor,
+    receiptBufferMinor,
+    reshootReserveMinor: Math.min(Math.ceil(clipsMinor / 2), hardCapMinor - baseEstimateMinor),
     route: fallback ? "FALLBACK" : "PRIMARY",
   };
 }
 export function fallbackEstimate(
   envelope: Pick<BudgetEnvelope, "spentMinor" | "reservedMinor" | "reshootReserveMinor">,
-  remaining: readonly (Pick<ShotSpec, "durationSeconds"> &
-    Partial<Pick<ShotSpec, "references" | "firstFrameFrom">>)[],
+  remaining: readonly PlanShot[],
   overheadRemaining = 0,
+  hardCapMinor = 800,
 ): Estimate {
+  const { clipsMinor, receiptBufferMinor } = clipCoverage(remaining, true);
   const baseEstimateMinor =
     envelope.spentMinor +
     envelope.reservedMinor +
-    clipEstimate(remaining, true) +
+    clipsMinor +
+    receiptBufferMinor +
     overheadRemaining;
-  if (baseEstimateMinor > 800)
-    throw new ConflictException({ code: "BUDGET_CAP", message: "Fallback exceeds $8" });
+  if (baseEstimateMinor > hardCapMinor)
+    throw new ConflictException({ code: "BUDGET_CAP", message: "Fallback exceeds the run cap" });
   const reserve =
-    baseEstimateMinor + envelope.reshootReserveMinor <= 800 ? envelope.reshootReserveMinor : 0;
+    baseEstimateMinor + envelope.reshootReserveMinor <= hardCapMinor
+      ? envelope.reshootReserveMinor
+      : 0;
   return { baseEstimateMinor, reshootReserveMinor: reserve, route: "FALLBACK" };
 }
 export function envelopeRoom(
@@ -55,4 +132,27 @@ export function envelopeRoom(
     envelope.spentMinor + envelope.reservedMinor + amount <=
     Math.min(envelope.hardCapMinor, envelope.baseEstimateMinor + envelope.reshootReserveMinor)
   );
+}
+
+export function priceShot(
+  current: Run,
+  budget: Parameters<typeof envelopeRoom>[0] & Pick<BudgetEnvelope, "route">,
+  ports: { primary: VideoGenPort; fallback: VideoGenPort },
+  shot: ShotSpec,
+): { provider: VideoGenPort; amount: number; estimate: number } {
+  const provider = budget.route === "FALLBACK" ? ports.fallback : ports.primary;
+  provider.assertKey?.();
+  const estimate = provider.estimate(shot, budget.route === "FALLBACK");
+  const amount = estimate + shotReceiptBufferMinor(estimate);
+  if (
+    !envelopeRoom(
+      {
+        ...budget,
+        hardCapMinor: Math.min(budget.hardCapMinor, pinnedBudget(current).hardCapMinor),
+      },
+      amount,
+    )
+  )
+    throw new ConflictException({ code: "BUDGET_CAP", message: "Envelope exhausted" });
+  return { provider, amount, estimate };
 }

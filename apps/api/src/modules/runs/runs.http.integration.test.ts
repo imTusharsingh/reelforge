@@ -130,7 +130,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     ).rejects.toThrow();
     t.runs.events = transport;
     await expect(
-      controller.reshoot(req as never, t.run.id, "-1", t.context.workspaceId),
+      controller.reshoot(req as never, t.run.id, "-1", t.context.workspaceId, randomUUID()),
     ).rejects.toThrow();
     await expect(
       controller.resume(req as never, t.run.id, t.context.workspaceId),
@@ -206,8 +206,9 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       ),
     ).rejects.toThrow("integrity validation");
   });
-  it("serves the clip persisted by planning and generation over HTTP", async () => {
+  it("serves the generated clip and replays its HTTP reshoot after returning to CRITIC", async () => {
     expect((await generating(t)).state).toBe("GENERATING");
+    vi.spyOn(t.generation.provider, "estimate").mockReturnValue(40);
     await generateClips(t);
     const step = await t.store.scoped(t.context).videoRunStep.findFirstOrThrow({
       where: { runId: t.run.id, key: "shot-0", state: "SUCCEEDED" },
@@ -231,5 +232,25 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .expect("Content-Type", "video/mp4")
       .expect(200)
       .expect(({ body }) => expect(body).toEqual(expected));
+    const parent = t.runs.job(t.context, t.run.id);
+    await t.engine.process(parent);
+    await t.engine.process(parent);
+    const path = `/api/v1/runs/${t.run.id}/reshoot/0?workspaceId=${t.context.workspaceId}`;
+    const command = (url: string): request.Test =>
+      request(app.getHttpServer() as never)
+        .post(url)
+        .set("Authorization", `Bearer ${token}`);
+    await command(path).expect(400);
+    const bound = `${path}&sourceStepId=${step.id}`;
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    const accepted = await command(bound).expect(201);
+    expect(accepted.body.stepId).toBeTruthy();
+    await generateClips(t);
+    await t.engine.process(parent);
+    await t.engine.process(parent);
+    expect((await t.store.get(t.context, t.run.id)).state).toBe("CRITIC");
+    await command(bound).expect(201, accepted.body);
+    expect(await t.db.videoRunStep.count({ where: { runId: t.run.id, key: "shot-0" } })).toBe(2);
+    expect(submit).toHaveBeenCalledOnce();
   }, 15000);
 });

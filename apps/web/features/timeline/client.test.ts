@@ -23,6 +23,11 @@ describe("V8 V3 HTTP and SSE clients on fakes", () => {
     source.emit("step_completed", 1);
     source.emit("transition", 2);
     expect(update).toHaveBeenCalledTimes(2);
+    source.emit("provider_receipt", 3);
+    expect(update).toHaveBeenCalledTimes(3);
+    source.emit("billing_reconciled", 4);
+    source.emit("billing_reconciled", 4);
+    expect(update).toHaveBeenCalledTimes(4);
     source.onerror?.();
     expect(connection).toHaveBeenCalledWith("Reconnecting…");
     close();

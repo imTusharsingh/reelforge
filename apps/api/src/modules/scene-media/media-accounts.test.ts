@@ -14,7 +14,36 @@ import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 const context = { workspaceId: "workspace", userId: "owner", role: "OWNER" } as Context;
-const run = { id: "run", workspaceId: context.workspaceId } as Run;
+const run: Run = {
+  channelBriefVersion: 1,
+  schemaVersion: "1.0",
+  channelId: "channel",
+  channelBriefId: "brief",
+  state: "ASSEMBLING",
+  requestedAutonomy: "L2",
+  effectiveAutonomy: "L2",
+  idempotencyKey: "run",
+  correlationId: "correlation",
+  revision: 1,
+  approvedShortsAtStart: 0,
+  criticAgreementScore: null,
+  pauseReason: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  id: "run",
+  workspaceId: context.workspaceId,
+  inputSnapshot: {
+    brief: {
+      budgetPolicy: {
+        currency: "USD",
+        targetMinor: 600,
+        hardCapMinor: 800,
+        dailyLimitMinor: 2000,
+        monthlyLimitMinor: 18000,
+      },
+    },
+  },
+};
 type Request = { id: string; errorCode: string; responseMetadata?: object };
 function harness(): {
   state: {
@@ -41,12 +70,15 @@ function harness(): {
     request: null as Request | null,
   };
   const steps = {
+    aggregate: vi.fn(async () => ({ _sum: { costMinor: state.step?.costMinor ?? 0 } })),
     findFirst: vi.fn(async () => state.step),
     findFirstOrThrow: vi.fn(async () => {
       if (!state.step) throw new Error("Missing step");
       return state.step;
     }),
-    findMany: vi.fn(async () => (state.step ? [state.step] : [])),
+    findMany: vi.fn(async () =>
+      state.step && state.step.state !== "CANCELLED" ? [state.step] : [],
+    ),
     create: vi.fn(async ({ data }: { data: Step }) => {
       state.step = { ...data, id: "step", providerJobId: null };
       return state.step;
@@ -78,7 +110,15 @@ function harness(): {
     usageReservation: {
       findMany: vi.fn(async () =>
         state.reservation
-          ? [{ ...state.reservation, idempotencyKey: `m08:${state.step?.idempotencyKey}` }]
+          ? [
+              {
+                createdAt: new Date(),
+                amountMinor: 4n,
+                currency: "USD",
+                ...state.reservation,
+                idempotencyKey: `m08:${state.step?.idempotencyKey}`,
+              },
+            ]
           : [],
       ),
       update: vi.fn(),
@@ -102,7 +142,7 @@ function harness(): {
       state.request = {
         id: "request",
         errorCode: "PENDING",
-        responseMetadata: { admissionOrdering: ADMISSION_ORDERING },
+        responseMetadata: { admissionOrdering: ADMISSION_ORDERING, dispatched: false },
       };
     }),
     finish: vi.fn(),

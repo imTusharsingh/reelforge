@@ -3,12 +3,12 @@ import {
   autonomyPolicy,
   criticReport,
   criticGatesPass,
-  humanGatesPass,
   type AutonomyLevel,
   type RunAutonomyStatus,
 } from "@reelforge/contracts";
+import { writeDecisionLocked, fallbackToL2 } from "./run-decision.js";
 import { RunsStore } from "../runs/runs.store.js";
-import type { Context, Run, Scoped, Json } from "../runs/runs.types.js";
+import type { Context, Run } from "../runs/runs.types.js";
 import { EMERGENCY_STOP_PORT, type EmergencyStopPort } from "../admin/emergency-stop.types.js";
 
 /** V8 decisions use V3's revision lock and event log, never a second run state machine. */
@@ -90,60 +90,8 @@ export class AutonomyService {
       context,
       id,
       decision === "APPROVE" ? (automatic ? "auto_approved" : "approved") : "human_rejected",
-      (db, current) => this.writeDecision(db, current, context, decision, automatic),
+      (db, current, tx) => writeDecisionLocked(db, tx, current, context, decision, automatic),
     );
-  }
-  private async writeDecision(
-    db: Scoped,
-    current: Run,
-    context: Context,
-    decision: "APPROVE" | "REJECT",
-    automatic: boolean,
-  ): Promise<{ value: null; payload: Json }> {
-    const id = current.id;
-    const previous = await db.runEvent.findFirst({
-      where: { runId: id, type: { in: ["approved", "auto_approved", "human_rejected"] } },
-    });
-    if (previous) {
-      if (
-        previous.type !==
-        (decision === "REJECT" ? "human_rejected" : automatic ? "auto_approved" : "approved")
-      )
-        throw new ConflictException("Run already decided");
-      // A conflicting request never changes the original tap or approval count.
-      throw new ConflictException("Decision already recorded");
-    }
-    if (current.state !== "AWAITING_APPROVAL")
-      throw new ConflictException("No final approval requested");
-    const step = await db.videoRunStep.findFirst({
-      where: { runId: id, key: "CRITIC", state: "SUCCEEDED" },
-      orderBy: { attempt: "desc" },
-    });
-    const report = criticReport(step?.output);
-    if (
-      decision === "APPROVE" &&
-      (!(automatic ? criticGatesPass(report) : humanGatesPass(report)) ||
-        current.pauseReason !== null)
-    )
-      throw new ConflictException("Approval requires all hard gates and no unresolved pause");
-    if (automatic && (current.effectiveAutonomy !== "L3" || current.approvedShortsAtStart < 10))
-      throw new ConflictException("L3 is unavailable");
-    await db.videoRun.updateMany({
-      where: { id },
-      data:
-        decision === "APPROVE"
-          ? { state: "SCHEDULED", pauseReason: null }
-          : { effectiveAutonomy: "L2", pauseReason: "HUMAN_REJECTED" },
-    });
-    return {
-      value: null,
-      payload: {
-        decision,
-        actorId: context.userId,
-        automatic,
-        criticAgreed: report ? report.recommendation === decision : null,
-      },
-    };
   }
   public async settle(context: Context, run: Run): Promise<void> {
     if (run.effectiveAutonomy !== "L3" || run.state !== "AWAITING_APPROVAL") return;
@@ -159,11 +107,8 @@ export class AutonomyService {
       await this.decide(context, run.id, "APPROVE", true);
       return;
     }
-    await this.store.mutate(context, run.id, "autonomy_fallback", async (db, current) => {
-      if (current.state !== "AWAITING_APPROVAL" || current.effectiveAutonomy !== "L3")
-        throw new ConflictException("Run changed");
-      await db.videoRun.updateMany({ where: { id: run.id }, data: { effectiveAutonomy: "L2" } });
-      return { value: null, payload: { reason: "GATE_FAILED", from: "L3", to: "L2" } };
-    });
+    await this.store.mutate(context, run.id, "autonomy_fallback", (db, current) =>
+      fallbackToL2(db, current),
+    );
   }
 }

@@ -17,12 +17,12 @@ import { PlanningReferenceAssetsService } from "../asset/planning-reference-asse
 import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { PlanningService } from "../script/planning.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
-import { MEDIA_OVERHEAD } from "./media-prices.js";
+import { MEDIA_OVERHEAD, textCallCents } from "./media-prices.js";
 type PlannedMedia = { script: PlanningScript; manifest: PlanningManifest };
 @Injectable()
 export class MediaPlanning {
@@ -153,10 +153,7 @@ export class MediaPlanning {
     });
     if (previous?.state === "SUCCEEDED") return this.output(previous.output).output;
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
-    const cost = reservationCents({
-      currency: "USD",
-      microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
-    });
+    const cost = textCallCents();
     const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
     const pending =
       previous &&
@@ -175,7 +172,7 @@ export class MediaPlanning {
         modelId,
       ));
     const result = await this.textResult(context, run, step, input, modelId, !!pending);
-    await this.validateAcceptedPlan(context, step, input.promptVersion.role, result.output);
+    await this.validateAcceptedPlan(context, run, step, input.promptVersion.role, result.output);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
@@ -208,7 +205,7 @@ export class MediaPlanning {
           usage: z.record(z.string(), z.unknown()),
         })
         .safeParse(step.output);
-      if (!saved.success)
+      if (!saved.success || !step.providerJobId || saved.data.providerJobId !== step.providerJobId)
         throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
       return saved.data;
     }
@@ -228,12 +225,13 @@ export class MediaPlanning {
 
   private async validateAcceptedPlan(
     context: Context,
+    run: Run,
     step: Step,
     role: string,
     output: unknown,
   ): Promise<void> {
     try {
-      this.validatePlan(role, output);
+      this.validatePlan(run, role, output);
     } catch (error) {
       const accepted = await this.access.runs.store
         .scoped(context)
@@ -247,12 +245,12 @@ export class MediaPlanning {
       throw error;
     }
   }
-  private validatePlan(role: string, output: unknown): void {
+  private validatePlan(run: Run, role: string, output: unknown): void {
     if (role === "director") {
       const shots = z.array(ShotSpecSchema).parse(output);
       if (shots.some((shot) => !Number.isInteger(shot.durationSeconds)))
         throw new Error("Omni requires integer-second shots");
-      runEstimate(shots);
+      runEstimate(shots, false, pinnedBudget(run).hardCapMinor);
     }
   }
   private async textReceipt(

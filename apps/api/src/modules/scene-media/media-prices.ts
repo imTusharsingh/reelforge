@@ -14,8 +14,6 @@ export const MEDIA_OVERHEAD = Object.freeze({
   textMicroUsd: 500000,
   ttsPerTenSecondsMicroUsd: 2250,
   musicMicroUsd: 80000,
-  initialImages: 3,
-  imagesPerShot: 2,
 });
 const models = (): ProviderModels => ({
   video: process.env.GEMINI_VIDEO_MODEL ?? "",
@@ -87,16 +85,37 @@ export function clipMoney(
   const images = (shot.references?.length ?? 0) + (shot.firstFrameFrom ? 2 : 1);
   return { ...cost, microUsd: cost.microUsd + (fallback ? images * imageSurcharge() : 0) };
 }
-export function overheadCents(shots: readonly Pick<ShotSpec, "durationSeconds">[]): number {
-  const seconds = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+export function imageCallCents(): number {
+  return reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.imageMicroUsd });
+}
+export function textCallCents(): number {
   return reservationCents({
     currency: "USD",
-    microUsd: Math.ceil(
-      (MEDIA_OVERHEAD.initialImages + MEDIA_OVERHEAD.imagesPerShot * shots.length) *
-        MEDIA_OVERHEAD.imageMicroUsd +
-        MEDIA_OVERHEAD.textMicroUsd +
-        (seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd +
-        MEDIA_OVERHEAD.musicMicroUsd,
-    ),
+    microUsd: Math.ceil(MEDIA_OVERHEAD.textMicroUsd / 3),
   });
+}
+export function audioCosts(seconds: number): { narration: number; music: number } {
+  return {
+    narration: reservationCents({
+      currency: "USD",
+      microUsd: Math.ceil((seconds / 10) * MEDIA_OVERHEAD.ttsPerTenSecondsMicroUsd),
+    }),
+    music: reservationCents({ currency: "USD", microUsd: MEDIA_OVERHEAD.musicMicroUsd }),
+  };
+}
+
+export function plannedRunOverheadCents(
+  shots: readonly Pick<ShotSpec, "durationSeconds">[],
+  planningSpentMinor = 3 * textCallCents(),
+): number {
+  if (!Number.isSafeInteger(planningSpentMinor) || planningSpentMinor < 0)
+    throw new Error("Invalid recorded planning cost");
+  const audio = audioCosts(shots.reduce((sum, shot) => sum + shot.durationSeconds, 0));
+  return (
+    planningSpentMinor +
+    shots.length * imageCallCents() +
+    audio.narration +
+    audio.music +
+    textCallCents()
+  );
 }

@@ -1,3 +1,5 @@
+import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
+import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { RunOutputs } from "./video-run.outputs.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import {
@@ -8,7 +10,7 @@ import {
 } from "@reelforge/contracts";
 import { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
-import { runEstimate } from "../usage-budget/run-envelope.js";
+import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
 import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.js";
 
 @Injectable()
@@ -49,7 +51,10 @@ export class RunPlanning {
         await scoped.videoRunStep.updateMany({
           where: { id: step.id, runId: run.id },
           data: {
-            output: json({ result: output, storageArtifacts: artifacts }),
+            output:
+              run.state === "ASSEMBLING"
+                ? await assemblyStageOutput(scoped, run.id, output, artifacts)
+                : json({ result: output, storageArtifacts: artifacts }),
             state: waiting ? "WAITING_APPROVAL" : "SUCCEEDED",
             finishedAt: new Date(),
           },
@@ -106,10 +111,23 @@ export class RunPlanning {
       ? records.map((row) => ShotSpecSchema.parse(row.document))
       : stubShots(run, this.brief(run));
     this.validateShots(run, shots);
-    const estimate = runEstimate(shots);
+    const { targetMinor, hardCapMinor } = pinnedBudget(run);
     const result = await this.runs.store.mutate(context, run.id, "budget_estimated", async (db) => {
+      if (await db.budgetEnvelope.findFirst({ where: { runId: run.id } }))
+        return { value: null, payload: json({ replay: true }) };
+      const planningSpentMinor = await settledMediaSpend(db, run.id, true);
+      const estimate = runEstimate(shots, false, hardCapMinor, planningSpentMinor);
       await db.budgetEnvelope.create({
-        data: { workspaceId: context.workspaceId, runId: run.id, ...estimate },
+        data: {
+          workspaceId: context.workspaceId,
+          runId: run.id,
+          targetMinor,
+          hardCapMinor,
+          baseEstimateMinor: estimate.baseEstimateMinor,
+          reshootReserveMinor: estimate.reshootReserveMinor,
+          spentMinor: planningSpentMinor,
+          route: estimate.route,
+        },
       });
       for (const shot of shots)
         await db.videoRunStep.create({
@@ -126,7 +144,7 @@ export class RunPlanning {
         value: null,
         payload: {
           ...estimate,
-          warn: estimate.baseEstimateMinor + estimate.reshootReserveMinor > 600,
+          warn: estimate.baseEstimateMinor + estimate.reshootReserveMinor > targetMinor,
         },
       };
     });
@@ -149,7 +167,7 @@ export class RunPlanning {
           where: { id: step.id },
           data: {
             state: "SUCCEEDED",
-            output: json({ result: output, storageArtifacts: artifacts }),
+            output: await assemblyStageOutput(scoped, run.id, output, artifacts),
             finishedAt: new Date(),
           },
         });

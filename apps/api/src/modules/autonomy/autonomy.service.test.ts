@@ -34,7 +34,7 @@ describe("V8 durable decisions on fake V3 store", () => {
     await expect(f.service.decide(context, f.run.id, "APPROVE")).rejects.toThrow("hard gates");
     f.run.pauseReason = "RECONCILE_REQUIRED";
     await expect(f.service.decide(context, f.run.id, "APPROVE")).rejects.toThrow(
-      "unresolved pause",
+      "billing reconciliation",
     );
     expect(f.db.events).toHaveLength(0);
   });

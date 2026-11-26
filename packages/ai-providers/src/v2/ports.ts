@@ -33,6 +33,9 @@ export type VideoOptions = Readonly<{
   lastFrame?: MediaInput;
   extension?: Readonly<{ providerJobId: string; previousSeconds: number }>;
 }>;
+export type RecordBilledSeconds = (seconds: number) => Promise<void>;
+/** Handles only media delivery after the provider status and billing have been processed. */
+export type MediaDeliveryFailure = (cause: unknown) => never;
 export interface VideoGenPort {
   capabilities(): ProviderCapability;
   estimate(spec: ShotSpec): Money;
@@ -41,8 +44,12 @@ export interface VideoGenPort {
     idemKey: string,
     options?: VideoOptions,
   ): Promise<{ providerJobId: string }>;
-  poll(providerJobId: string): Promise<JobStatus>;
-  fetch(providerJobId: string): Promise<ClipArtifact>;
+  poll(providerJobId: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus>;
+  fetch(
+    providerJobId: string,
+    recordBilling?: RecordBilledSeconds,
+    onMediaFailure?: MediaDeliveryFailure,
+  ): Promise<ClipArtifact>;
 }
 export type ImageSpec = Readonly<{ prompt: string; references?: readonly MediaInput[] }>;
 export type TtsSpec = Readonly<{ text: string; voice: string }>;

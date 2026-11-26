@@ -1,4 +1,5 @@
-import type { ChannelBrief, ShotSpec } from "@reelforge/contracts";
+import type { ClipArtifact } from "@reelforge/ai-providers";
+import type { ChannelBrief, MediaReceipt, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
 export interface StepHandler {
   execute(run: Run, brief: ChannelBrief, step: Step, context: Context): Promise<Json>;
@@ -25,6 +26,35 @@ export function stubShots(run: Run, brief: ChannelBrief): ShotSpec[] {
   void brief;
   throw new Error("V4 shot list required before generation");
 }
+export class ShotBillingFailure extends Error {
+  public constructor(
+    cause: unknown,
+    public readonly report?: {
+      providerId: string | null;
+      jobId: string | null;
+      receipt: VideoReceipt;
+    },
+  ) {
+    super("Could not record shot billing", { cause });
+  }
+  public static rethrow(cause: unknown): never {
+    throw new ShotBillingFailure(cause);
+  }
+}
+export class ShotMediaFailure extends Error {
+  public constructor(
+    public readonly providerId: string,
+    public readonly providerJobId: string,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : "Could not collect shot media", { cause });
+  }
+}
+export class InvalidVideoFormat extends ShotMediaFailure {
+  public constructor(providerId: string, providerJobId: string, cause?: Error) {
+    super(providerId, providerJobId, cause ?? new Error("Provider returned invalid 720p video"));
+  }
+}
 export interface VideoGenPort {
   readonly providerId: string;
   readonly modelId?: string;
@@ -32,19 +62,30 @@ export interface VideoGenPort {
   estimate(shot: ShotSpec, fallback: boolean): number;
   submit(shot: ShotSpec, idempotencyKey: string): Promise<{ providerJobId: string }>;
   reconcile(idempotencyKey: string): Promise<{ providerJobId: string } | null>;
-  poll(providerJobId: string): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
-  fetch(providerJobId: string): Promise<Buffer>;
-  metadata?(
-    id: string,
+  poll(
+    providerJobId: string,
+    billing?: ShotBilling,
+  ): Promise<"queued" | "running" | "succeeded" | "refused" | "failed">;
+  fetch(providerJobId: string, media?: ClipArtifact, billing?: ShotBilling): Promise<Buffer>;
+  collectReceipt?(
+    providerJobId: string,
     shot: ShotSpec,
-  ): {
-    seconds: number;
-    providerDurationSeconds?: number;
-    costMinor: number;
-    modelId: string;
-    promptVersion: string;
-  };
+    billing?: ShotBilling,
+  ): Promise<VideoReceipt>;
 }
+export type ShotBilling = {
+  shot: ShotSpec;
+  record: (receipt: VideoReceipt) => Promise<void>;
+};
+export type VideoReceipt = {
+  costBasis: MediaReceipt["costBasis"];
+  media: ClipArtifact | null;
+  seconds: number;
+  providerDurationSeconds: number | null;
+  costMinor: number;
+  modelId: string;
+  promptVersion: string;
+};
 export type MediaPortResolver = (
   context: Context,
   run: Run,
