@@ -2,7 +2,12 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { MediaReceiptSchema, type MediaReceipt } from "@reelforge/contracts";
-import { type MediaJobPort, type ClipArtifact, ProviderFailure } from "@reelforge/ai-providers";
+import {
+  type MediaJobPort,
+  type ClipArtifact,
+  ProviderFailure,
+  SubmissionRefused,
+} from "@reelforge/ai-providers";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import {
   ArtifactSchema,
@@ -13,6 +18,7 @@ import {
 } from "../runs/runs.types.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
+class TerminalMediaJobFailure extends ConflictException {}
 export class MediaChecksumMismatch extends Error {}
 
 type CompletedMedia = { receipt: MediaReceipt; artifact: Artifact };
@@ -59,12 +65,23 @@ export class MediaJobs {
         await this.access.paid.recordJob(context, claimed, job.providerJobId);
         step = await this.access.runs.attachJob(context, claimed, job.providerJobId);
       } catch (error) {
-        if (error instanceof ProviderFailure && !error.dispatched)
-          await this.accounts.cancelUndispatched(context, claimed);
+        if (
+          error instanceof SubmissionRefused ||
+          (error instanceof ProviderFailure && !error.dispatched)
+        ) {
+          if (
+            error instanceof SubmissionRefused ||
+            ((key === "music" || key === "narration") &&
+              ["INVALID", "REFUSAL", "NEEDS_HUMAN"].includes(error.kind))
+          ) {
+            const event = await this.access.paid.finalizeRejected(context, claimed, error);
+            await this.access.runs.events?.publish(event);
+          } else await this.accounts.cancelUndispatched(context, claimed);
+        }
         throw error;
       }
     }
-    return this.collect(context, key, port, step, modelId, promptVersion, seconds);
+    return this.collect(context, key, port, step, promptVersion, seconds);
   }
   private async recoverIntent(context: Context, step: Step): Promise<Step | null> {
     if (await this.accounts.recoverUndispatched(context, step)) return null;
@@ -81,17 +98,39 @@ export class MediaJobs {
   ): Promise<number | null> {
     const pending = step.providerJobId ? step : await this.recoverIntent(context, step);
     if (!pending) return null;
-    const { modelId } = z.object({ modelId: z.string().min(1) }).parse(pending.input);
     const result = await this.collect(
       context,
       step.key.slice("media:".length),
       port,
       pending,
-      modelId,
       "art-director:v2",
       0,
     );
     return result ? null : 12000;
+  }
+
+  /** Recover an existing audio admission without opening another intent. */
+  public async drainAudio<T>(
+    context: Context,
+    step: Step,
+    port: MediaJobPort<T>,
+    seconds: number,
+  ): Promise<void> {
+    const pending = step.providerJobId ? step : await this.recoverIntent(context, step);
+    if (!pending) return;
+    const key = z.enum(["media:narration", "media:music"]).parse(step.key);
+    try {
+      await this.collect(
+        context,
+        key.slice(6),
+        port,
+        pending,
+        key === "media:narration" ? "channel-narrator:v1" : "instrumental-bed:v1",
+        seconds,
+      );
+    } catch (error) {
+      if (!(error instanceof TerminalMediaJobFailure)) throw error;
+    }
   }
 
   private async collect<T>(
@@ -99,7 +138,6 @@ export class MediaJobs {
     key: string,
     port: MediaJobPort<T>,
     step: Step,
-    modelId: string,
     promptVersion: string,
     seconds: number,
   ): Promise<CompletedMedia | null> {
@@ -109,7 +147,7 @@ export class MediaJobs {
       const code = `PROVIDER_${status.toUpperCase()}`;
       const event = await this.access.paid.finalizeJobFailure(context, step, code);
       await this.access.runs.events?.publish(event);
-      throw new ConflictException(code);
+      throw new TerminalMediaJobFailure(code);
     }
     const media = await port.fetch(step.providerJobId!, seconds || undefined);
     const body = await this.bytes(context, media);
@@ -118,7 +156,7 @@ export class MediaJobs {
       key,
       providerId: "gemini",
       providerJobId: step.providerJobId,
-      modelId,
+      modelId: z.object({ modelId: z.string().min(1) }).parse(step.input).modelId,
       promptVersion,
       seconds: media.billedSeconds ?? seconds,
       costMinor: step.costMinor,

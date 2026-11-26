@@ -143,12 +143,22 @@ export function mergeShotReceipt(
       providerDurationSeconds: pendingMedia?.durationSeconds ?? null,
     },
   });
-  const budget = readReceiptBudget(step.output);
   return {
     priceChanged,
     previousCost: pending?.receipt.costMinor,
     cost: output.receipt.costMinor,
-    output: budget ? withReceiptBudget(json(output), budget) : json(output),
+    output: json({ ...admissionFields(step), ...output }),
+  };
+}
+
+export function admissionFields(step: Step): Record<string, unknown> {
+  const { receiptBudget, videoPricing, refusalRewrite } = z
+    .record(z.string(), z.unknown())
+    .parse(step.output ?? {});
+  return {
+    ...(receiptBudget !== undefined && { receiptBudget }),
+    ...(videoPricing !== undefined && { videoPricing }),
+    ...(refusalRewrite !== undefined && { refusalRewrite }),
   };
 }
 

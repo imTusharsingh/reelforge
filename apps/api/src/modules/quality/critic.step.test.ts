@@ -45,6 +45,12 @@ function fixture(
   const reedit = vi.fn();
   const assemble = vi.fn(() => []);
   const db = {
+    runEvent: {
+      findMany: (): { payload: { ordinal: number; attempt: number | undefined } }[] =>
+        attempts
+          .filter((item) => item.key === "shot-0")
+          .map((item) => ({ payload: { ordinal: 0, attempt: item.attempt } })),
+    },
     videoRunStep: {
       findMany: vi.fn(() => attempts),
       findFirst: vi.fn(() => null),

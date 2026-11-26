@@ -1,19 +1,14 @@
+import { closeSteps, releaseSteps } from "./run-close-steps.js";
+import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { createReshoot, replayedReshoot } from "./run-reshoot.js";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
+import { json, type Context, type Run, type Scoped, type Transaction } from "./runs.types.js";
 import {
-  json,
-  type Context,
-  type Run,
-  type Scoped,
-  type Step,
-  type Transaction,
-} from "./runs.types.js";
-import {
-  releaseSteps,
   activeSubmissionHold,
+  generationFailure,
   remainingSubmissionHold,
   SETTLED_SHOTS,
   submissionHold,
@@ -23,7 +18,6 @@ import {
   canRollback,
   hasSettledCharge,
   readAdmission,
-  readAdmissions,
 } from "../usage-budget/run-admission-state.js";
 import { closeReleasedMedia } from "../usage-budget/run-paid-admission.js";
 import { openCritics } from "../usage-budget/critic-admission.js";
@@ -129,7 +123,7 @@ export class RunsControl {
           providerJobId: null,
         },
       });
-      const hold = await this.closeSteps(context, db, tx, run, steps);
+      const hold = await closeSteps(context, db, tx, run, steps, "RUN_CANCELED");
       await db.videoRun.updateMany({
         where: { id },
         data: {
@@ -173,13 +167,14 @@ export class RunsControl {
             await db.videoRun.updateMany({ where: { id }, data: { pauseReason: reason } });
           return { value: reason, payload: { reason }, stepId, eventType: "reconcile_required" };
         }
-        if (!(
-          run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-          run.pauseReason === "OPERATOR_ABANDONED"
-        ))
+        if (
+          !run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+          run.pauseReason !== "OPERATOR_ABANDONED"
+        )
           throw new ConflictException("Run is not awaiting reconciliation");
         await releaseSteps(context.workspaceId, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
+          const rewrite = refusalRewrite(step);
           await db.videoRunStep.create({
             data: {
               workspaceId: context.workspaceId,
@@ -188,6 +183,7 @@ export class RunsControl {
               attempt: step.attempt + 1,
               idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
               input: json(step.input),
+              ...(rewrite && { output: { refusalRewrite: rewrite } }),
             },
           });
         }
@@ -208,28 +204,6 @@ export class RunsControl {
     });
   }
 
-  private async closeSteps(
-    context: Context,
-    db: Scoped,
-    tx: Transaction,
-    run: Run,
-    steps: Step[],
-  ): Promise<string | null> {
-    const admissions = await readAdmissions(db, tx, context.workspaceId, steps);
-    for (const admission of admissions)
-      if (admission.evidence === "released-nondispatch")
-        await closeReleasedMedia(db, run, admission.step);
-    await releaseSteps(
-      context.workspaceId,
-      db,
-      tx,
-      run.id,
-      admissions.filter(canRollback).map(({ step }) => step),
-      "RUN_CANCELED",
-    );
-    return remainingSubmissionHold(db, tx, run);
-  }
-
   public async resume(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
     const run = await this.runs.store.get(context, id);
@@ -246,6 +220,7 @@ export class RunsControl {
           eventType: "reconcile_required",
         };
       }
+      await this.assertGenerationResumable(db, current);
       const clearedStop =
         current.pauseReason === "EMERGENCY_STOP" &&
         [
@@ -333,5 +308,21 @@ export class RunsControl {
       if (current.state === "GENERATING") await this.runs.enqueue(context, current);
     }
     return result.value;
+  }
+  private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
+    if (
+      current.state === "NEEDS_HUMAN" &&
+      (await db.videoRunStep.findFirst({
+        where: {
+          runId: current.id,
+          key: { startsWith: "shot-" },
+          state: "FAILED",
+          error: { path: ["code"], equals: "PROVIDER_REFUSED" },
+        },
+      }))
+    )
+      throw new ConflictException("Refused shot requires human resolution");
+    if (current.state === "NEEDS_HUMAN" && (await generationFailure(db, current.id)))
+      throw new ConflictException("Required generation input failed");
   }
 }

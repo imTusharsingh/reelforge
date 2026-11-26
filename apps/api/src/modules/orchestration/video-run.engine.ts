@@ -1,10 +1,6 @@
-import {
-  deferCorrection,
-  needsReceiptMarker,
-  pendingCorrection,
-  pendingCorrectionWhere,
-} from "../usage-budget/run-pending-receipt.js";
-import { recordedShotPrice } from "../usage-budget/run-shot-receipt.js";
+import { recordShotFailure } from "./video-run.billing-recovery.js";
+import { acceptedAudio } from "../runs/run-audio.js";
+import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -19,7 +15,6 @@ import {
   type Run,
   type RunJob,
   type Scoped,
-  type Step,
   type Transaction,
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
@@ -27,9 +22,10 @@ import {
   collectibleFailedShots,
   failSettledGeneration,
   activeSubmissionHold,
-  SETTLED_SHOTS,
   unsettledShots,
 } from "../runs/run-outcomes.js";
+import { AssemblyInterrupted } from "./video-run.handlers.js";
+import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { transitionLocked } from "../runs/runs.store.js";
 import { InvalidVideoFormat, ShotBillingFailure, ShotMediaFailure } from "./video-run.handlers.js";
 import { RunGeneration } from "./video-run.generation.js";
@@ -96,8 +92,16 @@ export class VideoRunEngine {
               if (!accepted) return null;
             }
             if (job.stepId) return this.shot(context, run, job.stepId);
+            if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
+              await this.runs.enqueue(context, run);
+              return null;
+            }
+            if (run.state === "CANCELED" || (run.state === "ASSEMBLING" && run.pauseReason)) {
+              if (!job.assembly && this.runs.queue) return null;
+              return this.planning.collectAdmittedAudio?.(context, run) ?? null;
+            }
+            if (job.assembly && run.state !== "ASSEMBLING") return null;
             if (
-              run.state === "CANCELED" ||
               run.pauseReason === "EMERGENCY_STOP" ||
               run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
               run.pauseReason === "OPERATOR_ABANDONED"
@@ -107,6 +111,7 @@ export class VideoRunEngine {
             try {
               return await this.advance(context, run);
             } catch (error) {
+              if (error instanceof AssemblyInterrupted) return error.delay;
               if (
                 !(error instanceof SubmissionOutcomeUnknown) &&
                 error instanceof Error &&
@@ -155,46 +160,36 @@ export class VideoRunEngine {
     error: unknown,
     stepId?: string,
   ): Promise<null> {
-    const media = error instanceof ShotMediaFailure ? error : undefined;
     const cause =
       error instanceof ShotBillingFailure ||
       (error instanceof ShotMediaFailure && !(error instanceof InvalidVideoFormat))
         ? error.cause
         : error;
-    const hold = cause instanceof Error && cause.message.startsWith("RECONCILE_REQUIRED");
+    const hold =
+      cause instanceof MissingVideoPricing && stepId
+        ? MissingVideoPricing.hold(stepId)
+        : cause instanceof Error && cause.message.startsWith("RECONCILE_REQUIRED")
+          ? cause.message
+          : null;
     const result = await this.runs.store.mutate(
       context,
       run.id,
       hold ? "reconcile_required" : "transition",
       async (db, current, tx) => {
         if (stepId) {
-          const attempt = await db.videoRunStep.findFirst({
-            where: {
-              id: stepId,
-              runId: run.id,
-              key: { startsWith: "shot-" },
-              ...(media && { providerId: media.providerId, providerJobId: media.providerJobId }),
-            },
-          });
-          if (attempt && this.redundantFailure(attempt, error))
-            return {
-              value: null,
-              eventType: "redundant_clip_discarded",
-              stepId,
-              payload: { replay: true, reason: generationPause(cause) },
-            };
-          const report = error instanceof ShotBillingFailure ? error.report : undefined;
-          if (
-            attempt &&
-            report &&
-            (pendingCorrection(attempt) || needsReceiptMarker(attempt, report.receipt))
-          )
-            return deferCorrection(db, current, attempt, report);
-          if (media && !attempt) throw cause;
+          const result = await recordShotFailure(
+            db,
+            current,
+            stepId,
+            error,
+            cause,
+            generationPause(cause),
+          );
+          if (result) return result;
         }
         if (hold) {
-          await this.holdLocked(db, tx, run, current, cause.message);
-          return { value: null, payload: { reason: cause.message } };
+          await this.holdLocked(db, tx, run, current, hold);
+          return { value: null, payload: { reason: hold } };
         }
         if (current.state !== "GENERATING" || current.pauseReason) throw cause;
         return transitionLocked(db, current, "PAUSED_BUDGET", generationPause(cause));
@@ -203,22 +198,6 @@ export class VideoRunEngine {
     await this.runs.events?.publish(result.event);
     if (result.event.type === "redundant_clip_discarded") return null;
     throw cause;
-  }
-  private redundantFailure(step: Step, error: unknown): boolean {
-    if (error instanceof ShotBillingFailure) {
-      const report = error.report;
-      // A settled job can still owe a new charge. Only discard proven receipt replays.
-      return (
-        !!report &&
-        step.state === "SUCCEEDED" &&
-        report.providerId === step.providerId &&
-        report.jobId === step.providerJobId &&
-        !pendingCorrection(step) &&
-        recordedShotPrice(step, report.receipt)
-      );
-    }
-    if (error instanceof ShotMediaFailure) return step.state === "SUCCEEDED";
-    return SETTLED_SHOTS.some((state) => state === step.state);
   }
   private async advance(context: Context, run: Run): Promise<number | null> {
     if (run.state === "PLANNING") {
@@ -371,23 +350,31 @@ export class VideoRunEngine {
           run.state === "NEEDS_HUMAN" ||
           run.pauseReason
         ) {
-          const admitted =
-            run.state === "FAILED"
-              ? await collectibleFailedShots(db, this.runs.store.db, run)
-              : await db.videoRunStep.findMany({
-                  where: {
-                    runId: run.id,
-                    OR: [
-                      { key: { startsWith: "shot-" } },
-                      { key: { startsWith: "media:keyframe:" } },
-                    ],
-                    state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
-                  },
-                });
-          for (const step of admitted)
-            await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);
+          await this.enqueueAdmitted(context, db, run);
         } else await this.runs.enqueue(context, run);
       }
     }
+  }
+  private async enqueueAdmitted(context: Context, db: Scoped, run: Run): Promise<void> {
+    if (
+      ["CANCELED", "ASSEMBLING"].includes(run.state) &&
+      (await acceptedAudio(db, this.runs.store.db, run)).length
+    )
+      await this.runs.queue?.enqueue(
+        { ...this.runs.job(context, run.id), assembly: true },
+        run.revision,
+      );
+    const admitted =
+      run.state === "FAILED"
+        ? await collectibleFailedShots(db, this.runs.store.db, run)
+        : await db.videoRunStep.findMany({
+            where: {
+              runId: run.id,
+              OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:keyframe:" } }],
+              state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+            },
+          });
+    for (const step of admitted)
+      await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);
   }
 }

@@ -1,3 +1,4 @@
+import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import {
   ADMISSION_ORDERING,
@@ -76,6 +77,7 @@ async function releaseAdmission(
 ): Promise<number> {
   const where = { workspaceId: context.workspaceId, correlationId: step.id };
   const shot = step.key.startsWith("shot-");
+  const rewrite = refusalRewrite(step);
   if (reservationId) await releaseReservation(tx, usage, context, reservationId);
   await tx.providerRequest.updateMany({
     where: { ...where, errorCode: "PENDING" },
@@ -96,7 +98,7 @@ async function releaseAdmission(
     data: shot
       ? {
           state: "PENDING",
-          output: Prisma.DbNull,
+          output: rewrite ? { refusalRewrite: rewrite } : Prisma.DbNull,
           costMinor: null,
           providerId: null,
           startedAt: null,

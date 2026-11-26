@@ -44,6 +44,8 @@ export class MediaBindings {
     generation.recoverKeyframe = async (context, step): Promise<number | null> =>
       this.jobs.recoverKeyframe(context, step, (await this.ports.get(context)).image);
     const planning = module.get(RunPlanning, { strict: false });
+    planning.collectAdmittedAudio = (context, run): Promise<number | null> =>
+      this.assembly.collectAdmittedAudio(context, run);
     planning.handlers = {
       ...planning.handlers,
       PLANNING: this.handler(async (_run, brief) => ({
@@ -79,8 +81,8 @@ export class MediaBindings {
       : await this.frames.prepare(context, run, shot);
     if (!options) return null;
     const [ports, videoState] = await Promise.all([
-      this.ports.get(context, shot),
-      this.ports.videoState(context.workspaceId),
+      this.ports.get(context, admitted ? "collection" : shot),
+      admitted ? undefined : this.ports.videoState(context.workspaceId),
     ]);
     const routed = (
       port: typeof ports.omni | typeof ports.grok,

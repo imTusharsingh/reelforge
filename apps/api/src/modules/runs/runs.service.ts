@@ -1,3 +1,4 @@
+import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
 import { countApprovedShorts } from "../channel/brief-approvals.js";
 import { RunsArtifacts } from "./runs.artifacts.js";
@@ -141,6 +142,7 @@ export class RunsService {
     )
       return;
     const job = this.job(context, run.id);
+    if (run.state === "ASSEMBLING") job.assembly = true;
     const snapshot = run.inputSnapshot;
     if (
       !job.traceparent &&
@@ -198,17 +200,26 @@ export class RunsService {
     await this.artifacts.refreshManifests(context, id);
     const run = await this.store.get(context, id),
       db = this.store.scoped(context);
-    const [steps, envelope] = await Promise.all([
+    const [steps, envelope, requests] = await Promise.all([
       db.videoRunStep.findMany({
         where: { runId: id },
         orderBy: [{ key: "asc" }, { attempt: "asc" }],
       }),
       db.budgetEnvelope.findFirst({ where: { runId: id } }),
+      shotReshoots(db, id),
     ]);
     return {
       run,
       steps,
       envelope,
+      remainingReshoots: Object.fromEntries(
+        [...new Set(steps.map((step) => step.key))]
+          .filter((key) => key.startsWith("shot-"))
+          .map((key) => [
+            key,
+            Math.max(0, MAX_SHOT_RESHOOTS - requests.filter((r) => r.key === key).length),
+          ]),
+      ),
       artifactUrls: steps.map((step) => ({
         stepId: step.id,
         artifacts: this.artifacts.views(

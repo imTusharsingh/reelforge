@@ -1,3 +1,4 @@
+import { fitsAssemblyDuration } from "../script/planning-validation.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { RunOutputs } from "./video-run.outputs.js";
@@ -15,6 +16,7 @@ import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.
 
 @Injectable()
 export class RunPlanning {
+  public collectAdmittedAudio?: (context: Context, run: Run) => Promise<number | null>;
   public handlers: Readonly<Record<string, StepHandler>> = stepHandlers;
   public constructor(
     private readonly runs: RunsService,
@@ -182,8 +184,7 @@ export class RunPlanning {
       !shots.length ||
       new Set(shots.map((s) => s.ordinal)).size !== shots.length ||
       shots.some((s) => s.runId !== run.id || s.workspaceId !== run.workspaceId) ||
-      Math.abs(shots.reduce((sum, s) => sum + s.durationSeconds, 0) - brief.targetDurationSeconds) >
-        1
+      !fitsAssemblyDuration(shots, brief.targetDurationSeconds)
     )
       throw new ConflictException("Invalid shot list");
   }

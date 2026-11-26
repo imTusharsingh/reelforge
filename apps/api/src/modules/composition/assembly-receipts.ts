@@ -116,7 +116,12 @@ async function rewriteManifest(
   if (manifest.workspaceId !== context.workspaceId || manifest.runId !== runId)
     throw new Error("Stored assembly manifest provenance mismatch");
   const receipts = currentPrices(manifest.receipts, current);
-  const totalCostMinor = receipts.reduce((sum, receipt) => sum + receipt.costMinor, 0);
+  const totalCostMinor =
+    manifest.totalCostMinor +
+    receipts.reduce(
+      (delta, receipt, i) => delta + receipt.costMinor - manifest.receipts[i]!.costMinor,
+      0,
+    );
   // A manifest over the delivery contract's cap stays invalidated. The ledger keeps the actual cost.
   if (!AssemblyManifestSchema.shape.totalCostMinor.safeParse(totalCostMinor).success) return null;
   if (

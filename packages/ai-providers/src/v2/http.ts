@@ -65,6 +65,13 @@ export class ProviderFailure extends Error {
   }
 }
 
+/** A terminal content decision returned by the submission endpoint itself. */
+export class SubmissionRefused extends ProviderFailure {
+  public constructor(public readonly providerJobId: string | null) {
+    super("REFUSAL", true);
+  }
+}
+
 export class EmptyMediaResponse extends ProviderFailure {
   public constructor() {
     super("INVALID", true);

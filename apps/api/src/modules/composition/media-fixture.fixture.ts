@@ -21,8 +21,8 @@ import {
 import { ProviderArtifacts } from "../openai/provider-artifacts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
-async function fixtureMedia(
-  seconds: number,
+export async function fixtureMedia(
+  seconds = 5,
 ): Promise<{ clip: Buffer; image: Buffer; audio: Buffer }> {
   const root = await mkdtemp(join(tmpdir(), "reelforge-v5-fixture-"));
   const runner = new SpawnProcessRunner();

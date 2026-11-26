@@ -1,3 +1,5 @@
+import { claimPendingShot, shotPort } from "./video-run.claim.js";
+import { refusalRewrite, settleVideoRefusal } from "./video-run.refusal.js";
 import {
   isReceiptCorrection,
   pendingCorrection,
@@ -8,23 +10,20 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "../usage-budget/run-admission-state.js";
-import { ProviderFailure } from "@reelforge/ai-providers";
+import { ProviderFailure, SubmissionRefused } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
 import { RunsService } from "../runs/runs.service.js";
 import { RunsBoundary } from "../runs/runs.boundary.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
-import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
+import { type Context, type Run, type Step } from "../runs/runs.types.js";
 import { DispatchAdmissionError, RunPaidCalls } from "../usage-budget/run-paid.js";
+import { savedVideoPricing } from "../scene-media/media-prices.js";
 import { SETTLED_SHOTS, keyframeKey } from "../runs/run-outcomes.js";
 import { recordShotArtifact, captureShotReceipt } from "../usage-budget/run-billing.js";
 import { reconcileBilling, resumeAfterCorrection } from "./video-run.billing-recovery.js";
-import {
-  awaitingBilling,
-  pendingShotMedia,
-  withReceiptBudget,
-} from "../usage-budget/run-shot-receipt.js";
+import { awaitingBilling, pendingShotMedia } from "../usage-budget/run-shot-receipt.js";
 import { billingHold } from "../runs/run-outcomes.js";
 import { priceShot } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
@@ -38,6 +37,8 @@ import {
   type ShotBilling,
   type VideoReceipt,
 } from "./video-run.handlers.js";
+
+class ShotClaimCanceled extends Error {}
 
 @Injectable()
 export class RunGeneration {
@@ -84,6 +85,7 @@ export class RunGeneration {
       try {
         step = await this.submit(context, run, step, ports);
       } catch (error) {
+        if (error instanceof ShotClaimCanceled) return null;
         if (!(error instanceof ProviderFailure && error.kind === "OUTAGE" && !error.dispatched))
           throw error;
         const failed = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -99,6 +101,7 @@ export class RunGeneration {
       await this.complete(context, step, ports);
       return null;
     }
+    if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
     return this.poll(context, step, ports);
   }
 
@@ -111,6 +114,7 @@ export class RunGeneration {
     if (!step.providerJobId && step.state !== "RUNNING") {
       const stopped =
         run.state === "CANCELED" ||
+        (run.state === "NEEDS_HUMAN" && run.pauseReason === "PROVIDER_REFUSED") ||
         run.pauseReason === "EMERGENCY_STOP" ||
         run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
         run.pauseReason === "OPERATOR_ABANDONED";
@@ -142,7 +146,7 @@ export class RunGeneration {
   ): Promise<number | null> {
     const status = await withSpan(
       "run.provider.poll",
-      () => this.port(step, ports).poll(step.providerJobId!, this.billing(context, step)),
+      () => shotPort(step, ports).poll(step.providerJobId!, this.billing(context, step)),
       "CLIENT",
     );
     if (status === "queued" || status === "running") return 12000;
@@ -150,12 +154,11 @@ export class RunGeneration {
       metrics
         .counter("run_provider_results", "Provider outcomes")
         .inc({ provider: step.providerId ?? "unconfigured", status });
-      const event = await this.paid.finalizeJobFailure(
-        context,
-        step,
-        status === "refused" ? "PROVIDER_REFUSED" : "PROVIDER_FAILED",
-      );
-      await this.runs.events?.publish(event);
+      if (status === "refused") await settleVideoRefusal(this.runs, this.paid, context, step);
+      else {
+        const event = await this.paid.finalizeJobFailure(context, step, "PROVIDER_FAILED");
+        await this.runs.events?.publish(event);
+      }
       return null;
     }
     await this.complete(context, step, ports);
@@ -195,12 +198,16 @@ export class RunGeneration {
       }
       if (
         !(error instanceof ProviderFailure) ||
-        error.dispatched ||
-        (error.kind === "OUTAGE" && selected === ports.primary)
+        (error.dispatched && !(error instanceof SubmissionRefused)) ||
+        (error.kind === "OUTAGE" && selected === ports.primary && !refusalRewrite(step))
       )
         throw error;
-      const event = await this.paid.finalizeRejected(context, claimed, error);
-      await this.runs.events?.publish(event);
+      if (error instanceof SubmissionRefused)
+        await settleVideoRefusal(this.runs, this.paid, context, claimed, error.providerJobId);
+      else {
+        const event = await this.paid.finalizeRejected(context, claimed, error);
+        await this.runs.events?.publish(event);
+      }
       return this.runs.store
         .scoped(context)
         .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -235,7 +242,7 @@ export class RunGeneration {
       return step;
     const recovered = await withSpan(
       "run.provider.reconcile",
-      () => this.port(step, ports).reconcile(step.idempotencyKey),
+      () => shotPort(step, ports).reconcile(step.idempotencyKey),
       "CLIENT",
     );
     if (!recovered) {
@@ -257,6 +264,7 @@ export class RunGeneration {
       run.id,
       "dispatch_reserved",
       async (db, current, tx) => {
+        if (current.state === "CANCELED") throw new ShotClaimCanceled();
         if (
           current.state !== "GENERATING" ||
           current.pauseReason === "EMERGENCY_STOP" ||
@@ -265,22 +273,19 @@ export class RunGeneration {
         )
           throw new ConflictException("Run is not generating");
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const { provider, amount, estimate } = priceShot(current, budget, ports, shot);
-        const claimed = await db.videoRunStep.updateMany({
-          where: { id: step.id, state: "PENDING", idempotencyKey: step.idempotencyKey },
-          data: {
-            state: "RUNNING",
-            startedAt: new Date(),
-            costMinor: amount,
-            providerId: provider.providerId,
-            output: withReceiptBudget(json({}), {
-              admittedMinor: amount,
-              bufferMinor: amount - estimate,
-              estimateMinor: estimate,
-            }),
-          },
-        });
-        if (!claimed.count) throw new ConflictException("Step already claimed");
+        const rewrite = refusalRewrite(step);
+        const route = rewrite
+          ? shotPort({ ...step, providerId: rewrite.providerId }, ports) === ports.fallback
+            ? "FALLBACK"
+            : "PRIMARY"
+          : budget.route;
+        const { provider, amount, estimate } = priceShot(
+          current,
+          { ...budget, route },
+          ports,
+          shot,
+        );
+        await claimPendingShot(db, step, provider, shot, amount, estimate);
         await db.budgetEnvelope.updateMany({
           where: { id: budget.id, revision: budget.revision },
           data: { reservedMinor: budget.reservedMinor + amount, revision: budget.revision + 1 },
@@ -301,14 +306,6 @@ export class RunGeneration {
     );
     await this.runs.events?.publish(claim.event);
     return claim.value;
-  }
-  private port(step: Step, ports: { primary: VideoGenPort; fallback: VideoGenPort }): VideoGenPort {
-    const registry = new Map(
-      [ports.primary, ports.fallback].map((port) => [port.providerId, port]),
-    );
-    const port = step.providerId ? registry.get(step.providerId) : undefined;
-    if (!port) throw new ConflictException("RECONCILE_REQUIRED: stored provider is unavailable");
-    return port;
   }
   private recordSuccess(cost: number, step: Step, started: number): void {
     metrics
@@ -340,6 +337,7 @@ export class RunGeneration {
   }
   private billing(context: Context, step: Step): ShotBilling {
     return {
+      savedOutput: step.output,
       shot: ShotSpecSchema.parse(step.input),
       record: async (receipt): Promise<void> => {
         await this.capture(context, step, receipt);
@@ -352,7 +350,7 @@ export class RunGeneration {
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<void> {
     const started = step.startedAt?.getTime() ?? Date.now();
-    const port = this.port(step, ports);
+    const port = shotPort(step, ports);
     const recovering = !!pendingShotMedia(step);
     const billing = this.billing(context, step);
     if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {

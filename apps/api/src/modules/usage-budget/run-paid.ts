@@ -1,4 +1,5 @@
-import { readReceiptBudget } from "./run-shot-receipt.js";
+import { AUDIO_KEYS, failedAudio } from "../runs/run-audio.js";
+import { finalizeFailed } from "./run-paid-failure.js";
 import {
   canConfirmRejection,
   BILLING_OVERAGE,
@@ -14,14 +15,18 @@ import {
   rollbackAdmission,
   recordReservation,
 } from "./run-paid-admission.js";
-import { ProviderFailure, providerFailureMessage } from "@reelforge/ai-providers";
+import {
+  ProviderFailure,
+  SubmissionRefused,
+  providerFailureMessage,
+} from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
-import { submissionHold, remainingSubmissionHold, failRunIfSettled } from "../runs/run-outcomes.js";
+import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js";
 
 export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
@@ -124,6 +129,8 @@ export class RunPaidCalls {
           run.pauseReason?.startsWith("RECONCILE_REQUIRED")
         )
           throw new DispatchAdmissionError("Paid dispatch is closed");
+        if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
+          throw new DispatchAdmissionError("Required audio input failed");
         await assertRunCap(db, run, current.costMinor ?? 0, current.id);
         await assertCriticRevision(db, tx, run, current);
         const { reservation, evidence } = await readAdmission(tx, context, current);
@@ -153,7 +160,11 @@ export class RunPaidCalls {
     try {
       return await call();
     } catch (error) {
-      if (error instanceof ProviderFailure && !error.dispatched) throw error;
+      if (
+        error instanceof SubmissionRefused ||
+        (error instanceof ProviderFailure && !error.dispatched)
+      )
+        throw error;
       return this.holdUnknown(context, step, error);
     }
   }
@@ -198,86 +209,48 @@ export class RunPaidCalls {
     step: Step,
     failure: ProviderFailure,
   ): Promise<Event> {
-    if (failure.dispatched) throw new ConflictException("Provider dispatch was not ruled out");
-    const reason = ["REFUSAL", "NEEDS_HUMAN"].includes(failure.kind)
-      ? "PROVIDER_REFUSED"
-      : `PROVIDER_${failure.kind}`;
-    return this.finalizeFailed(
+    if (failure.dispatched && !(failure instanceof SubmissionRefused))
+      throw new ConflictException("Provider dispatch was not ruled out");
+    const reason =
+      failure.http?.status === 403
+        ? "PROVIDER_PERMISSION_DENIED"
+        : failure.http?.status === 401
+          ? "PROVIDER_UNAUTHENTICATED"
+          : ["REFUSAL", "NEEDS_HUMAN"].includes(failure.kind)
+            ? "PROVIDER_REFUSED"
+            : `PROVIDER_${failure.kind}`;
+    return finalizeFailed(
+      this.store,
+      this,
       context,
       step,
       reason,
       providerFailureMessage(failure.kind, failure.http),
-      false,
+      failure.dispatched,
+      failure instanceof SubmissionRefused ? failure.providerJobId : null,
     );
   }
 
   public async finalizeJobFailure(context: Context, step: Step, reason: string): Promise<Event> {
-    return this.finalizeFailed(context, step, reason, "Provider job ended unsuccessfully", true);
-  }
-
-  private async finalizeFailed(
-    context: Context,
-    step: Step,
-    reason: string,
-    message: string,
-    dispatched: boolean,
-  ): Promise<Event> {
-    const result = await this.store.mutate(
+    return finalizeFailed(
+      this.store,
+      this,
       context,
-      step.runId,
-      "step_failed",
-      async (db, run, tx) => {
-        const current = await db.videoRunStep.findFirstOrThrow({
-          where: { id: step.id, runId: run.id },
-        });
-        if (current.state === "FAILED")
-          return { value: null, payload: { replay: true }, stepId: step.id };
-        if (
-          current.idempotencyKey !== step.idempotencyKey ||
-          current.state !== (dispatched ? "WAITING_EXTERNAL" : "RUNNING") ||
-          Boolean(current.providerJobId) !== dispatched
-        )
-          throw new ConflictException("Dispatch claim changed");
-        const amount = current.costMinor ?? 0;
-        const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
-        await this.settleFailedRequest(tx, context, current, message, dispatched, cost);
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: {
-            state: "FAILED",
-            costMinor: cost,
-            finishedAt: new Date(),
-            error: { code: reason, message },
-          },
-        });
-        const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
-        if (budget)
-          await db.budgetEnvelope.updateMany({
-            where: { id: budget.id },
-            data: {
-              reservedMinor: budget.reservedMinor - amount,
-              spentMinor: budget.spentMinor + cost,
-              revision: budget.revision + 1,
-            },
-          });
-        await failRunIfSettled(db, tx, run, current, { code: reason, message });
-        return {
-          value: null,
-          payload: { reason, message, releasedMinor: amount },
-          stepId: step.id,
-        };
-      },
+      step,
+      reason,
+      "Provider job ended unsuccessfully",
+      true,
     );
-    return result.event;
   }
 
-  private async settleFailedRequest(
+  public async settleFailedRequest(
     tx: Transaction,
     context: Context,
     step: Step,
     message: string,
     dispatched: boolean,
     cost: number,
+    providerJobId = step.providerJobId,
   ): Promise<void> {
     if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
       throw new ConflictException("Paid dispatch outcome changed");
@@ -291,7 +264,11 @@ export class RunPaidCalls {
       data: {
         status: "FAILED",
         actualCost: dispatched ? null : 0,
-        responseMetadata: { dispatched, costKnown: !dispatched },
+        responseMetadata: {
+          dispatched,
+          costKnown: !dispatched,
+          ...(providerJobId ? { providerJobId } : {}),
+        },
         errorCode: code,
         errorMessage: message,
       },

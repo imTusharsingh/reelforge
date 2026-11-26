@@ -43,19 +43,27 @@ export class ScriptwriterService implements Scriptwriter {
     validatePlanningAccess(context, request);
 
     const prompt = await this.prompts.capture(context, request.brief.channelId, "scriptwriter");
+    let usedPrompt = prompt.receipt;
     const formatTemplate = await this.prompts.format(context, request.format);
+    const validate = (value: unknown): PlanningScript => {
+      const script = validatePlanningScript(value, request);
+      screen(request, JSON.stringify(script));
+      return script;
+    };
     const output = await this.text.generate({
       workspaceId: context.workspaceId,
       runId: request.runId,
       idempotencyKey: `${request.runId}:scriptwriter`,
       modelId: planningModels.text,
       schema: PlanningScriptSchema,
+      validateOutput: validate,
       promptVersion: prompt.receipt,
+      onPromptUsed: (receipt) => {
+        usedPrompt = receipt;
+      },
       prompt: `${prompt.prompt}\n${JSON.stringify({ request, formatTemplate })}`,
     });
-    const script = validatePlanningScript(output, request);
-    screen(request, JSON.stringify(script));
-    return { script, prompt: prompt.receipt };
+    return { script: validate(output), prompt: usedPrompt };
   }
 }
 @Injectable()
@@ -74,6 +82,7 @@ export class DirectorService implements Director {
     const script = validatePlanningScript(valueScript, request);
     screen(request, JSON.stringify(script));
     const prompt = await this.prompts.capture(context, request.brief.channelId, "director");
+    let usedPrompt = prompt.receipt;
     const shots = PlanningShotsSchema.parse(
       await this.text.generate({
         workspaceId: context.workspaceId,
@@ -81,11 +90,17 @@ export class DirectorService implements Director {
         idempotencyKey: `${request.runId}:director`,
         modelId: planningModels.text,
         schema: PlanningShotsSchema,
+        validateOutput: (value): void => {
+          validatePlanningShots(value, request, script);
+        },
         promptVersion: prompt.receipt,
+        onPromptUsed: (receipt) => {
+          usedPrompt = receipt;
+        },
         prompt: `${prompt.prompt}\n${JSON.stringify({ request, script })}`,
       }),
     );
     validatePlanningShots(shots, request, script);
-    return { shots, prompt: prompt.receipt };
+    return { shots, prompt: usedPrompt };
   }
 }

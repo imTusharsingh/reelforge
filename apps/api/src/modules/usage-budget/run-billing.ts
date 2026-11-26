@@ -35,6 +35,7 @@ import {
 import type { RunPaidCalls } from "./run-paid.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
+  admissionFields,
   awaitingBilling,
   correctionPayload,
   deliveredShot,
@@ -385,7 +386,7 @@ export async function recordShotArtifact(
     const receiptBudget = readReceiptBudget(current.output);
     const cost = pending?.receipt.costMinor ?? receiptBudget?.estimateMinor ?? reserved;
     const output = json({
-      ...(receiptBudget && { receiptBudget }),
+      ...admissionFields(current),
       storageArtifacts: [artifact],
       ...(pending && {
         receipt: {

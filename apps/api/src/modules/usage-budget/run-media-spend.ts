@@ -25,7 +25,7 @@ export async function settledMediaSpend(
   const steps = await db.videoRunStep.findMany({
     where: {
       runId,
-      state: { in: ["SUCCEEDED", "FAILED"] },
+      state: { in: ["SUCCEEDED", "FAILED", "SKIPPED"] },
       OR: prefixes.map((startsWith) => ({ key: { startsWith } })),
     },
     select: { id: true, key: true, output: true, costMinor: true, state: true },

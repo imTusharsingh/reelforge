@@ -1,4 +1,11 @@
-import { ProviderFailure, ProviderHttp, record, requiredString, type Json } from "./http.js";
+import {
+  ProviderFailure,
+  SubmissionRefused,
+  ProviderHttp,
+  record,
+  requiredString,
+  type Json,
+} from "./http.js";
 import type {
   ArtifactStore,
   ClipArtifact,
@@ -25,7 +32,10 @@ export class Interactions {
       { ...body, background: true, store: true },
       idemKey,
     );
-    if (this.status(response) === "refused") throw new ProviderFailure("REFUSAL", true);
+    if (this.status(response) === "refused")
+      throw new SubmissionRefused(
+        typeof response.id === "string" && response.id.trim() ? response.id : null,
+      );
     return { providerJobId: requiredString(response.id) };
   }
 

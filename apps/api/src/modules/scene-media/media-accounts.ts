@@ -3,7 +3,7 @@ import type { Prisma } from "@reelforge/database";
 type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
-import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { clearResolvedSubmissionHold, failSettledGeneration } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   BudgetExhaustedError,
@@ -253,8 +253,20 @@ export class MediaAccounts {
               revision: budget.revision + 1,
             },
           });
-        await clearResolvedSubmissionHold(db, tx, run, step.id);
-        return { value: null, payload: { refundedMinor: step.costMinor }, stepId: step.id };
+        const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
+        const settled =
+          run.state === "NEEDS_HUMAN" &&
+          step.key.startsWith("media:keyframe:") &&
+          (await failSettledGeneration(db, { ...run, pauseReason }));
+        return {
+          value: null,
+          eventType: settled ? "transition" : "media_not_dispatched",
+          payload: {
+            refundedMinor: step.costMinor,
+            ...(settled ? { from: run.state, to: "FAILED" } : {}),
+          },
+          stepId: step.id,
+        };
       },
     );
     await this.access.runs.events?.publish(result.event);
@@ -286,7 +298,9 @@ export class MediaAccounts {
             output: json({ result: output, budgetAccounted: !!budget }),
           },
         });
-        await clearResolvedSubmissionHold(db, tx, run, step.id);
+        const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
+        if (run.state === "NEEDS_HUMAN" && step.key.startsWith("media:keyframe:"))
+          await failSettledGeneration(db, { ...run, pauseReason });
         const paid = budget
           ? null
           : await db.videoRunStep.aggregate({

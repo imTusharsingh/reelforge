@@ -72,26 +72,35 @@ export class ArtDirectorService implements ArtDirector {
     const voice = request.brief.narratorVoice;
     if (!voice) throw new Error("Channel narrator voice required");
     const prompt = await this.prompts.capture(context, request.brief.channelId, "art-director");
-    const plan = ArtPlanSchema.parse(
+    let usedPrompt = prompt.receipt;
+    const validate = (value: unknown): ArtPlan => {
+      const plan = ArtPlanSchema.parse(value);
+      if (plan.keyframePrompts.length !== shots.length)
+        throw new Error("One keyframe prompt per shot required");
+      screenPlanningContent(request, JSON.stringify(plan));
+      return plan;
+    };
+    const plan = validate(
       await this.text.generate({
         workspaceId: context.workspaceId,
         runId: request.runId,
         idempotencyKey: `${request.runId}:art-director`,
         modelId: planningModels.text,
         schema: ArtPlanSchema,
+        validateOutput: validate,
         promptVersion: prompt.receipt,
+        onPromptUsed: (receipt) => {
+          usedPrompt = receipt;
+        },
         prompt: `${prompt.prompt}\n${JSON.stringify({ request, shots })}`,
       }),
     );
-    if (plan.keyframePrompts.length !== shots.length)
-      throw new Error("One keyframe prompt per shot required");
-    screenPlanningContent(request, JSON.stringify(plan));
     let references = await this.resolveOrGenerate(context, request, plan);
     references = selectReferences(references);
     return {
       references,
       voiceId: voice.voiceId,
-      prompt: prompt.receipt,
+      prompt: usedPrompt,
       shots: shots.map((shot, ordinal) => ({
         ...shot,
         keyframePrompt: plan.keyframePrompts[ordinal]!,

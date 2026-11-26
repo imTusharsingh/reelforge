@@ -5,7 +5,7 @@ describe.skipIf(!process.env.DATABASE_URL)("Run reshoot limits", () => {
   const fixture = runsFixture();
 
   it("limits full re-edits to one and shot reshoots to two", async () => {
-    const t = await fixture.tenant("L2", 15);
+    const t = await fixture.tenant("L2", 30);
     await generating(t);
     await generateClips(t);
     await t.db.budgetEnvelope.updateMany({

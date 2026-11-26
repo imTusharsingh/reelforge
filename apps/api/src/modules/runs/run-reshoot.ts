@@ -1,3 +1,4 @@
+import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { envelopeRoom, pinnedBudget } from "../usage-budget/run-envelope.js";
 import type { Json, Run, Scoped, Step } from "./runs.types.js";
@@ -34,7 +35,8 @@ export async function createReshoot(
   const id = current.id;
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: id } });
   if (
-    source.attempt >= 3 ||
+    (await shotReshoots(db, id)).filter((request) => request.key === source.key).length >=
+      MAX_SHOT_RESHOOTS ||
     !envelopeRoom(
       {
         ...budget,

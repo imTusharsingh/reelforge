@@ -5,6 +5,26 @@ import { validatePlanningAccess } from "./planning-guardrails.js";
 import { pinPlanningShots } from "./planning-shots.js";
 import type { ReferenceLibrary } from "../reference-library/planning.ports.js";
 describe("V4 planning trust boundaries", () => {
+  it.each([
+    [29, 30, false],
+    [30, 30, true],
+    [31, 30, true],
+    [32, 30, false],
+    [45, 45, true],
+    [46, 45, false],
+  ] as const)(
+    "checks both the assembly bounds and target tolerance for %is against %is",
+    (seconds, target, valid) => {
+      const request = planningFixture();
+      request.brief.targetDurationSeconds = target;
+      const shots = shotsFixture(request).map((shot, index) => ({
+        ...shot,
+        durationSeconds: Math.floor(seconds / 6) + Number(index < seconds % 6),
+      }));
+      if (valid) expect(validatePlanningShots(shots, request)).toEqual(shots);
+      else expect(() => validatePlanningShots(shots, request)).toThrow("Shot duration mismatch");
+    },
+  );
   it("rejects duplicate ids, foreign shots, wrong fps and missing narration", () => {
     const request = planningFixture();
     let shots = shotsFixture(request);

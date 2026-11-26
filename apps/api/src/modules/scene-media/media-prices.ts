@@ -8,6 +8,26 @@ import {
   type Money,
 } from "@reelforge/ai-providers";
 import type { ShotSpec } from "@reelforge/contracts";
+import { z } from "zod";
+
+export class MissingVideoPricing extends Error {
+  public static readonly code = "MISSING_ADMISSION_VIDEO_PRICING";
+  public static hold(stepId: string): string {
+    return `RECONCILE_REQUIRED: missing admission video pricing (${stepId})`;
+  }
+}
+export const videoPricingSchema = z.object({
+  modelId: z.string().min(1),
+  microUsdPerSecond: z.int().nonnegative(),
+  inputImageMicroUsd: z.int().nonnegative(),
+});
+const savedPricingSchema = z.object({ videoPricing: videoPricingSchema });
+export function savedVideoPricing(output: unknown): z.infer<typeof videoPricingSchema> {
+  const parsed = savedPricingSchema.safeParse(output);
+  if (!parsed.success) throw new MissingVideoPricing("Missing admission video pricing");
+  return parsed.data.videoPricing;
+}
+
 /** Planning allowance from locked #112 calculator; USD micros, not per-call video rates. */
 export const MEDIA_OVERHEAD = Object.freeze({
   imageMicroUsd: 33600,

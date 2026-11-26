@@ -23,7 +23,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
   const token = randomUUID();
   afterEach(() => vi.unstubAllEnvs());
   beforeAll(async () => {
-    t = await fixture.tenant("L2", 7.5);
+    t = await fixture.tenant("L2", 30);
     other = await fixture.tenant("L2", 45, null, false);
     artifactRunId = (await t.runs.create(t.context, t.brief.id, randomUUID())).id;
     artifact = await t.artifacts.put(t.context, "clips", Buffer.from("fixture clip"), "video/mp4");
@@ -234,7 +234,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .expect(({ body }) => expect(body).toEqual(expected));
     const parent = t.runs.job(t.context, t.run.id);
     await t.engine.process(parent);
-    await t.engine.process(parent);
+    await t.engine.process({ ...parent, assembly: true });
     const path = `/api/v1/runs/${t.run.id}/reshoot/0?workspaceId=${t.context.workspaceId}`;
     const command = (url: string): request.Test =>
       request(app.getHttpServer() as never)
@@ -247,7 +247,7 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     expect(accepted.body.stepId).toBeTruthy();
     await generateClips(t);
     await t.engine.process(parent);
-    await t.engine.process(parent);
+    await t.engine.process({ ...parent, assembly: true });
     expect((await t.store.get(t.context, t.run.id)).state).toBe("CRITIC");
     await command(bound).expect(201, accepted.body);
     expect(await t.db.videoRunStep.count({ where: { runId: t.run.id, key: "shot-0" } })).toBe(2);

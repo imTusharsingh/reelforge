@@ -1,3 +1,5 @@
+import { MissingVideoPricing } from "../scene-media/media-prices.js";
+import { releaseSteps } from "./run-close-steps.js";
 import { correctionHold, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { criticPrefix } from "../usage-budget/critic-admission.js";
 import { QualityRubricSchema, type ShotSpec } from "@reelforge/contracts";
@@ -95,6 +97,14 @@ export async function remainingSubmissionHold(
   const admissions = await readAdmissions(db, tx, run.workspaceId, steps);
   const billing = admissions.find(({ evidence }) => evidence === "billing-overage");
   if (billing) return billingHold(billing.step.id);
+  const missingPrice = steps.find(
+    ({ error }) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === MissingVideoPricing.code,
+  );
+  if (missingPrice) return MissingVideoPricing.hold(missingPrice.id);
   if (
     run.pauseReason === legacyBillingHold ||
     (run.pauseReason === "EMERGENCY_STOP" && (await stoppedLegacyBillingHold(db, run.id, steps)))
@@ -121,7 +131,11 @@ export async function storedSubmissionHold(
   const step = await db.videoRunStep.findFirst({ where: { runId, id: stepId } });
   if (!step) return reason;
   if (SETTLED_SHOTS.some((state) => step.state === state)) return null;
-  if (recoverableJob(step) && !reason.startsWith("RECONCILE_REQUIRED: provider billing"))
+  if (
+    recoverableJob(step) &&
+    !reason.startsWith("RECONCILE_REQUIRED: provider billing") &&
+    !reason.startsWith("RECONCILE_REQUIRED: missing admission video pricing")
+  )
     return null;
   return reason;
 }
@@ -158,21 +172,49 @@ export async function clearResolvedSubmissionHold(
   return pauseReason;
 }
 
+/** The first permanent input failure owns the run diagnostic while accepted siblings drain. */
+export function generationFailure(db: Scoped, runId: string): Promise<Step | null> {
+  return db.videoRunStep.findFirst({
+    where: {
+      runId,
+      key: { startsWith: "shot-" },
+      state: "FAILED",
+      error: { path: ["closesGeneration"], equals: true },
+    },
+    orderBy: [{ finishedAt: "asc" }, { key: "asc" }],
+  });
+}
+
 export async function failSettledGeneration(db: Scoped, run: Run): Promise<boolean> {
   if (
-    !["GENERATING", "PAUSED_BUDGET"].includes(run.state) ||
+    !["GENERATING", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
     run.pauseReason?.startsWith("RECONCILE_REQUIRED")
   )
     return false;
   if (await db.videoRunStep.findFirst({ where: unsettledShots(run.id) })) return false;
-  const failed = await db.videoRunStep.findFirst({
-    where: {
-      runId: run.id,
-      OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:text:critic:" } }],
-      state: "FAILED",
-    },
-    orderBy: { key: "asc" },
-  });
+  const permanent = await generationFailure(db, run.id);
+  if (run.state === "NEEDS_HUMAN" && !permanent) return false;
+  if (
+    permanent &&
+    (await db.videoRunStep.findFirst({
+      where: {
+        runId: run.id,
+        key: { startsWith: "media:keyframe:" },
+        state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+      },
+    }))
+  )
+    return false;
+  const failed =
+    permanent ??
+    (await db.videoRunStep.findFirst({
+      where: {
+        runId: run.id,
+        OR: [{ key: { startsWith: "shot-" } }, { key: { startsWith: "media:text:critic:" } }],
+        state: "FAILED",
+      },
+      orderBy: { key: "asc" },
+    }));
   if (!failed) return false;
   const error = failed.error;
   const reason =
@@ -189,57 +231,6 @@ export async function failSettledGeneration(db: Scoped, run: Run): Promise<boole
   });
   return true;
 }
-export async function releaseSteps(
-  workspaceId: string,
-  db: Scoped,
-  tx: Transaction,
-  runId: string,
-  steps: Step[],
-  reason: "RUN_CANCELED" | "OPERATOR_ABANDONED" | "CRITIC_SUPERSEDED" | "CRITIC_REJECTED",
-): Promise<void> {
-  if (!steps.length) return;
-  const ids = steps.map((step) => step.id);
-  await tx.usageReservation.updateMany({
-    where: {
-      workspaceId,
-      idempotencyKey: { in: steps.map((step) => `m08:${step.idempotencyKey}`) },
-      status: "RESERVED",
-    },
-    data: { status: "RELEASED", releasedAt: new Date(), releaseReason: reason },
-  });
-  await tx.providerRequest.updateMany({
-    where: {
-      workspaceId,
-      correlationId: { in: ids },
-      status: "FAILED",
-      actualCost: null,
-    },
-    data: {
-      errorCode: reason,
-      actualCost: 0,
-      responseMetadata: { dispatched: false, costKnown: true },
-    },
-  });
-  await db.videoRunStep.updateMany({
-    where: { runId, id: { in: ids } },
-    data: { state: "CANCELLED", finishedAt: new Date(), output: { closedBy: reason } },
-  });
-  const refunded = steps
-    .filter((step) => step.state === "RUNNING")
-    .reduce((sum, step) => sum + (step.costMinor ?? 0), 0);
-  if (!refunded) return;
-  const budget = await db.budgetEnvelope.findFirst({ where: { runId } });
-  if (budget) {
-    await db.budgetEnvelope.updateMany({
-      where: { id: budget.id },
-      data: {
-        reservedMinor: Math.max(0, budget.reservedMinor - refunded),
-        revision: budget.revision + 1,
-      },
-    });
-  }
-}
-
 /** A terminal critic may race a legacy replacement. Fence every unsubmitted child under the run lock. */
 async function closeUnsubmittedShots(db: Scoped, tx: Transaction, run: Run): Promise<void> {
   const steps = await db.videoRunStep.findMany({

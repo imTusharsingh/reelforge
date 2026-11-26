@@ -1,6 +1,5 @@
 import {
   EmptyMediaResponse,
-  ProviderFailure,
   VideoRouter,
   ProviderLimiter,
   reservationCents,
@@ -25,7 +24,7 @@ import {
 import type { Context, Run } from "../runs/runs.types.js";
 import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
 import { MediaJobs, MediaChecksumMismatch } from "./media-jobs.js";
-import { imageSurcharge } from "./media-prices.js";
+import { imageSurcharge, savedVideoPricing, videoPricingSchema } from "./media-prices.js";
 
 /** A V2 router dispatch under V3's already-reserved envelope/ledger, with no second M18 reservation. */
 export class RoutedMediaVideo implements VideoGenPort {
@@ -73,9 +72,7 @@ export class RoutedMediaVideo implements VideoGenPort {
           throw new Error("V3 must re-estimate the envelope before fallback");
         },
       },
-      async (): Promise<never> => {
-        throw new ProviderFailure("NEEDS_HUMAN", true);
-      },
+      undefined, // V3 admits each rewrite separately.
       Date.now,
       this.videoState,
       this.recordOutcome,
@@ -143,31 +140,43 @@ export class RoutedMediaVideo implements VideoGenPort {
     ) {
       // Some ports supply billed seconds only on the fetched descriptor.
       if (billing && media.billedSeconds !== null)
-        await billing.record(this.price(billing.shot, media.billedSeconds, null));
+        await billing.record(this.price(billing, media.billedSeconds, null));
       throw new InvalidVideoFormat(this.providerId, id);
     }
+  }
+  public collectionPricing(shot: ShotSpec): ReturnType<typeof savedVideoPricing> {
+    const cap = this.native.capabilities();
+    return videoPricingSchema.parse({
+      modelId: cap.modelId,
+      microUsdPerSecond: cap.pricePerSecond["720p"],
+      inputImageMicroUsd:
+        this.providerId === "xai"
+          ? (shot.references.length + this.frameCount) * imageSurcharge()
+          : 0,
+    });
   }
   public async collectReceipt(
     id: string,
     shot: ShotSpec,
     billing?: ShotBilling,
   ): Promise<VideoReceipt & { media: ClipArtifact }> {
+    savedVideoPricing(billing?.savedOutput);
     const media = await this.fetchMedia(id, billing);
     await this.validateFormat(id, media, billing);
-    return this.price(shot, media.billedSeconds, media);
+    return this.price({ shot, savedOutput: billing?.savedOutput }, media.billedSeconds, media);
   }
   private recordBilling(billing?: ShotBilling): ((seconds: number) => Promise<void>) | undefined {
-    if (billing) return (seconds) => billing.record(this.price(billing.shot, seconds, null));
+    if (billing) return (seconds) => billing.record(this.price(billing, seconds, null));
   }
   private price<T extends ClipArtifact | null>(
-    shot: ShotSpec,
+    billing: Pick<ShotBilling, "shot" | "savedOutput">,
     billedSeconds: number | null,
     media: T,
   ): VideoReceipt & { media: T } {
     try {
-      const seconds = billedSeconds ?? shot.durationSeconds;
-      const cost = secondsCost(seconds, this.native.capabilities().pricePerSecond["720p"]!);
-      const images = shot.references.length + this.frameCount;
+      const pricing = savedVideoPricing(billing.savedOutput);
+      const seconds = billedSeconds ?? billing.shot.durationSeconds;
+      const cost = secondsCost(seconds, pricing.microUsdPerSecond);
       return {
         media,
         costBasis: billedSeconds === null ? "RESERVATION" : "BILLED",
@@ -175,9 +184,9 @@ export class RoutedMediaVideo implements VideoGenPort {
         providerDurationSeconds: media?.durationSeconds ?? null,
         costMinor: reservationCents({
           ...cost,
-          microUsd: cost.microUsd + (this.providerId === "xai" ? images * imageSurcharge() : 0),
+          microUsd: cost.microUsd + pricing.inputImageMicroUsd,
         }),
-        modelId: this.native.capabilities().modelId,
+        modelId: pricing.modelId,
         promptVersion: "art-director:v2",
       };
     } catch (cause) {

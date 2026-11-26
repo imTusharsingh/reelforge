@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { ShotSpecSchema } from "../../../../packages/contracts/src/foundations";
-import type { RunDetailView } from "../../../../packages/contracts/src/run-experience";
+import type { TimelineDetail } from "./client";
 import { Badge, Button, Card } from "../../components/ui/primitives";
 import { EmptyState, VideoPlayer } from "../../components/ui/studio";
 import { dollars, stateLabel } from "./view-model";
@@ -10,11 +10,11 @@ export function Storyboard({
   onRedo,
   busy,
 }: {
-  detail: RunDetailView;
+  detail: TimelineDetail;
   onRedo?: ((ordinal: number, sourceStepId: string) => void) | undefined;
   busy: boolean;
 }): JSX.Element {
-  const latest = new Map<string, RunDetailView["steps"][number]>();
+  const latest = new Map<string, TimelineDetail["steps"][number]>();
   for (const step of detail.steps) {
     if (!step.key.startsWith("shot-")) continue;
     const previous = latest.get(step.key);
@@ -37,6 +37,7 @@ export function Storyboard({
             key={step.id}
             step={step}
             media={detail.artifactUrls.find((entry) => entry.stepId === step.id)?.artifacts ?? []}
+            remaining={detail.remainingReshoots[step.key] ?? 0}
             onRedo={onRedo}
             busy={busy}
           />
@@ -49,11 +50,13 @@ export function Storyboard({
 function ShotCard({
   step,
   media,
+  remaining,
   onRedo,
   busy,
 }: {
-  step: RunDetailView["steps"][number];
-  media: RunDetailView["artifactUrls"][number]["artifacts"];
+  step: TimelineDetail["steps"][number];
+  remaining: number;
+  media: TimelineDetail["artifactUrls"][number]["artifacts"];
   onRedo: ((ordinal: number, sourceStepId: string) => void) | undefined;
   busy: boolean;
 }): JSX.Element {
@@ -77,7 +80,7 @@ function ShotCard({
       {onRedo && shot.success && (
         <Button
           tone="secondary"
-          disabled={busy || step.attempt >= 3}
+          disabled={busy || remaining === 0}
           onClick={() => onRedo(shot.data.ordinal, step.id)}
         >
           Redo shot

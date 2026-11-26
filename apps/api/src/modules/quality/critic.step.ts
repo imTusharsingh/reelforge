@@ -1,3 +1,4 @@
+import { completedRedos, shotReshoots } from "../runs/shot-reshoots.js";
 import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import type { ModuleRef } from "@nestjs/core";
@@ -8,7 +9,6 @@ import { MediaAssembly } from "../composition/media-assembly.js";
 import { RunsControl } from "../runs/runs.control.js";
 import { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Json, type Run, type Step } from "../runs/runs.types.js";
-import { assemblyRevision } from "../usage-budget/critic-admission.js";
 import { envelopeRoom } from "../usage-budget/run-envelope.js";
 import { criticReservationCents } from "./critic-text-port.js";
 import type { RunCritic } from "./run-critic.js";
@@ -35,16 +35,11 @@ export class CriticStep implements StepHandler {
       orderBy: { attempt: "desc" },
     });
     // A reshoot enters GENERATING through V3. Its next CRITIC visit reconciles this same step.
-    const completed = attempts.filter((item) => item.state === "SUCCEEDED");
+    const requests = await shotReshoots(db, run.id);
+    const completed = completedRedos(attempts, requests);
     if (completed.length) await this.refreshAssembly(runs, context, run, brief, completed);
-    const result = await this.critic().execute(
-      context,
-      run,
-      brief,
-      step,
-      assemblyRevision(attempts),
-    );
-    await this.redo(context, run, db, attempts, result.redo);
+    const result = await this.critic().execute(context, run, brief, step, 1 + completed.length);
+    await this.redo(context, run, db, attempts, requests, result.redo);
     const report = RunCriticReportSchema.parse(result.report);
     await this.savePackaging(runs, context, run, result);
     return json(report);
@@ -97,6 +92,7 @@ export class CriticStep implements StepHandler {
     run: Run,
     db: ReturnType<RunsService["store"]["scoped"]>,
     attempts: Step[],
+    requests: Awaited<ReturnType<typeof shotReshoots>>,
     redo: { shots: string[]; reedit: boolean },
   ): Promise<void> {
     if (!redo.shots.length && !redo.reedit) return;
@@ -110,7 +106,7 @@ export class CriticStep implements StepHandler {
         attempts.find((item) => item.key === key) ??
         (await db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key, attempt: 1 } }));
       if (
-        previous.attempt >= 3 ||
+        requests.filter((request) => request.key === key).length >= 2 ||
         !envelopeRoom(budget, (previous.costMinor ?? 0) + criticReservationCents())
       )
         continue;

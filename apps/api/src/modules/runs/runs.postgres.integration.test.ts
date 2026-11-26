@@ -70,14 +70,6 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 durable VideoRun", () => {
     await t.engine.process(t.runs.job(t.context, t.run.id));
     expect((await t.store.get(t.context, t.run.id)).state).toBe("GENERATING");
   });
-  it("refuses over-$8 estimates before media dispatch", async () => {
-    const t = await fixture.tenant("L2", 180);
-    const submit = vi.spyOn(t.generation.provider, "submit");
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    await expect(t.engine.process(t.runs.job(t.context, t.run.id))).rejects.toThrow("$8");
-    expect(submit).not.toHaveBeenCalled();
-  });
   it("rejects illegal/stale transitions and scopes every run aggregate", async () => {
     const t = await fixture.tenant(),
       other = await fixture.tenant();

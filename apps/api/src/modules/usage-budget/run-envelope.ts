@@ -35,7 +35,7 @@ export async function assertRunCap(
   const claims = await db.videoRunStep.findMany({
     where: {
       runId: run.id,
-      state: { notIn: ["SKIPPED", "CANCELLED"] },
+      state: { not: "CANCELLED" },
       ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
     },
   });

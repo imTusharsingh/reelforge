@@ -1,5 +1,6 @@
+import * as mediaPrices from "../scene-media/media-prices.js";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
@@ -8,10 +9,23 @@ import { runsFixture } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
   const fixture = runsFixture();
+  it("refuses over-$8 estimates before media dispatch", async () => {
+    const t = await fixture.tenant();
+    using price = vi.spyOn(mediaPrices, "clipMoney");
+    price.mockImplementation((shot) => ({
+      currency: "USD",
+      microUsd: 200_000 * shot.durationSeconds,
+    }));
+    const submit = vi.spyOn(t.generation.provider, "submit");
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    await expect(t.engine.process(t.runs.job(t.context, t.run.id))).rejects.toThrow("$8");
+    expect(submit).not.toHaveBeenCalled();
+  });
   it.each(["DAY", "MONTH", "RUN"] as const)(
     "uses the pinned Brief before and after envelope creation for the %s limit",
     async (period) => {
-      const t = await fixture.tenant("L2", 21);
+      const t = await fixture.tenant("L2", 30);
       const policy = {
         ...t.brief.budgetPolicy,
         targetMinor: 6,
