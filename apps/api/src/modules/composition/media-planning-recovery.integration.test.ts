@@ -208,11 +208,14 @@ describe.skipIf(
     ).toEqual(artifacts.map((artifact) => artifact.checksumSha256));
     const current = await t.store.get(t.context, t.run.id);
     const review = vi.fn(async (_context, run, _brief, _step, attempt: number) => {
-      await criticTextPort({ access, accounts, ports, context: t.context, run, attempt }).complete({
-        prompt: "Check editing",
-        jsonSchema: {},
-        parse: (value) => value,
-      });
+      await criticTextPort({ access, accounts, ports, context: t.context, run, attempt }).complete(
+        {
+          prompt: "Check editing",
+          jsonSchema: {},
+          parse: (value) => value,
+        },
+        `critic:${run.id}:${attempt}`,
+      );
       return {
         report,
         redo: { shots: attempt === 1 ? ["1"] : [], reedit: false },

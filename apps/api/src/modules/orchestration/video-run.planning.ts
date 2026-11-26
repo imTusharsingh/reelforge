@@ -16,7 +16,7 @@ import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.
 
 @Injectable()
 export class RunPlanning {
-  public collectCanceledAudio?: (context: Context, run: Run) => Promise<number | null>;
+  public collectAdmittedAudio?: (context: Context, run: Run) => Promise<number | null>;
   public handlers: Readonly<Record<string, StepHandler>> = stepHandlers;
   public constructor(
     private readonly runs: RunsService,

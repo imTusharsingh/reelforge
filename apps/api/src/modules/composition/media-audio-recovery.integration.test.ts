@@ -325,71 +325,82 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     });
   });
 
-  it.each(["attached", "ledger only"])("recovers %s audio after cancellation", async (boundary) => {
-    const { t, run, native, bindings, job } = await setup();
-    const music = vi.spyOn(native.music, "submit"),
-      voice = vi.spyOn(native.tts, "submit");
-    vi.spyOn(native.music, "poll").mockResolvedValueOnce("running").mockResolvedValue("succeeded");
-    const collect = vi.spyOn(native.music, "fetch");
-    if (boundary === "ledger only") {
-      const record = bindings.access.paid.recordJob.bind(bindings.access.paid);
-      vi.spyOn(bindings.access.paid, "recordJob").mockImplementation(async (...args) => {
-        await record(...args);
-        if (args[1].key === "media:music") throw new Error("worker stopped after receipt");
+  it.each(["attached", "ledger only", "ledger only during emergency stop"])(
+    "recovers %s audio with new dispatch closed",
+    async (boundary) => {
+      const { t, run, native, bindings, job } = await setup();
+      const music = vi.spyOn(native.music, "submit"),
+        voice = vi.spyOn(native.tts, "submit");
+      vi.spyOn(native.music, "poll")
+        .mockResolvedValueOnce("running")
+        .mockResolvedValue("succeeded");
+      const collect = vi.spyOn(native.music, "fetch");
+      if (boundary !== "attached") {
+        const record = bindings.access.paid.recordJob.bind(bindings.access.paid);
+        vi.spyOn(bindings.access.paid, "recordJob").mockImplementation(async (...args) => {
+          await record(...args);
+          if (args[1].key === "media:music") throw new Error("worker stopped after receipt");
+        });
+        await expect(t.engine.process(job)).rejects.toThrow("worker stopped after receipt");
+      } else expect(await t.engine.process(job)).toBe(12000);
+      const step = await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: run.id, key: "media:music" },
       });
-      await expect(t.engine.process(job)).rejects.toThrow("worker stopped after receipt");
-    } else expect(await t.engine.process(job)).toBe(12000);
-    const step = await t.db.videoRunStep.findFirstOrThrow({
-      where: { runId: run.id, key: "media:music" },
-    });
-    const submitted = await music.mock.results[0]!.value;
-    if (boundary === "ledger only") {
-      expect(step).toMatchObject({ state: "RUNNING", providerJobId: null });
-      expect(
-        await t.db.providerRequest.findFirst({ where: { correlationId: step.id } }),
-      ).toMatchObject({
-        responseMetadata: { providerJobId: submitted.providerJobId },
-      });
-    }
-    await t.control.cancel(t.context, run.id);
-    const restarted = bindMedia(t, native);
-    const render = vi.spyOn(restarted.renderer, "render");
-    vi.spyOn(bindings.renderer, "render").mockImplementation(async () => {
-      throw new Error("Unexpected render");
-    });
-    const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
-    t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
-    for (let sweep = 0; sweep < 2; sweep++) {
-      enqueue.mockClear();
-      await t.engine.recover();
-      const queued = enqueue.mock.calls.filter(([data]) => data.runId === run.id);
-      if (sweep === 0) expect(queued).toHaveLength(1);
-      for (const [data] of queued) {
-        expect(data.assembly).toBe(true);
-        await t.engine.process(data);
+      const submitted = await music.mock.results[0]!.value;
+      if (boundary !== "attached") {
+        expect(step).toMatchObject({ state: "RUNNING", providerJobId: null });
+        expect(
+          await t.db.providerRequest.findFirst({ where: { correlationId: step.id } }),
+        ).toMatchObject({
+          responseMetadata: { providerJobId: submitted.providerJobId },
+        });
       }
-    }
-    expect(await t.db.videoRunStep.findUnique({ where: { id: step.id } })).toMatchObject({
-      state: "SUCCEEDED",
-      providerJobId: submitted.providerJobId,
-    });
-    expect(collect).toHaveBeenCalledWith(submitted.providerJobId, 30);
-    expect(await t.store.get(t.context, run.id)).toMatchObject({
-      state: "CANCELED",
-      pauseReason: null,
-    });
-    expect(music).toHaveBeenCalledOnce();
-    expect(voice).toHaveBeenCalledOnce();
-    expect(collect).toHaveBeenCalledOnce();
-    expect(render).not.toHaveBeenCalled();
-    expect(await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).toMatchObject({
-      reservedMinor: 0,
-      spentMinor: 9,
-    });
-    expect(
-      await t.db.usageReservation.count({
-        where: { workspaceId: run.workspaceId, status: "COMMITTED" },
-      }),
-    ).toBe(2);
-  });
+      const stopped = boundary === "ledger only during emergency stop";
+      if (stopped) {
+        t.stop.stopped = true;
+        await expect(bindings.access.boundary.check(t.context, run)).rejects.toThrow("Run halted");
+      } else await t.control.cancel(t.context, run.id);
+      const restarted = bindMedia(t, native);
+      const render = vi.spyOn(restarted.renderer, "render");
+      vi.spyOn(bindings.renderer, "render").mockImplementation(async () => {
+        throw new Error("Unexpected render");
+      });
+      const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
+      t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
+      for (let sweep = 0; sweep < 2; sweep++) {
+        enqueue.mockClear();
+        await t.engine.recover();
+        const queued = enqueue.mock.calls.filter(([data]) => data.runId === run.id);
+        if (sweep === 0) expect(queued).toHaveLength(1);
+        for (const [data] of queued) {
+          expect(data.assembly).toBe(true);
+          await t.engine.process(data);
+        }
+      }
+      expect(await t.db.videoRunStep.findUnique({ where: { id: step.id } })).toMatchObject({
+        state: "SUCCEEDED",
+        providerJobId: submitted.providerJobId,
+      });
+      expect(collect).toHaveBeenCalledWith(submitted.providerJobId, 30);
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: stopped ? "ASSEMBLING" : "CANCELED",
+        pauseReason: stopped ? "EMERGENCY_STOP" : null,
+      });
+      expect(music).toHaveBeenCalledOnce();
+      expect(voice).toHaveBeenCalledOnce();
+      expect(collect).toHaveBeenCalledOnce();
+      expect(render).not.toHaveBeenCalled();
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({
+        reservedMinor: 0,
+        spentMinor: 9,
+      });
+      expect(
+        await t.db.usageReservation.count({
+          where: { workspaceId: run.workspaceId, status: "COMMITTED" },
+        }),
+      ).toBe(2);
+    },
+  );
 });

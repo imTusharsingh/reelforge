@@ -94,11 +94,11 @@ export class RunGeneration {
       if (!step.providerJobId)
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
-    if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
     if (pendingShotMedia(step)) {
       await this.complete(context, step, ports);
       return null;
     }
+    if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
     return this.poll(context, step, ports);
   }
 

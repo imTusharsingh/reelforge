@@ -229,7 +229,7 @@ export class MediaAssembly {
       return this.failAssembly(context, run, failed);
     }
   }
-  public async collectCanceled(context: Context, run: Run): Promise<number | null> {
+  public async collectAdmittedAudio(context: Context, run: Run): Promise<number | null> {
     const db = this.access.runs.store.scoped(context);
     const accepted = await acceptedAudio(db, this.access.runs.store.db, run);
     if (!accepted.length) return null;

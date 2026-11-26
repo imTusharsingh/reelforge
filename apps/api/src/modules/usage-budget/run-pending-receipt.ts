@@ -5,6 +5,7 @@ import type { ShotBillingFailure, VideoReceipt } from "../orchestration/video-ru
 import { transitionLocked } from "../runs/runs.store.js";
 import type { Context, Json, Run, Scoped, Step } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
+import { videoPricingSchema } from "../scene-media/media-prices.js";
 import { pendingShotMedia, pricedOutput } from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
@@ -106,15 +107,26 @@ export async function persistPendingCorrection(
       where: { id: observed.id, runId: run.id },
     });
     if (
+      current.idempotencyKey !== observed.idempotencyKey ||
       current.providerId !== marker.providerId ||
       current.providerJobId !== marker.providerJobId ||
       !["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state)
     )
       throw new ConflictException("Provider job claim changed");
     if (!needsReceiptMarker(current, receipt)) return { value: null, payload: { replay: true } };
+    // An older worker can replace the output while a priced fetch is in flight.
+    // Keep the admission terms used for this observation across a later billing timeout.
+    const fields = z.record(z.string(), z.json()).parse(current.output ?? {});
+    const observedTerms = z.object({ videoPricing: videoPricingSchema }).safeParse(observed.output);
     await db.videoRunStep.updateMany({
       where: { id: current.id, providerId: marker.providerId, providerJobId: marker.providerJobId },
-      data: { error: marker },
+      data: {
+        error: marker,
+        ...(fields.videoPricing === undefined &&
+          observedTerms.success && {
+            output: { ...fields, videoPricing: observedTerms.data.videoPricing },
+          }),
+      },
     });
     return {
       value: null,

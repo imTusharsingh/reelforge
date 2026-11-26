@@ -167,13 +167,14 @@ export class RunsControl {
             await db.videoRun.updateMany({ where: { id }, data: { pauseReason: reason } });
           return { value: reason, payload: { reason }, stepId, eventType: "reconcile_required" };
         }
-        if (!(
-          run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-          run.pauseReason === "OPERATOR_ABANDONED"
-        ))
+        if (
+          !run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+          run.pauseReason !== "OPERATOR_ABANDONED"
+        )
           throw new ConflictException("Run is not awaiting reconciliation");
         await releaseSteps(context.workspaceId, db, tx, id, [step], "OPERATOR_ABANDONED");
         if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
+          const rewrite = refusalRewrite(step);
           await db.videoRunStep.create({
             data: {
               workspaceId: context.workspaceId,
@@ -182,9 +183,7 @@ export class RunsControl {
               attempt: step.attempt + 1,
               idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
               input: json(step.input),
-              output: json(
-                step.output && refusalRewrite(step) ? { refusalRewrite: refusalRewrite(step) } : {},
-              ),
+              ...(rewrite && { output: { refusalRewrite: rewrite } }),
             },
           });
         }

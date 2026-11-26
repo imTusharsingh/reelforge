@@ -1,11 +1,6 @@
-import { redundantFailure } from "./video-run.billing-recovery.js";
+import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
-import {
-  deferCorrection,
-  needsReceiptMarker,
-  pendingCorrection,
-  pendingCorrectionWhere,
-} from "../usage-budget/run-pending-receipt.js";
+import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -101,9 +96,10 @@ export class VideoRunEngine {
               await this.runs.enqueue(context, run);
               return null;
             }
-            if (run.state === "CANCELED" && !job.assembly && this.runs.queue) return null;
-            if (run.state === "CANCELED")
-              return this.planning.collectCanceledAudio?.(context, run) ?? null;
+            if (run.state === "CANCELED" || (run.state === "ASSEMBLING" && run.pauseReason)) {
+              if (!job.assembly && this.runs.queue) return null;
+              return this.planning.collectAdmittedAudio?.(context, run) ?? null;
+            }
             if (job.assembly && run.state !== "ASSEMBLING") return null;
             if (
               run.pauseReason === "EMERGENCY_STOP" ||
@@ -164,7 +160,6 @@ export class VideoRunEngine {
     error: unknown,
     stepId?: string,
   ): Promise<null> {
-    const media = error instanceof ShotMediaFailure ? error : undefined;
     const cause =
       error instanceof ShotBillingFailure ||
       (error instanceof ShotMediaFailure && !(error instanceof InvalidVideoFormat))
@@ -182,29 +177,15 @@ export class VideoRunEngine {
       hold ? "reconcile_required" : "transition",
       async (db, current, tx) => {
         if (stepId) {
-          const attempt = await db.videoRunStep.findFirst({
-            where: {
-              id: stepId,
-              runId: run.id,
-              key: { startsWith: "shot-" },
-              ...(media && { providerId: media.providerId, providerJobId: media.providerJobId }),
-            },
-          });
-          if (attempt && redundantFailure(attempt, error))
-            return {
-              value: null,
-              eventType: "redundant_clip_discarded",
-              stepId,
-              payload: { replay: true, reason: generationPause(cause) },
-            };
-          const report = error instanceof ShotBillingFailure ? error.report : undefined;
-          if (
-            attempt &&
-            report &&
-            (pendingCorrection(attempt) || needsReceiptMarker(attempt, report.receipt))
-          )
-            return deferCorrection(db, current, attempt, report);
-          if (media && !attempt) throw cause;
+          const result = await recordShotFailure(
+            db,
+            current,
+            stepId,
+            error,
+            cause,
+            generationPause(cause),
+          );
+          if (result) return result;
         }
         if (hold) {
           await this.holdLocked(db, tx, run, current, hold);
@@ -375,7 +356,10 @@ export class VideoRunEngine {
     }
   }
   private async enqueueAdmitted(context: Context, db: Scoped, run: Run): Promise<void> {
-    if (run.state === "CANCELED" && (await acceptedAudio(db, this.runs.store.db, run)).length)
+    if (
+      ["CANCELED", "ASSEMBLING"].includes(run.state) &&
+      (await acceptedAudio(db, this.runs.store.db, run)).length
+    )
       await this.runs.queue?.enqueue(
         { ...this.runs.job(context, run.id), assembly: true },
         run.revision,

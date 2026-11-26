@@ -1,3 +1,4 @@
+import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { releaseSteps } from "./run-close-steps.js";
 import { correctionHold, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
 import { criticPrefix } from "../usage-budget/critic-admission.js";
@@ -96,6 +97,14 @@ export async function remainingSubmissionHold(
   const admissions = await readAdmissions(db, tx, run.workspaceId, steps);
   const billing = admissions.find(({ evidence }) => evidence === "billing-overage");
   if (billing) return billingHold(billing.step.id);
+  const missingPrice = steps.find(
+    ({ error }) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === MissingVideoPricing.code,
+  );
+  if (missingPrice) return MissingVideoPricing.hold(missingPrice.id);
   if (
     run.pauseReason === legacyBillingHold ||
     (run.pauseReason === "EMERGENCY_STOP" && (await stoppedLegacyBillingHold(db, run.id, steps)))

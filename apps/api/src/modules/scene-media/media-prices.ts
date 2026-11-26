@@ -11,6 +11,7 @@ import type { ShotSpec } from "@reelforge/contracts";
 import { z } from "zod";
 
 export class MissingVideoPricing extends Error {
+  public static readonly code = "MISSING_ADMISSION_VIDEO_PRICING";
   public static hold(stepId: string): string {
     return `RECONCILE_REQUIRED: missing admission video pricing (${stepId})`;
   }
