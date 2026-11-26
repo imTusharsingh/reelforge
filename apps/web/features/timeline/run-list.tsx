@@ -1,44 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import type { RunDetailView, RunSummary } from "../../../../packages/contracts/src/run-experience";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
-import { Alert, Badge } from "../../components/ui/primitives";
+import { Alert, Badge, Button } from "../../components/ui/primitives";
 import { EmptyState, Skeleton, VideoPlayer } from "../../components/ui/studio";
+import { useResource } from "../../components/ui/use-resource";
 import { PageHeading } from "../../components/ui/page-heading";
 import { Icon, type IconName } from "../../components/ui/icon";
 import { NewShort } from "./new-short";
 import { runClient } from "./client";
 import { dollars, finalMedia, pauseLabel, runMetadata, stateLabel } from "./view-model";
-
-function useRuns(workspaceId: string): { runs: RunSummary[] | null; error: string } {
-  const [runs, setRuns] = useState<RunSummary[] | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async (): Promise<void> => {
-      try {
-        const data = await runClient.list(workspaceId);
-        if (active) {
-          setRuns(data);
-          setError("");
-        }
-      } catch (e) {
-        if (active) setError(String(e));
-      } finally {
-        if (active) timer = setTimeout(() => void load(), 15000);
-      }
-    };
-    void load();
-    return (): void => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [workspaceId]);
-  return { runs, error };
-}
 
 export function RunList({ inbox = false }: { inbox?: boolean }): JSX.Element {
   const workspace = useActiveWorkspace();
@@ -61,7 +34,8 @@ function RunGallery({
   inbox: boolean;
   editable: boolean;
 }): JSX.Element {
-  const { runs, error } = useRuns(workspaceId);
+  const load = useCallback(() => runClient.list(workspaceId), [workspaceId]);
+  const { data: runs, error, loading, retry } = useResource(load, 15000);
   const attention = runs?.filter(needsAttention);
   const visible = inbox ? attention : runs;
   return (
@@ -85,7 +59,7 @@ function RunGallery({
           ? "Open a Short to check its preview and make a decision."
           : "Track your Shorts from the first idea to the published video."}
       </PageHeading>
-      {!inbox && runs && !error && (
+      {!inbox && runs && (
         <WorkspaceSnapshot
           runs={runs.length}
           attention={attention?.length ?? 0}
@@ -93,8 +67,16 @@ function RunGallery({
         />
       )}
       {error && (
-        <Alert tone="danger" title="Runs unavailable">
-          {error}
+        <Alert
+          tone={runs ? "warning" : "danger"}
+          title={runs ? "Couldn’t refresh Shorts" : "Runs unavailable"}
+        >
+          {runs ? "Showing the last loaded Shorts." : error}
+          <div className="rf-action-row">
+            <Button tone="secondary" loading={loading} onClick={retry}>
+              Retry
+            </Button>
+          </div>
         </Alert>
       )}
       {!runs && !error && <Skeleton label="Loading runs…" />}

@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, type JSX } from "react";
+import { useCallback, type JSX } from "react";
 import Link from "next/link";
-import { Card } from "../../../components/ui/primitives";
+import { Alert, Button, Card } from "../../../components/ui/primitives";
+import { EmptyState, Skeleton } from "../../../components/ui/studio";
+import { useResource } from "../../../components/ui/use-resource";
 import { PageHeading } from "../../../components/ui/page-heading";
 import { AuthWorkspace } from "../../../components/auth-workspace";
 import { useActiveWorkspace } from "../../../components/studio-workspace-context";
@@ -23,30 +25,29 @@ function ActiveUsage(): JSX.Element {
 }
 
 function WorkspaceUsage({ workspaceId }: { workspaceId: string }): JSX.Element {
-  const [runs, setRuns] = useState<Awaited<ReturnType<typeof runClient.list>> | null>(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void runClient
-      .list(workspaceId)
-      .then((rows) => {
-        if (active) setRuns(rows);
-      })
-      .catch(() => {
-        if (active) setError(true);
-      });
-    return (): void => {
-      active = false;
-    };
-  }, [workspaceId]);
+  const load = useCallback(() => runClient.list(workspaceId), [workspaceId]);
+  const { data: runs, error, loading, retry } = useResource(load);
   return (
     <section className="rf-stack">
       <PageHeading label="01 / Production" title="Run usage">
         Review actual recorded spend for your Shorts.
       </PageHeading>
-      {error && <p role="alert">Runs unavailable.</p>}
-      {!runs && !error && <p>Loading runs…</p>}
-      {runs?.length === 0 && <p>No runs yet.</p>}
+      {error && (
+        <Alert tone="danger" title="Usage unavailable">
+          Run usage could not be loaded.
+          <div className="rf-action-row">
+            <Button tone="secondary" loading={loading} onClick={retry}>
+              Retry
+            </Button>
+          </div>
+        </Alert>
+      )}
+      {!runs && !error && <Skeleton label="Loading run usage…" />}
+      {runs?.length === 0 && (
+        <EmptyState title="No usage to show">
+          <p>Recorded spend appears here after your first run.</p>
+        </EmptyState>
+      )}
       {runs?.map((run) => (
         <Card key={run.id}>
           <Link href={`/runs/${run.id}`}>Short {run.id.slice(0, 8)}</Link>

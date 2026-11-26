@@ -9,6 +9,7 @@ import type {
 } from "react";
 
 import { Icon } from "./icon";
+import { InlineNoticeSlot } from "./notifications";
 
 type ButtonTone = "primary" | "secondary" | "ghost" | "danger";
 type ButtonProps = ComponentPropsWithRef<"button"> & {
@@ -191,6 +192,7 @@ export function Alert({
       <div className="rf-alert__content">
         <strong>{title}</strong>
         <div>{children}</div>
+        {(tone === "danger" || tone === "warning") && <InlineNoticeSlot tone={tone} />}
       </div>
     </div>
   );

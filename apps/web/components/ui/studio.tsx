@@ -49,9 +49,16 @@ export function EmptyState({
 
 export function Skeleton({ label }: { label: string }): JSX.Element {
   return (
-    <div role="status" className="rf-stack">
-      {label}
-      <div aria-hidden="true" className="rf-skeleton" />
+    <div role="status" className="rf-loading-state" aria-atomic="true">
+      <span className="rf-loading-label">
+        <span className="rf-spinner" aria-hidden="true" />
+        {label}
+      </span>
+      <span aria-hidden="true" className="rf-skeleton">
+        <span />
+        <span />
+        <span />
+      </span>
     </div>
   );
 }

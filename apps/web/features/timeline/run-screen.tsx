@@ -128,16 +128,7 @@ function RunContent({
   return (
     <section className="rf-stack">
       <RunHeading detail={detail} review={review} />
-      {error && (
-        <Alert tone="danger" title="Run needs attention">
-          {error}
-        </Alert>
-      )}
-      {detail.run.pauseReason && detail.run.pauseReason !== "PUBLISH_DRY_RUN" && (
-        <Alert tone="warning" title="Run status">
-          {pauseLabel(detail.run.pauseReason)}
-        </Alert>
-      )}
+      <RunFeedback pauseReason={detail.run.pauseReason} error={error} retry={refresh} />
       {editable && !["LEARNING", "FAILED", "CANCELED"].includes(detail.run.state) && (
         <RunOperatorControls detail={detail} controls={controls} />
       )}
@@ -161,6 +152,32 @@ function RunContent({
       )}
       <Storyboard detail={detail} onRedo={redo} busy={busy} />
     </section>
+  );
+}
+
+function RunFeedback({
+  pauseReason,
+  error,
+  retry,
+}: {
+  pauseReason: string | null;
+  error: string;
+  retry: () => void;
+}): JSX.Element | null {
+  const paused = pauseReason && pauseReason !== "PUBLISH_DRY_RUN" ? pauseLabel(pauseReason) : "";
+  if (!paused && !error) return null;
+  return (
+    <Alert tone={error ? "danger" : "warning"} title="Run status">
+      {paused && <div>{paused}</div>}
+      {error && (
+        <div className="rf-action-row">
+          <span>Couldn’t refresh the run. Showing the last loaded status.</span>
+          <Button tone="secondary" onClick={retry}>
+            Retry
+          </Button>
+        </div>
+      )}
+    </Alert>
   );
 }
 
