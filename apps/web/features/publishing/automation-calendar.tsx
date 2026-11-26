@@ -8,6 +8,7 @@ import { Alert, Badge, Card } from "../../components/ui/primitives";
 import { EmptyState, Skeleton } from "../../components/ui/studio";
 import { stateLabel } from "../timeline/view-model";
 import { autoSlots } from "./automation-api";
+import { PageHeading } from "../../components/ui/page-heading";
 
 function useSchedule(workspaceId: string): { slots: AutoSlotView[] | null; error: string } {
   const [slots, setSlots] = useState<AutoSlotView[] | null>(null);
@@ -46,13 +47,10 @@ function Schedule({ workspaceId }: { workspaceId: string }): JSX.Element {
   const { slots, error } = useSchedule(workspaceId);
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Publishing schedule</h1>
-        <p>
-          Approved Shorts fill the next available channel slot. YouTube keeps them private until the
-          scheduled time.
-        </p>
-      </header>
+      <PageHeading label="03 / Delivery" title="Publishing schedule">
+        Approved Shorts fill the next available channel slot. YouTube keeps them private until the
+        scheduled time.
+      </PageHeading>
       {error && (
         <Alert tone="danger" title="Schedule unavailable">
           {error}

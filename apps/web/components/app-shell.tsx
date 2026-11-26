@@ -6,6 +6,7 @@ import { StudioLink } from "./studio-link";
 import { BrandLogo } from "./brand-logo";
 import { Button } from "./ui/primitives";
 import { Modal } from "./ui/studio";
+import { Icon } from "./ui/icon";
 import { studioDestinations } from "./pipeline-navigation";
 
 function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
@@ -32,7 +33,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
               onClick={() => onNavigate?.()}
             >
               <span className="rf-nav-icon" aria-hidden="true">
-                {icon}
+                <Icon name={icon} />
               </span>
               {name}
             </StudioLink>
@@ -61,11 +62,15 @@ export function AppShell({
       </a>
       <aside className="rf-sidebar">
         <BrandLogo inverse />
+        <p className="rf-sidebar-label">Workspace</p>
         <Navigation />
+        <div className="rf-sidebar-note" aria-hidden="true">
+          <Icon name="film" /> Short-form production
+        </div>
       </aside>
       <div>
         <header className="rf-shell-header">
-          <div className="rf-cluster">
+          <div className="rf-cluster rf-workspace-ident">
             <Button
               ref={trigger}
               className="rf-menu-toggle"
@@ -73,9 +78,19 @@ export function AppShell({
               aria-haspopup="dialog"
               onClick={() => menu.current?.showModal()}
             >
-              Menu
+              <Icon name="menu" /> Menu
             </Button>
-            <strong>{workspaceName}</strong>
+            {workspaceName && (
+              <div className="rf-workspace-label">
+                <span className="rf-workspace-avatar" aria-hidden="true">
+                  {workspaceName.trim().slice(0, 2).toUpperCase()}
+                </span>
+                <div>
+                  <span className="rf-workspace-caption">Active workspace</span>
+                  <strong>{workspaceName}</strong>
+                </div>
+              </div>
+            )}
           </div>
           {shellActions}
         </header>

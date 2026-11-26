@@ -4,7 +4,8 @@ import { useState, type JSX } from "react";
 import type { TimelineDetail } from "./client";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { Alert, Badge, Button, Card } from "../../components/ui/primitives";
-import { Skeleton, Toast } from "../../components/ui/studio";
+import { Skeleton } from "../../components/ui/studio";
+import { useNotify } from "../../components/ui/notifications";
 import { Tabs } from "../../components/ui/tabs";
 import { AutonomyPanel } from "./autonomy-panel";
 import { ProgressStream } from "./progress-stream";
@@ -12,6 +13,7 @@ import { Storyboard } from "./storyboard";
 import { useRun } from "./use-run";
 import { RunCost } from "./run-cost";
 import { runRequest } from "./client";
+import { PageHeading } from "../../components/ui/page-heading";
 import { dollars, pauseLabel, runMetadata, stateLabel } from "./view-model";
 import { ApprovalPanel, CriticSummary } from "../approvals/approval-panel";
 
@@ -71,30 +73,29 @@ function useRunActions(
   id: string,
   refresh: () => void,
 ): {
-  actionError: string;
   busy: boolean;
-  notice: string;
   action: (path: string) => Promise<void>;
 } {
-  const [actionError, setActionError] = useState("");
+  const notify = useNotify();
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
   const action = async (path: string): Promise<void> => {
     if (busy) return;
     setBusy(true);
-    setActionError("");
-    setNotice("");
     try {
       await runRequest(`runs/${id}/${path}`, workspaceId, {});
-      setNotice(path === "approve" ? "Stage approved." : "Run updated.");
+      notify({ tone: "success", title: path === "approve" ? "Stage approved." : "Run updated." });
       refresh();
     } catch (e) {
-      setActionError(String(e));
+      notify({
+        tone: "danger",
+        title: "Run action failed",
+        detail: e instanceof Error ? e.message : "Try again from the run controls.",
+      });
     } finally {
       setBusy(false);
     }
   };
-  return { actionError, busy, notice, action };
+  return { busy, action };
 }
 
 type RunContentProps = {
@@ -117,7 +118,7 @@ function RunContent({
   refresh,
   controls,
 }: RunContentProps): JSX.Element {
-  const { action, actionError, busy, notice } = controls;
+  const { action, busy } = controls;
   const redo =
     editable && detail.run.state === "CRITIC"
       ? (ordinal: number, sourceStepId: string): void => {
@@ -127,12 +128,11 @@ function RunContent({
   return (
     <section className="rf-stack">
       <RunHeading detail={detail} review={review} />
-      {(error || actionError) && (
+      {error && (
         <Alert tone="danger" title="Run needs attention">
-          {actionError || error}
+          {error}
         </Alert>
       )}
-      {notice && <Toast>{notice}</Toast>}
       {detail.run.pauseReason && detail.run.pauseReason !== "PUBLISH_DRY_RUN" && (
         <Alert tone="warning" title="Run status">
           {pauseLabel(detail.run.pauseReason)}
@@ -210,12 +210,19 @@ function RunHeading({ detail, review }: { detail: TimelineDetail; review: boolea
   const title = runMetadata(detail)?.title ?? `Short ${detail.run.id.slice(0, 8)}`;
   return (
     <>
-      <header className="rf-page-heading rf-toolbar">
-        <h1>{review ? "Review Short" : title}</h1>
-        <Badge tone="info">
-          {detail.run.pauseReason === "PUBLISH_DRY_RUN" ? "Dry run" : stateLabel(detail.run.state)}
-        </Badge>
-      </header>
+      <PageHeading
+        label={review ? "02 / Review" : "01 / Production"}
+        title={review ? "Review Short" : title}
+        actions={
+          <Badge tone="info">
+            {detail.run.pauseReason === "PUBLISH_DRY_RUN"
+              ? "Dry run"
+              : stateLabel(detail.run.state)}
+          </Badge>
+        }
+      >
+        {review ? title : "Follow progress and inspect the artifacts from this run."}
+      </PageHeading>
       <Tabs
         label="Run views"
         items={[

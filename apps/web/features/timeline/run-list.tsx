@@ -6,6 +6,8 @@ import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Badge } from "../../components/ui/primitives";
 import { EmptyState, Skeleton, VideoPlayer } from "../../components/ui/studio";
+import { PageHeading } from "../../components/ui/page-heading";
+import { Icon, type IconName } from "../../components/ui/icon";
 import { NewShort } from "./new-short";
 import { runClient } from "./client";
 import { dollars, finalMedia, pauseLabel, runMetadata, stateLabel } from "./view-model";
@@ -60,35 +62,59 @@ function RunGallery({
   editable: boolean;
 }): JSX.Element {
   const { runs, error } = useRuns(workspaceId);
-  const visible = runs?.filter(
-    (run) =>
-      !inbox ||
-      (["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(
-        run.state,
-      ) &&
-        run.pauseReason !== "HUMAN_REJECTED"),
-  );
+  const attention = runs?.filter(needsAttention);
+  const visible = inbox ? attention : runs;
   return (
-    <section className="rf-stack">
-      <header className="rf-page-heading rf-toolbar">
-        <div className="rf-stack">
-          <h1>{inbox ? "Review queue" : "Creator studio"}</h1>
-          <p>
-            {inbox
-              ? "Open a Short to check its preview and make a decision."
-              : "Track your Shorts from the first idea to the published video."}
-          </p>
-        </div>
-        {!inbox && <StudioLink href="/runs/usage">Run usage</StudioLink>}
-        {!inbox && editable && <NewShort />}
-      </header>
+    <section className="rf-stack rf-run-library">
+      <PageHeading
+        label={inbox ? "02 / Review" : "01 / Production"}
+        title={inbox ? "Review queue" : "Creator studio"}
+        hero
+        actions={
+          inbox ? undefined : (
+            <>
+              <StudioLink className="rf-button rf-button--secondary" href="/runs/usage">
+                Run usage
+              </StudioLink>
+              {editable && <NewShort />}
+            </>
+          )
+        }
+      >
+        {inbox
+          ? "Open a Short to check its preview and make a decision."
+          : "Track your Shorts from the first idea to the published video."}
+      </PageHeading>
+      {!inbox && runs && !error && (
+        <WorkspaceSnapshot
+          runs={runs.length}
+          attention={attention?.length ?? 0}
+          published={runs.filter((run) => run.state === "PUBLISHED").length}
+        />
+      )}
       {error && (
         <Alert tone="danger" title="Runs unavailable">
           {error}
         </Alert>
       )}
       {!runs && !error && <Skeleton label="Loading runs…" />}
-      {visible?.length === 0 && (
+      {visible && <RunCards runs={visible} workspaceId={workspaceId} inbox={inbox} />}
+    </section>
+  );
+}
+
+function RunCards({
+  runs,
+  workspaceId,
+  inbox,
+}: {
+  runs: RunSummary[];
+  workspaceId: string;
+  inbox: boolean;
+}): JSX.Element {
+  return (
+    <>
+      {runs.length === 0 && (
         <EmptyState title={inbox ? "Nothing to review" : "No Shorts yet"}>
           <p>
             {inbox
@@ -97,17 +123,57 @@ function RunGallery({
           </p>
         </EmptyState>
       )}
-      {visible && visible.length > 0 && (
+      {runs.length > 0 && (
         <>
-          <h2>{inbox ? "Needs attention" : "Your Shorts"}</h2>
+          <div className="rf-section-heading">
+            <h2>{inbox ? "Needs attention" : "Your Shorts"}</h2>
+            <span>
+              {runs.length} {runs.length === 1 ? "Short" : "Shorts"}
+            </span>
+          </div>
           <ul className="rf-grid rf-gallery">
-            {visible.map((run) => (
+            {runs.map((run) => (
               <RunTile key={run.id} run={run} workspaceId={workspaceId} inbox={inbox} />
             ))}
           </ul>
         </>
       )}
-    </section>
+    </>
+  );
+}
+
+function needsAttention(run: RunSummary): boolean {
+  return (
+    ["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state) &&
+    run.pauseReason !== "HUMAN_REJECTED"
+  );
+}
+
+function WorkspaceSnapshot({
+  runs,
+  attention,
+  published,
+}: {
+  runs: number;
+  attention: number;
+  published: number;
+}): JSX.Element {
+  const stats: { label: string; value: number; icon: IconName }[] = [
+    { label: "Total Shorts", value: runs, icon: "film" },
+    { label: "Needs attention", value: attention, icon: "review" },
+    { label: "Published", value: published, icon: "calendar" },
+  ];
+  return (
+    <dl className="rf-snapshot" aria-label="Workspace snapshot">
+      {stats.map(({ label, value, icon }) => (
+        <div key={label}>
+          <dt>
+            <Icon name={icon} /> {label}
+          </dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

@@ -7,14 +7,14 @@ import { EmptyState, Skeleton } from "../../components/ui/studio";
 import { ChannelPicker } from "../brief/channel-picker";
 import { LearnedChanges } from "../insights/learned-changes";
 import type { Channel } from "../publishing/model";
+import { PageHeading } from "../../components/ui/page-heading";
 
 export function Ideas(): JSX.Element {
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Ideas & discovery</h1>
-        <p>Explore ranked topics and source material from your channel’s latest discovery scan.</p>
-      </header>
+      <PageHeading label="04 / Research" title="Ideas & discovery">
+        Explore ranked topics and source material from your channel’s latest discovery scan.
+      </PageHeading>
       <ChannelPicker>
         {(channel) => <ChannelIdeas key={channel.id} channel={channel} />}
       </ChannelPicker>

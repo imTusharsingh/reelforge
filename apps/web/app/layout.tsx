@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import { NotificationProvider } from "../components/ui/notifications";
 import { StudioNavigationGuard } from "../components/studio-link";
 
 export const metadata: Metadata = {
@@ -14,7 +15,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     <html lang="en">
       <body>
         <StudioNavigationGuard />
-        {children}
+        <NotificationProvider>{children}</NotificationProvider>
       </body>
     </html>
   );

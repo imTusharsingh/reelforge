@@ -2,6 +2,7 @@
 
 import { useId, useState, type JSX, type ReactNode, type RefObject } from "react";
 import { Button, Panel } from "./primitives";
+import { Icon } from "./icon";
 
 export function Modal({
   dialog,
@@ -37,6 +38,9 @@ export function EmptyState({
 }): JSX.Element {
   return (
     <Panel className="rf-empty">
+      <span className="rf-empty-icon" aria-hidden="true">
+        <Icon name="film" />
+      </span>
       <h2>{title}</h2>
       {children}
     </Panel>
@@ -48,14 +52,6 @@ export function Skeleton({ label }: { label: string }): JSX.Element {
     <div role="status" className="rf-stack">
       {label}
       <div aria-hidden="true" className="rf-skeleton" />
-    </div>
-  );
-}
-
-export function Toast({ children }: { children: ReactNode }): JSX.Element {
-  return (
-    <div role="status" className="rf-toast">
-      {children}
     </div>
   );
 }
@@ -90,7 +86,10 @@ export function VideoPlayer({
       ) : image ? (
         <img src={poster} alt={label} loading="lazy" onError={() => setFailedPoster(poster)} />
       ) : (
-        <span>{failedVideo || failedPoster ? "Media unavailable" : label}</span>
+        <span className="rf-frame-label">
+          <Icon name="film" />
+          {failedVideo || failedPoster ? "Media unavailable" : label}
+        </span>
       )}
     </div>
   );

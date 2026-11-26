@@ -6,7 +6,8 @@ import {
 } from "../../../../packages/contracts/src/run-experience";
 import { finalMedia, latestCritic, runMetadata } from "../timeline/view-model";
 import { Badge, Button, Card, Alert } from "../../components/ui/primitives";
-import { Toast, VideoPlayer } from "../../components/ui/studio";
+import { VideoPlayer } from "../../components/ui/studio";
+import { useNotify } from "../../components/ui/notifications";
 import { runRequest } from "../timeline/client";
 
 export function ApprovalPanel({
@@ -56,16 +57,33 @@ export function ApprovalPanel({
           {detail.run.state === "AWAITING_APPROVAL" && (
             <p>Shot redo is available during Critic review.</p>
           )}
-          {saved && <Toast>{saved}</Toast>}
-          {error && (
-            <Alert tone="danger" title="Decision failed">
-              {error}
-            </Alert>
-          )}
+          <DecisionFeedback rejected={saved === "REJECT"} error={error} />
         </Card>
       </div>
     </section>
   );
+}
+
+function DecisionFeedback({
+  rejected,
+  error,
+}: {
+  rejected: boolean;
+  error: string;
+}): JSX.Element | null {
+  if (error)
+    return (
+      <Alert tone="danger" title="Decision failed">
+        {error}
+      </Alert>
+    );
+  if (rejected)
+    return (
+      <Alert title="Rejected" tone="warning">
+        Publishing is blocked for this Short.
+      </Alert>
+    );
+  return null;
 }
 
 function DecisionActions({
@@ -134,23 +152,22 @@ function useDecision(
 ): {
   busy: boolean;
   error: string;
-  saved: string;
+  saved: "APPROVE" | "REJECT" | null;
   decide: (decision: "APPROVE" | "REJECT") => Promise<void>;
 } {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState("");
+  const [saved, setSaved] = useState<"APPROVE" | "REJECT" | null>(null);
+  const notify = useNotify();
   const decide = async (decision: "APPROVE" | "REJECT"): Promise<void> => {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
       await runRequest(`run-experience/${id}/decision`, workspaceId, { decision });
-      setSaved(
-        decision === "APPROVE"
-          ? "Approved. Ready for scheduling."
-          : "Rejected. Publishing is blocked.",
-      );
+      setSaved(decision);
+      if (decision === "APPROVE")
+        notify({ tone: "success", title: "Approved. Ready for scheduling." });
       refresh();
     } catch (e) {
       setError(String(e));

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
+import { useNotify } from "../../components/ui/notifications";
 import { Alert, Badge, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
 import {
   isEditableRole,
@@ -15,6 +16,7 @@ export function Accounts(): JSX.Element {
   const workspace = useActiveWorkspace();
   const editable = isEditableRole(workspace.role);
   const api = usePublishingClient();
+  const notify = useNotify();
   const [items, setItems] = useState<SocialAccount[]>([]);
   const [available, setAvailable] = useState<PlatformAvailability[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -81,10 +83,10 @@ export function Accounts(): JSX.Element {
     const code = params.get("oauthError");
     if (code) setNotice(`Connection failed: ${code}. Try connecting again.`);
     else if (params.has("connected"))
-      setNotice("Account connected. Check its health and capabilities below.");
-  }, []);
+      notify({ tone: "success", title: "YouTube account connected." });
+  }, [notify]);
 
-  const act = async (operation: () => Promise<void>): Promise<void> => {
+  const act = async (operation: () => Promise<void>, success: string): Promise<void> => {
     if (!editable || locked) return;
     setBusy(true);
     setError("");
@@ -92,8 +94,13 @@ export function Accounts(): JSX.Element {
     try {
       await operation();
       await load();
+      notify({ tone: "success", title: success });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Request failed.");
+      notify({
+        tone: "danger",
+        title: "Account action failed",
+        detail: cause instanceof Error ? cause.message : "Check the account status and try again.",
+      });
       setPending(api.pendingAccountScopes());
       setInspected(false);
     } finally {
@@ -245,14 +252,21 @@ export function Accounts(): JSX.Element {
                     <Button
                       tone="secondary"
                       disabled={locked}
-                      onClick={() => void act(() => api.refreshAccount(account.id))}
+                      onClick={() =>
+                        void act(() => api.refreshAccount(account.id), "Account refreshed.")
+                      }
                     >
                       Refresh
                     </Button>
                     <Button
                       tone="secondary"
                       disabled={locked}
-                      onClick={() => void act(() => api.checkAccountHealth(account.id))}
+                      onClick={() =>
+                        void act(
+                          () => api.checkAccountHealth(account.id),
+                          "Account health checked.",
+                        )
+                      }
                     >
                       Check health
                     </Button>
@@ -275,7 +289,7 @@ export function Accounts(): JSX.Element {
                       disabled={locked}
                       onClick={() => {
                         if (window.confirm(`Disconnect ${account.displayName}?`))
-                          void act(() => api.revokeAccount(account.id));
+                          void act(() => api.revokeAccount(account.id), "Account disconnected.");
                       }}
                     >
                       Disconnect

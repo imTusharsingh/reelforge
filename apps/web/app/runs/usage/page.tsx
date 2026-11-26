@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type JSX } from "react";
 import Link from "next/link";
+import { Card } from "../../../components/ui/primitives";
+import { PageHeading } from "../../../components/ui/page-heading";
 import { AuthWorkspace } from "../../../components/auth-workspace";
 import { useActiveWorkspace } from "../../../components/studio-workspace-context";
 import { runClient } from "../../../features/timeline/client";
@@ -39,15 +41,17 @@ function WorkspaceUsage({ workspaceId }: { workspaceId: string }): JSX.Element {
   }, [workspaceId]);
   return (
     <section className="rf-stack">
-      <h1>Run usage</h1>
+      <PageHeading label="01 / Production" title="Run usage">
+        Review actual recorded spend for your Shorts.
+      </PageHeading>
       {error && <p role="alert">Runs unavailable.</p>}
       {!runs && !error && <p>Loading runs…</p>}
       {runs?.length === 0 && <p>No runs yet.</p>}
       {runs?.map((run) => (
-        <article key={run.id}>
+        <Card key={run.id}>
           <Link href={`/runs/${run.id}`}>Short {run.id.slice(0, 8)}</Link>
           <RunCost workspaceId={workspaceId} id={run.id} />
-        </article>
+        </Card>
       ))}
     </section>
   );
