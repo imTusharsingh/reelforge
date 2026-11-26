@@ -5,22 +5,38 @@ import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { AlignedWordSchema, type AlignedWord } from "@reelforge/contracts";
 import { z } from "zod";
+import { captionPhrases, readableCaptionCues, type CaptionCue } from "./phrase-captions.js";
 const alignment = z.object({
   fragments: z.array(
     z.object({ begin: z.string(), end: z.string(), lines: z.array(z.string()).min(1) }),
   ),
 });
+type Align = (
+  audio: string,
+  text: string,
+  language: string,
+  root: string,
+  duration: number,
+) => Promise<AlignedWord[]>;
 export interface WordAligner {
-  align(
-    audio: string,
-    text: string,
-    language: string,
-    root: string,
-    duration: number,
-  ): Promise<AlignedWord[]>;
+  align: Align;
+  alignPhrases: Align;
 }
-/** Offline forced alignment, not proportional word timing or a live transcription service.
- * Deployment installs pinned aeneas==1.7.3.0 + its local eSpeak/FFmpeg dependencies. */
+
+const languages: Record<string, string> = {
+  English: "eng",
+  en: "eng",
+  Hindi: "hin",
+  hi: "hin",
+  Spanish: "spa",
+  es: "spa",
+  French: "fra",
+  fr: "fra",
+  German: "deu",
+  de: "deu",
+};
+
+/** Offline forced alignment against actual narration and local eSpeak reference speech. */
 @Injectable()
 export class LocalWordAligner implements WordAligner {
   public async align(
@@ -32,62 +48,116 @@ export class LocalWordAligner implements WordAligner {
   ): Promise<AlignedWord[]> {
     const words = text.trim().split(/\s+/u).filter(Boolean);
     if (!words.length) throw new Error("Narration transcript required");
-    const languages: Record<string, string> = {
-      English: "eng",
-      en: "eng",
-      Hindi: "hin",
-      hi: "hin",
-      Spanish: "spa",
-      es: "spa",
-      French: "fra",
-      fr: "fra",
-      German: "deu",
-      de: "deu",
-    };
-    const code = languages[language] ?? (/^[a-z]{3}$/.test(language) ? language : undefined);
-    if (!code) throw new Error("Local alignment language must be configured as ISO 639-3");
-    const transcript = join(root, "words.txt"),
-      output = join(root, "alignment.json");
-    await writeFile(transcript, words.join("\n"));
-    await promisify(execFile)(
-      process.env.ALIGNMENT_PYTHON_PATH ?? "python3",
-      [
-        "-m",
-        "aeneas.tools.execute_task",
-        audio,
-        transcript,
-        `task_language=${code}|is_text_type=plain|os_task_file_format=json`,
-        output,
-      ],
-      { timeout: 120000, maxBuffer: 1024 * 1024 },
-    );
-    const fragments = alignment.parse(
-      JSON.parse(await readFile(output, "utf8")) as unknown,
-    ).fragments;
-    const result = fragments.map((word) =>
-      AlignedWordSchema.parse({
-        text: word.lines.join(" "),
-        start: Number(word.begin),
-        end: Number(word.end),
-      }),
-    );
-    if (
-      result.length !== words.length ||
-      result.some(
-        (word, index) =>
-          word.text !== words[index] ||
-          word.end > duration + 0.001 ||
-          (index > 0 && word.start < result[index - 1]!.end),
-      )
-    )
-      throw new Error("Forced alignment does not match the narration transcript");
-    return result;
+    const measured = await measure(audio, words, language, root, "words");
+    return fitWordIntervals(measured, words, duration);
+  }
+
+  public async alignPhrases(
+    audio: string,
+    text: string,
+    language: string,
+    root: string,
+    duration: number,
+  ): Promise<CaptionCue[]> {
+    const phrases = captionPhrases(text);
+    const measured = await measure(audio, phrases, language, root, "phrases");
+    return readableCaptionCues(measured, phrases, duration);
   }
 }
-export function wordCaptions(words: readonly AlignedWord[]): string {
+
+async function measure(
+  audio: string,
+  fragments: readonly string[],
+  language: string,
+  root: string,
+  kind: "words" | "phrases",
+): Promise<AlignedWord[]> {
+  const code = languages[language] ?? (/^[a-z]{3}$/.test(language) ? language : undefined);
+  if (!code) throw new Error("Local alignment language must be configured as ISO 639-3");
+  const transcript = join(root, `${kind}.txt`);
+  const output = join(root, `${kind}-alignment.json`);
+  await writeFile(transcript, fragments.join("\n"));
+  await promisify(execFile)(
+    process.env.ALIGNMENT_PYTHON_PATH ?? "python3",
+    [
+      "-m",
+      "aeneas.tools.execute_task",
+      audio,
+      transcript,
+      `task_language=${code}|is_text_type=plain|os_task_file_format=json|task_adjust_boundary_no_zero=True`,
+      output,
+      // eSpeak's reference WAV uses 22,050 Hz. Analyzing narration at 16 kHz
+      // against that different reference rate sent late anchors to the last frame.
+      "-r=ffmpeg_sample_rate=22050|mfcc_mask_nonspeech=True|aba_no_zero_duration=0.080",
+    ],
+    { timeout: 120000, maxBuffer: 1024 * 1024 },
+  );
+  return alignment
+    .parse(JSON.parse(await readFile(output, "utf8")) as unknown)
+    .fragments.map((fragment) => ({
+      text: fragment.lines.join(" "),
+      start: Number(fragment.begin),
+      end: Number(fragment.end),
+    }));
+}
+
+const centis = (seconds: number): number => Math.round(seconds * 100);
+// ASS is centisecond-based. Five ticks cover at least one frame at 24 fps.
+const minimumCue = 5;
+const maximumAdjustment = 80;
+
+function fitWordIntervals(
+  measured: readonly AlignedWord[],
+  words: readonly string[],
+  duration: number,
+): AlignedWord[] {
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    measured.length !== words.length ||
+    measured.some(
+      (word, index) =>
+        word.text !== words[index] ||
+        !Number.isFinite(word.start) ||
+        !Number.isFinite(word.end) ||
+        word.start < 0 ||
+        word.end < word.start ||
+        word.end > duration + 0.001 ||
+        (index > 0 && word.start < measured[index - 1]!.end),
+    )
+  )
+    throw new Error("Forced alignment does not match the narration transcript");
+
+  const anchors = measured.filter((word) => centis(word.end) - centis(word.start) >= minimumCue);
+  if (anchors.length === measured.length)
+    return measured.map((word) => AlignedWordSchema.parse(word));
+  // Keep well-measured words and pauses unchanged where possible. Repair clustered,
+  // short intervals using their neighbors; never spread a largely missing alignment.
+  if (anchors.length < Math.ceil(measured.length / 2))
+    throw new Error("Forced alignment has too few usable speech anchors");
+
+  const trackEnd = Math.min(centis(measured.at(-1)!.end), Math.floor(duration * 100));
+  let cursor = 0;
+  return measured.map((word, index) => {
+    const rawStart = centis(word.start);
+    const rawEnd = centis(word.end);
+    const latestEnd = trackEnd - (words.length - index - 1) * minimumCue;
+    const start = Math.min(Math.max(cursor, rawStart), latestEnd - minimumCue);
+    const end = Math.min(Math.max(start + minimumCue, rawEnd), latestEnd);
+    if (
+      start < cursor ||
+      Math.abs(start - rawStart) > maximumAdjustment ||
+      Math.abs(end - rawEnd) > maximumAdjustment
+    )
+      throw new Error("Forced alignment cannot fit visible captions within the measured speech");
+    cursor = end;
+    return AlignedWordSchema.parse({ text: word.text, start: start / 100, end: end / 100 });
+  });
+}
+export function wordCaptions(words: readonly CaptionCue[]): string {
   const stamp = (seconds: number): string => {
-    const centis = Math.round(seconds * 100);
-    return `${Math.floor(centis / 360000)}:${String(Math.floor(centis / 6000) % 60).padStart(2, "0")}:${String(Math.floor(centis / 100) % 60).padStart(2, "0")}.${String(centis % 100).padStart(2, "0")}`;
+    const ticks = centis(seconds);
+    return `${Math.floor(ticks / 360000)}:${String(Math.floor(ticks / 6000) % 60).padStart(2, "0")}:${String(Math.floor(ticks / 100) % 60).padStart(2, "0")}.${String(ticks % 100).padStart(2, "0")}`;
   };
   const safe = (text: string): string =>
     text

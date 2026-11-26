@@ -7,6 +7,7 @@ import { type AlignedWord, type MediaReceipt } from "@reelforge/contracts";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
 import { LocalWordAligner, wordCaptions, type WordAligner } from "./media-alignment.js";
+import type { CaptionCue } from "./phrase-captions.js";
 import { assemblyArguments, type AssemblyClip } from "./media-filter.js";
 type RenderMediaInput = {
   workspaceId: string;
@@ -24,9 +25,13 @@ export class MediaRenderer {
     private readonly runner: SpawnProcessRunner,
     @Inject(LocalWordAligner) private readonly aligner: WordAligner,
   ) {}
-  public async render(
-    input: RenderMediaInput,
-  ): Promise<{ video: Buffer; cover: Buffer; words: AlignedWord[]; duration: number }> {
+  public async render(input: RenderMediaInput): Promise<{
+    video: Buffer;
+    cover: Buffer;
+    words: AlignedWord[];
+    cues: CaptionCue[];
+    duration: number;
+  }> {
     const root = await mkdtemp(join(tmpdir(), "reelforge-v5-"));
     try {
       const seconds = input.clips.reduce((sum, clip) => sum + clip.seconds, 0);
@@ -44,7 +49,7 @@ export class MediaRenderer {
         "-i",
         rawVoice,
         "-af",
-        `atempo=${input.pace},apad`,
+        `atempo=${input.pace}`,
         "-t",
         String(seconds),
         "-ar",
@@ -53,17 +58,13 @@ export class MediaRenderer {
         "1",
         narration,
       ]);
-      const words = await this.aligner.align(
-        narration,
-        input.transcript,
-        input.language,
-        root,
-        seconds,
-      );
+      // The mix pads voice to the video duration later. Align only the paced speech:
+      // trailing mix silence can collapse the last several words onto the final frame.
+      const { words, cues } = await this.timings(narration, input, root, seconds);
       const captions = join(root, "captions.ass"),
         output = join(root, "final.mp4"),
         cover = join(root, "cover.jpg");
-      await writeFile(captions, wordCaptions(words));
+      await writeFile(captions, wordCaptions(cues));
       await this.call(
         "ffmpeg",
         assemblyArguments(clips, narration, music, captions, output, seconds),
@@ -74,10 +75,34 @@ export class MediaRenderer {
         coverBytes = await readFile(cover);
       if (!bytes.length || !coverBytes.subarray(0, 2).equals(Buffer.from([255, 216])))
         throw new Error("Assembly outputs missing or invalid");
-      return { video: bytes, cover: coverBytes, words, duration: seconds };
+      return { video: bytes, cover: coverBytes, words, cues, duration: seconds };
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  }
+  private async timings(
+    path: string,
+    input: RenderMediaInput,
+    root: string,
+    maximum: number,
+  ): Promise<{ cues: CaptionCue[]; words: AlignedWord[] }> {
+    const duration = Math.min(await this.narrationDuration(path), maximum);
+    const cues = await this.aligner.alignPhrases(
+      path,
+      input.transcript,
+      input.language,
+      root,
+      duration,
+    );
+    const words = await this.aligner.align(path, input.transcript, input.language, root, duration);
+    return { cues, words };
+  }
+  private async narrationDuration(path: string): Promise<number> {
+    const audio = (await this.inspect(path)).find((stream) => stream.codec_type === "audio");
+    const duration = Number(audio?.duration);
+    if (!Number.isFinite(duration) || duration <= 0)
+      throw new Error("Could not measure narration duration");
+    return duration;
   }
   private async cover(output: string, cover: string): Promise<void> {
     await this.call("ffmpeg", [

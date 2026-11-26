@@ -94,6 +94,10 @@ export function bindMedia(
   const frames = new MediaFrames(access, jobs, ports, new SpawnProcessRunner()),
     planning = new MediaPlanning(access, accounts, jobs, ports);
   const aligner = {
+    alignPhrases: async (
+      _path: string,
+      text: string,
+    ): Promise<{ text: string; start: number; end: number }[]> => [{ text, start: 0, end: 20 }],
     align: async (
       _path: string,
       text: string,
