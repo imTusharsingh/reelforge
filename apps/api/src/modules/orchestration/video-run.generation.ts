@@ -38,6 +38,8 @@ import {
   type VideoReceipt,
 } from "./video-run.handlers.js";
 
+class ShotClaimCanceled extends Error {}
+
 @Injectable()
 export class RunGeneration {
   public provider: VideoGenPort = new UnconfiguredVideoPort();
@@ -83,6 +85,7 @@ export class RunGeneration {
       try {
         step = await this.submit(context, run, step, ports);
       } catch (error) {
+        if (error instanceof ShotClaimCanceled) return null;
         if (!(error instanceof ProviderFailure && error.kind === "OUTAGE" && !error.dispatched))
           throw error;
         const failed = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
@@ -261,6 +264,7 @@ export class RunGeneration {
       run.id,
       "dispatch_reserved",
       async (db, current, tx) => {
+        if (current.state === "CANCELED") throw new ShotClaimCanceled();
         if (
           current.state !== "GENERATING" ||
           current.pauseReason === "EMERGENCY_STOP" ||
