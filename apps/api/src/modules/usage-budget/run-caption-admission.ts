@@ -8,7 +8,9 @@ import { z } from "zod";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
-export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
+import { SAVED_CAPTION_PLAN_UNUSABLE } from "../runs/run-render-stage.js";
+
+export { SAVED_CAPTION_PLAN_UNUSABLE };
 
 function savedCaptionRejection(): ConflictException {
   return new ConflictException({

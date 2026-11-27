@@ -41,6 +41,8 @@ export function pauseLabel(reason: string): string {
         MEDIA_CODEC_UNAVAILABLE:
           "FFmpeg is missing a required encoder, MP4 muxer, or subtitle filter.",
         RENDER_DURATION_UNSUPPORTED: "The saved storyboard is outside the supported video length.",
+        ASSEMBLY_BUDGET_OVERRUN:
+          "Final provider charges exceed the budget for delivering this Short.",
         ASSEMBLY_ARTIFACT_TOO_LARGE: "The video exceeds the 128 MiB delivery limit.",
         ASSEMBLY_SHOT_RECEIPT_MISSING: "A shot is missing its playable video receipt.",
         ASSEMBLY_INPUTS_MISSING: "The saved plan or narrator is missing.",

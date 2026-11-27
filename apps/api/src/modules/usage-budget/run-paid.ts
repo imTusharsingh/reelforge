@@ -8,7 +8,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "./run-admission-state.js";
-import { assertCriticRevision } from "./critic-admission.js";
+import { assertCriticAdmissionOpen, assertCriticRevision } from "./critic-admission.js";
 import { pinnedBudget, assertPaidRunLimits } from "./run-envelope.js";
 import {
   SubmissionOutcomeUnknown,
@@ -54,6 +54,7 @@ async function assertReserveAdmission(
   amount: number,
   context: Context,
 ): Promise<Awaited<ReturnType<typeof readAdmission>>> {
+  assertCriticAdmissionOpen(run, step.key);
   await assertPaidRunLimits(db, run, amount, step.id);
   const admission = await readAdmission(transaction, context, step);
   if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
@@ -183,8 +184,8 @@ export class RunPaidCalls {
         throw new DispatchAdmissionError("Paid dispatch is closed");
       if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
         throw new DispatchAdmissionError("Required audio input failed");
-      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
       await assertCriticRevision(db, tx, run, current);
+      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
       const { reservation, evidence } = await readAdmission(tx, context, current);
       if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
         throw new DispatchAdmissionError("Paid dispatch reservation is inactive");

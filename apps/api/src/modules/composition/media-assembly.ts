@@ -3,7 +3,13 @@ import {
   rejectInvalidSavedCaptionPlan,
 } from "../usage-budget/run-caption-admission.js";
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
-import { currentPrices, shotReceipts } from "./assembly-receipts.js";
+import {
+  artifactTooLarge,
+  assertAssemblyCost,
+  assertCurrentAssemblyCost,
+  currentPrices,
+  shotReceipts,
+} from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { Injectable, PayloadTooLargeException } from "@nestjs/common";
@@ -46,6 +52,7 @@ export class MediaAssembly {
   ) {}
   public async execute(context: Context, run: Run, brief: ChannelBrief): Promise<Artifact[]> {
     const existing = await this.artifacts(context, run);
+    await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
     if (existing.length) {
       if (!existing.some((a) => a.kind === "manifest"))
         throw new LocalAssemblyFailure(
@@ -76,6 +83,7 @@ export class MediaAssembly {
       return { receipt, seconds: shot.durationSeconds, transition: shot.transition };
     });
     const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
+    await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
     const receipts = await this.receipts(context, run);
     const rendered = await this.renderer
       .render({
@@ -146,6 +154,7 @@ export class MediaAssembly {
         if (cached) return { value: null, payload: { replay: true } };
         const prices = currentPrices(receipts, await shotReceipts(db, run.id));
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+        assertAssemblyCost(budget.spentMinor);
         const manifest = this.manifest(
           context,
           run,
@@ -393,11 +402,4 @@ export class MediaAssembly {
       return receipt.success ? [receipt.data] : [];
     });
   }
-}
-
-function artifactTooLarge(): LocalAssemblyFailure {
-  return new LocalAssemblyFailure(
-    "ASSEMBLY_ARTIFACT_TOO_LARGE",
-    "The assembled video exceeds the 128 MiB delivery limit. Use smaller source media before making a new Short.",
-  );
 }

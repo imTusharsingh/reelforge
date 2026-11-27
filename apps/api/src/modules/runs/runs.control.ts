@@ -1,4 +1,4 @@
-import { isRenderStage } from "./run-render-stage.js";
+import { terminalRenderFailure } from "./run-render-stage.js";
 import { rearmDeniedKeyframes } from "./run-keyframe-budget-recovery.js";
 import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
@@ -11,6 +11,7 @@ import { RunsBoundary } from "./runs.boundary.js";
 import { json, type Context, type Run, type Scoped, type Transaction } from "./runs.types.js";
 import {
   activeSubmissionHold,
+  mayRecordSubmissionHold,
   generationFailure,
   remainingSubmissionHold,
   SETTLED_SHOTS,
@@ -165,8 +166,8 @@ export class RunsControl {
         if (!canRollback(admission)) {
           const reason = (await remainingSubmissionHold(db, tx, run)) ?? submissionHold(step.id);
           if (
-            run.pauseReason !== "EMERGENCY_STOP" &&
-            !run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+            !run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+            (await mayRecordSubmissionHold(db, run))
           )
             await db.videoRun.updateMany({ where: { id }, data: { pauseReason: reason } });
           return { value: reason, payload: { reason }, stepId, eventType: "reconcile_required" };
@@ -201,7 +202,8 @@ export class RunsControl {
   }
   private async updateAbandonHold(db: Scoped, tx: Transaction, run: Run): Promise<void> {
     if (run.pauseReason === "EMERGENCY_STOP") return;
-    const hold = await remainingSubmissionHold(db, tx, run);
+    const terminal = await terminalRenderFailure(db, run);
+    const hold = terminal?.code ?? (await remainingSubmissionHold(db, tx, run));
     await db.videoRun.updateMany({
       where: { id: run.id },
       data: { pauseReason: hold ?? (run.state === "CANCELED" ? null : "OPERATOR_ABANDONED") },
@@ -214,6 +216,7 @@ export class RunsControl {
     await this.boundary.check(context, run);
     const result = await this.runs.store.mutate(context, id, "resumed", async (db, current, tx) => {
       if (current.revision !== run.revision) throw new ConflictException("Run changed");
+      await assertAssemblyResumable(db, current);
       const hold = await activeSubmissionHold(db, tx, current);
       if (hold) {
         if (hold !== current.pauseReason && current.pauseReason !== "EMERGENCY_STOP")
@@ -315,7 +318,6 @@ export class RunsControl {
     return result.value;
   }
   private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
-    if (isRenderStage(current.state)) await assertAssemblyResumable(db, current);
     if (
       current.state === "NEEDS_HUMAN" &&
       (await db.videoRunStep.findFirst({
@@ -334,30 +336,11 @@ export class RunsControl {
 }
 
 async function assertAssemblyResumable(db: Scoped, run: Run): Promise<void> {
-  const failed = await db.videoRunStep.findFirst({
-    where: {
-      runId: run.id,
-      key: run.state,
-      state: "FAILED",
-      OR: [
-        { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
-        { error: { path: ["localRenderFailures"], gt: 0 } },
-      ],
-    },
-    select: { error: true },
-  });
-  if (!failed) return;
-  const details = failed.error;
-  if (
-    details &&
-    typeof details === "object" &&
-    "code" in details &&
-    details.code === SAVED_CAPTION_PLAN_UNUSABLE
-  )
+  const failure = await terminalRenderFailure(db, run);
+  if (!failure) return;
+  if (failure.code === SAVED_CAPTION_PLAN_UNUSABLE)
     throw new ConflictException(
-      "message" in details && typeof details.message === "string"
-        ? details.message
-        : "The saved plan cannot resume. Start a new Short.",
+      failure.message ?? "The saved plan cannot resume. Start a new Short.",
     );
   throw new ConflictException(
     "The local render cannot resume. Check the recorded assembly failure before making a new Short.",

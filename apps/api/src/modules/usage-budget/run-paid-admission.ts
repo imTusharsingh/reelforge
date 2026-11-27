@@ -1,3 +1,4 @@
+import { terminalRenderFailure } from "../runs/run-render-stage.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import {
@@ -148,7 +149,11 @@ async function holdAmbiguousAdmission(
         ...unknownPrice(admission, step),
       },
     });
-  if (run.pauseReason !== "EMERGENCY_STOP" && !run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+  if (
+    run.pauseReason !== "EMERGENCY_STOP" &&
+    !run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+    !(await terminalRenderFailure(db, run))
+  )
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: reason } });
   return { value: reason, payload: { reason }, stepId: step.id, eventType: "reconcile_required" };
 }

@@ -1,3 +1,4 @@
+import { terminalRenderFailure } from "./run-render-stage.js";
 import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { releaseSteps } from "./run-close-steps.js";
 import { correctionHold, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -151,6 +152,18 @@ export async function activeSubmissionHold(
   );
 }
 
+export async function mayRecordSubmissionHold(db: Scoped, run: Run): Promise<boolean> {
+  return run.pauseReason !== "EMERGENCY_STOP" && !(await terminalRenderFailure(db, run));
+}
+
+export async function recordShotBillingHold(db: Scoped, run: Run, stepId: string): Promise<void> {
+  if (await mayRecordSubmissionHold(db, run))
+    await db.videoRun.updateMany({
+      where: { id: run.id },
+      data: { pauseReason: billingHold(stepId) },
+    });
+}
+
 export async function clearResolvedSubmissionHold(
   db: Scoped,
   tx: Transaction,
@@ -158,15 +171,17 @@ export async function clearResolvedSubmissionHold(
   stepId: string,
 ): Promise<string | null> {
   const reason = run.pauseReason;
-  const durable = await remainingSubmissionHold(db, tx, run);
+  if (reason === "EMERGENCY_STOP") return reason;
+  const terminal = await terminalRenderFailure(db, run);
+  const durable = terminal ? null : await remainingSubmissionHold(db, tx, run);
   const pauseReason =
+    terminal?.code ??
     durable ??
     (reason?.startsWith("RECONCILE_REQUIRED")
       ? reason.includes(stepId)
         ? null
         : await storedSubmissionHold(db, run.id, reason)
       : reason);
-  if (reason === "EMERGENCY_STOP") return reason;
   if (pauseReason !== reason)
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
   return pauseReason;

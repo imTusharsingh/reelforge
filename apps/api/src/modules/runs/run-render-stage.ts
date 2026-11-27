@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Run, Scoped } from "./runs.types.js";
 
 export function isRenderStage(state: Run["state"]): state is "ASSEMBLING" | "CRITIC" {
@@ -39,4 +40,27 @@ export async function canAdvancePastRender(
     where: { runId: run.id, key: run.state, attempt: 1, state: "SUCCEEDED" },
     select: { id: true },
   }));
+}
+
+export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
+const terminalError = z.object({ code: z.string().min(1), message: z.string().optional() });
+
+export async function terminalRenderFailure(
+  db: Scoped,
+  run: Run,
+): Promise<z.infer<typeof terminalError> | undefined> {
+  if (!isRenderStage(run.state)) return;
+  const step = await db.videoRunStep.findFirst({
+    where: {
+      runId: run.id,
+      key: run.state,
+      state: "FAILED",
+      OR: [
+        { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
+        { error: { path: ["localRenderFailures"], gt: 0 } },
+      ],
+    },
+    select: { error: true },
+  });
+  return terminalError.safeParse(step?.error).data;
 }

@@ -1,4 +1,4 @@
-import { isRenderStage } from "../runs/run-render-stage.js";
+import { isRenderStage, terminalRenderFailure } from "../runs/run-render-stage.js";
 import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
@@ -157,7 +157,7 @@ export class VideoRunEngine {
           ? current.pauseReason
           : reason,
       });
-      if (hold && current.pauseReason !== hold)
+      if (hold && current.pauseReason !== hold && !(await terminalRenderFailure(db, current)))
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
     }
   }

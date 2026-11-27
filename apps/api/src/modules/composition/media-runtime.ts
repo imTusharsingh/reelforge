@@ -1,4 +1,4 @@
-import { LocalAssemblyFailure } from "./local-assembly-failure.js";
+import { LocalAssemblyFailure, localRenderFailure } from "./local-assembly-failure.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { verifyAssemblyRoundTrip } from "./media-probe.js";
@@ -38,6 +38,15 @@ const probe: Probe = async (executable, args) => {
   return stdout;
 };
 
+function propagateTransientProbeFailure(error: unknown): void {
+  if (localRenderFailure(error).retryable)
+    throw new LocalAssemblyFailure(
+      "LOCAL_RENDER_TRANSIENT",
+      "Local media preflight was temporarily interrupted.",
+      true,
+    );
+}
+
 async function verify(
   label: string,
   execute: () => Promise<boolean>,
@@ -45,8 +54,9 @@ async function verify(
 ): Promise<void> {
   try {
     if (await execute()) return;
-  } catch {
-    // Keep raw subprocess output (including environment information) out of errors.
+  } catch (error) {
+    // Check runtime pressure before redacting subprocess errors and output.
+    propagateTransientProbeFailure(error);
   }
   throw new LocalAssemblyFailure(
     "MEDIA_TOOL_UNAVAILABLE",
@@ -93,7 +103,8 @@ async function canSynthesize(run: Probe, voice: string): Promise<boolean> {
       wav.toString("ascii", 0, 4) === "RIFF" &&
       wav.toString("ascii", 8, 12) === "WAVE"
     );
-  } catch {
+  } catch (error) {
+    propagateTransientProbeFailure(error);
     return false;
   }
 }
