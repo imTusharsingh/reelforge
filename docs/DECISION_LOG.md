@@ -75,7 +75,7 @@ This log is append-only. An approved decision may be superseded by a later appro
 
 ## ADR-012 - Approved dependency and CI version pins
 
-- **Status:** APPROVED (Core Reviewer Minu; recorded as part of M00 integration).
+- **Status:** APPROVED (Core Reviewer Minu; recorded as part of M00 integration). Proposed partial supersession for build and quality-tool pins: ADR-029. Scope outside that proposal is unchanged.
 - **Decision:** Keep the following exact dependency and CI pins from the approved M00 status:
 
 | Component | Version |
@@ -273,3 +273,12 @@ Each pending decision must be resolved in an ADR before the affected production 
 - **Gates:** ADR-005 continues to require every rights, safety, technical, permission and policy hard gate plus the score threshold for auto-publish. Critic agreement informs the L3 offer and never replaces those gates. ADR-019's emergency stop applies to every VideoRun at paid dispatch and step boundaries, at all autonomy levels.
 - **Amends ADR-011:** V10 discovery through official YouTube Data API data and Gemini Search grounding is not competitor scraping. The existing competitor-scraping exclusion and other product-v1 non-goals remain unchanged. V1 here is the foundations requirement, not a product-release scope expansion. Autonomy is governed by this ADR, with script waits only at L1; ADR-009's bounded scoring-weight/format-mix exception is defined in ADR-026.
 - **Consequence:** Wave 0 persists these contracts/defaults; later requirements implement the offer, critic scoring and UI. No automatic publishing behavior is enabled by this ADR or by seeding.
+
+
+## ADR-029 — Rust toolchain for build output and workspace quality checks
+
+- **Status:** PROPOSED, pending independent review of [PR #165](https://github.com/imTusharsingh/reelforge/pull/165), tracked in [issue #164](https://github.com/imTusharsingh/reelforge/issues/164).
+- **Supersedes:** The ESLint, typescript-eslint, and Prettier selections and pins in ADR-012 once approved and merged. All unrelated runtime, TypeScript, testing, database and CI pins in ADR-012 remain in force.
+- **Decision:** Use Oxlint **1.95.0** and Oxfmt **0.80.0** for workspace lint and formatting. Preserve the existing TypeScript lint rules and size ceilings used by tracked code, 100-column formatting, and intentional single blank lines. Apply both Rust configuration files to the protected-path review policy. Use SWC **1.16.22** for Node JavaScript output, while TypeScript continues strict checking and declaration emission. Keep Next.js **16.4.5** on its Turbopack build, and use Rspack **2.3.4** only for the standalone browser fixtures. Preserve Node ESM, Nest injection metadata, and the source-map directive emitted by the build.
+- **Alternatives:** Do not replace Next's App Router with Rsbuild or an experimental Next/Rspack integration. Biome passed the spacing probe but needed an opt-in for Nest parameter decorators; Oxfmt retained more of the existing style with less formatting churn.
+- **Consequences:** The largest measured gain is lint and formatting time. Cold production build and uncompressed artifact sizes are documented in #164 and #165, including the increase in Node JavaScript size despite a small decrease in total Node dist size. Existing CI workflows, Prisma, Vitest, and Playwright remain in place. Future tooling pin changes still require independent Core approval and lockfile updates.

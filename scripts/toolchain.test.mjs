@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkEntrypointSourceMap } from "./check-source-map.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -61,5 +62,27 @@ test("Oxlint still rejects implicit return types, explicit any and new oversized
     assert.match(diagnostics, /max-lines-per-function/);
   } finally {
     rmSync(probe, { recursive: true, force: true });
+  }
+});
+
+test("built entrypoint smoke follows the sourceMappingURL and rejects broken linkage", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reelforge-source-map-"));
+  try {
+    const entrypoint = pathToFileURL(join(dir, "main.js"));
+    const expectedSource = "../src/main.ts";
+    const map = JSON.stringify({ version: 3, sources: [expectedSource], mappings: "AAAA" });
+    writeFileSync(join(dir, "main.js.map"), map); // Existing map cannot hide a missing directive.
+    writeFileSync(join(dir, "different-name.map"), map);
+
+    writeFileSync(entrypoint, "export {};\n");
+    await assert.rejects(checkEntrypointSourceMap(entrypoint, expectedSource), /sourceMappingURL/);
+
+    writeFileSync(entrypoint, "export {};\n//# sourceMappingURL=absent.map\n");
+    await assert.rejects(checkEntrypointSourceMap(entrypoint, expectedSource), { code: "ENOENT" });
+
+    writeFileSync(entrypoint, "export {};\n//# sourceMappingURL=different-name.map\n");
+    await checkEntrypointSourceMap(entrypoint, expectedSource);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
