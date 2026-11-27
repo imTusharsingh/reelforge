@@ -20,7 +20,8 @@ import {
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
 import {
-  collectibleFailedShots,
+  collectibleFailedSteps,
+  referenceMediaPrefix,
   failSettledGeneration,
   activeSubmissionHold,
   unsettledShots,
@@ -84,13 +85,15 @@ export class VideoRunEngine {
           async () => {
             if (run.state === "FAILED") {
               if (!job.stepId) return null;
-              const [accepted] = await collectibleFailedShots(
+              const [accepted] = await collectibleFailedSteps(
                 this.runs.store.scoped(context),
                 this.runs.store.db,
                 run,
                 job.stepId,
               );
               if (!accepted) return null;
+              if (accepted.key.startsWith(referenceMediaPrefix))
+                return this.planning.collectAdmittedReference?.(context, accepted) ?? null;
             }
             if (job.stepId) return this.shot(context, run, job.stepId);
             if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
@@ -369,7 +372,7 @@ export class VideoRunEngine {
       );
     const admitted =
       run.state === "FAILED"
-        ? await collectibleFailedShots(db, this.runs.store.db, run)
+        ? await collectibleFailedSteps(db, this.runs.store.db, run)
         : await db.videoRunStep.findMany({
             where: {
               runId: run.id,
