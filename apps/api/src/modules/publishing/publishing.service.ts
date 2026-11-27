@@ -594,17 +594,14 @@ export class PublishingService {
         const sessionUri = this.decryptSession(context.workspaceId, job.id, attempt);
         const progress = await client.checkVideoUpload(sessionUri, Number(attempt.totalBytes));
         if (progress.completed) {
-          await this.db.publishAttempt.update({
-            where: { workspaceId_id: { workspaceId: context.workspaceId, id: attempt.id } },
-            data: { remotePostId: progress.videoId },
-          });
-          const verified = await client.verifyUploadedVideo(progress.videoId, metadata);
-          await this.recordVerifiedVideo(
-            context.workspaceId,
+          await this.verifyAndRecord(
+            context,
             destination,
             job.id,
             attempt.id,
-            verified,
+            client,
+            metadata,
+            progress.videoId,
           );
         } else {
           await this.recordPartialUpload(
@@ -1158,10 +1155,18 @@ export class PublishingService {
     metadata: YouTubeDestinationMetadata,
     remoteVideoId: string,
   ): Promise<void> {
-    await this.db.publishAttempt.update({
-      where: { workspaceId_id: { workspaceId: context.workspaceId, id: attemptId } },
-      data: { remotePostId: remoteVideoId, status: "REMOTE_PROCESSING" },
+    const recorded = await this.db.$transaction(async (tx) => {
+      const workspaceId = context.workspaceId;
+      const current = await lockPublishingDestination(tx, workspaceId, destination.id, jobId);
+      if (!current || current.status === "PUBLISHED" || current.status === "FAILED_FINAL")
+        return false;
+      const changed = await tx.publishAttempt.updateMany({
+        where: { workspaceId, id: attemptId, status: { notIn: ["SUCCEEDED", "FAILED_FINAL"] } },
+        data: { remotePostId: remoteVideoId, status: "REMOTE_PROCESSING" },
+      });
+      return changed.count === 1;
     });
+    if (!recorded) return;
     const verified = await client.verifyUploadedVideo(remoteVideoId, metadata);
     await this.recordVerifiedVideo(context.workspaceId, destination, jobId, attemptId, verified);
   }

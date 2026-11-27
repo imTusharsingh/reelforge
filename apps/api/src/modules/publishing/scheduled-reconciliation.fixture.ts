@@ -16,6 +16,8 @@ import {
   UnconfiguredPublishingSchedulePort,
   UnconfiguredPublishingBudgetPort,
 } from "./publishing.ports.js";
+import { markElapsedSlotMissed } from "./automation-missed-slot.js";
+import type { AutoSlot } from "./automation-slots.js";
 import { PublishingService } from "./publishing.service.js";
 import { PublishingSessionVault } from "./publishing-session-vault.js";
 import type { ScheduledPostView } from "./publishing.types.js";
@@ -25,7 +27,7 @@ async function seedApprovedSlot(
   source: { workspaceId: string; channelId: string; accountId: string },
   postId: string,
   scheduledAt: Date,
-): Promise<void> {
+): Promise<AutoSlot> {
   const { workspaceId, channelId, accountId } = source;
   const brief = await db.channelBrief.create({
     data: { workspaceId, channelId, version: 1, document: {} },
@@ -41,7 +43,7 @@ async function seedApprovedSlot(
       inputSnapshot: {},
     },
   });
-  await db.v9PublishSlot.create({
+  return db.v9PublishSlot.create({
     data: {
       workspaceId,
       channelId,
@@ -63,8 +65,17 @@ export async function verifyScheduledReconciliation(
   scheduledAt: Date,
 ): Promise<void> {
   const destination = post.destinations[0]!;
-  await seedApprovedSlot(db, source, post.id, scheduledAt);
+  const slot = await seedApprovedSlot(db, source, post.id, scheduledAt);
   const job = await db.publishJob.findFirstOrThrow({ where: { destinationId: destination.id } });
+  await db.v9InsertLease.create({
+    data: {
+      workspaceId: context.workspaceId,
+      slotId: slot.id,
+      status: "DISPATCHED",
+      projectKey: "fixture",
+      quotaDay: "2026-11-27",
+    },
+  });
   const videoId = "confirmed-private-test-id";
   // Simulate a lost final response: only the encrypted resumable session is durable.
   const attemptId = randomUUID();
@@ -118,10 +129,17 @@ export async function verifyScheduledReconciliation(
       ],
     });
   const youtube = new ScheduledYouTube(provider);
+  const lateFinal = Promise.withResolvers<YouTubeUploadProgress>();
+  const firstProbe = Promise.withResolvers<void>();
+  const completed = { completed: true as const, videoId, nextByte: 12 };
   const probe = vi.fn(async (uri: string, bytes: number): Promise<YouTubeUploadProgress> => {
     expect(uri).toBe(sessionUri);
     expect(bytes).toBe(12);
-    return { completed: true, videoId, nextByte: 12 };
+    if (probe.mock.calls.length === 1) {
+      firstProbe.resolve();
+      return lateFinal.promise;
+    }
+    return completed;
   });
   const offline = new PublishingService(
     db,
@@ -160,6 +178,8 @@ export async function verifyScheduledReconciliation(
         eventType: "PostPublished",
       },
     });
+  const delayedFinalResponse = reconcile();
+  await firstProbe.promise;
   expect((await reconcile()).destinations[0]).toMatchObject({
     status: "REMOTE_PROCESSING",
     remotePostId: videoId,
@@ -171,9 +191,18 @@ export async function verifyScheduledReconciliation(
   privacyStatus = "public";
   const time = vi.spyOn(Date, "now").mockReturnValue(scheduledAt.getTime());
   try {
+    expect(await markElapsedSlotMissed(db, context, slot, destination.id, false)).toBe(false);
     const completions = await Promise.all([reconcile(), reconcile()]);
     stale.resolve(videoResponse("private"));
     await slowPrivate;
+    const verifiedReads = provider.mock.calls.length;
+    lateFinal.resolve(completed);
+    await delayedFinalResponse;
+    expect(provider).toHaveBeenCalledTimes(verifiedReads);
+    expect(await db.publishAttempt.findUniqueOrThrow({ where: { id: attemptId } })).toMatchObject({
+      status: "SUCCEEDED",
+      remotePostId: videoId,
+    });
     for (const result of completions)
       expect(result.destinations[0]).toMatchObject({
         status: "PUBLISHED",
@@ -184,10 +213,12 @@ export async function verifyScheduledReconciliation(
       remotePostId: videoId,
     });
     expect(await eventCount()).toBe(1);
-    expect(probe).toHaveBeenCalledOnce();
+    expect(probe).toHaveBeenCalledTimes(2);
     expect(await db.publishAttempt.count({ where: { publishJobId: job.id } })).toBe(1);
   } finally {
     stale.resolve(videoResponse("private"));
+    lateFinal.resolve(completed);
+    await Promise.allSettled([slowPrivate, delayedFinalResponse]);
     time.mockRestore();
   }
 }

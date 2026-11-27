@@ -305,6 +305,7 @@ function publishHarness(
       update: vi.fn().mockResolvedValue({}),
     },
     publishAttempt: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       count: vi.fn().mockResolvedValue(priorAttempt === null ? 0 : 1),
       create: vi.fn(async (args: { data: Record<string, unknown> }) => ({
         id: String(args.data["id"]),

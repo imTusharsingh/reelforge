@@ -1,12 +1,13 @@
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { PublishingPackageSchema, type PublishingPackage } from "@reelforge/contracts";
 import type { PrismaClient } from "@reelforge/database";
-import { missedYouTubeSlot, youTubeSlotElapsed } from "../social-accounts/scheduled-youtube.js";
+import { youTubeSlotElapsed } from "../social-accounts/scheduled-youtube.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { reconnectRequired } from "./automation-client.js";
 import { PublishingService } from "./publishing.service.js";
 import type { PublishingDestinationView, ScheduledPostView } from "./publishing.types.js";
+import { markElapsedSlotMissed } from "./automation-missed-slot.js";
 import { AutomationSlots, type AutoSlot } from "./automation-slots.js";
 
 @Injectable()
@@ -90,9 +91,13 @@ export class PublishingAutomation {
     let slot: AutoSlot | null = null;
     try {
       slot = await this.prepare(context, id);
+      if (slot.status === "COMPLETE") {
+        await this.finishPublishedRun(context, id);
+        return;
+      }
       if (
         !slot.scheduledPostId ||
-        ["COMPLETE", "DRY_RUN", "MISSED"].includes(slot.status) ||
+        ["DRY_RUN", "MISSED"].includes(slot.status) ||
         slot.status === "NEEDS_HUMAN"
       )
         return;
@@ -114,48 +119,43 @@ export class PublishingAutomation {
         },
         data: { status: published ? "COMPLETE" : "WAITING", lastError: null },
       });
-      if (published) {
-        const run = await this.runs.get(context, id);
-        if (run.state === "SCHEDULED")
-          await this.runs.transition(context, id, run.revision, "PUBLISHED");
-      }
+      if (published) await this.finishPublishedRun(context, id);
     } catch (error) {
       await this.failure(context, id, slot, error);
     }
   }
+  private async finishPublishedRun(context: Context, id: string): Promise<void> {
+    const run = await this.runs.get(context, id);
+    if (run.state === "SCHEDULED")
+      await this.runs.transition(context, id, run.revision, "PUBLISHED");
+  }
+
   private async uploadOrReconcile(
     context: Context,
     slot: AutoSlot,
     destination: PublishingDestinationView,
   ): Promise<ScheduledPostView | null> {
-    const attempted = destination.latestAttempt !== null;
     const elapsed = youTubeSlotElapsed(slot.scheduledAt);
-    const blockedBeforeInsert =
-      destination.status === "FAILED_FINAL" && destination.lastErrorCode === missedYouTubeSlot;
-    if (elapsed && (!attempted || blockedBeforeInsert)) return this.markMissed(context, slot);
-    const result = attempted
+    if (elapsed && (await markElapsedSlotMissed(this.db, context, slot, destination.id, false)))
+      return null;
+
+    // The original post view can predate another worker's upload claim.
+    // After the deadline, only a read-only probe is allowed, even if that view had no attempt.
+    const reconcile = elapsed || destination.latestAttempt !== null;
+    const result = reconcile
       ? await this.publishing.reconcile(context, destination.id)
       : await this.publishing.publishNow(context, destination.id);
-    if (attempted && result.destinations[0]?.status === "FAILED_RETRYABLE") {
+    if (reconcile && result.destinations[0]?.status === "FAILED_RETRYABLE") {
       if (!youTubeSlotElapsed(slot.scheduledAt))
         return this.publishing.retry(context, destination.id);
-      // A pre-slot final chunk may still be in flight (transport timeout is 120 seconds).
-      // Read again after a grace period before declaring the incomplete upload missed.
-      if (Date.now() - slot.scheduledAt.getTime() >= 180_000) return this.markMissed(context, slot);
+      // An already-dispatched final chunk can still be in flight. Use the grace window for reads.
+      if (
+        Date.now() - slot.scheduledAt.getTime() >= 180_000 &&
+        (await markElapsedSlotMissed(this.db, context, slot, destination.id, true))
+      )
+        return null;
     }
     return result;
-  }
-
-  private async markMissed(context: Context, slot: AutoSlot): Promise<null> {
-    await this.db.v9PublishSlot.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        id: slot.id,
-        status: { notIn: ["COMPLETE", "DRY_RUN"] },
-      },
-      data: { status: "MISSED", lastError: missedYouTubeSlot },
-    });
-    return null;
   }
 
   private async recordDryRun(context: Context, id: string, slotId: string): Promise<void> {
@@ -180,8 +180,8 @@ export class PublishingAutomation {
     error: unknown,
   ): Promise<void> {
     const reconnect = reconnectRequired(error);
-    if (slot)
-      await this.db.v9PublishSlot.updateMany({
+    if (slot) {
+      const changed = await this.db.v9PublishSlot.updateMany({
         where: {
           workspaceId: context.workspaceId,
           id: slot.id,
@@ -192,6 +192,8 @@ export class PublishingAutomation {
           lastError: reconnect ? "RECONNECT_YOUTUBE" : "PREFLIGHT_OR_RECONCILE_REQUIRED",
         },
       });
+      if (changed.count === 0) return;
+    }
     if (!reconnect) {
       console.warn("[v9-publishing] preflight or reconciliation blocked", id);
       return;
