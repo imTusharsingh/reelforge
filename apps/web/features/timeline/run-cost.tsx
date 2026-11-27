@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type JSX } from "react";
+import { Alert } from "../../components/ui/primitives";
 import { runRequest } from "./client";
 import { dollars } from "./view-model";
 
@@ -30,8 +31,19 @@ export function RunCost({
       active = false;
     };
   }, [workspaceId, id, revision]);
-  if (error) return <p role="alert">Run costs unavailable.</p>;
-  if (!cost) return <p>Loading run costs…</p>;
+  if (error)
+    return (
+      <Alert tone="warning" title="Run costs unavailable">
+        Actual spend could not be loaded.
+      </Alert>
+    );
+  if (!cost)
+    return (
+      <p role="status" className="rf-loading-label">
+        <span className="rf-spinner" aria-hidden="true" />
+        Loading run costs…
+      </p>
+    );
   return (
     <p>
       {dollars(cost.reservedMinor)} reserved · {dollars(cost.committedMinor)} committed

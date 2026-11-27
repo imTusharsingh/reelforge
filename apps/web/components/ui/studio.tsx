@@ -2,23 +2,26 @@
 
 import { useId, useState, type JSX, type ReactNode, type RefObject } from "react";
 import { Button, Panel } from "./primitives";
+import { Icon } from "./icon";
 
 export function Modal({
+  id,
   dialog,
   title,
   onClose,
   children,
 }: {
+  id?: string;
   dialog: RefObject<HTMLDialogElement | null>;
   title: string;
   onClose?: () => void;
   children: ReactNode;
 }): JSX.Element {
-  const id = useId();
+  const titleId = useId();
   return (
-    <dialog className="rf-dialog" ref={dialog} aria-labelledby={id} onClose={onClose}>
+    <dialog id={id} className="rf-dialog" ref={dialog} aria-labelledby={titleId} onClose={onClose}>
       <div className="rf-toolbar">
-        <h2 id={id}>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <Button tone="ghost" onClick={() => dialog.current?.close()}>
           Close
         </Button>
@@ -37,6 +40,9 @@ export function EmptyState({
 }): JSX.Element {
   return (
     <Panel className="rf-empty">
+      <span className="rf-empty-icon" aria-hidden="true">
+        <Icon name="film" />
+      </span>
       <h2>{title}</h2>
       {children}
     </Panel>
@@ -45,17 +51,16 @@ export function EmptyState({
 
 export function Skeleton({ label }: { label: string }): JSX.Element {
   return (
-    <div role="status" className="rf-stack">
-      {label}
-      <div aria-hidden="true" className="rf-skeleton" />
-    </div>
-  );
-}
-
-export function Toast({ children }: { children: ReactNode }): JSX.Element {
-  return (
-    <div role="status" className="rf-toast">
-      {children}
+    <div role="status" className="rf-loading-state" aria-atomic="true">
+      <span className="rf-loading-label">
+        <span className="rf-spinner" aria-hidden="true" />
+        {label}
+      </span>
+      <span aria-hidden="true" className="rf-skeleton">
+        <span />
+        <span />
+        <span />
+      </span>
     </div>
   );
 }
@@ -90,7 +95,10 @@ export function VideoPlayer({
       ) : image ? (
         <img src={poster} alt={label} loading="lazy" onError={() => setFailedPoster(poster)} />
       ) : (
-        <span>{failedVideo || failedPoster ? "Media unavailable" : label}</span>
+        <span className="rf-frame-label">
+          <Icon name="film" />
+          {failedVideo || failedPoster ? "Media unavailable" : label}
+        </span>
       )}
     </div>
   );

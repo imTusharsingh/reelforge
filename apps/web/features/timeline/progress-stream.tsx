@@ -20,11 +20,16 @@ export function ProgressStream({
         </span>
       </div>
       <ol className="rf-timeline">
-        {VideoRunStateSchema.options.map((state) => (
-          <li key={state} aria-current={detail.run.state === state ? "step" : undefined}>
-            {stateLabel(state)}
-          </li>
-        ))}
+        {VideoRunStateSchema.options.map((state) => {
+          const current = detail.run.state === state;
+          const simulated =
+            current && state === "PUBLISHED" && detail.run.pauseReason === "PUBLISH_DRY_RUN";
+          return (
+            <li key={state} aria-current={current ? "step" : undefined}>
+              {simulated ? "Publish simulated (dry run)" : stateLabel(state)}
+            </li>
+          );
+        })}
       </ol>
       {detail.steps.length > 0 && (
         <details>

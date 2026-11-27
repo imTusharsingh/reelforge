@@ -298,14 +298,22 @@ export class PublishingClient {
     await this.accountAction(accountId, "health");
   }
 
-  public async revokeAccount(accountId: string): Promise<void> {
-    await this.accountAction(accountId, "revoke");
+  public async revokeAccount(accountId: string): Promise<SocialAccount> {
+    return this.mutate(
+      `account:${accountId}`,
+      "POST",
+      `social-accounts/${encodeURIComponent(accountId)}/revoke`,
+      undefined,
+      (value) => {
+        const account = parseAccounts([value], this.workspaceId)[0];
+        if (account?.id !== accountId || account.status !== "REVOKED")
+          throw new Error("The response did not confirm that this account was disconnected.");
+        return account;
+      },
+    );
   }
 
-  private async accountAction(
-    accountId: string,
-    action: "refresh" | "health" | "revoke",
-  ): Promise<void> {
+  private async accountAction(accountId: string, action: "refresh" | "health"): Promise<void> {
     await this.mutate(
       `account:${accountId}`,
       "POST",

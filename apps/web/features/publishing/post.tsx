@@ -3,6 +3,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { usePublishingClient } from "./session";
 import { StudioLink } from "../../components/studio-link";
+import { PageHeading } from "../../components/ui/page-heading";
 import { Alert, Badge, Panel } from "../../components/ui/primitives";
 import { browserTimeZone, type Post } from "./model";
 
@@ -40,12 +41,15 @@ export function PostDetail({ postId }: { postId: string }): JSX.Element {
 
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Post detail</h1>
-        <div className="rf-action-row">
-          <StudioLink href="/publishing">Calendar</StudioLink>
-        </div>
-      </header>
+      <PageHeading
+        label="03 / Delivery"
+        title="Post detail"
+        actions={
+          <StudioLink className="rf-button rf-button--secondary" href="/publishing">
+            Calendar
+          </StudioLink>
+        }
+      />
       {error && (
         <Alert tone="danger" title="Request failed">
           {error}

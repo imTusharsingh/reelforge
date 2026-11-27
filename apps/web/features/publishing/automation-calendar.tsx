@@ -1,41 +1,15 @@
 "use client";
 
-import { useEffect, useState, type JSX } from "react";
+import { useCallback, type JSX } from "react";
 import type { AutoSlotView } from "../../../../packages/contracts/src/publishing-automation";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
-import { Alert, Badge, Card } from "../../components/ui/primitives";
+import { Alert, Badge, Button, Card } from "../../components/ui/primitives";
 import { EmptyState, Skeleton } from "../../components/ui/studio";
 import { stateLabel } from "../timeline/view-model";
 import { autoSlots } from "./automation-api";
-
-function useSchedule(workspaceId: string): { slots: AutoSlotView[] | null; error: string } {
-  const [slots, setSlots] = useState<AutoSlotView[] | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async (): Promise<void> => {
-      try {
-        const values = await autoSlots(workspaceId);
-        if (active) {
-          setSlots(values);
-          setError("");
-        }
-      } catch (e) {
-        if (active) setError(String(e));
-      } finally {
-        if (active) timer = setTimeout(() => void load(), 30000);
-      }
-    };
-    void load();
-    return (): void => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [workspaceId]);
-  return { slots, error };
-}
+import { useResource } from "../../components/ui/use-resource";
+import { PageHeading } from "../../components/ui/page-heading";
 
 export function AutomationCalendar(): JSX.Element {
   const workspace = useActiveWorkspace();
@@ -43,19 +17,25 @@ export function AutomationCalendar(): JSX.Element {
 }
 
 function Schedule({ workspaceId }: { workspaceId: string }): JSX.Element {
-  const { slots, error } = useSchedule(workspaceId);
+  const load = useCallback(() => autoSlots(workspaceId), [workspaceId]);
+  const { data: slots, error, loading, retry } = useResource(load, 30000);
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Publishing schedule</h1>
-        <p>
-          Approved Shorts fill the next available channel slot. YouTube keeps them private until the
-          scheduled time.
-        </p>
-      </header>
+      <PageHeading label="03 / Delivery" title="Publishing schedule">
+        Approved Shorts fill the next available channel slot. YouTube keeps them private until the
+        scheduled time.
+      </PageHeading>
       {error && (
-        <Alert tone="danger" title="Schedule unavailable">
-          {error}
+        <Alert
+          tone={slots ? "warning" : "danger"}
+          title={slots ? "Couldn’t refresh schedule" : "Schedule unavailable"}
+        >
+          {slots ? "Showing the last loaded publishing slots." : error}
+          <div className="rf-action-row">
+            <Button tone="secondary" loading={loading} onClick={retry}>
+              Retry
+            </Button>
+          </div>
         </Alert>
       )}
       {!slots && !error && <Skeleton label="Loading publishing schedule…" />}

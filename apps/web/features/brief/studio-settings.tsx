@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { Tabs } from "../../components/ui/tabs";
+import { PageHeading } from "../../components/ui/page-heading";
 
 const settings = [
   { label: "Provider keys", href: "/settings" },
@@ -17,9 +18,9 @@ export function StudioSettings({
 }): JSX.Element {
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Settings</h1>
-      </header>
+      <PageHeading label="05 / Configuration" title="Settings">
+        Manage your channel, provider connections, and account.
+      </PageHeading>
       <Tabs label="Settings sections" items={settings} current={current} />
       {children}
     </section>

@@ -1,30 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
+import { useNotify } from "../../components/ui/notifications";
 import { Alert, Badge, Button, Field, Panel, SelectField } from "../../components/ui/primitives";
-import {
-  isEditableRole,
-  type Channel,
-  type PlatformAvailability,
-  type SocialAccount,
-} from "./model";
+import { isEditableRole } from "./model";
 import { usePublishingClient } from "./session";
+import { useAccountLists } from "./use-account-lists";
 
 export function Accounts(): JSX.Element {
   const workspace = useActiveWorkspace();
   const editable = isEditableRole(workspace.role);
   const api = usePublishingClient();
-  const [items, setItems] = useState<SocialAccount[]>([]);
-  const [available, setAvailable] = useState<PlatformAvailability[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const notify = useNotify();
+  const { items, available, channels, replaceAccounts, hideRevoked, load } = useAccountLists(api);
   const [channel, setChannel] = useState("");
   const platform = "YOUTUBE";
   const [remoteAccountId, setRemoteAccountId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const loading = useInitialAccountLoad(load, setError);
   const [notice, setNotice] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState("");
   const [pending, setPending] = useState(() => api.pendingAccountScopes());
   const [inspected, setInspected] = useState(false);
   const locked = busy || pending.length > 0;
@@ -33,7 +30,7 @@ export function Accounts(): JSX.Element {
     setBusy(true);
     setError("");
     try {
-      setItems((await api.reconcileAccounts()).filter((item) => item.platform === platform));
+      replaceAccounts(await api.reconcileAccounts());
       setInspected(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to refresh accounts.");
@@ -51,53 +48,54 @@ export function Accounts(): JSX.Element {
     }
   };
 
-  const load = useCallback(async (): Promise<void> => {
-    const [nextAccounts, nextPlatforms, nextChannels] = await Promise.all([
-      api.accounts(),
-      api.platforms(),
-      api.channels(),
-    ]);
-    setItems(nextAccounts.filter((item) => item.platform === platform));
-    setAvailable(nextPlatforms.filter((item) => item.platform === platform));
-    setChannels(nextChannels.filter((item) => item.status !== "ARCHIVED"));
-  }, [api]);
+  useConnectFeedback(notify, setNotice);
 
-  useEffect(() => {
-    let active = true;
-    void load()
-      .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : "Unable to load accounts.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return (): void => {
-      active = false;
-    };
-  }, [load]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("oauthError");
-    if (code) setNotice(`Connection failed: ${code}. Try connecting again.`);
-    else if (params.has("connected"))
-      setNotice("Account connected. Check its health and capabilities below.");
-  }, []);
-
-  const act = async (operation: () => Promise<void>): Promise<void> => {
+  const act = async <T,>(
+    operation: () => Promise<T>,
+    success: string,
+    onCompleted?: (result: T) => void,
+  ): Promise<void> => {
     if (!editable || locked) return;
     setBusy(true);
     setError("");
     setNotice("");
+    setRefreshNotice("");
+    notify(null);
     try {
-      await operation();
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Request failed.");
-      setPending(api.pendingAccountScopes());
-      setInspected(false);
+      let result: T;
+      try {
+        result = await operation();
+      } catch (cause) {
+        notify({
+          tone: "danger",
+          title: "Account action failed",
+          detail:
+            cause instanceof Error ? cause.message : "Check the account status and try again.",
+        });
+        setPending(api.pendingAccountScopes());
+        setInspected(false);
+        return;
+      }
+      onCompleted?.(result);
+      await refreshLists(success);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const refreshLists = async (completed: string, retry = false): Promise<void> => {
+    if (retry) {
+      if (busy) return;
+      setBusy(true);
+    }
+    try {
+      await load();
+      setRefreshNotice("");
+      notify({ tone: "success", title: retry ? "Account lists refreshed." : completed });
+    } catch {
+      setRefreshNotice(completed);
+    } finally {
+      if (retry) setBusy(false);
     }
   };
 
@@ -140,6 +138,13 @@ export function Accounts(): JSX.Element {
         <Alert tone="danger" title="Request failed">
           {error}
         </Alert>
+      )}
+      {refreshNotice && (
+        <AccountRefreshNotice
+          completed={refreshNotice}
+          busy={busy}
+          retry={() => void refreshLists(refreshNotice, true)}
+        />
       )}
       {notice && (
         <Alert tone="warning" title="Connection status">
@@ -245,14 +250,21 @@ export function Accounts(): JSX.Element {
                     <Button
                       tone="secondary"
                       disabled={locked}
-                      onClick={() => void act(() => api.refreshAccount(account.id))}
+                      onClick={() =>
+                        void act(() => api.refreshAccount(account.id), "Account refreshed.")
+                      }
                     >
                       Refresh
                     </Button>
                     <Button
                       tone="secondary"
                       disabled={locked}
-                      onClick={() => void act(() => api.checkAccountHealth(account.id))}
+                      onClick={() =>
+                        void act(
+                          () => api.checkAccountHealth(account.id),
+                          "Account health checked.",
+                        )
+                      }
                     >
                       Check health
                     </Button>
@@ -275,7 +287,11 @@ export function Accounts(): JSX.Element {
                       disabled={locked}
                       onClick={() => {
                         if (window.confirm(`Disconnect ${account.displayName}?`))
-                          void act(() => api.revokeAccount(account.id));
+                          void act(
+                            () => api.revokeAccount(account.id),
+                            "Account disconnected.",
+                            hideRevoked,
+                          );
                       }}
                     >
                       Disconnect
@@ -288,5 +304,60 @@ export function Accounts(): JSX.Element {
         )}
       </Panel>
     </section>
+  );
+}
+
+function useInitialAccountLoad(
+  load: () => Promise<void>,
+  setError: (value: string) => void,
+): boolean {
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    void load()
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to load accounts.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return (): void => {
+      active = false;
+    };
+  }, [load, setError]);
+  return loading;
+}
+
+function useConnectFeedback(
+  notify: ReturnType<typeof useNotify>,
+  setNotice: (value: string) => void,
+): void {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("oauthError");
+    if (code) setNotice(`Connection failed: ${code}. Try connecting again.`);
+    else if (params.has("connected"))
+      notify({ tone: "success", title: "YouTube account connected." });
+  }, [notify, setNotice]);
+}
+
+function AccountRefreshNotice({
+  completed,
+  busy,
+  retry,
+}: {
+  completed: string;
+  busy: boolean;
+  retry: () => void;
+}): JSX.Element {
+  return (
+    <Alert tone="warning" title={completed}>
+      Account lists could not be refreshed. Retry the refresh without repeating the action.
+      <div className="rf-action-row">
+        <Button tone="secondary" disabled={busy} onClick={retry}>
+          Retry list refresh
+        </Button>
+      </div>
+    </Alert>
   );
 }

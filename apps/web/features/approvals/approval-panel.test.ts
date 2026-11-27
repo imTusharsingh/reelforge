@@ -2,6 +2,7 @@
 import { act, createElement, type JSX } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NotificationProvider } from "../../components/ui/notifications";
 import { ApprovalPanel } from "./approval-panel";
 import { useRun } from "../timeline/use-run";
 import { detail, FakeEventSource, runId, workspaceId } from "../timeline/timeline.fixture";
@@ -30,7 +31,14 @@ describe("mobile approval UI on fake transport", () => {
     const refresh = vi.fn();
     await act(async () =>
       root.render(
-        createElement(ApprovalPanel, { detail: detail(), workspaceId, editable: true, refresh }),
+        createElement(NotificationProvider, {
+          children: createElement(ApprovalPanel, {
+            detail: detail(),
+            workspaceId,
+            editable: true,
+            refresh,
+          }),
+        }),
       ),
     );
     const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
@@ -41,7 +49,11 @@ describe("mobile approval UI on fake transport", () => {
     expect(fetcher.mock.calls[1]?.[1]?.body).toContain(
       label === "Approve Short" ? "APPROVE" : "REJECT",
     );
-    expect(host.querySelector('[role="status"]')).not.toBeNull();
+    expect(
+      host.querySelector(
+        label === "Approve Short" ? '.rf-notification [role="status"]' : '.rf-alert[role="status"]',
+      ),
+    ).not.toBeNull();
   });
   it("renders packaged metadata and the retained assembly preview", async () => {
     const data = detail();

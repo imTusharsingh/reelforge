@@ -8,6 +8,9 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 
+import { Icon } from "./icon";
+import { InlineNoticeSlot } from "./notifications";
+
 type ButtonTone = "primary" | "secondary" | "ghost" | "danger";
 type ButtonProps = ComponentPropsWithRef<"button"> & {
   tone?: ButtonTone;
@@ -185,8 +188,12 @@ export function Alert({
 }): JSX.Element {
   return (
     <div className={`rf-alert rf-alert--${tone}`} role={tone === "danger" ? "alert" : "status"}>
-      <strong>{title}</strong>
-      <p>{children}</p>
+      <Icon name={tone === "success" ? "check" : tone === "info" ? "info" : "warning"} />
+      <div className="rf-alert__content">
+        <strong>{title}</strong>
+        <div>{children}</div>
+        {(tone === "danger" || tone === "warning") && <InlineNoticeSlot tone={tone} />}
+      </div>
     </div>
   );
 }

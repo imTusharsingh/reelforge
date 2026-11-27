@@ -20,6 +20,7 @@ export const accounts: SocialAccount[] = [
     username: "fixture",
     status: "CONNECTED",
     health: "HEALTHY",
+    connectedAt: "2026-11-13T10:00:00.000Z",
   },
 ];
 
