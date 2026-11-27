@@ -1,3 +1,5 @@
+import type { PartialYouTubeProbe } from "./automation-missed-slot.js";
+import { closeOverlappingAttempts } from "./publishing-overlap.js";
 import { publishingClient, isScheduledAutomation, reconnectRequired } from "./automation-client.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -570,6 +572,7 @@ export class PublishingService {
   public async reconcile(
     context: WorkspaceContext,
     destinationId: string,
+    onPartial?: (probe: PartialYouTubeProbe) => void,
   ): Promise<ScheduledPostView> {
     this.requireEditor(context);
     const destination = await this.requireDestination(context.workspaceId, destinationId);
@@ -592,6 +595,7 @@ export class PublishingService {
         );
       } else if (attempt.sessionCiphertext !== null) {
         const sessionUri = this.decryptSession(context.workspaceId, job.id, attempt);
+        const startedAt = Date.now();
         const progress = await client.checkVideoUpload(sessionUri, Number(attempt.totalBytes));
         if (progress.completed) {
           await this.verifyAndRecord(
@@ -604,13 +608,15 @@ export class PublishingService {
             progress.videoId,
           );
         } else {
-          await this.recordPartialUpload(
+          const recorded = await this.recordPartialUpload(
             context.workspaceId,
             destination.id,
             job.id,
             attempt.id,
             progress.nextByte,
           );
+          if (recorded)
+            onPartial?.({ attemptId: attempt.id, startedAt, nextByte: progress.nextByte });
         }
       } else {
         throw new ConflictException("No resumable session or remote ID is available to reconcile");
@@ -1129,10 +1135,15 @@ export class PublishingService {
       } else {
         noProgressCount = 0;
         offset = progress.nextByte;
-        await this.db.publishAttempt.update({
-          where: { workspaceId_id: { workspaceId: context.workspaceId, id: attemptId } },
+        const advanced = await this.db.publishAttempt.updateMany({
+          where: {
+            workspaceId: context.workspaceId,
+            id: attemptId,
+            status: { notIn: ["SUCCEEDED", "FAILED_FINAL"] },
+          },
           data: { confirmedBytes: BigInt(offset), status: "UPLOADING" },
         });
+        if (!advanced.count) return;
       }
     }
     await this.markReconciliationRequired(
@@ -1158,8 +1169,12 @@ export class PublishingService {
     const recorded = await this.db.$transaction(async (tx) => {
       const workspaceId = context.workspaceId;
       const current = await lockPublishingDestination(tx, workspaceId, destination.id, jobId);
-      if (!current || current.status === "PUBLISHED" || current.status === "FAILED_FINAL")
+      if (!current || current.status === "FAILED_FINAL") return false;
+      if (current.status === "PUBLISHED") {
+        if (current.remotePostId === remoteVideoId)
+          await closeOverlappingAttempts(tx, workspaceId, jobId, new Date());
         return false;
+      }
       const changed = await tx.publishAttempt.updateMany({
         where: { workspaceId, id: attemptId, status: { notIn: ["SUCCEEDED", "FAILED_FINAL"] } },
         data: { remotePostId: remoteVideoId, status: "REMOTE_PROCESSING" },
@@ -1202,7 +1217,12 @@ export class PublishingService {
         destination.id,
         jobId,
       );
-      if (!currentDestination || currentDestination.status === "PUBLISHED") return;
+      if (!currentDestination) return;
+      if (currentDestination.status === "PUBLISHED") {
+        if (published && currentDestination.remotePostId === verified.videoId)
+          await closeOverlappingAttempts(tx, workspaceId, jobId, now);
+        return;
+      }
       if (currentDestination.status === "FAILED_FINAL" && !published) return;
       await tx.publishAttempt.update({
         where: { workspaceId_id: { workspaceId, id: attemptId } },
@@ -1234,6 +1254,7 @@ export class PublishingService {
       });
       await this.updateParentStatus(tx, workspaceId, destination.scheduledPostId);
       if (published) {
+        await closeOverlappingAttempts(tx, workspaceId, jobId, now);
         const event = PostPublishedV1Schema.parse({
           eventId: randomUUID(),
           eventType: "PostPublished",
@@ -1511,11 +1532,24 @@ export class PublishingService {
     jobId: string,
     attemptId: string,
     nextByte: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const status = "FAILED_RETRYABLE";
-    await this.db.$transaction(async (tx) => {
+    return this.db.$transaction(async (tx) => {
       const current = await lockPublishingDestination(tx, workspaceId, destinationId, jobId);
-      if (!current || current.remotePostId !== null || current.status === "FAILED_FINAL") return;
+      if (!current || current.remotePostId !== null || current.status === "FAILED_FINAL")
+        return false;
+      const latest = await tx.publishAttempt.findFirst({
+        where: { workspaceId, publishJobId: jobId },
+        orderBy: { attemptNumber: "desc" },
+        select: { id: true, status: true, confirmedBytes: true, remotePostId: true },
+      });
+      if (
+        latest?.id !== attemptId ||
+        latest.remotePostId !== null ||
+        ["SUCCEEDED", "FAILED_FINAL", "REMOTE_PROCESSING"].includes(latest.status) ||
+        latest.confirmedBytes > BigInt(nextByte)
+      )
+        return false;
       await tx.publishAttempt.update({
         where: { workspaceId_id: { workspaceId, id: attemptId } },
         data: { confirmedBytes: BigInt(nextByte), status },
@@ -1528,6 +1562,7 @@ export class PublishingService {
         where: { workspaceId_id: { workspaceId, id: jobId } },
         data: { status },
       });
+      return true;
     });
   }
 

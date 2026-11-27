@@ -111,8 +111,35 @@ export async function verifyScheduledReconciliation(
       hold = false;
       return stale.promise;
     }
+    if (privacyStatus === "public" && !resumeRecorded) {
+      resumeRecorded = true;
+      await startOverlappingResume();
+    }
     return videoResponse(privacyStatus);
   });
+  const resumedId = randomUUID();
+  let resumeRecorded = false;
+  async function startOverlappingResume(): Promise<void> {
+    const encrypted = vault.encrypt(
+      sessionUri,
+      `${context.workspaceId}:${job.id}:${resumedId}:youtube-upload-session`,
+    );
+    await db.publishAttempt.create({
+      data: {
+        workspaceId: context.workspaceId,
+        publishJobId: job.id,
+        attemptNumber: 2,
+        idempotencyKey: randomUUID(),
+        status: "STARTED",
+        id: resumedId,
+        totalBytes: 12,
+        sessionCiphertext: encrypted.ciphertext,
+        sessionNonce: encrypted.nonce,
+        sessionTag: encrypted.tag,
+        sessionKeyVersion: encrypted.keyVersion,
+      },
+    });
+  }
   const videoResponse = (privacy: string): Response =>
     Response.json({
       items: [
@@ -191,8 +218,8 @@ export async function verifyScheduledReconciliation(
   privacyStatus = "public";
   const time = vi.spyOn(Date, "now").mockReturnValue(scheduledAt.getTime());
   try {
-    expect(await markElapsedSlotMissed(db, context, slot, destination.id, false)).toBe(false);
-    const completions = await Promise.all([reconcile(), reconcile()]);
+    expect(await markElapsedSlotMissed(db, context, slot, destination.id)).toBe(false);
+    const completedPost = await reconcile();
     stale.resolve(videoResponse("private"));
     await slowPrivate;
     const verifiedReads = provider.mock.calls.length;
@@ -203,18 +230,22 @@ export async function verifyScheduledReconciliation(
       status: "SUCCEEDED",
       remotePostId: videoId,
     });
-    for (const result of completions)
-      expect(result.destinations[0]).toMatchObject({
-        status: "PUBLISHED",
-        remotePostId: videoId,
-      });
+    expect(completedPost.destinations[0]).toMatchObject({
+      status: "PUBLISHED",
+      remotePostId: videoId,
+      latestAttempt: { id: resumedId, status: "FAILED_FINAL", errorCode: "UPLOAD_SUPERSEDED" },
+    });
+    expect(await db.publishAttempt.findUniqueOrThrow({ where: { id: resumedId } })).toMatchObject({
+      status: "FAILED_FINAL",
+      finishedAt: expect.any(Date),
+    });
     expect((await reconcile()).destinations[0]).toMatchObject({
       status: "PUBLISHED",
       remotePostId: videoId,
     });
     expect(await eventCount()).toBe(1);
     expect(probe).toHaveBeenCalledTimes(2);
-    expect(await db.publishAttempt.count({ where: { publishJobId: job.id } })).toBe(1);
+    expect(await db.publishAttempt.count({ where: { publishJobId: job.id } })).toBe(2);
   } finally {
     stale.resolve(videoResponse("private"));
     lateFinal.resolve(completed);

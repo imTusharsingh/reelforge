@@ -7,6 +7,7 @@ import type { YouTubeDestinationMetadata } from "@reelforge/contracts";
 import { z } from "zod";
 
 export const missedYouTubeSlot = "YOUTUBE_SLOT_MISSED";
+export const rejectedYouTubeInsert = "YOUTUBE_INSERT_REJECTED_RECONNECT_REQUIRED";
 
 export function youTubeSlotElapsed(scheduledAt: Date | string): boolean {
   const instant = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : scheduledAt.getTime();
@@ -62,7 +63,14 @@ export class ScheduledYouTube {
           },
         }),
       },
-    );
+    ).catch((error: unknown) => {
+      if (
+        error instanceof SocialProviderError &&
+        error.detail.code === "YOUTUBE_RECONNECT_REQUIRED"
+      )
+        throw this.failure(rejectedYouTubeInsert, "AUTH_REQUIRED");
+      throw error;
+    });
     const location = response.headers.get("location");
     if (!location) throw this.failure("UPLOAD_OUTCOME_UNKNOWN", "TRANSIENT");
     return normalizeUploadSession(location, [

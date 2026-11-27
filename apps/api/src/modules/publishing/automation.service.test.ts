@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnauthorizedException } from "@nestjs/common";
-import { automationFixture, context } from "./automation.fixture.js";
+import { automationFixture, context, id } from "./automation.fixture.js";
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2027-03-13T00:00:00Z"));
@@ -116,15 +116,17 @@ it("only reads a previously submitted upload after its slot and never resumes an
     remotePostId: null,
   });
   f.db.publishAttempt.findFirst.mockResolvedValue({
+    id: id(12),
+    confirmedBytes: 3n,
     status: "FAILED_RETRYABLE",
     sessionCiphertext: "session",
     remotePostId: null,
   });
   vi.setSystemTime(new Date(f.slot.scheduledAt.getTime() + 180_000));
   const post = await f.publishing.getScheduledPost(context, f.slot.scheduledPostId!);
-  f.publishing.reconcile.mockResolvedValueOnce({
-    ...post,
-    destinations: [{ ...post.destinations[0]!, status: "FAILED_RETRYABLE" }],
+  f.publishing.reconcile.mockImplementationOnce(async (_context, _id, partial) => {
+    partial?.({ attemptId: id(12), startedAt: Date.now(), nextByte: 3 });
+    return { ...post, destinations: [{ ...post.destinations[0]!, status: "FAILED_RETRYABLE" }] };
   });
   await f.service.dispatch(context, f.run.id);
   expect(f.publishing.reconcile).toHaveBeenCalledOnce();
@@ -239,7 +241,12 @@ it("reads but does not resume a partial upload during grace, then publishes its 
   await f.service.tick(new Date());
   expect(f.slot.status).toBe("COMPLETE");
   expect(f.run.state).toBe("PUBLISHED");
-  expect(f.publishing.reconcile).toHaveBeenNthCalledWith(2, context, destination.id);
+  expect(f.publishing.reconcile).toHaveBeenNthCalledWith(
+    2,
+    context,
+    destination.id,
+    expect.any(Function),
+  );
   expect(f.publishing.publishNow).toHaveBeenCalledOnce();
   expect(f.publishing.retry).not.toHaveBeenCalled();
 });

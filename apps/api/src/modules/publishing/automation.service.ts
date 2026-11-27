@@ -1,14 +1,28 @@
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { PublishingPackageSchema, type PublishingPackage } from "@reelforge/contracts";
-import type { PrismaClient } from "@reelforge/database";
+import type { Prisma, PrismaClient } from "@reelforge/database";
 import { youTubeSlotElapsed } from "../social-accounts/scheduled-youtube.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { reconnectRequired } from "./automation-client.js";
 import { PublishingService } from "./publishing.service.js";
 import type { PublishingDestinationView, ScheduledPostView } from "./publishing.types.js";
-import { markElapsedSlotMissed } from "./automation-missed-slot.js";
+import { markElapsedSlotMissed, type PartialYouTubeProbe } from "./automation-missed-slot.js";
 import { AutomationSlots, type AutoSlot } from "./automation-slots.js";
+
+const reconnectReason = "RECONNECT_YOUTUBE";
+class ReconnectRace extends Error {}
+const confirmedSlot = {
+  OR: [
+    { status: "COMPLETE" },
+    {
+      status: { not: "DRY_RUN" },
+      post: {
+        is: { destinations: { some: { status: "PUBLISHED", remotePostId: { not: null } } } },
+      },
+    },
+  ],
+} satisfies Prisma.V9PublishSlotWhereInput;
 
 @Injectable()
 export class PublishingAutomation {
@@ -90,6 +104,11 @@ export class PublishingAutomation {
     this.editor(context);
     let slot: AutoSlot | null = null;
     try {
+      const current = await this.runs.get(context, id);
+      if (current.state === "NEEDS_HUMAN" && current.pauseReason === reconnectReason) {
+        await this.finishPublishedRun(context, id);
+        return;
+      }
       slot = await this.prepare(context, id);
       if (slot.status === "COMPLETE") {
         await this.finishPublishedRun(context, id);
@@ -115,7 +134,9 @@ export class PublishingAutomation {
         where: {
           workspaceId: context.workspaceId,
           id: slot.id,
-          status: { notIn: published ? ["DRY_RUN"] : ["COMPLETE", "DRY_RUN", "MISSED"] },
+          status: {
+            notIn: published ? ["DRY_RUN"] : ["COMPLETE", "DRY_RUN", "MISSED", "NEEDS_HUMAN"],
+          },
         },
         data: { status: published ? "COMPLETE" : "WAITING", lastError: null },
       });
@@ -126,8 +147,35 @@ export class PublishingAutomation {
   }
   private async finishPublishedRun(context: Context, id: string): Promise<void> {
     const run = await this.runs.get(context, id);
-    if (run.state === "SCHEDULED")
+    if (run.state === "SCHEDULED") {
       await this.runs.transition(context, id, run.revision, "PUBLISHED");
+    } else if (run.state === "NEEDS_HUMAN" && run.pauseReason === reconnectReason) {
+      await this.runs
+        .mutate(context, id, "transition", async (db, current, tx) => {
+          if (current.state !== "NEEDS_HUMAN" || current.pauseReason !== reconnectReason)
+            throw new ReconnectRace();
+          const complete = await tx.v9PublishSlot.findFirst({
+            where: { workspaceId: context.workspaceId, runId: id, ...confirmedSlot },
+          });
+          if (!complete) throw new ReconnectRace();
+          if (complete.status !== "COMPLETE") {
+            await tx.v9PublishSlot.updateMany({
+              where: {
+                workspaceId: context.workspaceId,
+                id: complete.id,
+                status: { notIn: ["DRY_RUN"] },
+              },
+              data: { status: "COMPLETE", lastError: null },
+            });
+          }
+          await db.videoRun.updateMany({
+            where: { id },
+            data: { state: "PUBLISHED", pauseReason: null },
+          });
+          return { value: null, payload: { from: "NEEDS_HUMAN", to: "PUBLISHED", reason: null } };
+        })
+        .catch(ignoreReconnectRace);
+    }
   }
 
   private async uploadOrReconcile(
@@ -136,23 +184,23 @@ export class PublishingAutomation {
     destination: PublishingDestinationView,
   ): Promise<ScheduledPostView | null> {
     const elapsed = youTubeSlotElapsed(slot.scheduledAt);
-    if (elapsed && (await markElapsedSlotMissed(this.db, context, slot, destination.id, false)))
+    if (elapsed && (await markElapsedSlotMissed(this.db, context, slot, destination.id)))
       return null;
 
     // The original post view can predate another worker's upload claim.
     // After the deadline, only a read-only probe is allowed, even if that view had no attempt.
     const reconcile = elapsed || destination.latestAttempt !== null;
+    let partial: PartialYouTubeProbe | undefined;
     const result = reconcile
-      ? await this.publishing.reconcile(context, destination.id)
+      ? await this.publishing.reconcile(context, destination.id, (probe) => {
+          partial = probe;
+        })
       : await this.publishing.publishNow(context, destination.id);
     if (reconcile && result.destinations[0]?.status === "FAILED_RETRYABLE") {
       if (!youTubeSlotElapsed(slot.scheduledAt))
         return this.publishing.retry(context, destination.id);
       // An already-dispatched final chunk can still be in flight. Use the grace window for reads.
-      if (
-        Date.now() - slot.scheduledAt.getTime() >= 180_000 &&
-        (await markElapsedSlotMissed(this.db, context, slot, destination.id, true))
-      )
+      if (partial && (await markElapsedSlotMissed(this.db, context, slot, destination.id, partial)))
         return null;
     }
     return result;
@@ -179,53 +227,80 @@ export class PublishingAutomation {
     slot: AutoSlot | null,
     error: unknown,
   ): Promise<void> {
-    const reconnect = reconnectRequired(error);
+    if (reconnectRequired(error)) {
+      await this.recordReconnect(context, id, slot);
+      return;
+    }
     if (slot) {
       const changed = await this.db.v9PublishSlot.updateMany({
         where: {
           workspaceId: context.workspaceId,
           id: slot.id,
-          status: { notIn: ["COMPLETE", "DRY_RUN", "MISSED"] },
+          status: { notIn: ["COMPLETE", "DRY_RUN", "MISSED", "NEEDS_HUMAN"] },
         },
-        data: {
-          status: reconnect ? "NEEDS_HUMAN" : "WAITING",
-          lastError: reconnect ? "RECONNECT_YOUTUBE" : "PREFLIGHT_OR_RECONCILE_REQUIRED",
-        },
+        data: { status: "WAITING", lastError: "PREFLIGHT_OR_RECONCILE_REQUIRED" },
       });
       if (changed.count === 0) return;
     }
-    if (!reconnect) {
-      console.warn("[v9-publishing] preflight or reconciliation blocked", id);
-      return;
-    }
-    await this.runs.mutate(context, id, "publishing_reconnect_required", async (db, run) => {
-      if (run.state !== "SCHEDULED") throw new ConflictException("Run changed");
-      // #131 explicitly requires a reconnect hold from the scheduled boundary; V1 remains frozen.
-      await db.videoRun.updateMany({
-        where: { id },
-        data: { state: "NEEDS_HUMAN", effectiveAutonomy: "L2", pauseReason: "RECONNECT_YOUTUBE" },
-      });
-      return {
-        value: null,
-        payload: { reason: "RECONNECT_YOUTUBE", from: "SCHEDULED", to: "NEEDS_HUMAN" },
-      };
-    });
+    console.warn("[v9-publishing] preflight or reconciliation blocked", id);
+  }
+  private async recordReconnect(
+    context: Context,
+    id: string,
+    slot: AutoSlot | null,
+  ): Promise<void> {
+    await this.runs
+      .mutate(context, id, "publishing_reconnect_required", async (db, run, tx) => {
+        if (run.state !== "SCHEDULED" || run.pauseReason !== null) throw new ReconnectRace();
+        if (slot) {
+          if (
+            await tx.v9PublishSlot.findFirst({
+              where: { workspaceId: context.workspaceId, id: slot.id, ...confirmedSlot },
+            })
+          )
+            throw new ReconnectRace();
+          const changed = await tx.v9PublishSlot.updateMany({
+            where: {
+              workspaceId: context.workspaceId,
+              id: slot.id,
+              status: { notIn: ["COMPLETE", "DRY_RUN", "MISSED"] },
+            },
+            data: { status: "NEEDS_HUMAN", lastError: reconnectReason },
+          });
+          if (!changed.count) throw new ReconnectRace();
+        }
+        // V1's transition table is frozen. Reconnect is a specific scheduled boundary.
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { state: "NEEDS_HUMAN", effectiveAutonomy: "L2", pauseReason: reconnectReason },
+        });
+        return {
+          value: null,
+          payload: { reason: reconnectReason, from: "SCHEDULED", to: "NEEDS_HUMAN" },
+        };
+      })
+      .catch(ignoreReconnectRace);
   }
   public async retry(context: Context, id: string): Promise<void> {
     this.editor(context);
-    await this.runs.mutate(context, id, "publishing_reconnect_acknowledged", async (db, run) => {
-      if (run.state !== "NEEDS_HUMAN" || run.pauseReason !== "RECONNECT_YOUTUBE")
-        throw new ConflictException("No reconnect hold");
-      await db.videoRun.updateMany({
-        where: { id },
-        data: { state: "SCHEDULED", pauseReason: null },
-      });
-      return { value: null, payload: { from: "NEEDS_HUMAN", to: "SCHEDULED" } };
-    });
-    await this.db.v9PublishSlot.updateMany({
-      where: { workspaceId: context.workspaceId, runId: id },
-      data: { status: "WAITING", lastError: null },
-    });
+    await this.runs.mutate(
+      context,
+      id,
+      "publishing_reconnect_acknowledged",
+      async (db, run, tx) => {
+        if (run.state !== "NEEDS_HUMAN" || run.pauseReason !== reconnectReason)
+          throw new ConflictException("No reconnect hold");
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { state: "SCHEDULED", pauseReason: null },
+        });
+        await tx.v9PublishSlot.updateMany({
+          where: { workspaceId: context.workspaceId, runId: id, status: "NEEDS_HUMAN" },
+          data: { status: "WAITING", lastError: null },
+        });
+        return { value: null, payload: { from: "NEEDS_HUMAN", to: "SCHEDULED" } };
+      },
+    );
     await this.dispatch(context, id);
   }
   public async tick(_now: Date): Promise<void> {
@@ -242,7 +317,16 @@ export class PublishingAutomation {
         role: actor.role,
       };
       const runs = await this.runs.scoped(context).videoRun.findMany({
-        where: { state: "SCHEDULED", v9Slot: { isNot: { status: "MISSED" } } },
+        where: {
+          OR: [
+            { state: "SCHEDULED", v9Slot: { isNot: { status: "MISSED" } } },
+            {
+              state: "NEEDS_HUMAN",
+              pauseReason: reconnectReason,
+              v9Slot: { is: confirmedSlot },
+            },
+          ],
+        },
         orderBy: { createdAt: "asc" },
         take: 100,
       });
@@ -254,4 +338,8 @@ export class PublishingAutomation {
   private editor(context: Context): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor required");
   }
+}
+
+function ignoreReconnectRace(error: unknown): void {
+  if (!(error instanceof ReconnectRace)) throw error;
 }

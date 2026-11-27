@@ -3,6 +3,7 @@ import { vi, type Mock } from "vitest";
 import type { PrismaClient } from "@reelforge/database";
 import type { Context, Run, Scoped, Json } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
+import type { PartialYouTubeProbe } from "./automation-missed-slot.js";
 import { PublishingAutomation } from "./automation.service.js";
 import { AutomationSlots, type AutoSlot } from "./automation-slots.js";
 import type { PublishingService } from "./publishing.service.js";
@@ -122,7 +123,7 @@ function slotDatabase(slot: AutoSlot): {
   v9InsertLease: { findUnique: Mock };
   publishingDestination: { findUnique: Mock };
   publishAttempt: { findFirst: Mock };
-  v9PublishSlot: { updateMany: Mock };
+  v9PublishSlot: { updateMany: Mock; findFirst: Mock };
   workspace: { findMany: Mock };
   workspaceMembership: { findFirst: Mock };
 } {
@@ -136,15 +137,18 @@ function slotDatabase(slot: AutoSlot): {
     },
     publishAttempt: { findFirst: vi.fn().mockResolvedValue(null) },
     v9PublishSlot: {
+      findFirst: vi.fn(async () => (slot.status === "COMPLETE" ? slot : null)),
       updateMany: vi.fn(
         async ({
           where,
           data,
         }: {
-          where?: { status?: { notIn?: string[] } };
+          where?: { status?: { notIn?: string[] } | string };
           data: Partial<AutoSlot>;
         }) => {
-          if (where?.status?.notIn?.includes(slot.status)) return { count: 0 };
+          if (typeof where?.status === "string") {
+            if (where.status !== slot.status) return { count: 0 };
+          } else if (where?.status?.notIn?.includes(slot.status)) return { count: 0 };
           Object.assign(slot, data);
           return { count: 1 };
         },
@@ -160,7 +164,13 @@ function publishingFake(): {
   createScheduledPost: Mock<(context: Context, body: unknown) => Promise<ScheduledPostView>>;
   getScheduledPost: Mock<(context: Context, id: string) => Promise<ScheduledPostView>>;
   publishNow: Mock<(context: Context, id: string) => Promise<ScheduledPostView>>;
-  reconcile: Mock<(context: Context, id: string) => Promise<ScheduledPostView>>;
+  reconcile: Mock<
+    (
+      context: Context,
+      id: string,
+      onPartial?: (probe: PartialYouTubeProbe) => void,
+    ) => Promise<ScheduledPostView>
+  >;
   retry: Mock<(context: Context, id: string) => Promise<ScheduledPostView>>;
 } {
   let attempted = false;
