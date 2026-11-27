@@ -51,6 +51,11 @@ it.skipIf(!process.env.DATABASE_URL).each([
       ),
     ).resolves.toBeNull();
     const musicSeconds = malformed ? 32 : 30;
+    const musicSpec = {
+      prompt: "Existing music",
+      instrumentalOnly: true,
+      durationSeconds: musicSeconds,
+    };
     if (musicAdmitted)
       await expect(
         bindings.jobs.tick(
@@ -58,7 +63,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
           run,
           "music",
           native.music,
-          { prompt: "Existing music", instrumentalOnly: true, durationSeconds: musicSeconds },
+          musicSpec,
           4,
           "fixture-music",
           "instrumental-bed:v1",
