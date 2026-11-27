@@ -73,6 +73,19 @@ export class RunsArtifacts {
   public readTextSpool(context: Context, objectKey: string): Promise<Buffer> {
     return this.storage.getObject({ workspaceId: context.workspaceId, objectKey });
   }
+  public async quarantineTextSpool(
+    context: Context,
+    objectKey: string,
+    body: Buffer,
+  ): Promise<void> {
+    const digest = createHash("sha256").update(body).digest("hex");
+    await this.writeTextSpool(
+      context,
+      objectKey.replace(/\.json$/, `.quarantine-${digest}.json`),
+      body,
+    );
+    await this.storage.deleteObject({ workspaceId: context.workspaceId, objectKey });
+  }
   public sign(context: Context, runId: string, stepId: string, artifact: Artifact): string {
     const expires = Date.now() + 5 * 60000;
     const path = `/api/v1/runs/${runId}/artifacts/${stepId}/${artifact.checksumSha256}`;

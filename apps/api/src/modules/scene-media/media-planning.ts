@@ -1,7 +1,7 @@
 import type { PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
 import { textReceiptReference } from "../usage-budget/text-evidence.js";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
 import {
@@ -173,13 +173,14 @@ export class MediaPlanning {
     }
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
     const cost = textCallCents();
-    const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
+    const modelId = process.env.GEMINI_TEXT_MODEL?.trim() ?? "";
     const pending =
       previous &&
       !this.accounts.abandoned(previous) &&
       !(await this.accounts.recoverUndispatched(context, previous))
         ? previous
         : null;
+    if (!pending && !modelId) throw new ConflictException("Planning text model is not configured");
     const step =
       pending ??
       (await this.accounts.begin(

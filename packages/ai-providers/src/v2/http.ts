@@ -23,6 +23,10 @@ const rejectionCodes = new Map<number, ReadonlySet<string>>([
   [403, new Set(["permission_denied", "PERMISSION_DENIED"])],
   [404, new Set(["not_found", "NOT_FOUND"])],
 ]);
+export function isDefinitiveProviderRejection(status: number, code: string): boolean {
+  return rejectionCodes.get(status)?.has(code) ?? false;
+}
+
 const diagnosticCodes = new Set([
   ...Array.from(rejectionCodes.values()).flatMap((codes) => [...codes]),
   "resource_exhausted",
@@ -265,7 +269,7 @@ export class ProviderHttp {
   private async reject(response: Response, authenticated: boolean): Promise<never> {
     const codes = errorCodes(await readErrorPrefix(response.body));
     const status = response.status;
-    const confirmed = codes.find((code) => rejectionCodes.get(status)?.has(code));
+    const confirmed = codes.find((code) => isDefinitiveProviderRejection(status, code));
     const code = confirmed ?? codes[0];
     const detail = { status, ...(code ? { code } : {}) };
     if (response.status === 429) {

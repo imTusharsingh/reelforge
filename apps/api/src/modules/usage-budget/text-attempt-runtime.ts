@@ -10,9 +10,10 @@ import { envelopeRoom } from "./run-envelope.js";
 import { appendTextEvidence, lockTextAttempt, readTextAttempt } from "./text-attempt-store.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 import { maybeCompleteTextCancellation, textCancellationRequested } from "./text-attempt-cancel.js";
+import { currentTextSenderIdentity } from "./text-sender-identity.js";
 import { deliverTextObservation, type TextObservation } from "./text-attempt-delivery.js";
 
-const incarnation = randomUUID();
+const sender = currentTextSenderIdentity();
 const preparedInput = z.object({
   expectedRevision: z.int(),
   stage: z.string(),
@@ -113,7 +114,8 @@ async function authorizeTextArm(
         data: {
           dispatchKey: step.idempotencyKey,
           reservationId: reservation.reservationId,
-          incarnation,
+          incarnation: sender.incarnation,
+          sender,
         },
       });
       await foldTextAttempt(tx, context, step.id);

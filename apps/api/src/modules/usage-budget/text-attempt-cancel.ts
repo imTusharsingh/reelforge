@@ -80,7 +80,7 @@ export async function completeCancellationLocked(
 }
 
 export async function maybeCompleteTextCancellation(
-  runs: RunsService,
+  runs: Pick<RunsService, "store" | "events">,
   context: Context,
   runId: string,
 ): Promise<void> {

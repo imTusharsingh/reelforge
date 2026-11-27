@@ -63,20 +63,21 @@ export function createPaidTextTransport(send: HttpsRequest = request): PaidTextT
       // Node emits finish after handing the last request bytes to the OS, not when end() is called.
       // It does NOT mean the provider has accepted, completed, or billed the interaction.
       req.once("finish", () => {
-        handoff = Promise.resolve().then(onBodySent);
-        // Preserve errors until the response (or reset) has arrived.
-        void handoff.catch(() => undefined);
+        // Handoff persistence is independent evidence: its failure cannot replace
+        // the stronger provider response, or disguise the original transport error.
+        handoff = Promise.resolve()
+          .then(onBodySent)
+          .catch(() => undefined);
       });
       req.end(input.body);
     });
     try {
-      const response = await pending;
-      await handoff;
-      return response;
+      return await pending;
     } catch (error) {
       req?.destroy();
-      await handoff;
       throw error;
+    } finally {
+      await handoff;
     }
   };
 }

@@ -90,6 +90,10 @@ function harness(): {
   };
   const db = {
     videoRunStep: steps,
+    textAttemptEvidence: {
+      count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     runEvent: { findMany: vi.fn().mockResolvedValue([]) },
     budgetEnvelope: {
       findFirst: vi.fn(async () => ({

@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderHttp } from "./http.js";
 import { Interactions } from "./interactions.js";
-import { createPaidTextTransport } from "./paid-text-transport.js";
+import { createPaidTextTransport, type PaidTextTransport } from "./paid-text-transport.js";
 import { GeminiText } from "./text.js";
 
 const key = "AIza" + "aB1".repeat(12);
@@ -19,6 +19,7 @@ const usage = { input_tokens: 10 };
 
 function harness(): {
   port: GeminiText;
+  transport: PaidTextTransport;
   send: ReturnType<typeof vi.fn>;
   end: ReturnType<typeof vi.fn>;
   req: EventEmitter;
@@ -43,6 +44,7 @@ function harness(): {
   });
   return {
     port: new GeminiText(client, "fixture"),
+    transport: paidTransport,
     send,
     end,
     req,
@@ -92,27 +94,67 @@ describe("paid Gemini text wire evidence", () => {
     });
   });
 
+  it("returns a real provider completion even if writing handoff evidence fails", async () => {
+    const { port, send, req, reply } = harness();
+    const sent = vi.fn().mockRejectedValueOnce(new Error("handoff journal unavailable"));
+    const completion = port.completePaid(spec, dispatchKey, sent);
+    req.emit("finish");
+    reply(200, {
+      id: "google-job",
+      status: "completed",
+      usage,
+      steps: [{ type: "model_output", content: [{ type: "text", text: '{"score":8}' }] }],
+    });
+    await expect(completion).resolves.toEqual({
+      output: { score: 8 },
+      dispatchKey,
+      providerJobId: "google-job",
+      usage,
+    });
+    expect(sent).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the original socket reset when writing handoff evidence also fails", async () => {
+    const { transport, send, req } = harness();
+    const sent = vi.fn().mockRejectedValueOnce(new Error("handoff journal unavailable"));
+    const reset = new Error("original socket reset");
+    const pending = transport(
+      "https://fixture.invalid/interactions",
+      { body: "{}", headers: {}, signal: new AbortController().signal },
+      sent,
+    );
+    req.emit("finish");
+    req.emit("error", reset);
+    await expect(pending).rejects.toBe(reset);
+    expect(sent).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("retains definitive Google rejection only when response content confirms it", async () => {
     const confirmed = harness();
-    const sent = vi.fn(async (): Promise<void> => Promise.resolve());
+    const sent = vi.fn().mockRejectedValueOnce(new Error("handoff journal unavailable"));
     const rejected = confirmed.port.completePaid(spec, dispatchKey, sent);
+    confirmed.req.emit("finish");
     confirmed.reply(400, { error: { status: "INVALID_ARGUMENT" } });
     await expect(rejected).rejects.toMatchObject({
       kind: "INVALID",
       dispatched: false,
       http: { status: 400, code: "INVALID_ARGUMENT" },
     });
-    expect(sent).not.toHaveBeenCalled();
+    expect(sent).toHaveBeenCalledOnce();
+    expect(confirmed.send).toHaveBeenCalledOnce();
 
     const ambiguous = harness();
-    const lost = ambiguous.port.completePaid(spec, dispatchKey, sent);
+    const noHandoff = vi.fn();
+    const lost = ambiguous.port.completePaid(spec, dispatchKey, noHandoff);
     ambiguous.reply(504, { error: { code: 504 } });
     await expect(lost).rejects.toMatchObject({
       kind: "OUTAGE",
       dispatched: true,
       http: { status: 504 },
     });
-    expect(sent).not.toHaveBeenCalled();
+    expect(noHandoff).not.toHaveBeenCalled();
   });
 
   it("retains separate correlation for id-less results and real Google evidence for invalid output", async () => {

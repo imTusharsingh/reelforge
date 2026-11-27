@@ -349,8 +349,8 @@ test("a lost owner acknowledgment replays after a late 401 reverses the booking 
   await putLateRejection(t, step);
   const timeout = timeOutRejectionFold(t, step);
   try {
-    // Durable storage migration into the journal survives the settlement transaction failure.
-    await expect(t.engine.recover()).rejects.toMatchObject({ code: "P2028" });
+    // A timed-out fold is isolated to this attempt. Its imported evidence is still durable.
+    await expect(t.engine.recover()).resolves.toBeUndefined();
     const pending = await snapshot(t, step);
     expect(timeout.aborted()).toBe(1);
     expect(pending.journal.at(-1)).toMatchObject({ kind: "REJECTED" });

@@ -126,14 +126,17 @@ when the request is created and not as proof Google accepted it.
 Provider observations are saved before accounting. If database ingestion is
 unavailable, the worker saves the observation to an attempt-and-nonce workspace
 object. Recovery imports evidence and posts the net delta; it does not retry
-transport. A definitive rejection can reverse a prior owner estimate, less
+transport. Invalid or contradictory objects are retained under a quarantine
+key so unrelated attempts can recover. A definitive rejection can reverse a prior owner estimate, less
 any credit already linked to that attempt. Unknown arms keep their hold and
 need positive send evidence plus confirmed sender retirement for owner settlement.
 
 Cancel first closes new admissions. It stays pending (HTTP 202) until a live
 sender can no longer initiate transport or the attempt has durable send evidence.
 A supervisor must match the exact process incarnation before recording exit;
-database disconnection or a lease deadline is not enough.
+database disconnection or a lease deadline is not enough. The [operator recovery
+runbook](../usage-budget/TEXT_ATTEMPT_RECOVERY.md) covers retirement and independently
+matched provider evidence.
 
 The new path defaults off. Follow the [legacy import runbook](../usage-budget/LEGACY_TEXT_IMPORT.md)
 before activating it, including draining and not restarting old writers.

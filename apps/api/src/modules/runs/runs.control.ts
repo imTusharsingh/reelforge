@@ -214,7 +214,8 @@ export class RunsControl {
     }
   }
   private async updateAbandonHold(db: Scoped, tx: Transaction, run: Run): Promise<void> {
-    if (run.pauseReason === "EMERGENCY_STOP") return;
+    if (run.pauseReason === "EMERGENCY_STOP" || run.pauseReason === textCancellationRequested)
+      return;
     const terminal = await terminalRenderFailure(db, run);
     const hold = terminal?.code ?? (await remainingSubmissionHold(db, tx, run));
     await db.videoRun.updateMany({
@@ -229,6 +230,8 @@ export class RunsControl {
     await this.boundary.check(context, run);
     const result = await this.runs.store.mutate(context, id, "resumed", async (db, current, tx) => {
       if (current.revision !== run.revision) throw new ConflictException("Run changed");
+      if (current.pauseReason === textCancellationRequested)
+        throw new ConflictException("Cancellation is still pending");
       await assertAssemblyResumable(db, current);
       const hold = await activeSubmissionHold(db, tx, current);
       if (hold) {

@@ -1,51 +1,70 @@
-import { ConflictException, ForbiddenException } from "@nestjs/common";
-import type { RunsService } from "../runs/runs.service.js";
-import { json, type Context } from "../runs/runs.types.js";
-import { appendTextEvidence, lockTextAttempt } from "./text-attempt-store.js";
-import { foldTextAttempt } from "./text-attempt-fold.js";
-import { maybeCompleteTextCancellation } from "./text-attempt-cancel.js";
+import { isDeepStrictEqual } from "node:util";
+import { ConflictException } from "@nestjs/common";
+import { z } from "zod";
+import { json, type Database } from "../runs/runs.types.js";
+import { appendTextEvidence } from "./text-attempt-store.js";
+import {
+  proveLocalTextSenderExit,
+  textSenderIdentity,
+  type TextSenderIdentity,
+} from "./text-sender-identity.js";
+import { textSenderRetirementProof } from "./text-attempt-ops-schema.js";
+import {
+  foldOperatorEvidence,
+  lockOperatorTarget,
+  operatorEventKey,
+  validateAuditTime,
+} from "./text-attempt-ops.js";
 
-type SupervisorProof = {
-  attemptId: string;
-  incarnation: string;
-  nonce: string;
-  auditId: string;
-};
+const storedSender = z.object({ sender: textSenderIdentity });
+type ExitProof = z.infer<typeof textSenderRetirementProof>;
 
-/** Internal supervisor boundary. Invoke only from the process supervisor after
- * it verifies exit for this exact incarnation; a DB-session loss is not proof. */
-export async function retireExitedTextSender(
-  runs: RunsService,
-  supervisor: Context,
-  proof: SupervisorProof,
-): Promise<void> {
-  if (supervisor.role !== "OWNER" || !proof.auditId.trim())
-    throw new ForbiddenException("Audited process-exit proof is required");
-  const runId = await runs.store.db.$transaction(async (tx) => {
-    const step = await lockTextAttempt(tx, supervisor.workspaceId, proof.attemptId);
-    const arm = await tx.textAttemptEvidence.findFirst({
-      where: {
-        workspaceId: supervisor.workspaceId,
-        attemptId: step.id,
-        kind: "ARMED",
-        nonce: proof.nonce,
-        data: { path: ["incarnation"], equals: proof.incarnation },
-      },
+/** DB-privileged input: the operator must independently authenticate external audit records. */
+export async function retireExitedTextSender(db: Database, input: unknown): Promise<void> {
+  const proof = textSenderRetirementProof.parse(input);
+  const { target, source, actor, reference } = proof;
+  const eventKey = operatorEventKey("exit", source, reference);
+  await db.$transaction(async (tx) => {
+    const { step, armData, armedAt } = await lockOperatorTarget(tx, target);
+    const { sender } = storedSender.parse(armData);
+    if (sender.incarnation !== target.incarnation)
+      throw new ConflictException("Stored sender does not match the armed incarnation");
+    const immutable = { dispatchKey: target.dispatchKey, sender, actor, reference, source };
+    const prior = await tx.textAttemptEvidence.findFirst({
+      where: { workspaceId: target.workspaceId, attemptId: target.attemptId, eventKey },
     });
-    if (!arm) throw new ConflictException("Retirement does not match the authorized sender");
+    const data = proofData(proof, sender, armedAt, prior?.data);
     await appendTextEvidence(tx, step, {
       kind: "SENDER_RETIRED",
-      eventKey: `supervisor-exit:${proof.nonce}:${proof.auditId}`,
-      nonce: proof.nonce,
-      data: json({
-        dispatchKey: step.idempotencyKey,
-        incarnation: proof.incarnation,
-        auditId: proof.auditId,
-        recordedBy: supervisor.userId,
-      }),
+      nonce: target.armNonce,
+      eventKey,
+      data: json({ ...immutable, ...data }),
     });
-    await foldTextAttempt(tx, supervisor, step.id);
-    return step.runId;
   });
-  await maybeCompleteTextCancellation(runs, supervisor, runId);
+  await foldOperatorEvidence(db, target);
+}
+
+const localExit = z.object({
+  observedAt: z.iso.datetime(),
+  result: z.enum(["absent", "exited", "pid-reused"]),
+});
+
+function proofData(
+  proof: ExitProof,
+  sender: TextSenderIdentity,
+  armedAt: Date,
+  prior: unknown,
+): {
+  observedAt: string;
+  result: "absent" | "exited" | "pid-reused" | "process-exited";
+} {
+  if (proof.source === "local-procfs") {
+    if (prior) return localExit.parse(prior); // Exact replay with the original observation.
+    const { result, checkedAt: observedAt } = proveLocalTextSenderExit(sender);
+    return { observedAt, result };
+  }
+  if (!isDeepStrictEqual(sender, proof.sender))
+    throw new ConflictException("Terminal supervisor record does not match the stored sender");
+  validateAuditTime(proof.observedAt, armedAt);
+  return { observedAt: proof.observedAt, result: proof.result };
 }

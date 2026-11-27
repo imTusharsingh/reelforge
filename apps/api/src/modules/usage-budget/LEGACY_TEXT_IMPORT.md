@@ -5,6 +5,13 @@ admissions, recovery, owner confirmation and relevant credits. Drain or terminat
 all old writers (including workers, API processes and operator jobs). Do not
 restart any old writer after the import or enable the new runtime before review.
 
+Before enabling, configure an explicit, persistent `STORAGE_LOCAL_ROOT` shared
+by paid sender and recovery processes. The local adapter's OS-temp fallback is
+not suitable for paid evidence recovery. In a disposable environment, make one
+fake provider return a definitive response while journal ingestion is unavailable,
+stop that sender, and verify that a separate recovery process can read the same
+spool, settle once, and make no repeat POST.
+
 With the API built and `DATABASE_URL` supplied explicitly by the operator, run:
 
 ```sh

@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { z } from "zod";
 import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
@@ -13,6 +13,7 @@ const observationSchema = z.object({
 });
 export type TextObservation = { kind: z.infer<typeof observationSchema.shape.kind>; data: Json };
 const kinds = observationSchema.shape.kind.options;
+const logger = new Logger("TextAttemptRecovery");
 
 export async function deliverTextObservation(
   access: MediaAccess,
@@ -23,7 +24,8 @@ export async function deliverTextObservation(
 ): Promise<void> {
   try {
     await ingest(access, context, step, nonce, observation);
-  } catch {
+  } catch (error) {
+    if (invalidObservation(error) || error instanceof NotFoundException) throw error;
     await access.artifacts.writeTextSpool(
       context,
       spoolKey(step.id, nonce, observation.kind),
@@ -47,7 +49,7 @@ async function ingest(
       where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "ARMED", nonce },
     });
     if (!arm || current.idempotencyKey !== step.idempotencyKey)
-      throw new Error("Text observation does not match its arm");
+      throw new ConflictException("Text observation does not match its arm");
     await appendTextEvidence(tx, current, {
       kind,
       nonce,
@@ -84,7 +86,7 @@ export async function recoverTextEvidence(access: MediaAccess, context: Context)
         await importArmSpool(access, context, arm.attempt, arm.nonce);
         await apply(access, context, arm.attempt);
       } catch (error) {
-        ignoreDeletedAttempt(error);
+        reportSweepFailure(arm.attemptId, error);
       }
     }
     cursor = arms.at(-1)!.id;
@@ -118,7 +120,7 @@ async function closeOrphanPreparations(access: MediaAccess, context: Context): P
         });
         await foldTextAttempt(tx, context, step.id);
       })
-      .catch(ignoreDeletedAttempt);
+      .catch((error: unknown) => reportSweepFailure(id, error));
   }
 }
 
@@ -145,10 +147,17 @@ async function importArmSpool(
       throw error;
     });
     if (!bytes) continue;
-    const observation = observationSchema.parse(JSON.parse(bytes.toString("utf8")));
-    if (observation.kind !== kind) throw new Error("Text spool object has a mismatched kind");
-    await ingest(access, context, step, nonce, observation);
-    // Leave the deterministic object intact until the journal is durably applied.
+    try {
+      const observation = observationSchema.parse(JSON.parse(bytes.toString("utf8")));
+      if (observation.kind !== kind)
+        throw new ConflictException("Text spool has a mismatched kind");
+      await ingest(access, context, step, nonce, observation);
+      // Leave the deterministic object intact until the journal is durably applied.
+    } catch (error) {
+      if (!invalidObservation(error)) throw error;
+      await access.artifacts.quarantineTextSpool(context, key, bytes);
+      logger.warn(`Quarantined invalid ${kind} evidence for attempt ${step.id}`);
+    }
   }
 }
 
@@ -157,6 +166,14 @@ const observationKey = (nonce: string, kind: TextObservation["kind"]): string =>
 const spoolKey = (stepId: string, nonce: string, kind: TextObservation["kind"]): string =>
   `runs/text-evidence/${stepId}/${nonce}/${kind}.json`;
 
-function ignoreDeletedAttempt(error: unknown): void {
-  if (!(error instanceof NotFoundException)) throw error;
+function invalidObservation(error: unknown): boolean {
+  return (
+    error instanceof ConflictException ||
+    error instanceof z.ZodError ||
+    error instanceof SyntaxError
+  );
+}
+function reportSweepFailure(attemptId: string, error: unknown): void {
+  if (!(error instanceof NotFoundException))
+    logger.warn(`Text evidence recovery deferred for attempt ${attemptId}`);
 }
