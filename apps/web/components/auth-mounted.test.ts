@@ -8,13 +8,20 @@ import { AuthWorkspace } from "./auth-workspace";
 vi.mock("./app-shell", () => ({
   AppShell: ({
     children,
-    inspector,
-    shellActions,
+    onWorkspaceSwitch,
+    onSignOut,
   }: {
     children: ReactNode;
-    inspector: ReactNode;
-    shellActions: ReactNode;
-  }): ReactNode => createElement("main", null, inspector, shellActions, children),
+    onWorkspaceSwitch: () => void;
+    onSignOut: () => boolean;
+  }): ReactNode =>
+    createElement(
+      "main",
+      null,
+      createElement("button", { onClick: onWorkspaceSwitch }, "Switch workspace"),
+      createElement("button", { onClick: onSignOut }, "Sign out"),
+      children,
+    ),
 }));
 let container: HTMLDivElement, root: Root;
 async function mount(node: ReactNode): Promise<void> {

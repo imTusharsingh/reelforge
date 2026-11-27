@@ -5,21 +5,23 @@ import { Button, Panel } from "./primitives";
 import { Icon } from "./icon";
 
 export function Modal({
+  id,
   dialog,
   title,
   onClose,
   children,
 }: {
+  id?: string;
   dialog: RefObject<HTMLDialogElement | null>;
   title: string;
   onClose?: () => void;
   children: ReactNode;
 }): JSX.Element {
-  const id = useId();
+  const titleId = useId();
   return (
-    <dialog className="rf-dialog" ref={dialog} aria-labelledby={id} onClose={onClose}>
+    <dialog id={id} className="rf-dialog" ref={dialog} aria-labelledby={titleId} onClose={onClose}>
       <div className="rf-toolbar">
-        <h2 id={id}>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <Button tone="ghost" onClick={() => dialog.current?.close()}>
           Close
         </Button>

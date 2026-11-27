@@ -1,7 +1,7 @@
 "use client";
 import type { JSX, ReactNode } from "react";
 import { AppShell } from "./app-shell";
-import { Alert, Button } from "./ui/primitives";
+import { Alert } from "./ui/primitives";
 import { requestNavigationIntent } from "./studio-navigation";
 import type { Workspace } from "../lib/api";
 import { WorkspaceProvider } from "./studio-workspace-context";
@@ -21,26 +21,14 @@ export function Studio({
   return (
     <AppShell
       workspaceName={workspace.name}
-      shellActions={
-        <div className="rf-actions">
-          <Button
-            onClick={() => {
-              if (requestNavigationIntent("workspace")) onSwitch();
-            }}
-            tone="secondary"
-          >
-            Switch workspace
-          </Button>
-          <Button
-            onClick={() => {
-              if (requestNavigationIntent("logout")) void onLogout();
-            }}
-            tone="ghost"
-          >
-            Sign out
-          </Button>
-        </div>
-      }
+      onWorkspaceSwitch={() => {
+        if (requestNavigationIntent("workspace")) onSwitch();
+      }}
+      onSignOut={() => {
+        if (!requestNavigationIntent("logout")) return false;
+        void onLogout();
+        return true;
+      }}
     >
       <WorkspaceProvider workspace={workspace}>
         {logoutError && (

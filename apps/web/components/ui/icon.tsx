@@ -12,6 +12,8 @@ const paths = {
   discovery: "M12 2l2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z",
   settings: "M4 7h7m4 0h5M4 12h3m4 0h9M4 17h10m4 0h2M11 5v4m-4 1v4m7 1v4",
   menu: "M4 6h16M4 12h16M4 18h16",
+  "chevron-down": "m6 9 6 6 6-6",
+  workspace: "M4 7h16v13H4zM8 7V4h8v3M4 12h16m-9 0v2h2v-2",
   film: "M4 5h16v14H4zM8 5v14m8-14v14M4 10h4m-4 4h4m8-4h4m-4 4h4",
   play: "m9 5 11 7-11 7z",
   plus: "M12 5v14M5 12h14",
