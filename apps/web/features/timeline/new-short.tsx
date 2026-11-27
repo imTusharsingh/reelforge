@@ -80,10 +80,11 @@ function QueueShort({
   const [queued, setQueued] = useState<{ id: string; cycle: number }>();
   const run = queued?.cycle === openedCycle ? queued.id : "";
   const [error, setError] = useState("");
+  const scope = `${channel.workspaceId}:${channel.id}`;
+  const pending = attempts.has(scope);
   const queue = async (): Promise<void> => {
     if (inFlight.current || run) return;
     inFlight.current = true;
-    const scope = `${channel.workspaceId}:${channel.id}`;
     setBusy(true);
     onBusy(true);
     setError("");
@@ -103,22 +104,48 @@ function QueueShort({
   };
   return (
     <div className="rf-stack">
-      <p>Queue a run using this channel’s latest Brief and budget caps.</p>
-      {error && (
-        <Alert tone="danger" title="Short could not be queued">
-          {error}
-        </Alert>
-      )}
+      <QueueShortStatus pending={pending} busy={busy} error={error} />
       {run ? (
         <Alert title="Short queued." tone="success">
           <StudioLink href={`/runs/${run}`}>Open live run</StudioLink>
         </Alert>
       ) : (
         <Button loading={busy} onClick={() => void queue()}>
-          Queue Short
+          {pending ? "Retry earlier submission" : "Queue Short"}
         </Button>
       )}
     </div>
+  );
+}
+
+function QueueShortStatus({
+  pending,
+  busy,
+  error,
+}: {
+  pending: boolean;
+  busy: boolean;
+  error: string;
+}): JSX.Element {
+  if (pending) {
+    return (
+      <Alert
+        tone={busy ? "info" : "warning"}
+        title={busy ? "Checking submission" : "Earlier submission is unconfirmed"}
+      >
+        Retrying uses the original Channel Brief and won’t create a duplicate run.
+      </Alert>
+    );
+  }
+  return (
+    <>
+      <p>Queue a run using this channel’s latest Brief and budget caps.</p>
+      {error && (
+        <Alert tone="danger" title="Short could not be queued">
+          {error}
+        </Alert>
+      )}
+    </>
   );
 }
 
@@ -132,8 +159,8 @@ async function submitScopedAttempt(
   const brief = pending?.brief ?? (await client.briefs(channel.id))[0];
   if (!brief) throw new Error("Save a Channel Brief in Settings to queue a Short.");
   const key = pending?.key ?? crypto.randomUUID();
-  attempts.set(scope, { key, brief });
   await ensureCsrfToken();
+  attempts.set(scope, { key, brief });
   const { id } = await client.queue(brief, key);
   attempts.delete(scope);
   return id;

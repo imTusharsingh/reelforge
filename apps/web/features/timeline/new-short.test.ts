@@ -120,11 +120,16 @@ it("retries an ambiguous request with its original key and brief after reopening
   await mount();
   await click("New Short");
   await click("Queue Short");
-  expect(host.textContent).toContain("Short could not be queued");
+  expect(host.textContent).toContain("Earlier submission is unconfirmed");
   await click("Close");
   f.setNewerBrief();
   await click("New Short");
-  await click("Queue Short");
+  expect(host.textContent).toContain("Earlier submission is unconfirmed");
+  expect(host.textContent).toContain("uses the original Channel Brief");
+  expect(host.textContent).not.toContain("Short could not be queued");
+  expect(host.textContent).not.toContain("latest Brief and budget caps");
+  expect(button("Queue Short")).toBeUndefined();
+  await click("Retry earlier submission");
   expect(host.querySelector(`a[href="/runs/${runId}"]`)).not.toBeNull();
   expect(f.attempts).toHaveLength(2);
   expect(f.attempts[0]?.idempotencyKey).toBeTruthy();
