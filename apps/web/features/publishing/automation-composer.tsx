@@ -4,6 +4,8 @@ import { useSearchParams } from "next/navigation";
 import type { AutoSlotView } from "../../../../packages/contracts/src/publishing-automation";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
+import { PageHeading } from "../../components/ui/page-heading";
+import { useNotify } from "../../components/ui/notifications";
 import { Alert, Button, Card, Field, TextAreaField } from "../../components/ui/primitives";
 import { EmptyState, Skeleton } from "../../components/ui/studio";
 import { autoSlot, automationRequest } from "./automation-api";
@@ -19,6 +21,7 @@ export function PublishingComposer(): JSX.Element {
 }
 export function AutomationComposer({ id }: { id: string }): JSX.Element {
   const workspace = useActiveWorkspace();
+  const notify = useNotify();
   const [slot, setSlot] = useState<AutoSlotView | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,18 +46,20 @@ export function AutomationComposer({ id }: { id: string }): JSX.Element {
     try {
       await automationRequest(workspace.id, `/${slot.runId}/retry`, true);
       setSlot(await autoSlot(workspace.id, id));
+      notify({ tone: "info", title: "Publishing status refreshed." });
     } catch (e) {
-      setError(String(e));
+      notify({
+        tone: "danger",
+        title: "Publishing status could not be refreshed",
+        detail: e instanceof Error ? e.message : "Check the connection and try again.",
+      });
     } finally {
       setBusy(false);
     }
   };
   return (
     <section className="rf-stack">
-      <header className="rf-page-heading">
-        <h1>Scheduled Short</h1>
-        <StudioLink href="/publishing">Back to schedule</StudioLink>
-      </header>
+      <ScheduledShortHeading />
       {error && (
         <Alert tone="danger" title="Publishing details unavailable">
           {error}
@@ -71,6 +76,20 @@ export function AutomationComposer({ id }: { id: string }): JSX.Element {
         <Skeleton label="Loading packaged metadata…" />
       ) : null}
     </section>
+  );
+}
+
+function ScheduledShortHeading(): JSX.Element {
+  return (
+    <PageHeading
+      label="03 / Delivery"
+      title="Scheduled Short"
+      actions={
+        <StudioLink className="rf-button rf-button--secondary" href="/publishing">
+          Back to schedule
+        </StudioLink>
+      }
+    />
   );
 }
 

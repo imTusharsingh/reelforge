@@ -19,18 +19,21 @@ export function AuthWorkspace({ children }: { children: ReactNode }): JSX.Elemen
     );
   if (state.view === "auth")
     return (
-      <>
-        <AuthForm onAuthenticated={session.authenticated} />
-        {state.sessionError && (
-          <Alert tone="danger" title="Could not restore your session">
-            {state.sessionError}
-            <br />
-            <Button tone="secondary" onClick={() => void session.retry()}>
-              Retry workspace load
-            </Button>
-          </Alert>
-        )}
-      </>
+      <AuthForm
+        onAuthenticated={session.authenticated}
+        notice={
+          state.sessionError && (
+            <div className="rf-stack">
+              <Alert tone="danger" title="Could not restore your session">
+                {state.sessionError}
+              </Alert>
+              <Button tone="secondary" onClick={() => void session.retry()}>
+                Retry workspace load
+              </Button>
+            </div>
+          )
+        }
+      />
     );
   if (state.view === "onboarding" || !state.selected)
     return (

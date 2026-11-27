@@ -59,6 +59,20 @@ describe("M27 publishing client", () => {
 });
 
 describe("account action recovery", () => {
+  it("requires the scoped account and confirmed REVOKED status in a disconnect response", async () => {
+    const account = accounts[0]!;
+    const revoked = { ...account, status: "REVOKED", health: "AUTH_REQUIRED" };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(json(revoked))
+      .mockResolvedValueOnce(json({ ...revoked, workspaceId: secondWorkspaceId }));
+    vi.stubGlobal("fetch", fetch);
+    const api = client();
+    await expect(api.revokeAccount(accountId)).resolves.toEqual(revoked);
+    await expect(api.revokeAccount(accountId)).rejects.toMatchObject({ uncertain: true });
+    expect(api.pendingAccountScopes()).toEqual([`account:${accountId}`]);
+  });
+
   it("keeps interrupted actions locked across reload until accounts are inspected", async () => {
     const fetch = vi
       .fn()

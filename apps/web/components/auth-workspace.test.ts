@@ -43,8 +43,8 @@ describe("authenticated studio route boundary", () => {
   });
 
   it("keeps session actions in the shared shell", () => {
-    expect(workspaceSource).toContain("Switch workspace");
-    expect(workspaceSource).toContain("Sign out");
-    expect(workspaceSource).toContain("shellActions");
+    expect(workspaceSource).toContain("onWorkspaceSwitch");
+    expect(workspaceSource).toContain("onSignOut");
+    expect(workspaceSource).toContain('requestNavigationIntent("logout")');
   });
 });

@@ -1,6 +1,8 @@
 "use client";
-import { useState, type FormEvent, type JSX } from "react";
+import { useState, type FormEvent, type JSX, type ReactNode } from "react";
 import { AccountEmailForm } from "./account-email-form";
+import { BrandLogo } from "./brand-logo";
+import { Icon } from "./ui/icon";
 import { Alert, Button, Field } from "./ui/primitives";
 import { ApiError, api } from "../lib/api";
 import { validateAuth, type AuthMode } from "../lib/auth-validation";
@@ -9,11 +11,13 @@ function errorText(error: unknown): string {
 }
 export function AuthForm({
   onAuthenticated,
+  notice,
 }: {
   onAuthenticated: () => Promise<void>;
+  notice?: ReactNode;
 }): JSX.Element {
   const state = useAuthFormState({ onAuthenticated });
-  return <AuthFormView {...state} />;
+  return <AuthFormView {...state} notice={notice} />;
 }
 type AuthFormState = {
   mode: AuthMode;
@@ -81,25 +85,18 @@ function useAuthFormState({
     submit,
   };
 }
-function AuthFormView(state: AuthFormState): JSX.Element {
-  const { mode, setMode, setError, error } = state;
+function AuthFormView(state: AuthFormState & { notice?: ReactNode }): JSX.Element {
+  const { mode, setMode, setError, error, notice } = state;
   const [reset, setReset] = useState(false);
   return (
-    <main className="rf-auth-page">
-      <div className="rf-auth-brand">
-        <span className="rf-auth-mark" aria-hidden="true">
-          R
-        </span>
-        <span>
-          Reel<span>Forge</span>
-        </span>
-      </div>
+    <main className="rf-auth-page rf-auth-page--split">
+      <AuthStage />
       <section className="rf-auth-card" aria-labelledby="auth-heading">
         {reset ? (
           <ResetPassword close={() => setReset(false)} />
         ) : (
           <>
-            <p className="rf-eyebrow">The creator&apos;s control room</p>
+            <p className="rf-eyebrow">ReelForge Studio</p>
             <h1 id="auth-heading">
               {mode === "signin" ? "Welcome back." : "Make space for good work."}
             </h1>
@@ -108,6 +105,7 @@ function AuthFormView(state: AuthFormState): JSX.Element {
                 ? "Sign in to continue to your studio."
                 : "Create an account and start with a workspace."}
             </p>
+            {notice}
             {error && (
               <Alert tone="danger" title="Unable to continue">
                 {error}
@@ -135,6 +133,25 @@ function AuthFormView(state: AuthFormState): JSX.Element {
         )}
       </section>
     </main>
+  );
+}
+
+function AuthStage(): JSX.Element {
+  return (
+    <div className="rf-auth-stage">
+      <BrandLogo inverse />
+      <div className="rf-auth-art" aria-hidden="true">
+        <div className="rf-auth-art-frame">
+          <Icon name="play" />
+        </div>
+        <span>9:16</span>
+      </div>
+      <div className="rf-auth-stage-copy">
+        <p className="rf-eyebrow">Your short-form studio</p>
+        <p className="rf-auth-statement">A shorter path to great Shorts.</p>
+        <p>Develop ideas, review cuts, and plan your publishing schedule in one place.</p>
+      </div>
+    </div>
   );
 }
 

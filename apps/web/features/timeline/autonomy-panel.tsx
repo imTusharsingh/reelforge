@@ -4,6 +4,7 @@ import type {
   RunAutonomyStatus,
   RunSummary,
 } from "../../../../packages/contracts/src/run-experience";
+import { Alert } from "../../components/ui/primitives";
 import { runClient, runRequest } from "./client";
 
 export function AutonomyPanel({
@@ -54,7 +55,11 @@ export function AutonomyPanel({
       </p>
       <AutonomyStatus status={status} />
       <AutonomySelection run={run} editable={editable} busy={busy} choose={choose} />
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <Alert tone="danger" title="Autonomy needs attention">
+          {error}
+        </Alert>
+      )}
     </section>
   );
 }

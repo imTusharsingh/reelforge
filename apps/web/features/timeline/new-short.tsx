@@ -4,7 +4,8 @@ import { useRef, useState, type JSX } from "react";
 import type { ChannelBrief } from "../../../../packages/contracts/src/foundations";
 import { StudioLink } from "../../components/studio-link";
 import { Alert, Button } from "../../components/ui/primitives";
-import { Modal, Toast } from "../../components/ui/studio";
+import { Modal } from "../../components/ui/studio";
+import { Icon } from "../../components/ui/icon";
 import { ensureCsrfToken } from "../../lib/csrf";
 import { ChannelPicker } from "../brief/channel-picker";
 import { BriefClient } from "../brief/client";
@@ -29,7 +30,7 @@ export function NewShort(): JSX.Element {
           dialog.current?.showModal();
         }}
       >
-        ＋ New Short
+        <Icon name="plus" /> New Short
       </Button>
       <Modal title="Create a Short" dialog={dialog} onClose={() => trigger.current?.focus()}>
         {opened && (
@@ -84,9 +85,9 @@ function QueueShort({
         </Alert>
       )}
       {run ? (
-        <Toast>
-          Short queued. <StudioLink href={`/runs/${run}`}>Open live run</StudioLink>
-        </Toast>
+        <Alert title="Short queued." tone="success">
+          <StudioLink href={`/runs/${run}`}>Open live run</StudioLink>
+        </Alert>
       ) : (
         <Button loading={busy} onClick={() => void queue()}>
           Queue Short

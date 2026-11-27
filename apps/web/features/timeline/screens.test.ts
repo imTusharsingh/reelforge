@@ -55,6 +55,20 @@ describe("V8 mounted experience with fake HTTP", () => {
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
   });
+  it.each([
+    { reason: "PUBLISH_DRY_RUN", timeline: "Publish simulated (dry run)", header: "Dry run" },
+    { reason: null, timeline: "Published", header: "Published" },
+  ])("labels the current publish step $timeline", async ({ reason, timeline, header }) => {
+    const data = detail();
+    data.run.state = "PUBLISHED";
+    data.run.pauseReason = reason;
+    fakeFetch(data);
+
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    expect(host.querySelector(".rf-page-heading .rf-badge")?.textContent).toBe(header);
+    expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(timeline);
+    expect(host.querySelectorAll(".rf-timeline [aria-current=step]")).toHaveLength(1);
+  });
   it.each(["assembly_input_failed", "assembly_failed", "shot_refused", "step_failed"])(
     "refreshes the open timeline on %s",
     async (event) => {
@@ -149,6 +163,71 @@ describe("V8 mounted experience with fake HTTP", () => {
     await act(async () => root.render(createElement(RunList)));
     expect(host.querySelector(`a[href="/runs/${runId}"]`)).not.toBeNull();
     expect(host.textContent).toContain("$5.79");
+  });
+  it("counts the latest 100 Shorts and lists actionable pauses without counting dry runs as published", async () => {
+    const base = detail().run;
+    const run = (state: typeof base.state, pauseReason: string | null = null): typeof base => ({
+      ...base,
+      id: crypto.randomUUID(),
+      state,
+      pauseReason,
+    });
+    const stopped = run("GENERATING", "EMERGENCY_STOP");
+    const pending = run("AWAITING_APPROVAL");
+    const dryRun = run("PUBLISHED", "PUBLISH_DRY_RUN");
+    const learnedDryRun = run("LEARNING", "PUBLISH_DRY_RUN");
+    const rejected = run("AWAITING_APPROVAL", "HUMAN_REJECTED");
+    const canceled = run("CANCELED");
+    const canceledWithBillingHold = run(
+      "CANCELED",
+      "RECONCILE_REQUIRED: provider billing exceeded reservation (video step)",
+    );
+    const canceledWithUnknownOutcome = run("CANCELED", "RECONCILE_REQUIRED");
+    const runs = [
+      stopped,
+      pending,
+      dryRun,
+      learnedDryRun,
+      run("PUBLISHED"),
+      run("LEARNING"),
+      rejected,
+      canceled,
+      canceledWithBillingHold,
+      canceledWithUnknownOutcome,
+    ];
+    fakeFetch().mockImplementation(async (url: string): Promise<Response> => {
+      if (url.includes("/run-experience?")) return Response.json(runs);
+      const selected = runs.find((item) => url.includes(item.id));
+      return Response.json({ ...detail(), run: selected ?? base });
+    });
+
+    await act(async () => root.render(createElement(RunList)));
+    expect(host.querySelector("#workspace-snapshot-heading")?.textContent).toBe(
+      "Latest 100 Shorts",
+    );
+    const stats = Object.fromEntries(
+      Array.from(host.querySelectorAll(".rf-snapshot > div"), (element) => [
+        element.querySelector("dt")?.textContent?.trim(),
+        element.querySelector("dd")?.textContent,
+      ]),
+    );
+    expect(stats).toEqual({ "Shorts loaded": "10", "Needs attention": "4", Published: "2" });
+    expect(host.querySelector(`a[href="/runs/${dryRun.id}"]`)?.textContent).toContain("Dry run");
+
+    await act(async () => root.render(createElement(RunList, { inbox: true })));
+    expect(
+      Array.from(host.querySelectorAll(".rf-run-tile a"), (link) => link.getAttribute("href")),
+    ).toEqual([
+      `/runs/${stopped.id}/review`,
+      `/runs/${pending.id}/review`,
+      `/runs/${canceledWithBillingHold.id}/review`,
+      `/runs/${canceledWithUnknownOutcome.id}/review`,
+    ]);
+    const heldCard = host.querySelector(`a[href="/runs/${canceledWithBillingHold.id}/review"]`);
+    expect(heldCard?.textContent).toContain("Canceled");
+    expect(heldCard?.textContent).toContain(
+      "Provider reconciliation required: provider billing exceeded reservation (video step)",
+    );
   });
   it("offers explicit L3 selection after ten, and posts selection without auto enabling it", async () => {
     const fetcher = fakeFetch();

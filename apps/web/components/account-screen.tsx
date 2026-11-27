@@ -1,5 +1,6 @@
 "use client";
 
+import { useNotify } from "./ui/notifications";
 import { AccountEmailForm } from "./account-email-form";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { Alert, Button, Field, Panel, StateMessage } from "./ui/primitives";
@@ -25,12 +26,12 @@ function errorMessage(error: unknown): string {
 }
 
 function ProfilePanel(): JSX.Element {
+  const notify = useNotify();
   const [me, setMe] = useState<AuthMe | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -58,7 +59,6 @@ function ProfilePanel(): JSX.Element {
     event.preventDefault();
     if (saving) return;
     setError("");
-    setSuccess("");
     const trimmed = displayName.trim();
     if (!trimmed || trimmed.length > 80 || /[\p{Cc}]/u.test(trimmed)) {
       setError("Use 1–80 characters without control characters for your display name.");
@@ -69,7 +69,7 @@ function ProfilePanel(): JSX.Element {
       const result = await api.updateMe(trimmed);
       setMe(result);
       setDisplayName(result.displayName ?? "");
-      setSuccess("Profile updated.");
+      notify({ tone: "success", title: "Profile updated." });
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -103,11 +103,6 @@ function ProfilePanel(): JSX.Element {
       {error && (
         <Alert tone="danger" title="Profile not updated">
           {error}
-        </Alert>
-      )}
-      {success && (
-        <Alert tone="success" title="Saved">
-          {success}
         </Alert>
       )}
       <form className="rf-form" onSubmit={save} noValidate>

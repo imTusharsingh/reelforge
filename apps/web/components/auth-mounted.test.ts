@@ -5,17 +5,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "../lib/api";
 import { AuthForm } from "./auth-form";
 import { AuthWorkspace } from "./auth-workspace";
+import { useNotify } from "./ui/notifications";
 vi.mock("./app-shell", () => ({
   AppShell: ({
     children,
-    inspector,
-    shellActions,
+    onWorkspaceSwitch,
+    onSignOut,
   }: {
     children: ReactNode;
-    inspector: ReactNode;
-    shellActions: ReactNode;
-  }): ReactNode => createElement("main", null, inspector, shellActions, children),
+    onWorkspaceSwitch: () => void;
+    onSignOut: () => boolean;
+  }): ReactNode =>
+    createElement(
+      "main",
+      null,
+      createElement("button", { onClick: onWorkspaceSwitch }, "Switch workspace"),
+      createElement("button", { onClick: onSignOut }, "Sign out"),
+      children,
+    ),
 }));
+function FeedbackRun({ result }: { result: Promise<void> }): ReactNode {
+  const notify = useNotify();
+  return createElement(
+    "div",
+    null,
+    createElement(
+      "button",
+      { onClick: () => notify({ tone: "danger", title: "Persistent run error" }) },
+      "Fail now",
+    ),
+    createElement(
+      "button",
+      {
+        onClick: () => void result.then(() => notify({ tone: "danger", title: "Late run error" })),
+      },
+      "Start old run action",
+    ),
+  );
+}
 let container: HTMLDivElement, root: Root;
 async function mount(node: ReactNode): Promise<void> {
   await act(async () => root.render(node));
@@ -112,6 +139,40 @@ describe("authentication and Channel Brief setup", () => {
     await click("Sign out");
     expect(container.querySelector("#email")).not.toBeNull();
   });
+  it.each(["workspace switch", "sign out and back in"] as const)(
+    "clears old notices and discards late run results on a same-URL %s",
+    async (change) => {
+      const first = { id: "first", name: "Science", role: "OWNER" as const };
+      const second = { id: "second", name: "History", role: "OWNER" as const };
+      vi.spyOn(api, "listWorkspaces").mockResolvedValue([first, second]);
+      vi.spyOn(api, "login").mockResolvedValue({ userId: "different-user" });
+      vi.spyOn(api, "logout").mockResolvedValue({ ok: true });
+      localStorage.setItem("reelforge.activeWorkspace", first.id);
+      const delayed = Promise.withResolvers<void>();
+      await mount(
+        createElement(AuthWorkspace, null, createElement(FeedbackRun, { result: delayed.promise })),
+      );
+      await click("Fail now");
+      expect(container.textContent).toContain("Persistent run error");
+      await click("Start old run action");
+      if (change === "workspace switch") {
+        await click("Switch workspace");
+        await click("History");
+      } else {
+        await click("Sign out");
+        expect(container.textContent).not.toContain("Persistent run error");
+        await fill("email", "new@example.com");
+        await fill("password", "long-password-2026");
+        await submit();
+        await click("Science");
+      }
+      expect(container.textContent).not.toContain("Persistent run error");
+      await act(async () => delayed.resolve());
+      expect(container.textContent).not.toContain("Late run error");
+      await click("Fail now");
+      expect(container.textContent).toContain("Persistent run error");
+    },
+  );
   it("retries workspace loading and offers new channel setup for existing members", async () => {
     const list = vi.spyOn(api, "listWorkspaces").mockRejectedValue(new ApiError(503, "offline"));
     await mount(createElement(AuthWorkspace, null, "Studio"));
