@@ -85,6 +85,75 @@ describe("V7 mounted screens", () => {
     ).toHaveLength(before);
     expect(container.textContent).toContain("first Short is queued");
   });
+  it("repairs a saved unsupported language without recreating the workspace or channel", async () => {
+    const attempts: { channelBriefId: string; idempotencyKey: string }[] = [];
+    let correctedUnavailable = true;
+    const completed = vi.fn();
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(url).endsWith("/runs")) return stub.fetch(url, init);
+      const attempt = JSON.parse(String(init?.body)) as (typeof attempts)[number];
+      attempts.push(attempt);
+      const saved = stub.versions.find(({ id }) => id === attempt.channelBriefId);
+      if (saved?.languages.narration === "Klingon")
+        return Response.json(
+          {
+            code: "NARRATION_LANGUAGE_UNSUPPORTED",
+            message: "fixture-secret",
+          },
+          { status: 409 },
+        );
+      return correctedUnavailable
+        ? Response.json({ message: "ambiguous" }, { status: 503 })
+        : stub.fetch(url, init);
+    });
+    await render(createElement(Onboarding, { onComplete: completed }));
+    await change("#setup-niche", "Science");
+    await change("#setup-audience", "Adults");
+    await change("#setup-language", "Klingon");
+    for (let i = 0; i < 3; i++) await submit();
+    const field = container.querySelector<HTMLInputElement>("#setup-language")!;
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toBe("Audience");
+    expect(field.matches(":disabled")).toBe(false);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(field);
+    expect(container.textContent).toContain("This narration language isn’t supported.");
+    expect(container.textContent).not.toContain("fixture-secret");
+    expect(completed).not.toHaveBeenCalled();
+    await submit();
+    expect(attempts).toHaveLength(1);
+    await change("#setup-language", "Italian");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+    for (let i = 0; i < 3; i++) await submit();
+    expect(container.textContent).toContain("Setup could not finish");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]!.channelBriefId).not.toBe(attempts[0]!.channelBriefId);
+    expect(attempts[1]!.idempotencyKey).not.toBe(attempts[0]!.idempotencyKey);
+    expect(container.querySelector("fieldset")!.disabled).toBe(true);
+    correctedUnavailable = false;
+    await submit();
+    expect(attempts[2]).toEqual(attempts[1]);
+    expect(completed).toHaveBeenCalledOnce();
+    const posts = stub.calls.filter(({ method }) => method === "POST");
+    expect(posts.filter(({ path }) => path.endsWith("/workspaces"))).toHaveLength(1);
+    expect(posts.filter(({ path }) => path.endsWith("/channels"))).toHaveLength(1);
+    expect(posts.filter(({ path }) => path.endsWith("/briefs"))).toHaveLength(2);
+    expect(stub.versions[0]).toMatchObject({
+      channelId,
+      languages: { script: "Italian", narration: "Italian", captions: "Italian" },
+      narrationLanguage: "Italian",
+      narratorVoice: { language: "Italian" },
+    });
+  });
+  it("checks the audience step before advancing or writing setup data", async () => {
+    await render(createElement(Onboarding));
+    await change("#setup-niche", "Science");
+    await change("#setup-audience", "Adults");
+    await change("#setup-language", "   ");
+    await submit();
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toBe("Audience");
+    expect(container.textContent).toContain("Enter a narration language.");
+    expect(stub.calls.filter(({ method }) => method === "POST")).toHaveLength(0);
+  });
   it("shows safe failures and clears submitted keys on success and failure", async () => {
     vi.stubGlobal("fetch", (url: RequestInfo | URL, init?: RequestInit) =>
       String(url).endsWith("/providers/xai/key") && init?.method === "PUT"

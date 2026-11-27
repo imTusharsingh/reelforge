@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BriefClient } from "./client";
+import { BriefClient, UnsupportedNarrationLanguageError } from "./client";
 import { brief, capability, channelId, runId, setupStub, workspaceId } from "./setup.fixture";
 import { BriefInputSchema } from "../../../../packages/contracts/src/channel-brief";
 const input = (): ReturnType<typeof BriefInputSchema.parse> =>
@@ -99,6 +99,27 @@ describe("V7 HTTP ports", () => {
     );
     await expect(client.saveKey("gemini", "fixture-secret")).rejects.toThrow(
       "Enter a valid provider key",
+    );
+  });
+  it("recognizes only the intended unsupported-language 409 and hides the response body", async () => {
+    const rejected = (status: number, code: string): BriefClient =>
+      new BriefClient(workspaceId, async () =>
+        Response.json({ code, message: "fixture-secret" }, { status }),
+      );
+    const unsupported = "NARRATION_LANGUAGE_UNSUPPORTED";
+    const client = rejected(409, unsupported);
+    await expect(client.queue(brief, "once")).rejects.toBeInstanceOf(
+      UnsupportedNarrationLanguageError,
+    );
+    await expect(client.queue(brief, "once")).rejects.not.toThrow("fixture-secret");
+    await expect(rejected(400, unsupported).queue(brief, "once")).rejects.not.toBeInstanceOf(
+      UnsupportedNarrationLanguageError,
+    );
+    await expect(
+      rejected(409, "IDEMPOTENCY_CONFLICT").queue(brief, "once"),
+    ).rejects.not.toBeInstanceOf(UnsupportedNarrationLanguageError);
+    await expect(client.save(channelId, input())).rejects.not.toBeInstanceOf(
+      UnsupportedNarrationLanguageError,
     );
   });
   it("rejects malformed and cross-workspace responses", async () => {

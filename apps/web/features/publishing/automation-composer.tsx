@@ -1,14 +1,13 @@
 "use client";
-import { useEffect, useState, type JSX } from "react";
+import type { JSX } from "react";
 import { useSearchParams } from "next/navigation";
 import type { AutoSlotView } from "../../../../packages/contracts/src/publishing-automation";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { StudioLink } from "../../components/studio-link";
 import { PageHeading } from "../../components/ui/page-heading";
-import { useNotify } from "../../components/ui/notifications";
 import { Alert, Button, Card, Field, TextAreaField } from "../../components/ui/primitives";
 import { EmptyState, Skeleton } from "../../components/ui/studio";
-import { autoSlot, automationRequest } from "./automation-api";
+import { useAutomationSlot } from "./use-automation-slot";
 export function PublishingComposer(): JSX.Element {
   const id = useSearchParams().get("autoSlot");
   return id ? (
@@ -21,55 +20,40 @@ export function PublishingComposer(): JSX.Element {
 }
 export function AutomationComposer({ id }: { id: string }): JSX.Element {
   const workspace = useActiveWorkspace();
-  const notify = useNotify();
-  const [slot, setSlot] = useState<AutoSlotView | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void autoSlot(workspace.id, id).then(
-      (value) => {
-        if (active) setSlot(value);
-      },
-      (e: unknown) => {
-        if (active) setError(String(e));
-      },
-    );
-    return (): void => {
-      active = false;
-    };
-  }, [workspace.id, id]);
-  const retry = async (): Promise<void> => {
-    if (!slot || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await automationRequest(workspace.id, `/${slot.runId}/retry`, true);
-      setSlot(await autoSlot(workspace.id, id));
-      notify({ tone: "info", title: "Publishing status refreshed." });
-    } catch (e) {
-      notify({
-        tone: "danger",
-        title: "Publishing status could not be refreshed",
-        detail: e instanceof Error ? e.message : "Check the connection and try again.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
+  return (
+    <ScopedComposer
+      key={JSON.stringify([workspace.id, workspace.role, id])}
+      workspaceId={workspace.id}
+      id={id}
+      editable={workspace.role !== "VIEWER"}
+    />
+  );
+}
+
+function ScopedComposer({
+  workspaceId,
+  id,
+  editable,
+}: {
+  workspaceId: string;
+  id: string;
+  editable: boolean;
+}): JSX.Element {
+  const { slot, error, busy, retry, reload } = useAutomationSlot(workspaceId, id);
   return (
     <section className="rf-stack">
       <ScheduledShortHeading />
       {error && (
         <Alert tone="danger" title="Publishing details unavailable">
-          {error}
+          <p>{error}</p>
+          <Button onClick={reload}>Reload publishing details</Button>
         </Alert>
       )}
       {slot ? (
         <>
           <PackagedMetadata slot={slot} />
           {slot.lastError === "RECONNECT_YOUTUBE" && (
-            <ReconnectNotice editable={workspace.role !== "VIEWER"} busy={busy} retry={retry} />
+            <ReconnectNotice editable={editable} busy={busy} retry={retry} />
           )}
         </>
       ) : !error ? (

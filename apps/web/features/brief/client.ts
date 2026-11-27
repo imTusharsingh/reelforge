@@ -12,6 +12,11 @@ import {
 import { withCsrf } from "../../lib/csrf";
 
 type Transport = typeof fetch;
+export class UnsupportedNarrationLanguageError extends Error {
+  public constructor() {
+    super("This narration language isn’t supported. Choose another language, such as English.");
+  }
+}
 export type KeyStatus = { gemini: boolean; xai: boolean };
 export interface SetupPorts {
   keys(): Promise<KeyStatus>;
@@ -40,15 +45,16 @@ export class BriefClient implements SetupPorts {
     );
     // Never surface arbitrary server response bodies: they could contain submitted secrets.
     if (!result.ok) {
-      if (result.status === 400) {
+      if (result.status === 400 || (result.status === 409 && path === "/runs")) {
         const payload: unknown = await result.json().catch(() => null);
-        if (
-          typeof payload === "object" &&
-          payload !== null &&
-          "code" in payload &&
-          payload.code === "INVALID_KEY"
-        )
+        const code =
+          typeof payload === "object" && payload !== null && "code" in payload
+            ? payload.code
+            : undefined;
+        if (result.status === 400 && code === "INVALID_KEY")
           throw new Error("Enter a valid provider key.");
+        if (result.status === 409 && code === "NARRATION_LANGUAGE_UNSUPPORTED")
+          throw new UnsupportedNarrationLanguageError();
       }
       throw new Error(
         result.status === 403
