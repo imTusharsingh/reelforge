@@ -6,7 +6,7 @@ import { Injectable } from "@nestjs/common";
 import { AlignedWordSchema, type AlignedWord } from "@reelforge/contracts";
 import { z } from "zod";
 import { captionPhrases, readableCaptionCues, type CaptionCue } from "./phrase-captions.js";
-import { alignmentPython, mediaExecutable } from "./media-runtime.js";
+import { alignmentPython, mediaExecutable, mediaRuntimeGate } from "./media-runtime.js";
 const alignment = z.object({
   fragments: z.array(
     z.object({ begin: z.string(), end: z.string(), lines: z.array(z.string()).min(1) }),
@@ -28,19 +28,6 @@ export type WordAlignment = {
   words: AlignedWord[];
   // Only unrepaired observations may drive visible highlighting. Missing anchors stay null.
   highlights: (AlignedWord | null)[];
-};
-
-const languages: Record<string, string> = {
-  English: "eng",
-  en: "eng",
-  Hindi: "hin",
-  hi: "hin",
-  Spanish: "spa",
-  es: "spa",
-  French: "fra",
-  fr: "fra",
-  German: "deu",
-  de: "deu",
 };
 
 /** Offline forced alignment against actual narration and local eSpeak reference speech. */
@@ -92,8 +79,7 @@ async function measure(
   root: string,
   kind: "words" | "phrases",
 ): Promise<AlignedWord[]> {
-  const code = languages[language] ?? (/^[a-z]{3}$/.test(language) ? language : undefined);
-  if (!code) throw new Error("Local alignment language must be configured as ISO 639-3");
+  const code = mediaRuntimeGate.resolveLanguage(language);
   const transcript = join(root, `${kind}.txt`);
   const output = join(root, `${kind}-alignment.json`);
   await writeFile(transcript, fragments.join("\n"));

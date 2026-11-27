@@ -2,6 +2,7 @@ import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
 import { countApprovedShorts } from "../channel/brief-approvals.js";
 import { RunsArtifacts } from "./runs.artifacts.js";
+import { assertVideoRunLanguage } from "../composition/video-run-language.js";
 import { randomUUID } from "node:crypto";
 import {
   ConflictException,
@@ -46,6 +47,7 @@ export class RunsService {
       brief.channelId !== briefRow.channelId
     )
       throw new ConflictException("Brief ownership/version mismatch");
+    assertVideoRunLanguage(() => brief.languages.narration);
     const approvedShorts = await countApprovedShorts(db, brief.channelId);
     const requestContext = currentContext();
     const traceparent = requestContext && formatTraceparent(requestContext);

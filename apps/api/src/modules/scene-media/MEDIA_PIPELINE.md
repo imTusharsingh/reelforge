@@ -52,7 +52,14 @@ reference speech synthesis), FFmpeg with libass, and FFprobe before starting the
 HTTP listener or consuming jobs. VideoRun's paid reservation and dispatch gates
 reuse that startup capability result, without running subprocesses inside a
 ledger transaction. Restart the affected process after a media configuration
-change. Preflight is entirely local and uses no provider credentials.
+change. Startup also reads the installed Aeneas language catalogue and probes
+the matching local eSpeak voices once in bounded batches. New VideoRuns reject an
+unsupported narration language before creation. Paid admission for an existing
+VideoRun checks its pinned narration language again, without blocking collection
+or reconciliation of already-submitted work. Language names such as English and
+Italian, supported short aliases such as en and it, and available ISO 639-3 codes
+use the same resolver as rendering. Preflight is entirely local and uses no
+provider credentials.
 
 ReelForge aligns to the paced narration before
 adding the final mix's silence. Aeneas analyzes both the narration and eSpeak

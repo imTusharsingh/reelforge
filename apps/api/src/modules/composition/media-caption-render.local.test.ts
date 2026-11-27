@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { MediaReceipt } from "@reelforge/contracts";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
 import { LocalWordAligner } from "./media-alignment.js";
@@ -88,10 +88,41 @@ async function assertCaptionFrames(
 }
 
 describe.skipIf(process.env.RF_ALIGNMENT_RENDER_TEST !== "1")("offline caption render", () => {
+  beforeAll(async () => mediaRuntimeGate.activate(), 60000);
+
+  it("aligns Italian through the exact locally admitted Aeneas/eSpeak voice", async () => {
+    const root = await mkdtemp(join(tmpdir(), "caption-language-test-"));
+    try {
+      const voice = join(root, "italian.wav");
+      const text = "Buongiorno mondo";
+      const exec = promisify(execFile);
+      await exec("espeak", ["-v", "it", "-w", voice, text]);
+      const { stdout } = await exec(mediaExecutable("ffprobe"), [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        voice,
+      ]);
+      const duration = Number(stdout.trim());
+      expect(mediaRuntimeGate.resolveLanguage("Italian")).toBe("ita");
+      const aligner = new LocalWordAligner();
+      const result = await aligner.alignMeasured(voice, text, "Italian", root, duration);
+      expect(result.words.map((word) => word.text)).toEqual(text.split(" "));
+      expect(result.highlights.filter(Boolean)).toHaveLength(2);
+      expect(await aligner.alignPhrases(voice, text, "ita", root, duration)).toMatchObject([
+        { text },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 35000);
+
   it.each([175, 115])(
     "renders readable phrase captions on the 30-second Short at %i wpm",
     async (speed) => {
-      await mediaRuntimeGate.activate();
       const root = await mkdtemp(join(tmpdir(), "caption-render-test-"));
       const exec = promisify(execFile);
       const runner = new SpawnProcessRunner();
