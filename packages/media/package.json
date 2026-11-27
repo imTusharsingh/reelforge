@@ -15,7 +15,7 @@
     "@types/node": "24.19.2"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../scripts/build-swc.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   }
 }

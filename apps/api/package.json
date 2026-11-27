@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../scripts/build-swc.mjs",
     "start": "node dist/main.js",
     "typecheck": "pnpm --filter @reelforge/database db:generate && tsc --noEmit -p tsconfig.json"
   },

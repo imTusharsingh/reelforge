@@ -85,6 +85,19 @@ function packet() {
 
 test("valid independently authorized exact-head packet", () =>
   assert.equal(validatePacket(packet()), true));
+for (const filename of [".oxlintrc.json", ".oxfmtrc.json"]) {
+  test(`requires the exact protected blob for ${filename}`, () => {
+    const p = packet();
+    p.files = [{ filename, sha: blob, status: "modified" }];
+    p.metadata.files = [filename];
+    p.approval.paths = [filename];
+    p.approval.blobs = {};
+    p.approval.metadataDigest = metadataDigest(p.metadata);
+    assert.throws(() => validatePacket(p), /Protected blob mismatch/);
+    p.approval.blobs[filename] = blob;
+    assert.equal(validatePacket(p), true);
+  });
+}
 test("previous trusted-base authorization digests remain valid", () => {
   const value = packet();
   value.metadata.authorizationComment = 123;

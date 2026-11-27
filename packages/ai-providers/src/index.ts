@@ -48,7 +48,11 @@ export interface LlmProviderPort<T = unknown> {
   complete(request: LlmRequest): Promise<LlmResponse<T>>;
 }
 export type QualityReviewCriterion =
-  "FACTUALITY" | "CLARITY" | "COHERENCE" | "ENGAGEMENT" | "GENRE_FIT";
+  | "FACTUALITY"
+  | "CLARITY"
+  | "COHERENCE"
+  | "ENGAGEMENT"
+  | "GENRE_FIT";
 export type QualityReviewCriterionResult = Readonly<{
   score: number;
   evidence: ReadonlyArray<string>;

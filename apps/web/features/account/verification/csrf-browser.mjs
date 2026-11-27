@@ -1,26 +1,9 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { chromium } from "@playwright/test";
-import { build } from "esbuild";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { buildBrowserFixture } from "./browser-bundle.mjs";
 
-const directory = path.dirname(fileURLToPath(import.meta.url));
-const output = await build({
-  entryPoints: [path.join(directory, "mounted-fixture.tsx")],
-  bundle: true,
-  write: false,
-  outdir: "/tmp/reelforge-csrf-browser",
-  platform: "browser",
-  format: "iife",
-  jsx: "automatic",
-  define: { "process.env.NODE_ENV": '"development"' },
-  alias: {
-    "next/link": path.join(directory, "next-link.tsx"),
-    "next/navigation": path.join(directory, "next-navigation.ts"),
-  },
-});
-const js = output.outputFiles.find((file) => file.path.endsWith(".js")).text;
+const { js } = await buildBrowserFixture();
 const server = http.createServer((request, response) => {
   response.setHeader(
     "Content-Type",

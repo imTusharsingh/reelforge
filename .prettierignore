@@ -1,9 +1,0 @@
-node_modules
-dist
-.next
-pnpm-lock.yaml
-packages/database/src/generated
-docs/
-prompts/
-templates/
-work-packages/
