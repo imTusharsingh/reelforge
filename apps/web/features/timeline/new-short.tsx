@@ -88,15 +88,7 @@ function QueueShort({
     onBusy(true);
     setError("");
     try {
-      const client = new BriefClient(channel.workspaceId);
-      const pending = attempts.get(scope);
-      const brief = pending?.brief ?? (await client.briefs(channel.id))[0];
-      if (!brief) throw new Error("Save a Channel Brief in Settings to queue a Short.");
-      const key = pending?.key ?? crypto.randomUUID();
-      attempts.set(scope, { key, brief });
-      await ensureCsrfToken();
-      const { id } = await client.queue(brief, key);
-      attempts.delete(scope);
+      const id = await submitScopedAttempt(channel, attempts, scope);
       // Reopening while the same request is in flight must not discard its result.
       setQueued({ id, cycle: cycle.current });
     } catch (cause) {
@@ -128,4 +120,21 @@ function QueueShort({
       )}
     </div>
   );
+}
+
+async function submitScopedAttempt(
+  channel: Channel,
+  attempts: Map<string, QueuedAttempt>,
+  scope: string,
+): Promise<string> {
+  const client = new BriefClient(channel.workspaceId);
+  const pending = attempts.get(scope);
+  const brief = pending?.brief ?? (await client.briefs(channel.id))[0];
+  if (!brief) throw new Error("Save a Channel Brief in Settings to queue a Short.");
+  const key = pending?.key ?? crypto.randomUUID();
+  attempts.set(scope, { key, brief });
+  await ensureCsrfToken();
+  const { id } = await client.queue(brief, key);
+  attempts.delete(scope);
+  return id;
 }

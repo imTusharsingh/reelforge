@@ -60,7 +60,7 @@ function transport(reply: (index: number) => Response | Promise<Response>): {
   );
   return {
     attempts,
-    setNewerBrief: () => {
+    setNewerBrief: (): void => {
       latest = newerBrief;
     },
     briefReads: () => reads,
