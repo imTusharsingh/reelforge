@@ -1,7 +1,4 @@
-import {
-  SAVED_CAPTION_PLAN_INVALID,
-  SAVED_CAPTION_PLAN_UNUSABLE,
-} from "../usage-budget/run-caption-admission.js";
+import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
@@ -320,9 +317,7 @@ export class RunsControl {
           runId: current.id,
           key: "ASSEMBLING",
           state: "FAILED",
-          OR: [SAVED_CAPTION_PLAN_UNUSABLE, SAVED_CAPTION_PLAN_INVALID].map((code) => ({
-            error: { path: ["code"], equals: code },
-          })),
+          error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE },
         },
         select: { error: true },
       });

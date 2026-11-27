@@ -2,6 +2,7 @@ import { PackagingSchema } from "../../../../packages/contracts/src/quality";
 import { PublishingPackageSchema } from "../../../../packages/contracts/src/publishing-automation";
 import {
   criticReport,
+  SavedCaptionPlanDetailSchema,
   type RunDetailView,
   type RunSummary,
 } from "../../../../packages/contracts/src/run-experience";
@@ -34,8 +35,7 @@ export function pauseLabel(reason: string): string {
     (
       {
         SAVED_CAPTION_PLAN_UNUSABLE:
-          "The captions won’t fit. Start a new Short with shorter narration.",
-        SAVED_CAPTION_PLAN_INVALID: "The saved plan is invalid. Start a new Short.",
+          "The saved caption plan can’t be used. Open the run for details.",
         BUDGET_CAP: "Budget cap reached. Review spend before resuming.",
         PROVIDER_REFUSED: "Provider refused this content. Review the prompt.",
         HUMAN_REJECTED: "You rejected this Short. Publishing is blocked.",
@@ -44,6 +44,23 @@ export function pauseLabel(reason: string): string {
     )[reason] ?? reason
   );
 }
+export function runPauseLabel(detail: RunDetailView): string {
+  const reason = detail.run.pauseReason;
+  if (!reason || reason === "PUBLISH_DRY_RUN") return "";
+  if (reason !== "SAVED_CAPTION_PLAN_UNUSABLE") return pauseLabel(reason);
+  const failure = detail.steps.findLast(
+    (step) => step.key === "ASSEMBLING" && step.state === "FAILED",
+  );
+  const error = failure?.error;
+  if (error && typeof error === "object" && "code" in error && error.code === reason) {
+    const parse = SavedCaptionPlanDetailSchema.safeParse("detail" in error ? error.detail : null);
+    if (parse.data === "MALFORMED_PLAN") return "The saved plan is invalid. Start a new Short.";
+    if (parse.data === "CAPTIONS_TOO_LONG")
+      return "The captions won’t fit. Start a new Short with shorter narration.";
+  }
+  return "The saved caption plan can’t be used. Start a new Short.";
+}
+
 export function latestCritic(detail: RunDetailView): ReturnType<typeof criticReport> {
   const step = detail.steps
     .filter((s) => s.key === "CRITIC" && s.state === "SUCCEEDED")

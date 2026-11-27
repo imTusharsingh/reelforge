@@ -210,12 +210,14 @@ it.each([
     const error = {
       response: malformed
         ? {
-            code: "SAVED_CAPTION_PLAN_INVALID",
+            code: "SAVED_CAPTION_PLAN_UNUSABLE",
+            detail: "MALFORMED_PLAN",
             message:
               "The saved plan is invalid and its captions could not be validated. Start a new Short.",
           }
         : {
             code: "SAVED_CAPTION_PLAN_UNUSABLE",
+            detail: "CAPTIONS_TOO_LONG",
             message: "Saved captions cannot fit. Start a new Short with shorter narration.",
           },
     };

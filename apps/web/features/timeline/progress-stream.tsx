@@ -27,8 +27,7 @@ export function ProgressStream({
           const captionPaused =
             current &&
             state === "ASSEMBLING" &&
-            (detail.run.pauseReason === "SAVED_CAPTION_PLAN_UNUSABLE" ||
-              detail.run.pauseReason === "SAVED_CAPTION_PLAN_INVALID");
+            detail.run.pauseReason === "SAVED_CAPTION_PLAN_UNUSABLE";
           return (
             <li key={state} aria-current={current ? "step" : undefined}>
               {simulated

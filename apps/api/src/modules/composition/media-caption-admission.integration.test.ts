@@ -37,6 +37,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
     const fetchMusic = vi.spyOn(native.music, "fetch");
     const narrationPoll = vi.spyOn(native.tts, "poll").mockResolvedValueOnce("running");
     const musicPoll = vi.spyOn(native.music, "poll").mockResolvedValueOnce("running");
+    if (malformed) narrationPoll.mockResolvedValueOnce("running");
     await expect(
       bindings.jobs.tick(
         t.context,
@@ -133,7 +134,8 @@ it.skipIf(!process.env.DATABASE_URL).each([
         },
       });
     }
-    const code = malformed ? "SAVED_CAPTION_PLAN_INVALID" : "SAVED_CAPTION_PLAN_UNUSABLE";
+    const code = "SAVED_CAPTION_PLAN_UNUSABLE";
+    const detail = malformed ? "MALFORMED_PLAN" : "CAPTIONS_TOO_LONG";
     const message = malformed
       ? "The saved plan is invalid and its captions could not be validated. Start a new Short."
       : "Saved captions cannot fit. Start a new Short with shorter narration.";
@@ -156,7 +158,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
       await db.videoRunStep.findFirst({
         where: { runId: run.id, key: "ASSEMBLING" },
       }),
-    ).toMatchObject({ state: "FAILED", error: { code, message } });
+    ).toMatchObject({ state: "FAILED", error: { code, detail, message } });
     expect(narrationPoll).toHaveBeenCalledOnce();
     expect(musicPoll).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
     expect(
@@ -164,7 +166,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
         where: { runId: run.id, type: "assembly_input_failed" },
       }),
     ).toMatchObject({
-      payload: { code, message },
+      payload: { code, detail, message },
     });
     const enqueue = vi.fn();
     t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
@@ -174,6 +176,15 @@ it.skipIf(!process.env.DATABASE_URL).each([
         .filter(([payload]) => payload.runId === run.id)
         .map(([payload]) => payload.assembly),
     ).toEqual([true]);
+    if (malformed) {
+      // Music settles on the first recovery poll; narration only settles on the next one.
+      await expect(engine.process(job)).resolves.toBe(12000);
+      expect(fetchMusic).toHaveBeenCalledWith(expect.any(String), musicSeconds);
+      expect(fetchNarration).not.toHaveBeenCalled();
+      expect(
+        await db.videoRunStep.findFirst({ where: { runId: run.id, key: "media:music" } }),
+      ).toMatchObject({ state: "SUCCEEDED" });
+    }
     await expect(engine.process(job)).resolves.toBeNull();
     enqueue.mockClear();
     await engine.recover();
@@ -183,7 +194,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
     expect(fetchNarration).toHaveBeenCalledOnce();
     expect(musicSubmit).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
     expect(fetchMusic).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
-    if (malformed) expect(fetchMusic).toHaveBeenCalledWith(expect.any(String), musicSeconds);
+    if (malformed) expect(fetchNarration).toHaveBeenCalledWith(expect.any(String), musicSeconds);
     expect(render).not.toHaveBeenCalled();
     expect(
       await t.db.usageReservation.findMany({

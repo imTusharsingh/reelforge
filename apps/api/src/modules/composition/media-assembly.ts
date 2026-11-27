@@ -249,15 +249,33 @@ export class MediaAssembly {
       .array(ShotSpecSchema)
       .min(1)
       .safeParse(shots.map((row) => row.document));
-    const music = accepted.find((step) => step.key === "media:music");
     // A malformed storyboard must not strand an already submitted audio job.
     const seconds = parsed.success
       ? parsed.data.reduce((total, shot) => total + shot.durationSeconds, 0)
-      : (admittedMusicInput.safeParse(music?.input).data?.spec.durationSeconds ??
-        pinnedDuration.safeParse(run.inputSnapshot).data?.brief.targetDurationSeconds ??
-        45);
+      : await this.savedAudioDuration(context, run, accepted);
     await this.drainAudio(context, run, await this.ports.get(context), seconds, accepted);
     return (await acceptedAudio(db, this.access.runs.store.db, run)).length ? 12000 : null;
+  }
+
+  private async savedAudioDuration(context: Context, run: Run, accepted: Step[]): Promise<number> {
+    const db = this.access.runs.store.scoped(context);
+    const music =
+      accepted.find((step) => step.key === "media:music") ??
+      (await db.videoRunStep.findFirst({
+        where: {
+          runId: run.id,
+          key: "media:music",
+          providerJobId: { not: null },
+          state: { in: ["SUCCEEDED", "FAILED"] },
+        },
+        orderBy: { attempt: "desc" },
+        select: { input: true },
+      }));
+    return (
+      admittedMusicInput.safeParse(music?.input).data?.spec.durationSeconds ??
+      pinnedDuration.safeParse(run.inputSnapshot).data?.brief.targetDurationSeconds ??
+      45
+    );
   }
 
   private async drainAudio(
