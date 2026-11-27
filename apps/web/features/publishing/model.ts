@@ -21,6 +21,7 @@ export type SocialAccount = {
   username: string | null;
   status: string;
   health: string;
+  connectedAt: string;
 };
 type Destination = {
   id: string;
@@ -147,6 +148,7 @@ export function parseAccounts(value: unknown, workspaceId: string): SocialAccoun
       username: nullableText(row.username),
       status: text(row.status),
       health: text(row.health),
+      connectedAt: timestamp(row.connectedAt),
     };
   });
 }

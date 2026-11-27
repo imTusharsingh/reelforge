@@ -933,7 +933,7 @@ td {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin-inline: 0;
+  margin: 8px 0 0;
 }
 .rf-snapshot > div {
   padding: clamp(12px, 2.1vw, 22px);

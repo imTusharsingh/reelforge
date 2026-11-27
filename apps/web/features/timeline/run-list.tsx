@@ -11,7 +11,15 @@ import { PageHeading } from "../../components/ui/page-heading";
 import { Icon, type IconName } from "../../components/ui/icon";
 import { NewShort } from "./new-short";
 import { runClient } from "./client";
-import { dollars, finalMedia, pauseLabel, runMetadata, stateLabel } from "./view-model";
+import {
+  dollars,
+  finalMedia,
+  isPublishedRun,
+  needsAttention,
+  pauseLabel,
+  runMetadata,
+  stateLabel,
+} from "./view-model";
 
 export function RunList({ inbox = false }: { inbox?: boolean }): JSX.Element {
   const workspace = useActiveWorkspace();
@@ -63,7 +71,7 @@ function RunGallery({
         <WorkspaceSnapshot
           runs={runs.length}
           attention={attention?.length ?? 0}
-          published={runs.filter((run) => run.state === "PUBLISHED").length}
+          published={runs.filter(isPublishedRun).length}
         />
       )}
       {error && (
@@ -124,13 +132,6 @@ function RunCards({
   );
 }
 
-function needsAttention(run: RunSummary): boolean {
-  return (
-    ["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state) &&
-    run.pauseReason !== "HUMAN_REJECTED"
-  );
-}
-
 function WorkspaceSnapshot({
   runs,
   attention,
@@ -141,21 +142,26 @@ function WorkspaceSnapshot({
   published: number;
 }): JSX.Element {
   const stats: { label: string; value: number; icon: IconName }[] = [
-    { label: "Total Shorts", value: runs, icon: "film" },
+    { label: "Shorts loaded", value: runs, icon: "film" },
     { label: "Needs attention", value: attention, icon: "review" },
     { label: "Published", value: published, icon: "calendar" },
   ];
   return (
-    <dl className="rf-snapshot" aria-label="Workspace snapshot">
-      {stats.map(({ label, value, icon }) => (
-        <div key={label}>
-          <dt>
-            <Icon name={icon} /> {label}
-          </dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <section aria-labelledby="workspace-snapshot-heading">
+      <h2 className="rf-muted" id="workspace-snapshot-heading">
+        Latest 100 Shorts
+      </h2>
+      <dl className="rf-snapshot">
+        {stats.map(({ label, value, icon }) => (
+          <div key={label}>
+            <dt>
+              <Icon name={icon} /> {label}
+            </dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -205,6 +211,11 @@ function useTileDetail(
   return { detail, unavailable };
 }
 
+function runBadgeTone(run: RunSummary): "success" | "warning" | "neutral" {
+  if (isPublishedRun(run)) return "success";
+  return needsAttention(run) ? "warning" : "neutral";
+}
+
 function RunTile({
   run,
   workspaceId,
@@ -240,16 +251,8 @@ function RunTile({
         <div className="rf-run-caption">
           <strong>{title}</strong>
           <span className="rf-cluster">
-            <Badge
-              tone={
-                run.state === "PUBLISHED"
-                  ? "success"
-                  : run.state === "AWAITING_APPROVAL"
-                    ? "warning"
-                    : "neutral"
-              }
-            >
-              {stateLabel(run.state)}
+            <Badge tone={runBadgeTone(run)}>
+              {run.pauseReason === "PUBLISH_DRY_RUN" ? "Dry run" : stateLabel(run.state)}
             </Badge>
             <span>
               {detail?.envelope
@@ -259,7 +262,9 @@ function RunTile({
                   : "Loading cost…"}
             </span>
           </span>
-          {run.pauseReason && <p>{pauseLabel(run.pauseReason)}</p>}
+          {run.pauseReason && run.pauseReason !== "PUBLISH_DRY_RUN" && (
+            <p>{pauseLabel(run.pauseReason)}</p>
+          )}
         </div>
       </StudioLink>
     </li>

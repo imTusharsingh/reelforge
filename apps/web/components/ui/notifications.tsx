@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type JSX,
@@ -18,9 +19,9 @@ import { Icon, type IconName } from "./icon";
 type Tone = "success" | "info" | "warning" | "danger";
 type BlockingTone = Extract<Tone, "warning" | "danger">;
 type Notice = { tone: Tone; title: string; detail?: string };
-type NoticeItem = Notice & { id: number; route: string | null };
+type NoticeItem = Notice & { id: number; scope: symbol };
 type InlineTarget = { node: HTMLDivElement; tone: BlockingTone };
-type Notify = (notice: Notice) => void;
+type Notify = (notice: Notice | null) => void;
 type Register = (target: InlineTarget) => () => void;
 
 const Notifications = createContext<Notify>(() => undefined);
@@ -57,33 +58,46 @@ function useInlineTargets(): { target: HTMLDivElement | undefined; register: Reg
 
 export function NotificationProvider({ children }: { children: ReactNode }): JSX.Element {
   const route = usePathname();
+  const routeScope = useMemo(() => Symbol(), [route]);
+  const activeScope = useRef<symbol | null>(null);
+  useLayoutEffect(() => {
+    activeScope.current = routeScope;
+    return (): void => {
+      activeScope.current = null;
+    };
+  }, [routeScope]);
   const [item, setItem] = useState<NoticeItem | null>(null);
   const sequence = useRef(0);
   const { target, register } = useInlineTargets();
   const notify = useCallback<Notify>(
     (notice) => {
+      if (activeScope.current !== routeScope) return;
+      if (notice === null) {
+        setItem(null);
+        return;
+      }
       const id = ++sequence.current;
       setItem((current) =>
-        current?.route === route &&
+        current?.scope === routeScope &&
         current.tone === notice.tone &&
         current.title === notice.title &&
         current.detail === notice.detail
           ? current
-          : { ...notice, id, route },
+          : { ...notice, id, scope: routeScope },
       );
     },
-    [route],
+    [routeScope],
   );
   const dismiss = useCallback((id: number) => {
     setItem((current) => (current?.id === id ? null : current));
   }, []);
   useEffect(() => {
-    setItem((current) => (current?.route === route ? current : null));
-  }, [route]);
+    setItem((current) => (current?.scope === routeScope ? current : null));
+  }, [routeScope]);
   return (
     <Notifications.Provider value={notify}>
       <InlineTargets.Provider value={register}>{children}</InlineTargets.Provider>
-      {item?.route === route && (
+      {item?.scope === routeScope && (
         <Feedback key={item.id} item={item} dismiss={dismiss} target={target} />
       )}
     </Notifications.Provider>

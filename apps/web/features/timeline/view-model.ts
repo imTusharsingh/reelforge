@@ -3,7 +3,23 @@ import { PublishingPackageSchema } from "../../../../packages/contracts/src/publ
 import {
   criticReport,
   type RunDetailView,
+  type RunSummary,
 } from "../../../../packages/contracts/src/run-experience";
+export function isPublishedRun(run: RunSummary): boolean {
+  return (
+    (run.state === "PUBLISHED" || run.state === "LEARNING") && run.pauseReason !== "PUBLISH_DRY_RUN"
+  );
+}
+
+export function needsAttention(run: RunSummary): boolean {
+  if (run.pauseReason === "HUMAN_REJECTED" || run.pauseReason === "PUBLISH_DRY_RUN") return false;
+  if (["PUBLISHED", "LEARNING", "CANCELED"].includes(run.state)) return false;
+  return (
+    run.pauseReason !== null ||
+    ["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state)
+  );
+}
+
 export function pauseLabel(reason: string): string {
   return (
     (

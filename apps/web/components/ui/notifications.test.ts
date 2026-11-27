@@ -9,6 +9,7 @@ const navigation = vi.hoisted(() => ({ path: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: (): string => navigation.path }));
 
 let container: HTMLDivElement, root: Root;
+let finishOldAction: (() => void) | undefined;
 function Trigger({ blocker }: { blocker: boolean }): JSX.Element {
   const notify = useNotify();
   return createElement(
@@ -30,6 +31,15 @@ function Trigger({ blocker }: { blocker: boolean }): JSX.Element {
       { onClick: () => notify({ tone: "danger", title: "Run failed", detail: "Try again." }) },
       "Error",
     ),
+    createElement(
+      "button",
+      {
+        onClick: () => {
+          finishOldAction = (): void => notify({ tone: "danger", title: "Old route result" });
+        },
+      },
+      "Start delayed action",
+    ),
   );
 }
 async function render(blocker = false): Promise<void> {
@@ -49,6 +59,7 @@ beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.useFakeTimers();
   navigation.path = "/";
+  finishOldAction = undefined;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -85,6 +96,17 @@ describe("Studio notifications", () => {
     navigation.path = "/publishing";
     await render();
     expect(container.querySelector(".rf-notifications")).toBeNull();
+  });
+  it("ignores delayed results when a user leaves a route and then returns to the same URL", async () => {
+    await click("Start delayed action");
+    navigation.path = "/publishing";
+    await render();
+    navigation.path = "/";
+    await render();
+    await click("Success");
+    await act(async () => finishOldAction?.());
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Short saved.");
+    expect(container.textContent).not.toContain("Old route result");
   });
   it("keeps a warning and action result in one inline region instead of adding a toast", async () => {
     await render(true);

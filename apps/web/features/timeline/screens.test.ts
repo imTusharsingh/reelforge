@@ -150,6 +150,54 @@ describe("V8 mounted experience with fake HTTP", () => {
     expect(host.querySelector(`a[href="/runs/${runId}"]`)).not.toBeNull();
     expect(host.textContent).toContain("$5.79");
   });
+  it("counts the latest 100 Shorts and lists actionable pauses without counting dry runs as published", async () => {
+    const base = detail().run;
+    const run = (state: typeof base.state, pauseReason: string | null = null): typeof base => ({
+      ...base,
+      id: crypto.randomUUID(),
+      state,
+      pauseReason,
+    });
+    const stopped = run("GENERATING", "EMERGENCY_STOP");
+    const pending = run("AWAITING_APPROVAL");
+    const dryRun = run("PUBLISHED", "PUBLISH_DRY_RUN");
+    const learnedDryRun = run("LEARNING", "PUBLISH_DRY_RUN");
+    const rejected = run("AWAITING_APPROVAL", "HUMAN_REJECTED");
+    const canceled = run("CANCELED");
+    const runs = [
+      stopped,
+      pending,
+      dryRun,
+      learnedDryRun,
+      run("PUBLISHED"),
+      run("LEARNING"),
+      rejected,
+      canceled,
+    ];
+    fakeFetch().mockImplementation(async (url: string): Promise<Response> => {
+      if (url.includes("/run-experience?")) return Response.json(runs);
+      const selected = runs.find((item) => url.includes(item.id));
+      return Response.json({ ...detail(), run: selected ?? base });
+    });
+
+    await act(async () => root.render(createElement(RunList)));
+    expect(host.querySelector("#workspace-snapshot-heading")?.textContent).toBe(
+      "Latest 100 Shorts",
+    );
+    const stats = Object.fromEntries(
+      Array.from(host.querySelectorAll(".rf-snapshot > div"), (element) => [
+        element.querySelector("dt")?.textContent?.trim(),
+        element.querySelector("dd")?.textContent,
+      ]),
+    );
+    expect(stats).toEqual({ "Shorts loaded": "8", "Needs attention": "2", Published: "2" });
+    expect(host.querySelector(`a[href="/runs/${dryRun.id}"]`)?.textContent).toContain("Dry run");
+
+    await act(async () => root.render(createElement(RunList, { inbox: true })));
+    expect(
+      Array.from(host.querySelectorAll(".rf-run-tile a"), (link) => link.getAttribute("href")),
+    ).toEqual([`/runs/${stopped.id}/review`, `/runs/${pending.id}/review`]);
+  });
   it("offers explicit L3 selection after ten, and posts selection without auto enabling it", async () => {
     const fetcher = fakeFetch();
     const data = detail();
