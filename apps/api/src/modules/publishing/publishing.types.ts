@@ -76,5 +76,8 @@ export type PublishingPlatformView = Readonly<{
   connectable: boolean;
   publishable: boolean;
   reasonCode:
-    "PLATFORM_NOT_CONFIGURED" | "PUBLISHING_NOT_CONFIGURED" | "INSTAGRAM_NOT_VERIFIED" | null;
+    | "PLATFORM_NOT_CONFIGURED"
+    | "PUBLISHING_NOT_CONFIGURED"
+    | "INSTAGRAM_NOT_VERIFIED"
+    | null;
 }>;

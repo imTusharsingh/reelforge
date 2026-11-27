@@ -1,0 +1,1419 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "off"
+  },
+  "plugins": ["typescript"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/.next/**",
+    "**/node_modules/**",
+    "**/.dist-swc-*/**",
+    "packages/database/src/generated/**",
+    "packages/database/prisma/src/generated/**"
+  ],
+  "rules": {
+    "typescript/ban-ts-comment": "error",
+    "no-array-constructor": "error",
+    "typescript/no-duplicate-enum-values": "error",
+    "typescript/no-empty-object-type": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-extra-non-null-assertion": "error",
+    "typescript/no-misused-new": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-non-null-asserted-optional-chain": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-this-alias": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-declaration-merging": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "no-unused-expressions": [
+      "error",
+      {
+        "allowShortCircuit": false,
+        "allowTaggedTemplates": false,
+        "allowTernary": false
+      }
+    ],
+    "no-unused-vars": "error",
+    "typescript/no-wrapper-object-types": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/prefer-namespace-keyword": "error",
+    "typescript/triple-slash-reference": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.ts", "**/*.tsx"],
+      "rules": {
+        "no-var": "error",
+        "prefer-const": [
+          "error",
+          {
+            "destructuring": "any",
+            "ignoreReadBeforeAssign": false
+          }
+        ],
+        "prefer-rest-params": "error",
+        "prefer-spread": "error",
+        "max-lines": [
+          "error",
+          {
+            "max": 400,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 60,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "typescript/explicit-function-return-type": "error"
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/admin/admin.http.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 501,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/admin/admin.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 472,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 191,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/admin/audit.interceptor.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 64,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/admin/emergency-stop.service.ts",
+        "apps/api/src/modules/identity/identity.service.ts",
+        "apps/web/features/planning/session.tsx"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 85,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/analytics/analytics.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 858,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 218,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/asset/asset.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 444,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 75,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/asset/media-delivery.http.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 977,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/character/character.service.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 471,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/character/character.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 588,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 65,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/composition/composition.engine.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 430,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/composition/composition.engine.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 199,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/composition/composition.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 2274,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/composition/composition.manifest.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 96,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/composition/composition.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1805,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 329,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/config/config.service.ts",
+        "apps/web/features/planning/verification/mounted-fixture.tsx"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 109,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/config/prompt.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 674,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 71,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/idea/idea.service.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 479,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/idea/idea.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 560,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 102,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/notifications/notifications.postgres.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 631,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/notifications/notifications.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 694,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 111,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/notifications/reports.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 746,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 118,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/orchestration/orchestration.dispatcher.postgres.integration.test.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 584,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/orchestration/orchestration.dispatcher.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 529,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 67,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/orchestration/orchestration.postgres.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 985,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/orchestration/orchestration.schedule.ts",
+        "apps/web/features/publishing/history.tsx"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 70,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/orchestration/orchestration.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 2228,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 167,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/performance-intelligence/performance-intelligence.service.test.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1076,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/api/src/modules/performance-intelligence/performance-intelligence.service.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1269,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 229,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/publishing/publishing.behavior.postgres.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 444,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/publishing/publishing.service.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1042,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/publishing/publishing.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 2019,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 190,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/quality/quality.service.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 845,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/quality/quality.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1377,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 552,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/release-gate/release-gate.http.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 408,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/script/script.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 798,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/script/script.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 205,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 189,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/social-accounts/social-accounts.service.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 827,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/social-accounts/social-accounts.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 824,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 147,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/usage-budget/usage-budget.ledger.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 90,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/usage-budget/usage-budget.postgres.integration.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1004,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/api/src/modules/usage-budget/usage-budget.service.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 1181,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 83,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/components/account-screen.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 105,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/components/app-shell.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 107,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/components/operations-dashboard.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 599,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 289,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/components/studio-navigation.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 100,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/api.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 111,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/asset-panel.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 194,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/channel-detail.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 123,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/channels-workspace.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 103,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/web/features/channels/character-panel.tsx",
+        "packages/config-engine/src/config.resolver.ts"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 108,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/configuration-panel.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 73,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/content-panels.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 71,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/dto.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 500,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/structured-field.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 83,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/ui.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 452,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 157,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/channels/verification/mounted-fixture.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 84,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/insights/insights-screen.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 484,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 451,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/insights/verification/mounted-fixture.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 74,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/operations/verification/mounted-fixture.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 72,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/idea-form.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 201,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/idea-workspace.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 256,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/library.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 95,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/model.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 488,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/model.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 790,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/planning/script-workspace.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 668,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 486,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/composition.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 92,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/model.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 579,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/render.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 180,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/start.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 183,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/studio.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 750,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 291,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/production/verification/mounted-fixture.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 101,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/accounts.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 297,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/api.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 517,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/calendar.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 157,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/composer.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 829,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 764,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/model.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 439,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 75,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/post.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 283,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/publishing/verification/mounted-fixture.tsx"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 115,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/web/features/review/workspace.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 645,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 233,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["e2e/journey.spec.ts"],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 149,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/config-engine/src/prompt.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 472,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 176,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/media/src/index.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 401,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 143,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/social-providers/src/youtube.connector.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 417,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/social-providers/src/youtube.connector.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 604,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 71,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.fixture.ts"],
+      "rules": {
+        "max-lines-per-function": "off"
+      }
+    }
+  ]
+}

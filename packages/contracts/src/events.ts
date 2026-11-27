@@ -77,7 +77,8 @@ export const eventRegistry = {
 } as const;
 
 export type RegisteredEvent =
-  z.infer<typeof PostPublishedV1Schema> | z.infer<typeof PublishFailedV1Schema>;
+  | z.infer<typeof PostPublishedV1Schema>
+  | z.infer<typeof PublishFailedV1Schema>;
 export type RegisteredEventName = (typeof eventRegistry)[keyof typeof eventRegistry]["eventType"];
 export type EventRetryPolicy = z.infer<typeof EventRetryPolicySchema>;
 

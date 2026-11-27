@@ -23,7 +23,7 @@ For migration validation against local PostgreSQL, set `DATABASE_URL` to a dispo
 
 ## Pre-commit hook
 
-A Husky pre-commit hook runs Prettier and ESLint `--fix` on staged files only, via lint-staged. Auto-fixable issues are applied and re-staged; unfixable ESLint errors fail the commit. The hook does not run typecheck or tests. CI (`pnpm lint` and `pnpm format:check`) remains the real gate, because the hook can be skipped with `--no-verify`. If lint-staged is not installed in the current worktree, the hook prints a warning and allows the commit.
+A Husky pre-commit hook runs Oxlint `--fix` and Oxfmt on staged files only, via lint-staged. Auto-fixable issues are applied and re-staged; unfixable Oxlint errors fail the commit. The hook does not run typecheck or tests. CI (`pnpm lint` and `pnpm format:check`) remains the real gate, because the hook can be skipped with `--no-verify`. If lint-staged is not installed in the current worktree, the hook prints a warning and allows the commit.
 
 ## Scope and review
 
@@ -60,3 +60,5 @@ peers can supply client addresses for source limits.
 
 Planning uses session advisory locks. Point `DIRECT_DATABASE_URL` at PostgreSQL
 or a session-mode endpoint if `DATABASE_URL` uses a transaction-mode pooler.
+
+Run `pnpm format` to format the workspace. Keep one blank line between functions and around distinct groups of variables when it helps the reader. Oxfmt preserves intentional single blank lines without sorting imports or package keys. See [the toolchain decisions](docs/TOOLCHAIN.md).

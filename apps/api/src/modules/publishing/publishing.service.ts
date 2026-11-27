@@ -91,7 +91,8 @@ type PresentedDestinationRecord = Prisma.PublishingDestinationGetPayload<{
   include: { publishJob: { include: { attempts: typeof latestAttemptInclude } } };
 }>;
 type LatestAttempt =
-  NonNullable<PresentedDestinationRecord["publishJob"]>["attempts"][number] | null;
+  | NonNullable<PresentedDestinationRecord["publishJob"]>["attempts"][number]
+  | null;
 type PublishAttemptRecord = Prisma.PublishAttemptGetPayload<object>;
 type RenderRecord = Prisma.RenderJobGetPayload<{
   include: { sceneMediaJob: true; artifacts: true };
@@ -303,7 +304,8 @@ export class PublishingService {
     const post = destination.scheduledPost;
     const gates: PublishingPreflightGate[] = [];
     let hardGates:
-      readonly Awaited<ReturnType<QualityService["assertPublishable"]>>[number][] | null = null;
+      | readonly Awaited<ReturnType<QualityService["assertPublishable"]>>[number][]
+      | null = null;
     let approvalPassed = false;
     let hardGatePass = false;
     let approvalEvidence = "A current M11 approval is required.";

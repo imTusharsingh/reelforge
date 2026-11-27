@@ -2,29 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
 import { chromium } from "@playwright/test";
-import { build } from "esbuild";
+import { buildBrowserFixture } from "./browser-bundle.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(directory, "../../../../..");
 
-const output = await build({
-  entryPoints: [path.join(directory, "mounted-fixture.tsx")],
-  bundle: true,
-  write: false,
-  outdir: "/tmp/m22-account-browser",
-  platform: "browser",
-  format: "iife",
-  jsx: "automatic",
-  define: { "process.env.NODE_ENV": '"development"' },
-  alias: {
-    "next/link": path.join(directory, "next-link.tsx"),
-    "next/navigation": path.join(directory, "next-navigation.ts"),
-  },
-});
-const js = output.outputFiles.find((file) => file.path.endsWith(".js")).text;
-const css = output.outputFiles.find((file) => file.path.endsWith(".css"))?.text ?? "";
+const { js, css } = await buildBrowserFixture();
 const global = fs
   .readFileSync(path.join(root, "apps/web/app/globals.css"), "utf8")
   .replace(/@import[^;]+;/g, "");
