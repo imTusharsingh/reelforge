@@ -17,8 +17,16 @@ const config = ts.getParsedCommandLineOfConfigFile(
 if (!config) throw new Error("Cannot load tsconfig.build.json");
 if (config.errors.length) failDiagnostics(config.errors[0]);
 
-const { rootDir, outDir, experimentalDecorators, emitDecoratorMetadata, sourceMap } =
-  config.options;
+const {
+  rootDir,
+  outDir,
+  experimentalDecorators,
+  emitDecoratorMetadata,
+  inlineSources,
+  sourceMap,
+  target = ts.ScriptTarget.ES2024,
+  useDefineForClassFields = target >= ts.ScriptTarget.ES2022,
+} = config.options;
 if (!rootDir || !outDir || dirname(outDir) !== process.cwd() || basename(outDir) !== "dist")
   throw new Error("Expected a package-local src and dist");
 
@@ -68,13 +76,15 @@ async function emit(file) {
     swcrc: false,
     configFile: false,
     sourceMaps: sourceMap ?? false,
+    inlineSourcesContent: inlineSources ?? false,
     jsc: {
-      target: "es2024",
+      target: ts.ScriptTarget[target].toLowerCase(),
       parser: { syntax: "typescript", decorators: experimentalDecorators ?? false },
       transform: {
         legacyDecorator: experimentalDecorators ?? false,
         decoratorMetadata: emitDecoratorMetadata ?? false,
-        verbatimModuleSyntax: true,
+        verbatimModuleSyntax: config.options.verbatimModuleSyntax ?? false,
+        useDefineForClassFields,
       },
     },
     module: { type: "es6" },
