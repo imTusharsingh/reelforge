@@ -13,6 +13,6 @@ node apps/web/features/account/verification/csrf-browser.mjs
 ```
 
 Set `CHROMIUM_PATH` only when using an existing compatible Chromium binary.
-Both scripts use the workspace’s pinned Playwright and esbuild packages and local Next.js stubs.
+Both scripts use the workspace’s pinned Playwright and Rspack packages and local Next.js stubs.
 
 Fixtures mock `/api/v1` fetch responses only. No live provider, credential, or production data is used.
