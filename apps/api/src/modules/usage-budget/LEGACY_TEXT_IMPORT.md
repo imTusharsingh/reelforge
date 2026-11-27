@@ -1,0 +1,36 @@
+# Paid text upgrade
+
+Deploy the additive migration with `PAID_TEXT_V3_ENABLED` disabled. Pause paid-text
+admissions, recovery, owner confirmation and relevant credits. Drain or terminate
+all old writers (including workers, API processes and operator jobs). Do not
+restart any old writer after the import or enable the new runtime before review.
+
+With the API built and `DATABASE_URL` supplied explicitly by the operator, run:
+
+```sh
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID \
+  --apply --old-writers-drained --audit-id CHANGE_RECORD
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID
+```
+
+The default is dry-run. It shows per-attempt before/after reserved, gross
+committed and net amounts without exposing payloads. The apply acknowledgement
+must cover every process that could still send or change accounting; an expired
+lease or closed database connection is not proof of drain. The applied import
+records the audit ID and exact historical source keys in each run.
+
+A matching legacy send event or verified Google receipt is positive send
+evidence. A bare marker remains held without owner eligibility. A provably
+unarmed preparation closes at zero. A pre-POST release requires the exact
+attempt, dispatch/reservation key, canceled step and matching zero-cost
+NOT_DISPATCHED ledger plus its own release event. A release on another step
+cannot authorize retry. An owner-reported interaction ID is not Google evidence.
+Only exact adjustment-audit links or existing scoped adjustment FKs become
+linked credits; a correlation ID alone is insufficient.
+
+Apply is idempotent. Existing posted charges are seeded and not booked again;
+already-stored but not yet posted completions remain for the normal evidence
+fold. Review every blocked row (exit 2) and all changes to reserved funds,
+commitments, credits and net exposure before enabling a new sender. The importer
+makes no provider calls.

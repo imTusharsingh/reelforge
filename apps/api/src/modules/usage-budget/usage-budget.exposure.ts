@@ -76,7 +76,7 @@ export async function budgetExposure(
        WHERE minor > 0 AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}
       UNION ALL
       SELECT currency, CASE WHEN kind = 'DEBIT' THEN amount_minor ELSE -amount_minor END
-        FROM usage_adjustments WHERE ${period}
+        FROM usage_adjustments WHERE ${period} AND text_attempt_id IS NULL
     ) charges GROUP BY currency`);
   let consumed = 0n;
   let unconverted = 0;

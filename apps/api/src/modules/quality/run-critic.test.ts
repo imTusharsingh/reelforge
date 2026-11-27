@@ -112,14 +112,14 @@ function fixture(
     providerJobId: "job",
     usage: {},
   }));
-  const dispatchText: MediaAccounts["dispatchText"] = (_context, _step, call) => call();
+  const dispatchTextAttempt: MediaAccounts["dispatchTextAttempt"] = (_context, _step, call) =>
+    call(async () => undefined);
   const accounts = {
     begin: async () => ({ id: "paid", idempotencyKey: "idem" }),
-    prepare: async () => undefined,
-    dispatchText,
+    dispatchTextAttempt,
     complete: async () => undefined,
   } as unknown as MediaAccounts;
-  const ports = { get: async () => ({ text: { complete: native } }) } as unknown as MediaPorts;
+  const ports = { get: async () => ({ text: { completePaid: native } }) } as unknown as MediaPorts;
   return {
     service: new RunCritic(
       access,

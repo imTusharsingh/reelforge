@@ -21,8 +21,11 @@ export class Interactions {
     private readonly store: ArtifactStore,
   ) {}
 
-  public result(body: Json, key: string): Promise<Json> {
-    return this.http.json("interactions", { ...body, background: false, store: false }, key);
+  public result(body: Json, key: string, onBodySent?: () => Promise<void>): Promise<Json> {
+    const request = { ...body, background: false, store: false };
+    return onBodySent
+      ? this.http.paidJson("interactions", request, key, onBodySent)
+      : this.http.json("interactions", request, key);
   }
 
   public async submit(body: Json, idemKey: string): Promise<{ providerJobId: string }> {

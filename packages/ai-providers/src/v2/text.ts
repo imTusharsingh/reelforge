@@ -1,12 +1,13 @@
 import { ProviderFailure, record, requiredString } from "./http.js";
 import { Interactions } from "./interactions.js";
-import type { TextPort, TextSpec } from "./ports.js";
+import type { TextCompletion, TextPort, TextSpec } from "./ports.js";
 
 /** The provider completed the call and returned billing evidence, but no usable output. */
 export class InvalidCompletedText extends ProviderFailure {
   public constructor(
-    public readonly providerJobId: string,
+    public readonly providerJobId: string | null,
     public readonly usage: Record<string, unknown>,
+    public readonly dispatchKey?: string,
   ) {
     super("INVALID", true);
   }
@@ -21,6 +22,27 @@ export class GeminiText implements TextPort {
     spec: TextSpec<T>,
     key: string,
   ): Promise<{ output: T; providerJobId: string; usage: Record<string, unknown> }> {
+    const result = await this.synchronous(spec, key);
+    return {
+      output: result.output,
+      providerJobId: result.providerJobId ?? key,
+      usage: result.usage,
+    };
+  }
+
+  public completePaid<T>(
+    spec: TextSpec<T>,
+    dispatchKey: string,
+    onBodySent: () => Promise<void> = (): Promise<void> => Promise.resolve(),
+  ): Promise<TextCompletion<T>> {
+    return this.synchronous(spec, dispatchKey, onBodySent);
+  }
+
+  private async synchronous<T>(
+    spec: TextSpec<T>,
+    key: string,
+    onBodySent?: () => Promise<void>,
+  ): Promise<TextCompletion<T>> {
     if (!key.trim() || !spec.prompt.trim()) throw new ProviderFailure("INVALID", false);
     const response = await this.client.result(
       {
@@ -31,21 +53,24 @@ export class GeminiText implements TextPort {
         response_format: { type: "text", mime_type: "application/json", schema: spec.jsonSchema },
       },
       key,
+      onBodySent,
     );
-    // Unstored sync completions may omit id. Correlate the terminal receipt with the
-    // original dispatch key; replaying a paid POST to obtain a remote id is unsafe.
-    const reference = typeof response.id === "string" && response.id.trim() ? response.id : key;
+    // Unstored completions may omit id. The dispatch key is local evidence, never a Google ID.
+    const providerJobId =
+      typeof response.id === "string" && response.id.trim() ? response.id : null;
     try {
       return {
         ...this.parseResponse(response, spec.parse),
-        providerJobId: reference,
+        providerJobId,
+        dispatchKey: key,
       };
     } catch (error) {
       if (response.status !== "completed") throw error;
       const usage = response.usage;
       throw new InvalidCompletedText(
-        reference,
+        onBodySent ? providerJobId : (providerJobId ?? key),
         usage && typeof usage === "object" && !Array.isArray(usage) ? record(usage) : {},
+        key,
       );
     }
   }

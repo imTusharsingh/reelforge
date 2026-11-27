@@ -74,7 +74,20 @@ export type TextSpec<T> = Readonly<{
   jsonSchema: Record<string, unknown>;
   parse: (value: unknown) => T;
 }>;
+export type TextCompletion<T> = Readonly<{
+  output: T;
+  providerJobId: string | null;
+  dispatchKey: string;
+  usage: Record<string, unknown>;
+}>;
+
 export interface TextPort {
+  completePaid?<T>(
+    spec: TextSpec<T>,
+    dispatchKey: string,
+    onBodySent?: () => Promise<void>,
+  ): Promise<TextCompletion<T>>;
+
   complete<T>(
     spec: TextSpec<T>,
     idemKey: string,

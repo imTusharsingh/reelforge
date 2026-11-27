@@ -1,7 +1,8 @@
 import * as mediaPrices from "../scene-media/media-prices.js";
 import { ShotSpecSchema } from "@reelforge/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import type { PaidTextInvocation, PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
 import { RunsBoundary } from "./runs.boundary.js";
@@ -9,6 +10,7 @@ import { runsFixture } from "./runs.fixture.js";
 
 describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
   const fixture = runsFixture();
+  afterEach(() => vi.unstubAllEnvs());
   it("refuses over-$8 estimates before media dispatch", async () => {
     const t = await fixture.tenant();
     using price = vi.spyOn(mediaPrices, "clipMoney");
@@ -42,8 +44,10 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       };
       const run = await t.runs.create(t.context, await append(2, policy), "pinned");
       await append(3, t.brief.budgetPolicy);
+      vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
       const access = {
         runs: t.runs,
+        artifacts: t.artifacts,
         paid: new RunPaidCalls(t.usage, t.store),
         boundary: new RunsBoundary({ check: async (): Promise<typeof t.stop> => t.stop }, t.runs),
       } as MediaAccess;
@@ -52,24 +56,52 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
         accounts.begin(t.context, run, "media:expensive", {}, 429, "fixture"),
       ).rejects.toThrow("BUDGET_CAP");
       for (const key of ["script", "shots"]) {
-        const step = await accounts.begin(t.context, run, `media:text:${key}`, {}, 4, "fixture");
-        await accounts.prepare(t.context, run, step, "fixture");
-        await accounts.dispatchText(t.context, step, async () => ({ providerJobId: key }));
-        await accounts.complete(t.context, step, { providerJobId: key });
-        for (const type of ["media_intent", "media_completed"]) {
-          const event = await t.db.runEvent.findFirstOrThrow({ where: { type, stepId: step.id } });
-          expect(event.payload).toMatchObject({
-            costMinor: 4,
-            cumulativeMinor: key === "shots" ? 8 : 4,
-            warn: key === "shots",
-          });
-        }
+        const step = await accounts.begin(
+          t.context,
+          run,
+          `media:text:${key}`,
+          {},
+          4,
+          "fixture",
+          true,
+        );
+        const transport = vi.fn(async (sent: () => Promise<void>): Promise<PaidTextResult> => {
+          await sent();
+          return {
+            output: { draft: key },
+            providerJobId: null,
+            dispatchKey: step.idempotencyKey,
+            usage: {},
+          };
+        });
+        const saved = await accounts.dispatchTextAttempt(t.context, step, transport);
+        await accounts.complete(t.context, step, saved);
+        expect(transport).toHaveBeenCalledOnce();
+        expect(
+          await t.db.usageReservation.findMany({ where: { correlationId: step.id } }),
+        ).toMatchObject([
+          { idempotencyKey: `m08:${step.idempotencyKey}`, status: "COMMITTED", committedMinor: 4n },
+        ]);
+        expect(
+          await t.db.textAttemptProjection.findFirstOrThrow({ where: { attemptId: step.id } }),
+        ).toMatchObject({ netMinor: 4, reservedMinor: 0 });
+        const intent = await t.db.runEvent.findFirstOrThrow({
+          where: { type: "media_intent", stepId: step.id },
+        });
+        expect(intent.payload).toMatchObject({
+          costMinor: 4,
+          cumulativeMinor: key === "shots" ? 8 : 4,
+          warn: key === "shots",
+        });
       }
+      const blocked = vi.fn<PaidTextInvocation<unknown>>();
       if (period !== "RUN") {
-        const pre = await accounts.begin(t.context, run, "media:pre", {}, 16, "fixture");
-        await expect(accounts.prepare(t.context, run, pre, "fixture")).rejects.toMatchObject({
+        const pre = await accounts.begin(t.context, run, "media:text:pre", {}, 16, "fixture", true);
+        await expect(accounts.dispatchTextAttempt(t.context, pre, blocked)).rejects.toMatchObject({
           code: "BUDGET_EXHAUSTED",
         });
+        expect(blocked).not.toHaveBeenCalled();
+        expect(await t.db.usageReservation.count({ where: { correlationId: pre.id } })).toBe(0);
       }
       const shots = await t.db.shotSpec.findMany({ where: { runId: t.run.id } });
       for (const shot of shots) {
@@ -89,7 +121,7 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       await t.planning.prepare(t.context, run);
       expect(
         await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
-      ).toMatchObject({ targetMinor: 6, hardCapMinor: 428 });
+      ).toMatchObject({ targetMinor: 6, hardCapMinor: 428, spentMinor: 8, reservedMinor: 0 });
       expect(
         await t.db.runEvent.findFirstOrThrow({
           where: { runId: run.id, type: "budget_estimated" },
@@ -97,15 +129,23 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
       ).toMatchObject({ payload: expect.objectContaining({ warn: true }) });
       if (period === "RUN") {
         await expect(
-          accounts.begin(t.context, run, "media:text:post", {}, 421, "fixture"),
+          accounts.begin(t.context, run, "media:text:post", {}, 421, "fixture", true),
         ).rejects.toThrow("BUDGET_CAP");
         expect(
           await t.db.videoRunStep.count({ where: { runId: run.id, key: "media:text:post" } }),
         ).toBe(0);
         return;
       }
-      const after = await accounts.begin(t.context, run, "media:post", {}, 16, "fixture");
-      await expect(accounts.prepare(t.context, run, after, "fixture")).rejects.toMatchObject({
+      const after = await accounts.begin(
+        t.context,
+        run,
+        "media:text:post",
+        {},
+        16,
+        "fixture",
+        true,
+      );
+      await expect(accounts.dispatchTextAttempt(t.context, after, blocked)).rejects.toMatchObject({
         code: "BUDGET_EXHAUSTED",
       });
       await t.usage.upsertBudget(t.context, {
@@ -113,10 +153,24 @@ describe.skipIf(!process.env.DATABASE_URL)("pinned run budget", () => {
         dailyLimitMinor: 5,
         reason: "lower workspace policy",
       });
-      const lower = await accounts.begin(t.context, run, "media:workspace", {}, 6, "fixture");
-      await expect(accounts.prepare(t.context, run, lower, "fixture")).rejects.toMatchObject({
+      const lower = await accounts.begin(
+        t.context,
+        run,
+        "media:text:workspace",
+        {},
+        6,
+        "fixture",
+        true,
+      );
+      await expect(accounts.dispatchTextAttempt(t.context, lower, blocked)).rejects.toMatchObject({
         code: "BUDGET_EXHAUSTED",
       });
+      expect(blocked).not.toHaveBeenCalled();
+      expect(
+        await t.db.usageReservation.count({
+          where: { correlationId: { in: [after.id, lower.id] } },
+        }),
+      ).toBe(0);
     },
   );
 });

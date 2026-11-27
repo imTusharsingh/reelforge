@@ -35,25 +35,30 @@ test("settles an attached text receipt on a canceled run after restart without a
     {},
     7,
     "fixture-text",
+    true,
   );
-  await accounts.prepare(t.context, run, step, "fixture-text");
   const response = {
     output: { draft: "persisted output" },
-    providerJobId: step.idempotencyKey,
+    providerJobId: null,
+    dispatchKey: step.idempotencyKey,
     usage: { input_tokens: 12, output_tokens: 3 },
   };
-  const post = vi.fn().mockResolvedValue(response);
-  await accounts.dispatchText(t.context, step, post);
-  // Crash boundary: the response was attached, but complete() has not settled the estimate.
-  await t.control.cancel(t.context, run.id);
-  expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "CANCELED" });
-  expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } })).toMatchObject({
-    state: "WAITING_EXTERNAL",
-    output: response,
+  const handed = Promise.withResolvers<void>();
+  const reply = Promise.withResolvers<typeof response>();
+  const post = vi.fn(async (sent: () => Promise<void>) => {
+    await sent();
+    handed.resolve();
+    return reply.promise;
   });
+  const original = accounts.dispatchTextAttempt(t.context, step, post);
+  await handed.promise;
+  expect(await t.control.cancel(t.context, run.id)).toBe(false);
+  expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "CANCELED" });
   expect(await t.db.usageReservation.findMany({ where: { correlationId: step.id } })).toMatchObject(
     [{ status: "RESERVED", committedMinor: null }],
   );
+  reply.resolve(response);
+  await original;
   // Rebind runtime dependencies to represent the new worker, and refuse any provider text call.
   const secondPost = vi.fn().mockRejectedValue(new Error("recovery must not POST"));
   bindMedia(t, { ...native, text: { complete: secondPost } });
@@ -64,8 +69,8 @@ test("settles an attached text receipt on a canceled run after restart without a
   expect(secondPost).not.toHaveBeenCalled();
   expect(await t.store.get(t.context, run.id)).toMatchObject({ state: "CANCELED" });
   expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } })).toMatchObject({
-    state: "SUCCEEDED",
-    output: { result: response, budgetAccounted: true },
+    state: "WAITING_EXTERNAL",
+    output: response,
   });
   expect(await t.db.providerRequest.findMany({ where: { correlationId: step.id } })).toMatchObject([
     {
@@ -82,7 +87,7 @@ test("settles an attached text receipt on a canceled run after restart without a
     reservedMinor: 0,
     spentMinor: 7,
   });
-  expect(await t.db.runEvent.count({ where: { stepId: step.id, type: "media_completed" } })).toBe(
-    1,
-  );
+  expect(
+    await t.db.textAttemptEvidence.count({ where: { attemptId: step.id, kind: "SUCCEEDED" } }),
+  ).toBe(1);
 });

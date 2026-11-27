@@ -5,8 +5,6 @@ import {
   ADMISSION_ORDERING,
   type Admission,
   canRollback,
-  TEXT_PREPARED,
-  TEXT_DISPATCH_PROTOCOL,
   OUTCOME_UNKNOWN,
   readAdmission,
 } from "./run-admission-state.js";
@@ -78,7 +76,6 @@ export async function releaseAdmission(
   step: Step,
   reservationId: string | undefined,
   budgetDenied: boolean,
-  provenTextNotSent = false,
 ): Promise<number> {
   const where = { workspaceId: context.workspaceId, correlationId: step.id };
   const shot = step.key.startsWith("shot-");
@@ -87,12 +84,12 @@ export async function releaseAdmission(
   await tx.providerRequest.updateMany({
     where: {
       ...where,
-      errorCode: provenTextNotSent ? TEXT_PREPARED : "PENDING",
+      errorCode: "PENDING",
     },
     data: {
       errorCode: shot ? "ADMISSION_ROLLED_BACK" : "NOT_DISPATCHED",
       actualCost: 0,
-      responseMetadata: releaseProof(step, provenTextNotSent),
+      responseMetadata: releaseProof(step),
     },
   });
   await db.videoRunStep.updateMany({
@@ -262,12 +259,8 @@ export async function recordReservation(
   });
 }
 
-function releaseProof(step: Step, provenTextNotSent: boolean): Prisma.InputJsonObject {
+function releaseProof(step: Step): Prisma.InputJsonObject {
   return {
-    ...(provenTextNotSent && {
-      fencedTextNotSent: true,
-      textDispatchProtocol: TEXT_DISPATCH_PROTOCOL,
-    }),
     admissionOrdering: ADMISSION_ORDERING,
     dispatched: false,
     costKnown: true,

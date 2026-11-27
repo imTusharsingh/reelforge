@@ -116,13 +116,27 @@ Readers on this revision still accept old receipts. New text receipts keep the l
 New assembly exports also normalize historical text receipts without changing the
 stored records. Media jobs such as video shots still require their provider job ID.
 
-The text lock uses the `sync-text-advisory-v2` protocol. The orphan sweep releases
-a stranded preparation without committing spend. An armed attempt may have sent
-its POST; it becomes confirmable after the session lock is lost, with no second
-POST. A definitive provider rejection releases an uncommitted reservation or
-corrects an already-committed owner estimate to zero, with an audit event.
-Before rollouts, inventory older and unversioned dispatch markers before and after
-draining workers. The new sweep leaves them untouched for evidence-led reconciliation.
+Paid text uses one append-only attempt journal. Preparing an attempt creates no
+reservation and permits no POST. Authorization puts the run hold, usage hold and
+single sender nonce in one database transaction. Only the invocation that receives
+that commit acknowledgment can use the nonce. It never retries the POST.
+Transport handoff is recorded when Node hands the request body to the OS, not
+when the request is created and not as proof Google accepted it.
+
+Provider observations are saved before accounting. If database ingestion is
+unavailable, the worker saves the observation to an attempt-and-nonce workspace
+object. Recovery imports evidence and posts the net delta; it does not retry
+transport. A definitive rejection can reverse a prior owner estimate, less
+any credit already linked to that attempt. Unknown arms keep their hold and
+need positive send evidence plus confirmed sender retirement for owner settlement.
+
+Cancel first closes new admissions. It stays pending (HTTP 202) until a live
+sender can no longer initiate transport or the attempt has durable send evidence.
+A supervisor must match the exact process incarnation before recording exit;
+database disconnection or a lease deadline is not enough.
+
+The new path defaults off. Follow the [legacy import runbook](../usage-budget/LEGACY_TEXT_IMPORT.md)
+before activating it, including draining and not restarting old writers.
 
 An authenticated workspace owner can attach evidence from a recovered Google receipt
 with `POST /api/v1/runs/:runId/steps/:stepId/text-evidence?workspaceId=…`.

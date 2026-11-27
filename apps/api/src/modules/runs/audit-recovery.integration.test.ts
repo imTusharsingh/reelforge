@@ -31,11 +31,23 @@ test("settles an invalid completed interaction with usage and never submits it a
     }),
   );
   const port = new GeminiText(
-    new Interactions(new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher), {
-      save: async (): Promise<never> => {
-        throw new Error("Unexpected storage");
+    new Interactions(
+      new ProviderHttp(
+        "AIza" + "aB1".repeat(12),
+        "gemini",
+        fetcher,
+        undefined,
+        async (url, init, sent) => {
+          await sent();
+          return fetcher(url, { ...init, method: "POST" });
+        },
+      ),
+      {
+        save: async (): Promise<never> => {
+          throw new Error("Unexpected storage");
+        },
       },
-    }),
+    ),
     "fixture-text",
   );
   const step = await accounts.begin(
@@ -45,21 +57,23 @@ test("settles an invalid completed interaction with usage and never submits it a
     {},
     7,
     "fixture-text",
+    true,
   );
-  await accounts.prepare(t.context, run, step, "fixture-text");
-  const submit = (): ReturnType<typeof port.complete> =>
-    port.complete(
+  const submit = (sent: () => Promise<void>): ReturnType<typeof port.completePaid> =>
+    port.completePaid(
       {
         prompt: "Fixture",
         jsonSchema: {},
         parse: (value) => value,
       },
       step.idempotencyKey,
+      sent,
     );
-  await expect(accounts.dispatchText(t.context, step, submit)).rejects.toMatchObject({
-    providerJobId: step.idempotencyKey,
+  await expect(accounts.dispatchTextAttempt(t.context, step, submit)).rejects.toMatchObject({
+    providerJobId: null,
+    dispatchKey: step.idempotencyKey,
   });
-  await expect(accounts.dispatchText(t.context, step, submit)).rejects.toThrow();
+  await expect(accounts.dispatchTextAttempt(t.context, step, submit)).rejects.toThrow();
   expect(fetcher).toHaveBeenCalledOnce();
   expect(await t.db.providerRequest.findFirst({ where: { correlationId: step.id } })).toMatchObject(
     {
@@ -106,11 +120,21 @@ test("only an owner can close terminal unknown text and book the estimate once",
     [],
   );
   const { accounts } = bindMedia(t, native);
-  const step = await accounts.begin(t.context, run, "media:text:scriptwriter", {}, 17, "fixture");
-  await accounts.prepare(t.context, run, step, "fixture");
-  const submit = vi.fn().mockRejectedValue(new Error("connection closed"));
-  await expect(accounts.dispatchText(t.context, step, submit)).rejects.toThrow(
-    "RECONCILE_REQUIRED",
+  const step = await accounts.begin(
+    t.context,
+    run,
+    "media:text:scriptwriter",
+    {},
+    17,
+    "fixture",
+    true,
+  );
+  const submit = vi.fn(async (sent: () => Promise<void>) => {
+    await sent();
+    throw new Error("connection closed");
+  });
+  await expect(accounts.dispatchTextAttempt(t.context, step, submit)).rejects.toThrow(
+    "connection closed",
   );
   await expect(t.runs.detail(t.context, run.id)).resolves.toMatchObject({
     pinnedHardCapMinor: 800,
@@ -123,12 +147,9 @@ test("only an owner can close terminal unknown text and book the estimate once",
     t.control.abandonTerminalText({ ...t.context, role: "EDITOR" }, run.id, step.id),
   ).rejects.toThrow("owner");
   await expect(t.control.abandon(t.context, run.id, step.id)).rejects.toThrow("Reconcile");
-  // A billing investigation can outlast the reservation TTL. The original ledger
-  // still counts the estimate until the owner settles it.
-  await t.db.usageReservation.updateMany({
-    where: { correlationId: step.id },
-    data: { status: "EXPIRED" },
-  });
+  expect(
+    await t.db.usageReservation.findFirst({ where: { correlationId: step.id } }),
+  ).toMatchObject({ status: "RESERVED" });
   const breakdown = await t.usage.runBreakdown(t.context, run.id);
   expect(breakdown.totals.currencies[0]?.byCategory).toEqual(
     expect.arrayContaining([expect.objectContaining({ category: "LLM", totalMinor: 17 })]),
@@ -144,14 +165,11 @@ test("only an owner can close terminal unknown text and book the estimate once",
   expect(await t.db.usageReservation.findMany({ where: { correlationId: step.id } })).toMatchObject(
     [{ category: "LLM", status: "COMMITTED", committedMinor: 17n }],
   );
-  const failures = await t.db.runEvent.findMany({
-    where: { stepId: step.id, type: "step_failed" },
+  const confirmations = await t.db.textAttemptEvidence.findMany({
+    where: { attemptId: step.id, kind: "OWNER_CONFIRMED" },
   });
-  expect(failures).toHaveLength(1);
-  expect(failures[0]?.payload).toMatchObject({
-    confirmedBy: t.context.userId,
-    committedEstimateMinor: 17,
-  });
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0]?.data).toMatchObject({ confirmedBy: t.context.userId });
 });
 
 test("reports effective Brief caps in both spend views", async () => {

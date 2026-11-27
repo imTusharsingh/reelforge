@@ -1,9 +1,15 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { z } from "zod";
-import { DISPATCHING, OUTCOME_UNKNOWN } from "../usage-budget/run-admission-state.js";
+import { createHash } from "node:crypto";
+import {
+  appendTextEvidence,
+  lockTextAttempt,
+  readTextAttempt,
+} from "../usage-budget/text-attempt-store.js";
+import { foldTextAttempt } from "../usage-budget/text-attempt-fold.js";
 import { remoteTextId } from "../usage-budget/text-evidence.js";
 import type { RunsService } from "./runs.service.js";
-import type { Context, Step, Transaction } from "./runs.types.js";
+import { json, type Context, type Step, type Transaction } from "./runs.types.js";
 
 const counterLimit = 32;
 const usageCounters = z.record(
@@ -16,9 +22,11 @@ const interactionId = z
   .trim()
   .regex(/^[A-Za-z0-9._:-]{1,256}$/);
 // Read the full existing evidence, even if an older writer let it exceed the limit.
-const storedOwnerEvidence = z
-  .object({ providerJobId: interactionId, usage: usageCounters.optional() })
-  .optional();
+const storedOwnerEvidence = z.object({
+  source: z.literal("owner_reported"),
+  googleId: interactionId,
+  usage: usageCounters.optional(),
+});
 export const RecoveredTextEvidenceSchema = z
   .object({
     dispatchKey: z.string().trim().min(1).max(300),
@@ -28,7 +36,6 @@ export const RecoveredTextEvidenceSchema = z
   })
   .strict();
 
-const metadataSchema = z.record(z.string(), z.json());
 type Evidence = z.infer<typeof RecoveredTextEvidenceSchema>;
 
 /** Record an owner's recovered receipt without treating attestation as verified output or cost. */
@@ -40,6 +47,8 @@ export async function attachRecoveredTextEvidence(
   evidence: Evidence,
 ): Promise<void> {
   if (context.role !== "OWNER") throw new ForbiddenException("Workspace owner required");
+  if (process.env.PAID_TEXT_V3_ENABLED !== "1")
+    throw new ConflictException("Paid text reconciliation is disabled");
   const result = await runs.store.mutate(
     context,
     runId,
@@ -77,49 +86,43 @@ async function saveEvidence(
   step: Step,
   evidence: Evidence,
 ): Promise<void> {
-  const row = await tx.providerRequest.findUnique({
-    where: {
-      workspaceId_correlationId: { workspaceId: context.workspaceId, correlationId: step.id },
-    },
-  });
-  const metadata = metadataSchema.safeParse(row?.responseMetadata).data;
-  if (
-    metadata?.dispatched !== true ||
-    !row ||
-    !(
-      row.status === "SUCCEEDED" ||
-      row.status === "FAILED" ||
-      row.errorCode === DISPATCHING ||
-      row.errorCode === OUTCOME_UNKNOWN
-    )
-  )
-    throw new ConflictException("The attempt has no dispatched text call");
-  const known =
-    remoteTextId(step, step.providerJobId) ??
-    remoteTextId(step, typeof metadata.providerJobId === "string" ? metadata.providerJobId : null);
-  if (known && known !== evidence.providerJobId)
+  const current = await lockTextAttempt(tx, context.workspaceId, step.id);
+  const journal = await readTextAttempt(tx, current);
+  if (!journal?.armNonce || journal.phase === "NOT_DISPATCHED")
+    throw new ConflictException("The text attempt has no authorized send");
+  if (journal.googleId && journal.googleId !== evidence.providerJobId)
     throw new ConflictException("Conflicting Google interaction IDs");
-  const stored = storedOwnerEvidence.safeParse(metadata.ownerReportedEvidence);
-  if (!stored.success)
-    throw new ConflictException("Existing owner-reported evidence cannot be merged");
-  const reported = stored.data;
-  if (reported && reported.providerJobId !== evidence.providerJobId)
-    throw new ConflictException("Conflicting owner-reported interaction IDs");
-  const counters = mergeCounters(reported?.usage ?? {}, evidence.usage ?? {});
-  await tx.providerRequest.update({
-    where: { id: row.id },
-    data: {
-      responseMetadata: {
-        ...metadata,
-        dispatchKey: step.idempotencyKey,
-        ownerReportedEvidence: {
-          providerJobId: evidence.providerJobId,
-          usage: counters,
-          recordedBy: context.userId,
-        },
-      },
-    },
+  const earlier = await tx.textAttemptEvidence.findMany({
+    where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "RECOVERED_RECEIPT" },
+    select: { data: true },
   });
+  let counters: Record<string, number> = {};
+  for (const row of earlier) {
+    const report = storedOwnerEvidence.safeParse(row.data);
+    if (!report.success) continue;
+    if (report.data.googleId !== evidence.providerJobId)
+      throw new ConflictException("Conflicting owner-reported interaction IDs");
+    counters = mergeCounters(counters, report.data.usage ?? {});
+  }
+  const usage = mergeCounters(counters, evidence.usage ?? {});
+  for (const [key, value] of Object.entries(usage))
+    if (Object.hasOwn(journal.usage ?? {}, key) && journal.usage![key] !== value)
+      throw new ConflictException("Counter conflicts with verified provider evidence");
+  const fieldHash = createHash("sha256")
+    .update(JSON.stringify([evidence.providerJobId, Object.entries(usage).sort()]))
+    .digest("hex");
+  await appendTextEvidence(tx, current, {
+    kind: "RECOVERED_RECEIPT",
+    eventKey: `owner-receipt:${fieldHash}`,
+    nonce: journal.armNonce,
+    data: json({
+      dispatchKey: current.idempotencyKey,
+      source: "owner_reported",
+      googleId: evidence.providerJobId,
+      usage,
+    }),
+  });
+  await foldTextAttempt(tx, context, current.id);
 }
 
 function mergeCounters(

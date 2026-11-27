@@ -1,9 +1,4 @@
-import { OWNER_TERMINAL_TEXT, reconcileOwnerEstimate } from "./run-paid-rejection.js";
-import { recordTextEvidence, remoteTextId } from "./text-evidence.js";
-import { terminalTextEligible, readAdmission } from "./run-admission-state.js";
-import type { InvalidCompletedText } from "@reelforge/ai-providers";
 import { readReceiptBudget } from "./run-shot-receipt.js";
-import { failRunIfSettled as settleRunFailure } from "../runs/run-outcomes.js";
 import { closeSteps } from "../runs/run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { ConflictException } from "@nestjs/common";
@@ -34,25 +29,12 @@ export async function finalizeFailed(
   providerJobId: string | null = step.providerJobId,
   usage?: Record<string, unknown>,
 ): Promise<Event> {
-  const manual = reason === OWNER_TERMINAL_TEXT;
   return failureEvent(
     store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
       const current = await currentStep(db, run, step);
-      if (!dispatched && current.idempotencyKey === step.idempotencyKey) {
-        const corrected = await reconcileOwnerEstimate(db, tx, context, run, current, {
-          code: reason,
-          message,
-        });
-        if (corrected) return corrected;
-      }
-      if (
-        usage &&
-        current.key.startsWith("media:text:") &&
-        ["FAILED", "SUCCEEDED"].includes(current.state)
-      )
-        return attachLateInvalidEvidence(db, tx, context, current, providerJobId, usage);
-      if (!(await canFinalize(tx, context, current, step, reason, manual)))
-        throw new ReplayedFailure(await previousFailure(db, step));
+      if (current.key.startsWith("media:text:"))
+        throw new ConflictException("Text failure requires its evidence journal");
+      if (!canFinalize(current, step)) throw new ReplayedFailure(await previousFailure(db, step));
       const amount = current.costMinor ?? 0;
       const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
       await paid.settleFailedRequest(
@@ -73,9 +55,7 @@ export async function finalizeFailed(
         payload: {
           reason,
           message,
-          ...(manual
-            ? { confirmedBy: context.userId, committedEstimateMinor: cost }
-            : { releasedMinor: amount }),
+          releasedMinor: amount,
         },
         stepId: step.id,
       };
@@ -103,9 +83,7 @@ async function markStepFailed(
     where: { id: step.id },
     data: {
       state: "FAILED",
-      providerJobId: step.key.startsWith("media:text:")
-        ? remoteTextId(step, providerJobId)
-        : providerJobId,
+      providerJobId,
       costMinor: cost,
       finishedAt: new Date(),
       error,
@@ -120,60 +98,17 @@ async function previousFailure(db: Scoped, step: Step): Promise<Event> {
   });
 }
 
-async function attachLateInvalidEvidence(
-  db: Scoped,
-  tx: Transaction,
-  context: Context,
-  step: Step,
-  providerJobId: string | null,
-  usage: Record<string, unknown>,
-): Promise<{
-  value: null;
-  stepId: string;
-  eventType: string;
-  payload: { providerJobId: string | null; dispatchKey: string; invalidOutput: boolean };
-}> {
-  const id = await recordTextEvidence(tx, context, step, providerJobId, usage);
-  await db.videoRunStep.updateMany({ where: { id: step.id }, data: { providerJobId: id } });
-  return {
-    value: null,
-    stepId: step.id,
-    eventType: "text_evidence_recorded",
-    payload: { providerJobId: id, dispatchKey: step.idempotencyKey, invalidOutput: true },
-  };
-}
-
-async function canFinalize(
-  tx: Transaction,
-  context: Context,
-  current: Step,
-  step: Step,
-  reason: string,
-  manual: boolean,
-): Promise<boolean> {
-  if (
-    current.state === "FAILED" &&
-    (!manual ||
-      (typeof current.error === "object" &&
-        current.error &&
-        "code" in current.error &&
-        current.error.code === reason))
-  )
-    return false;
-  const waiting =
-    step.providerJobId !== null ||
-    (step.key.startsWith("media:text:") && step.state === "WAITING_EXTERNAL");
+function canFinalize(current: Step, step: Step): boolean {
+  if (current.state === "FAILED") return false;
+  const waiting = step.providerJobId !== null;
   if (
     current.state !== (waiting ? "WAITING_EXTERNAL" : "RUNNING") ||
     current.providerJobId !== step.providerJobId ||
     current.idempotencyKey !== step.idempotencyKey
   )
     throw new ConflictException("Dispatch claim changed");
-  if (manual && !terminalTextEligible(current, await readAdmission(tx, context, current)))
-    throw new ConflictException("Text attempt is not awaiting terminal confirmation");
   return true;
 }
-
 async function failRunIfSettled(
   context: Context,
   db: Scoped,
@@ -182,7 +117,6 @@ async function failRunIfSettled(
   step: Step,
   error: { code: string; message: string },
 ): Promise<void> {
-  if (step.key.startsWith("media:text:critic:")) return settleRunFailure(db, tx, run, step, error);
   const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
   if (
     run.state === "CANCELED" ||
@@ -213,7 +147,7 @@ async function failRunIfSettled(
   }
   if (step.key.startsWith("shot-") || frame) {
     await failSettledGeneration(db, { ...run, pauseReason });
-  } else if (step.key.startsWith("media:text:") || step.key.startsWith("media:reference:")) {
+  } else if (step.key.startsWith("media:reference:")) {
     await db.videoRunStep.updateMany({
       where: {
         runId: run.id,
@@ -282,26 +216,6 @@ async function settleEnvelope(db: Scoped, run: Run, amount: number, cost: number
         revision: budget.revision + 1,
       },
     });
-}
-
-export function finalizeInvalidText(
-  store: RunsStore,
-  paid: RunPaidCalls,
-  context: Context,
-  step: Step,
-  receipt: InvalidCompletedText,
-): Promise<Event> {
-  return finalizeFailed(
-    store,
-    paid,
-    context,
-    step,
-    "PROVIDER_INVALID_OUTPUT",
-    "Provider completed the text call but returned invalid output",
-    true,
-    receipt.providerJobId,
-    receipt.usage,
-  );
 }
 
 function currentStep(db: Scoped, run: Run, step: Step): Promise<Step> {

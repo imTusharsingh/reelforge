@@ -7,6 +7,7 @@ import {
   Injectable,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import {
@@ -56,6 +57,7 @@ import {
 } from "./usage-budget.validation.js";
 
 import { budgetExposure } from "./usage-budget.exposure.js";
+import { createLinkedTextCredit } from "./text-attempt-credit.js";
 import {
   admissionBudgets,
   applicableBudgetWhere,
@@ -305,6 +307,21 @@ export class UsageBudgetService {
   ): Promise<{ adjustmentId: string; correlationId: string; budgets: BudgetStatusView[] }> {
     this.requireOwner(context);
     const input = parseAdjustment(body);
+    if ("textAttemptId" in input) {
+      if (process.env.PAID_TEXT_V3_ENABLED !== "1")
+        throw new ServiceUnavailableException("Linked text credits are disabled");
+      const now = this.clock();
+      return this.db.$transaction((tx) =>
+        createLinkedTextCredit(tx, context, input, now, {
+          lock: async (channelId): Promise<BudgetRecord[]> => {
+            const budgets = await this.applicableBudgets(tx, context.workspaceId, channelId);
+            await this.lockBudgets(tx, context.workspaceId, budgets);
+            return budgets;
+          },
+          statuses: (budgets): Promise<BudgetStatusView[]> => this.statuses(tx, budgets, now),
+        }),
+      );
+    }
     const channelId = input.channelId ?? null;
     if (channelId !== null) await this.channel(this.db, context.workspaceId, channelId);
     const correlationId = randomUUID();
@@ -739,7 +756,9 @@ export class UsageBudgetService {
     };
     for (const reservation of await this.db.usageReservation.findMany({ where: scope }))
       totals.addReservation(reservation);
-    for (const adjustment of await this.db.usageAdjustment.findMany({ where: scope }))
+    for (const adjustment of await this.db.usageAdjustment.findMany({
+      where: { ...scope, textAttemptId: null },
+    }))
       totals.addAdjustment(adjustment);
     return {
       workspaceId: context.workspaceId,
@@ -812,7 +831,9 @@ export class UsageBudgetService {
     };
     for (const reservation of await this.db.usageReservation.findMany({ where: scope }))
       totalsFor(reservation.channelId).addReservation(reservation);
-    for (const adjustment of await this.db.usageAdjustment.findMany({ where: scope }))
+    for (const adjustment of await this.db.usageAdjustment.findMany({
+      where: { ...scope, textAttemptId: null },
+    }))
       totalsFor(adjustment.channelId).addAdjustment(adjustment);
     const budgets = await this.db.usageBudget.findMany({
       where: { workspaceId: context.workspaceId, channelId: { not: null } },

@@ -1,6 +1,4 @@
 import { settleFailedRequest } from "./run-paid-rejection.js";
-import { remoteTextId, retainedOwnerEvidence } from "./text-evidence.js";
-import { beginLockedTextSend } from "./run-paid-text-send.js";
 import { markDispatching } from "./run-paid-dispatch.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
@@ -19,7 +17,6 @@ import {
   recordReservation,
 } from "./run-paid-admission.js";
 import {
-  InvalidCompletedText,
   ProviderFailure,
   SubmissionRefused,
   providerFailureMessage,
@@ -59,7 +56,10 @@ async function assertReserveAdmission(
   assertCriticAdmissionOpen(run, step.key);
   await assertPaidRunLimits(db, run, amount, step.id);
   const admission = await readAdmission(transaction, context, step);
-  if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
+  if (
+    !["never-dispatched", "rolled-back", "text-prepared"].includes(admission.evidence) ||
+    (admission.evidence === "text-prepared" && (admission.request || admission.reservation))
+  )
     throw new ConflictException(submissionHold(step.id));
   return admission;
 }
@@ -148,22 +148,16 @@ export class RunPaidCalls {
     call: () => Promise<T>,
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
-    if (step.key.startsWith("media:text:") && !assertLocked)
-      throw new ConflictException("Text dispatch requires its advisory session");
+    if (step.key.startsWith("media:text:"))
+      throw new ConflictException("Text transport must use its evidence journal");
     await markDispatching(this.store, context, step, assertLocked).catch(async (error: unknown) => {
       await this.rollbackAdmission(context, step);
       throw error;
     });
-    const started =
-      assertLocked && step.key.startsWith("media:text:")
-        ? await beginLockedTextSend(this.store, this.usage, context, step, assertLocked, call)
-        : null;
-    // The durable dispatch marker protects the claims before invoking the provider.
     try {
-      return await (started ? started.response : call());
+      return await call();
     } catch (error) {
       if (
-        error instanceof InvalidCompletedText ||
         error instanceof SubmissionRefused ||
         (error instanceof ProviderFailure && !error.dispatched)
       )
@@ -284,24 +278,8 @@ export class RunPaidCalls {
       },
       data: {
         status: "SUCCEEDED",
-        ...(step.key.startsWith("media:text:")
-          ? {
-              actualCost: null,
-              responseMetadata: {
-                ...(await retainedOwnerEvidence(tx, context, step)),
-                dispatched: true,
-                costKnown: false,
-                costBasis: "RESERVATION",
-                dispatchKey: step.idempotencyKey,
-                ...(remoteTextId(step, step.providerJobId) && {
-                  providerJobId: step.providerJobId,
-                }),
-              },
-            }
-          : {
-              actualCost: actualMinor / 100,
-              responseMetadata: { dispatched: true, costKnown: true },
-            }),
+        actualCost: actualMinor / 100,
+        responseMetadata: { dispatched: true, costKnown: true },
         errorCode: null,
       },
     });

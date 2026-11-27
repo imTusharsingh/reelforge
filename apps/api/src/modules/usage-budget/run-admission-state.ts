@@ -4,8 +4,6 @@ import { scopedTransaction } from "../runs/runs.transaction.js";
 import type { Context, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 export const ADMISSION_ORDERING = "v2-commit-before-dispatch";
-export const TEXT_DISPATCH_PROTOCOL = "sync-text-advisory-v2";
-export const TEXT_PREPARED = "VIDEO_RUN_TEXT_PREPARED";
 export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
 export const BILLING_OVERAGE = "VIDEO_RUN_BILLING_OVERAGE";
 export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";
@@ -60,7 +58,8 @@ const receiptSchema = z.object({ providerJobId: z.string().min(1) });
 
 export const textResultSchema = z.object({
   output: z.json(),
-  providerJobId: z.string().min(1),
+  providerJobId: z.string().min(1).nullable(),
+  dispatchKey: z.string().min(1).optional(),
   usage: z.record(z.string(), z.unknown()),
 });
 
@@ -69,7 +68,9 @@ export function attachedTextResult(
 ): z.infer<typeof textResultSchema> | null {
   const result = textResultSchema.safeParse(step.output);
   return result.success &&
-    (result.data.providerJobId === step.providerJobId ||
+    ((result.data.dispatchKey === step.idempotencyKey &&
+      result.data.providerJobId === step.providerJobId) ||
+      (result.data.providerJobId !== null && result.data.providerJobId === step.providerJobId) ||
       result.data.providerJobId === step.idempotencyKey)
     ? result.data
     : null;
@@ -93,7 +94,7 @@ function classify(
     (!request.actualCost || request.actualCost.isZero()) &&
     (reservation?.status === "RELEASED" ||
       (reservation?.status === "EXPIRED" &&
-        (!marked || isFencedTextRelease(request, step.idempotencyKey)) &&
+        !marked &&
         request.errorCode === "NOT_DISPATCHED" &&
         z
           .object({
@@ -107,7 +108,7 @@ function classify(
     z.object({ dispatched: z.literal(false) }).safeParse(request.responseMetadata).success
   )
     return "released-nondispatch";
-  if (request.errorCode === TEXT_PREPARED) return "text-prepared";
+
   if (request.errorCode === DISPATCHING) return "dispatching";
   if (request.errorCode !== "PENDING" && request.errorCode !== "ADMISSION_ROLLED_BACK")
     return "recorded"; // Includes OUTCOME_UNKNOWN and provider receipts. Reconcile by the original key.
@@ -128,16 +129,6 @@ function classify(
   return request.errorCode === "PENDING" ? "pending" : "rolled-back";
 }
 
-function isFencedTextRelease(request: Request, idempotencyKey: string): boolean {
-  return z
-    .object({
-      fencedTextNotSent: z.literal(true),
-      idempotencyKey: z.literal(idempotencyKey),
-      textDispatchProtocol: z.literal(TEXT_DISPATCH_PROTOCOL),
-    })
-    .safeParse(request.responseMetadata).success;
-}
-
 export function isBillingHold(error: unknown): boolean {
   return z.object({ code: z.literal(BILLING_OVERAGE) }).safeParse(error).success;
 }
@@ -148,19 +139,6 @@ export function hasSettledCharge(admission: Admission): boolean {
     admission.request?.status === "SUCCEEDED" &&
     admission.request.errorCode === null &&
     admission.reservation?.status === "COMMITTED"
-  );
-}
-
-export function terminalTextEligible(step: Step, admission: Admission): boolean {
-  return (
-    step.state === "RUNNING" &&
-    step.key.startsWith("media:text:") &&
-    !step.providerJobId &&
-    !jobIdFromAdmission(admission) &&
-    admission.request?.errorCode === OUTCOME_UNKNOWN &&
-    !!admission.reservation &&
-    ["RESERVED", "EXPIRED"].includes(admission.reservation.status) &&
-    admission.reservation.amountMinor === BigInt(step.costMinor ?? -1)
   );
 }
 
@@ -214,7 +192,7 @@ export async function readAdmissions<T extends Attempt>(
   steps: T[],
 ): Promise<(Admission & { step: T })[]> {
   if (!steps.length) return [];
-  const [requests, reservations, markers] = await Promise.all([
+  const [requests, reservations, markers, text] = await Promise.all([
     tx.providerRequest.findMany({
       where: { workspaceId, correlationId: { in: steps.map((s) => s.id) } },
       select: providerRequestSelect,
@@ -232,10 +210,15 @@ export async function readAdmissions<T extends Attempt>(
       },
       select: { stepId: true, payload: true },
     }),
+    tx.textAttemptEvidence.findMany({
+      where: { workspaceId, attemptId: { in: steps.map((s) => s.id) }, kind: "PREPARED" },
+      select: { attemptId: true },
+    }),
   ]);
   const byStep = new Map(requests.map((row) => [row.correlationId, row]));
   const byKey = new Map(reservations.map((row) => [row.idempotencyKey, row]));
   const marked = markedSteps(steps, markers);
+  const journal = new Set(text.map(({ attemptId }) => attemptId));
   return steps.map((step) => {
     const request = byStep.get(step.id) ?? null;
     const reservation = byKey.get(`m08:${step.idempotencyKey}`) ?? null;
@@ -243,9 +226,14 @@ export async function readAdmissions<T extends Attempt>(
       step,
       request,
       reservation,
-      evidence: isBillingHold(step.error)
-        ? "billing-overage"
-        : classify(request, reservation, marked.has(step.id), step),
+      evidence:
+        journal.has(step.id) && (!request || request.errorCode === "TEXT_AWAITING_EVIDENCE")
+          ? reservation
+            ? "dispatching"
+            : "text-prepared"
+          : isBillingHold(step.error)
+            ? "billing-overage"
+            : classify(request, reservation, marked.has(step.id), step),
     };
   });
 }

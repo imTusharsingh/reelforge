@@ -115,8 +115,16 @@ export class RunsController {
     @Req() request: AuthenticatedRequest,
     @Param("id") id: string,
     @Query("workspaceId") workspaceId: string,
-  ): Promise<void> {
-    await this.control.cancel(await this.context(request, workspaceId), this.id(id));
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ pending: true } | void> {
+    const pending = await this.control.cancel(
+      await this.context(request, workspaceId),
+      this.id(id),
+    );
+    if (pending) {
+      response.status(202);
+      return { pending: true };
+    }
   }
   @Post(":id/steps/:stepId/abandon")
   public async abandon(

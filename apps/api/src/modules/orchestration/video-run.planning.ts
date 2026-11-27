@@ -1,5 +1,3 @@
-import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
-import { recoverTextDispatches } from "../usage-budget/text-dispatch-recovery.js";
 import { isRenderStage, pendingRenderEdit } from "../runs/run-render-stage.js";
 import { Prisma } from "@reelforge/database";
 import { fitsAssemblyDuration } from "../script/planning-validation.js";
@@ -27,16 +25,14 @@ import {
 export class RunPlanning {
   public collectAdmittedReference?: (context: Context, step: Step) => Promise<number | null>;
   public collectAdmittedAudio?: (context: Context, run: Run) => Promise<number | null>;
-  public drainTerminalTextReceipts?: (context: Context) => Promise<void>;
+  public recoverTextJournal?: (context: Context) => Promise<void>;
   public handlers: Readonly<Record<string, StepHandler>> = stepHandlers;
   public constructor(
     private readonly runs: RunsService,
     private readonly outputs: RunOutputs,
-    private readonly usage: UsageBudgetService,
   ) {}
   public async recoverText(context: Context): Promise<void> {
-    await recoverTextDispatches(this.runs.store, context, this.usage);
-    await this.drainTerminalTextReceipts?.(context);
+    await this.recoverTextJournal?.(context);
   }
   public brief(run: Run): ChannelBrief {
     const snapshot = json(run.inputSnapshot) as Record<string, unknown>;

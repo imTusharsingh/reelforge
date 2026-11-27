@@ -111,9 +111,10 @@ export class VideoRunEngine {
             }
             if (job.assembly && run.state !== "ASSEMBLING") return null;
             if (
-              run.pauseReason === "EMERGENCY_STOP" ||
-              run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-              run.pauseReason === "OPERATOR_ABANDONED"
+              ["EMERGENCY_STOP", "OPERATOR_ABANDONED", "CANCEL_REQUESTED"].includes(
+                run.pauseReason ?? "",
+              ) ||
+              run.pauseReason?.startsWith("RECONCILE_REQUIRED")
             )
               return null;
             await this.boundary.check(context, run);
@@ -153,13 +154,12 @@ export class VideoRunEngine {
     current: Run,
     reason: string,
   ): Promise<void> {
-    if (current.state === run.state && current.pauseReason !== "EMERGENCY_STOP") {
-      const hold = await activeSubmissionHold(db, tx, {
-        ...current,
-        pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
-          ? current.pauseReason
-          : reason,
-      });
+    const halted = ["EMERGENCY_STOP", "CANCEL_REQUESTED"].includes(current.pauseReason ?? "");
+    if (current.state === run.state && !halted) {
+      const pauseReason = current.pauseReason?.startsWith("RECONCILE_REQUIRED")
+        ? current.pauseReason
+        : reason;
+      const hold = await activeSubmissionHold(db, tx, { ...current, pauseReason });
       if (hold && current.pauseReason !== hold && !(await terminalRenderFailure(db, current)))
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
     }

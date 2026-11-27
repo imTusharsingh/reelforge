@@ -56,11 +56,23 @@ describe.skipIf(!process.env.DATABASE_URL)("exported planning text receipts", ()
         ),
       );
     native.text = new GeminiText(
-      new Interactions(new ProviderHttp("AIza" + "abc".repeat(12), "gemini", http), {
-        save: async (): Promise<never> => {
-          throw new Error("Text response must not fetch a provider artifact");
+      new Interactions(
+        new ProviderHttp(
+          "AIza" + "abc".repeat(12),
+          "gemini",
+          http,
+          undefined,
+          async (url, init, sent) => {
+            await sent();
+            return http(url, { ...init, method: "POST" });
+          },
+        ),
+        {
+          save: async (): Promise<never> => {
+            throw new Error("Text response must not fetch a provider artifact");
+          },
         },
-      }),
+      ),
       "fixture-text",
     );
     const { planning } = bindMedia(t, native);

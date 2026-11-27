@@ -49,23 +49,21 @@ function fixture(
       reconcilePending: async (): Promise<never> => {
         throw new Error("RECONCILE_REQUIRED");
       },
-      dispatchText: async (
+      dispatchTextAttempt: async (
         _context: unknown,
         _step: unknown,
-        call: () => Promise<unknown>,
+        call: (sent: () => Promise<void>) => Promise<unknown>,
       ): Promise<unknown> => {
-        const result = await call();
+        calls.push("reserve");
+        const result = await call(async () => undefined);
         await db.videoRunStep.updateMany();
         return result;
-      },
-      prepare: async () => {
-        calls.push("reserve");
       },
       complete: async () => {
         calls.push("settle");
       },
     } as unknown as MediaAccounts,
-    ports: { get: async () => ({ text: { complete } }) } as unknown as MediaPorts,
+    ports: { get: async () => ({ text: { completePaid: complete } }) } as unknown as MediaPorts,
     context: { workspaceId: "w" } as Context,
     run: { id: "r" } as Run,
     attempt: 2,

@@ -9,12 +9,7 @@ import {
 } from "../composition/video-run-language.js";
 import { assertCriticRevision } from "./critic-admission.js";
 import { assertPaidRunLimits } from "./run-envelope.js";
-import {
-  DISPATCHING,
-  readAdmission,
-  TEXT_DISPATCH_PROTOCOL,
-  TEXT_PREPARED,
-} from "./run-admission-state.js";
+import { DISPATCHING, readAdmission } from "./run-admission-state.js";
 
 export class DispatchAdmissionError extends ConflictException {}
 
@@ -32,7 +27,9 @@ export async function markDispatching(
     const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (
       ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
-      ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
+      ["OPERATOR_ABANDONED", "EMERGENCY_STOP", "CANCEL_REQUESTED"].some(
+        (reason) => run.pauseReason === reason,
+      ) ||
       current.state !== "RUNNING" ||
       current.idempotencyKey !== step.idempotencyKey ||
       run.pauseReason?.startsWith("RECONCILE_REQUIRED")
@@ -46,36 +43,32 @@ export async function markDispatching(
     if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
       throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
     if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
-    const lockedText = current.key.startsWith("media:text:") && assertLocked !== undefined;
+    if (current.key.startsWith("media:text:"))
+      throw new DispatchAdmissionError("Text dispatch requires its journal");
     const marked = await tx.providerRequest.updateMany({
       where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
       data: {
-        errorCode: lockedText ? TEXT_PREPARED : DISPATCHING,
+        errorCode: DISPATCHING,
         responseMetadata: {
-          dispatched: !lockedText,
+          dispatched: true,
           costKnown: false,
-          ...(lockedText && { textDispatchProtocol: TEXT_DISPATCH_PROTOCOL }),
         },
       },
     });
     if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-    if (assertLocked) await checkDispatchLock(assertLocked, lockedText);
+    if (assertLocked) await checkDispatchLock(assertLocked);
     return {
       value: null,
       payload: { idempotencyKey: step.idempotencyKey },
       stepId: step.id,
-      ...(lockedText && { eventType: "text_dispatch_prepared" }),
     };
   });
 }
 
-async function checkDispatchLock(check: () => Promise<void>, text: boolean): Promise<void> {
+async function checkDispatchLock(check: () => Promise<void>): Promise<void> {
   try {
     await check();
   } catch (cause) {
-    throw new DispatchAdmissionError(
-      text ? "Ownership lost before dispatch" : "Reference ownership lost before dispatch",
-      { cause },
-    );
+    throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
   }
 }

@@ -1,4 +1,4 @@
-import { textReceiptReference } from "../usage-budget/text-evidence.js";
+import { remoteTextId, textReceiptReference } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import { createHash } from "node:crypto";
 import {
@@ -14,27 +14,84 @@ import {
   type Context,
   type Json,
   type Scoped,
+  type Step,
 } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 
+type TextReceipt = MediaReceipt & { dispatchKey: string };
+type ReceiptStep = Pick<Step, "key" | "output" | "providerId" | "providerJobId" | "idempotencyKey">;
+
+const stepReceipt = z.object({ receipt: z.unknown().optional(), result: z.unknown().optional() });
+
+function readReceipt(step: Pick<Step, "output">): MediaReceipt | undefined {
+  const output = stepReceipt.safeParse(step.output).data;
+  const result = stepReceipt.safeParse(output?.result).data;
+  return MediaReceiptSchema.safeParse(output?.receipt ?? result?.receipt).data;
+}
+
+function planningReceipt(step: Step): TextReceipt | undefined {
+  const receipt = readReceipt(step);
+  if (
+    !receipt ||
+    receipt.key !== step.key ||
+    (step.providerId && step.providerId !== receipt.providerId) ||
+    (receipt.dispatchKey && receipt.dispatchKey !== step.idempotencyKey)
+  )
+    return;
+  const saved = remoteTextId(step, receipt.providerJobId);
+  const attached = remoteTextId(step, step.providerJobId);
+  if (saved && attached && saved !== attached) return;
+  return { ...receipt, ...textReceiptReference(step, receipt.providerJobId) };
+}
+
 export async function assemblyReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
   const steps = await db.videoRunStep.findMany({
-    where: { runId, state: "SUCCEEDED" },
+    where: { runId, state: "SUCCEEDED", NOT: { key: { startsWith: "shot-" } } },
     orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
   });
   return steps.flatMap((step) => {
-    const record = step.output as Record<string, unknown> | null;
-    const result = record?.result as Record<string, unknown> | undefined;
-    const receipt = MediaReceiptSchema.safeParse(record?.receipt ?? result?.receipt);
-    if (!receipt.success) return [];
-    const value = receipt.data;
-    return [
-      step.key.startsWith("media:text:") && value.key === step.key
-        ? { ...value, ...textReceiptReference(step, value.providerJobId) }
-        : value,
-    ];
+    const receipt = step.key.startsWith("media:text:") ? planningReceipt(step) : readReceipt(step);
+    return receipt ? [receipt] : [];
+  });
+}
+
+function validShotReceipt(step: ReceiptStep | undefined): MediaReceipt | undefined {
+  if (!step?.providerJobId || step.providerJobId === step.idempotencyKey) return;
+  const receipt = readReceipt(step);
+  if (
+    receipt?.key === step.key &&
+    receipt.providerId === step.providerId &&
+    receipt.providerJobId === step.providerJobId &&
+    receipt.mimeType === "video/mp4"
+  )
+    return receipt;
+}
+
+export function missingShotReceipt(): LocalAssemblyFailure {
+  return new LocalAssemblyFailure(
+    "ASSEMBLY_SHOT_RECEIPT_MISSING",
+    "Every shot requires a playable video receipt for its latest successful attempt. Check the missing shot before making a new Short.",
+  );
+}
+
+export async function selectedShotReceipts(
+  db: Scoped,
+  runId: string,
+  ordinals: readonly number[],
+): Promise<MediaReceipt[]> {
+  const keys = ordinals.map((ordinal) => `shot-${ordinal}`);
+  const steps = await db.videoRunStep.findMany({
+    where: { runId, state: "SUCCEEDED", key: { in: keys } },
+    orderBy: { attempt: "desc" },
+  });
+  return keys.map((key) => {
+    // Select the attempt before inspecting its receipt: a malformed reshoot must
+    // not silently substitute an older clip from another successful attempt.
+    const receipt = validShotReceipt(steps.find((step) => step.key === key));
+    if (!receipt) throw missingShotReceipt();
+    return receipt;
   });
 }
 
@@ -97,26 +154,74 @@ export async function invalidateAssemblyManifests(db: Scoped, runId: string): Pr
 export async function shotReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
   const shots = await db.videoRunStep.findMany({
     where: { runId, key: { startsWith: "shot-" }, state: "SUCCEEDED" },
-    select: { output: true },
   });
-  return shots.flatMap(({ output }) => {
-    const result = z.object({ receipt: MediaReceiptSchema }).safeParse(output);
-    return result.success ? [result.data.receipt] : [];
+  return shots.flatMap((step) => {
+    const receipt = validShotReceipt(step);
+    return receipt ? [receipt] : [];
   });
 }
 
-// Preserve the exact jobs and media used by this render, even after later reshoots.
-export function currentPrices(rendered: MediaReceipt[], current: MediaReceipt[]): MediaReceipt[] {
-  return rendered.map(
-    (item) =>
-      current.find(
-        (shot) =>
-          shot.key === item.key &&
-          shot.providerId === item.providerId &&
-          shot.providerJobId === item.providerJobId &&
-          shot.objectKey === item.objectKey,
-      ) ?? item,
+function sameReceiptArtifact(a: MediaReceipt, b: MediaReceipt): boolean {
+  return (
+    a.key === b.key &&
+    a.providerId === b.providerId &&
+    a.objectKey === b.objectKey &&
+    a.checksumSha256 === b.checksumSha256 &&
+    a.mimeType === b.mimeType
   );
+}
+
+// Preserve the exact jobs and media used by this render, even after later reshoots.
+export function currentPrices(
+  rendered: MediaReceipt[],
+  current: MediaReceipt[],
+): MediaReceipt[] | null {
+  const priced: MediaReceipt[] = [];
+  for (const item of rendered) {
+    const matches = current.filter(
+      (shot) => sameReceiptArtifact(item, shot) && item.providerJobId === shot.providerJobId,
+    );
+    if (matches.length > 1) return null;
+    priced.push(matches[0] ?? item);
+  }
+  return priced;
+}
+
+async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
+  const steps = await db.videoRunStep.findMany({
+    where: { runId, state: "SUCCEEDED", key: { startsWith: "media:text:" } },
+  });
+  return steps.flatMap((step) => {
+    const receipt = planningReceipt(step);
+    return receipt ? [receipt] : [];
+  });
+}
+
+function normalizeHistoricalText(
+  receipts: MediaReceipt[],
+  historical: TextReceipt[],
+): MediaReceipt[] | null {
+  const resolved: MediaReceipt[] = [];
+  for (const item of receipts) {
+    if (!item.key.startsWith("media:text:")) {
+      resolved.push(item);
+      continue;
+    }
+    const matching = historical.filter(
+      (candidate) =>
+        sameReceiptArtifact(item, candidate) &&
+        (!item.dispatchKey || item.dispatchKey === candidate.dispatchKey) &&
+        (item.providerJobId === null
+          ? item.dispatchKey === candidate.dispatchKey
+          : item.providerJobId === candidate.dispatchKey ||
+            item.providerJobId === candidate.providerJobId),
+    );
+    // Never infer the attempt merely from an identical output artifact.
+    if (matching.length !== 1) return null;
+    const { providerJobId, dispatchKey } = matching[0]!;
+    resolved.push({ ...item, providerJobId, dispatchKey });
+  }
+  return resolved;
 }
 
 async function rewriteManifest(
@@ -124,6 +229,7 @@ async function rewriteManifest(
   runId: string,
   source: Artifact,
   current: MediaReceipt[],
+  historical: TextReceipt[],
   storage: StoragePort,
   artifacts: RunsArtifacts,
 ): Promise<Artifact | null> {
@@ -136,7 +242,9 @@ async function rewriteManifest(
   const manifest = AssemblyManifestSchema.parse(JSON.parse(bytes.toString()));
   if (manifest.workspaceId !== context.workspaceId || manifest.runId !== runId)
     throw new Error("Stored assembly manifest provenance mismatch");
-  const receipts = currentPrices(manifest.receipts, current);
+  const priced = currentPrices(manifest.receipts, current);
+  const receipts = priced && normalizeHistoricalText(priced, historical);
+  if (!receipts) return null;
   const totalCostMinor =
     manifest.totalCostMinor +
     receipts.reduce(
@@ -184,6 +292,7 @@ export async function refreshAssemblyManifests(
     await invalidateAssemblyManifests(db, runId);
     const pending = await db.videoRunStep.findMany({ where, select: { id: true, output: true } });
     const prices = await shotReceipts(db, runId);
+    const historical = await historicalTextReceipts(db, runId);
     const written = new Map<string, Artifact | null>();
     for (const step of pending) {
       const output = assemblyOutput.parse(step.output);
@@ -191,7 +300,7 @@ export async function refreshAssemblyManifests(
       if (!written.has(source.objectKey))
         written.set(
           source.objectKey,
-          await rewriteManifest(context, runId, source, prices, storage, artifacts),
+          await rewriteManifest(context, runId, source, prices, historical, storage, artifacts),
         );
       const descriptor = written.get(source.objectKey);
       if (descriptor)

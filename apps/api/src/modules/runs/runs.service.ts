@@ -1,6 +1,5 @@
+import { canOwnerConfirmText } from "../usage-budget/text-attempt-owner.js";
 import { completedStages } from "./completed-stages.js";
-import { attachTextEvidence } from "../usage-budget/text-evidence.js";
-import { readAdmission, terminalTextEligible } from "../usage-budget/run-admission-state.js";
 import { claimedRunCost, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { canAdvancePastRender } from "./run-render-stage.js";
 import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
@@ -114,7 +113,7 @@ export class RunsService {
       "provider_submitted",
       async (db, currentRun, tx) => {
         if (step.key.startsWith("media:text:"))
-          return attachTextEvidence(db, tx, context, currentRun, step, providerJobId, output);
+          throw new ConflictException("Text receipts must be ingested into the evidence journal");
         const changed = await db.videoRunStep.updateMany({
           where: {
             id: step.id,
@@ -148,7 +147,8 @@ export class RunsService {
       run.state === "CANCELED" ||
       run.pauseReason === "EMERGENCY_STOP" ||
       run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-      run.pauseReason === "OPERATOR_ABANDONED"
+      run.pauseReason === "OPERATOR_ABANDONED" ||
+      run.pauseReason === "CANCEL_REQUESTED"
     )
       return;
     const job = this.job(context, run.id);
@@ -274,10 +274,7 @@ export class RunsService {
         run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
         run.pauseReason.includes(step.id),
     );
-    const confirmable =
-      held && terminalTextEligible(held, await readAdmission(this.store.db, context, held))
-        ? held.id
-        : null;
+    const confirmable = held && (await canOwnerConfirmText(this.store.db, held)) ? held.id : null;
     return steps.map((step) => ({
       ...step,
       confirmTerminalText: confirmable === step.id,

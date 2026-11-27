@@ -10,6 +10,8 @@ import {
   currentPrices,
   assemblyReceipts,
   shotReceipts,
+  selectedShotReceipts,
+  missingShotReceipt,
 } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -72,19 +74,20 @@ export class MediaAssembly {
     const transcript = planningTranscript(plan.script);
     const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
     assertSavedCaptionFit(transcript, brief.targetDurationSeconds, seconds);
-    const beforeAudio = await assemblyReceipts(this.access.runs.store.scoped(context), run.id);
-    const clips = plan.manifest.shots.map((shot) => {
-      const receipt = beforeAudio.findLast((item) => item.key === `shot-${shot.ordinal}`);
-      if (!receipt?.providerJobId || receipt.mimeType !== "video/mp4")
-        throw new LocalAssemblyFailure(
-          "ASSEMBLY_SHOT_RECEIPT_MISSING",
-          "Every shot requires a playable video receipt. Check the missing shot before making a new Short.",
-        );
-      return { receipt, seconds: shot.durationSeconds, transition: shot.transition };
-    });
+    const db = this.access.runs.store.scoped(context);
+    const selected = await selectedShotReceipts(
+      db,
+      run.id,
+      plan.manifest.shots.map((shot) => shot.ordinal),
+    );
+    const clips = plan.manifest.shots.map((shot, i) => ({
+      receipt: selected[i]!,
+      seconds: shot.durationSeconds,
+      transition: shot.transition,
+    }));
     const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
-    await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
-    const receipts = await assemblyReceipts(this.access.runs.store.scoped(context), run.id);
+    await assertCurrentAssemblyCost(db, run.id);
+    const receipts = [...(await assemblyReceipts(db, run.id)), ...selected];
     const rendered = await this.renderer
       .render({
         workspaceId: context.workspaceId,
@@ -153,6 +156,7 @@ export class MediaAssembly {
         });
         if (cached) return { value: null, payload: { replay: true } };
         const prices = currentPrices(receipts, await shotReceipts(db, run.id));
+        if (!prices) throw missingShotReceipt();
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         assertAssemblyCost(budget.spentMinor);
         const manifest = this.manifest(

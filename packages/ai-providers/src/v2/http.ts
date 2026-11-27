@@ -1,4 +1,7 @@
 import { providerKeyIssue } from "./config.js";
+import { createPaidTextTransport, type PaidTextTransport } from "./paid-text-transport.js";
+
+export type { PaidTextRequest, PaidTextTransport } from "./paid-text-transport.js";
 
 export type Json = Record<string, unknown>;
 export type FailureKind =
@@ -152,14 +155,31 @@ export class ProviderHttp {
   public constructor(
     private readonly key: string,
     private readonly vendor: "gemini" | "xai",
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher?: typeof fetch,
     private readonly timeoutMs = 30000,
+    private readonly paidTransport: PaidTextTransport | undefined = fetcher === undefined
+      ? createPaidTextTransport()
+      : undefined,
   ) {}
   public assertKey(): void {
     const issue = providerKeyIssue(this.vendor, this.key);
     if (issue) throw new ProviderFailure(issue, false);
   }
-  public json(path: string, body?: Json, idemKey?: string): Promise<Json> {
+  public paidJson(
+    path: string,
+    body: Json,
+    idemKey: string,
+    onBodySent: () => Promise<void>,
+  ): Promise<Json> {
+    if (!this.paidTransport) throw new ProviderFailure("NOT_CONFIGURED", false);
+    return this.json(path, body, idemKey, onBodySent);
+  }
+  public json(
+    path: string,
+    body?: Json,
+    idemKey?: string,
+    onBodySent?: () => Promise<void>,
+  ): Promise<Json> {
     return this.request(
       path,
       async (response) => {
@@ -171,6 +191,7 @@ export class ProviderHttp {
       },
       body,
       idemKey,
+      onBodySent,
     );
   }
   public bytes(uri: string): Promise<Uint8Array> {
@@ -185,6 +206,7 @@ export class ProviderHttp {
     consume: (response: Response) => Promise<T>,
     body?: Json,
     idemKey?: string,
+    onBodySent?: () => Promise<void>,
   ): Promise<T> {
     this.assertKey();
     const base =
@@ -209,13 +231,8 @@ export class ProviderHttp {
       if (this.vendor === "gemini") headers["Api-Revision"] = "2026-05-20";
       if (body) headers["Content-Type"] = "application/json";
       if (idemKey) headers["Idempotency-Key"] = idemKey;
-      const response = await this.fetcher(url.toString(), {
-        method: body ? "POST" : "GET",
-        headers,
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: controller.signal,
-        redirect: "error",
-      });
+      const serialized = body ? JSON.stringify(body) : undefined;
+      const response = await this.send(url, headers, controller.signal, serialized, onBodySent);
       if (!response.ok) return await this.reject(response, authenticated);
       return await consume(response);
     } catch (error) {
@@ -224,6 +241,26 @@ export class ProviderHttp {
     } finally {
       clearTimeout(timer);
     }
+  }
+  private send(
+    url: URL,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+    body: string | undefined,
+    onBodySent?: () => Promise<void>,
+  ): Promise<Response> {
+    const address = url.toString();
+    if (onBodySent && body !== undefined) {
+      if (!this.paidTransport) throw new ProviderFailure("NOT_CONFIGURED", false);
+      return this.paidTransport(address, { headers, signal, body }, onBodySent);
+    }
+    return (this.fetcher ?? fetch)(address, {
+      method: body === undefined ? "GET" : "POST",
+      headers,
+      ...(body === undefined ? {} : { body }),
+      signal,
+      redirect: "error",
+    });
   }
   private async reject(response: Response, authenticated: boolean): Promise<never> {
     const codes = errorCodes(await readErrorPrefix(response.body));

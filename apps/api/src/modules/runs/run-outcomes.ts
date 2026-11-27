@@ -153,7 +153,11 @@ export async function activeSubmissionHold(
 }
 
 export async function mayRecordSubmissionHold(db: Scoped, run: Run): Promise<boolean> {
-  return run.pauseReason !== "EMERGENCY_STOP" && !(await terminalRenderFailure(db, run));
+  return (
+    run.pauseReason !== "EMERGENCY_STOP" &&
+    run.pauseReason !== "CANCEL_REQUESTED" &&
+    !(await terminalRenderFailure(db, run))
+  );
 }
 
 export async function recordShotBillingHold(db: Scoped, run: Run, stepId: string): Promise<void> {
@@ -171,7 +175,7 @@ export async function clearResolvedSubmissionHold(
   stepId: string,
 ): Promise<string | null> {
   const reason = run.pauseReason;
-  if (reason === "EMERGENCY_STOP") return reason;
+  if (reason === "EMERGENCY_STOP" || reason === "CANCEL_REQUESTED") return reason;
   const terminal = await terminalRenderFailure(db, run);
   const durable = terminal ? null : await remainingSubmissionHold(db, tx, run);
   const pauseReason =

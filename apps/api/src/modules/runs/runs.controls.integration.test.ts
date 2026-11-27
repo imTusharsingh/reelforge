@@ -1,10 +1,9 @@
-import { withTextDispatch } from "../usage-budget/text-dispatch-recovery.js";
+import { bindMedia } from "../composition/media-bindings.fixture.js";
+import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
-import { MediaAccounts } from "../scene-media/media-accounts.js";
-import type { MediaAccess } from "../scene-media/media-access.js";
 import { ProviderHttp } from "@reelforge/ai-providers";
 import { ArtifactSchema } from "./runs.types.js";
 
@@ -118,7 +117,7 @@ suite("V3 approval, caps and retention", () => {
       data: {
         workspaceId: t.context.workspaceId,
         runId: t.run.id,
-        key: "media:text:fixture",
+        key: "media:reference:fixture",
         state: "RUNNING",
         costMinor: 10,
         idempotencyKey: `${t.run.id}:text:1`,
@@ -130,17 +129,10 @@ suite("V3 approval, caps and retention", () => {
     await paid.reserve(t.context, t.run, step, 10);
     const started = Promise.withResolvers<void>();
     const completed = Promise.withResolvers<number>();
-    const dispatched = withTextDispatch(step, (check) =>
-      paid.dispatch(
-        t.context,
-        step,
-        () => {
-          started.resolve();
-          return completed.promise;
-        },
-        check,
-      ),
-    );
+    const dispatched = paid.dispatch(t.context, step, () => {
+      started.resolve();
+      return completed.promise;
+    });
     await started.promise;
     await t.control.cancel(t.context, t.run.id);
     expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
@@ -150,54 +142,52 @@ suite("V3 approval, caps and retention", () => {
     completed.resolve(7);
     await paid.finish(t.context, step, true, await dispatched);
     const provider = vi.fn();
-    await expect(
-      withTextDispatch(step, (check) => paid.dispatch(t.context, step, provider, check)),
-    ).rejects.toThrow("Paid dispatch is closed");
+    await expect(paid.dispatch(t.context, step, provider)).rejects.toThrow(
+      "Paid dispatch is closed",
+    );
     expect(provider).not.toHaveBeenCalled();
     expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
       reservedMinor: 0,
       committedMinor: 7,
     });
   });
-  it("releases a pre-admission text intent and resumes the same stage", async () => {
+  it("releases a recovered unarmed preparation and allocates a fresh key", async () => {
     const t = await fixture.tenant();
     await t.engine.process(t.runs.job(t.context, t.run.id));
-    const db = t.store.scoped(t.context);
-    const step = await db.videoRunStep.create({
-      data: {
-        workspaceId: t.context.workspaceId,
-        runId: t.run.id,
-        key: "media:text:fixture",
-        state: "RUNNING",
-        costMinor: 12,
-        idempotencyKey: `${t.run.id}:text:1`,
-        input: {},
-      },
-    });
-    const usage = new UsageBudgetService(t.db, () => new Date());
-    const paid = new RunPaidCalls(usage, t.store);
-    await paid.reserve(t.context, t.run, step, 12);
-    await db.videoRun.updateMany({
-      where: { id: t.run.id },
-      data: { pauseReason: "RECONCILE_REQUIRED: text submission outcome unknown" },
-    });
-    await expect(t.control.resume(t.context, t.run.id)).rejects.toMatchObject({ status: 409 });
-    await t.control.abandon(t.context, t.run.id, step.id);
-    expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
-      reservedMinor: 0,
-      committedMinor: 0,
-    });
-    await t.control.resume(t.context, t.run.id);
-    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
-      state: "SCRIPTING",
-      pauseReason: null,
-    });
+    const run = await t.store.get(t.context, t.run.id);
+    const { accounts } = bindMedia(
+      t,
+      fakeMediaPorts(
+        t.context.workspaceId,
+        t.storage,
+        {
+          clip: Buffer.alloc(0),
+          image: Buffer.alloc(0),
+          audio: Buffer.alloc(0),
+        },
+        [],
+      ),
+    );
+    const step = await accounts.begin(
+      t.context,
+      run,
+      "media:text:fixture",
+      {},
+      12,
+      "fixture",
+      true,
+    );
+    await t.engine.recover();
+    await t.engine.recover();
+    expect(await t.db.usageReservation.count({ where: { correlationId: step.id } })).toBe(0);
+    expect(
+      await t.db.textAttemptEvidence.count({
+        where: { attemptId: step.id, kind: "NOT_DISPATCHED" },
+      }),
+    ).toBe(1);
     const resumed = await t.store.get(t.context, t.run.id);
-    const accounts = new MediaAccounts({
-      runs: t.runs,
-      boundary: { check: vi.fn() },
-    } as unknown as MediaAccess);
-    const next = await accounts.begin(t.context, resumed, step.key, {}, 12, "fixture");
+    expect(resumed).toMatchObject({ state: "SCRIPTING", pauseReason: null });
+    const next = await accounts.begin(t.context, resumed, step.key, {}, 12, "fixture", true);
     expect(next).toMatchObject({ attempt: 2, state: "RUNNING" });
     expect(next.idempotencyKey).not.toBe(step.idempotencyKey);
   });
