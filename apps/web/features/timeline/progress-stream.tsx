@@ -11,6 +11,7 @@ export function ProgressStream({
   detail: RunDetailView;
   connection: string;
 }): JSX.Element {
+  const completed = completedStages(detail);
   return (
     <Card>
       <div className="rf-toolbar">
@@ -39,9 +40,7 @@ export function ProgressStream({
               : stateLabel(state);
             return (
               <li key={state} aria-current={current ? "step" : undefined}>
-                {!current &&
-                  (detail.completedStages?.includes(state) ?? detail.steps.some((step) => step.key === state && step.state === "SUCCEEDED")) &&
-                  "✓ "}
+                {!current && completed.has(state) && "✓ "}
                 {simulated ? "Publish simulated (dry run)" : label}
               </li>
             );
@@ -62,5 +61,12 @@ export function ProgressStream({
         </details>
       )}
     </Card>
+  );
+}
+
+function completedStages(detail: RunDetailView): ReadonlySet<string> {
+  return new Set<string>(
+    detail.completedStages ??
+      detail.steps.filter((step) => step.state === "SUCCEEDED").map((step) => step.key),
   );
 }

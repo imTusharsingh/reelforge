@@ -16,7 +16,11 @@ import {
   clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
 
-class ReplayedFailure extends Error { constructor(readonly event: Event) { super(); } }
+class ReplayedFailure extends Error {
+  constructor(readonly event: Event) {
+    super();
+  }
+}
 
 export async function finalizeFailed(
   store: RunsStore,
@@ -30,57 +34,102 @@ export async function finalizeFailed(
   usage?: Record<string, unknown>,
 ): Promise<Event> {
   const manual = reason === "OWNER_CONFIRMED_TERMINAL_TEXT";
-  const result = await store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({
-      where: { id: step.id, runId: run.id },
-    });
-    if (usage && current.key.startsWith("media:text:") && ["FAILED","SUCCEEDED"].includes(current.state)) {
-      const id = await recordTextEvidence(tx, context, current, providerJobId, usage);
-      await db.videoRunStep.updateMany({where:{id:step.id},data:{providerJobId:id}});
-      return {value:null,stepId:step.id,eventType:"text_evidence_recorded",payload:{providerJobId:id,dispatchKey:step.idempotencyKey,invalidOutput:true}};
-    }
-    if (!(await canFinalize(tx, context, current, step, reason, manual)))
-      throw new ReplayedFailure(await db.runEvent.findFirstOrThrow({where:{runId:step.runId,stepId:step.id,type:"step_failed"},orderBy:{sequence:"asc"}}));
-    const amount = current.costMinor ?? 0;
-    const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
-    await paid.settleFailedRequest(
-      tx,
-      context,
-      current,
-      message,
-      dispatched,
-      cost,
-      providerJobId,
-      usage,
-    );
-    await db.videoRunStep.updateMany({
-      where: { id: step.id },
-      data: {
-        state: "FAILED",
-        providerJobId: current.key.startsWith("media:text:") ? remoteTextId(step, providerJobId) : providerJobId,
-        costMinor: cost,
-        finishedAt: new Date(),
-        error: { code: reason, message },
-      },
-    });
-    await settleEnvelope(db, run, amount, cost);
-    await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
-    return {
-      value: null,
-      payload: {
-        reason,
+  const result = await store
+    .mutate(context, step.runId, "step_failed", async (db, run, tx) => {
+      const current = await db.videoRunStep.findFirstOrThrow({
+        where: { id: step.id, runId: run.id },
+      });
+      if (
+        usage &&
+        current.key.startsWith("media:text:") &&
+        ["FAILED", "SUCCEEDED"].includes(current.state)
+      )
+        return attachLateInvalidEvidence(db, tx, context, current, providerJobId, usage);
+      if (!(await canFinalize(tx, context, current, step, reason, manual)))
+        throw new ReplayedFailure(await previousFailure(db, step));
+      const amount = current.costMinor ?? 0;
+      const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
+      await paid.settleFailedRequest(
+        tx,
+        context,
+        current,
         message,
-        ...(manual
-          ? { confirmedBy: context.userId, committedEstimateMinor: cost }
-          : { releasedMinor: amount }),
-      },
-      stepId: step.id,
-    };
-  }).catch((error: unknown) => {
-    if (error instanceof ReplayedFailure) return {event:error.event};
-    throw error;
-  });
+        dispatched,
+        cost,
+        providerJobId,
+        usage,
+      );
+      await markStepFailed(db, current, providerJobId, cost, { code: reason, message });
+      await settleEnvelope(db, run, amount, cost);
+      await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
+      return {
+        value: null,
+        payload: {
+          reason,
+          message,
+          ...(manual
+            ? { confirmedBy: context.userId, committedEstimateMinor: cost }
+            : { releasedMinor: amount }),
+        },
+        stepId: step.id,
+      };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof ReplayedFailure) return { event: error.event };
+      throw error;
+    });
   return result.event;
+}
+
+async function markStepFailed(
+  db: Scoped,
+  step: Step,
+  providerJobId: string | null,
+  cost: number,
+  error: { code: string; message: string },
+): Promise<void> {
+  await db.videoRunStep.updateMany({
+    where: { id: step.id },
+    data: {
+      state: "FAILED",
+      providerJobId: step.key.startsWith("media:text:")
+        ? remoteTextId(step, providerJobId)
+        : providerJobId,
+      costMinor: cost,
+      finishedAt: new Date(),
+      error,
+    },
+  });
+}
+
+async function previousFailure(db: Scoped, step: Step): Promise<Event> {
+  return db.runEvent.findFirstOrThrow({
+    where: { runId: step.runId, stepId: step.id, type: "step_failed" },
+    orderBy: { sequence: "asc" },
+  });
+}
+
+async function attachLateInvalidEvidence(
+  db: Scoped,
+  tx: Transaction,
+  context: Context,
+  step: Step,
+  providerJobId: string | null,
+  usage: Record<string, unknown>,
+): Promise<{
+  value: null;
+  stepId: string;
+  eventType: string;
+  payload: { providerJobId: string | null; dispatchKey: string; invalidOutput: boolean };
+}> {
+  const id = await recordTextEvidence(tx, context, step, providerJobId, usage);
+  await db.videoRunStep.updateMany({ where: { id: step.id }, data: { providerJobId: id } });
+  return {
+    value: null,
+    stepId: step.id,
+    eventType: "text_evidence_recorded",
+    payload: { providerJobId: id, dispatchKey: step.idempotencyKey, invalidOutput: true },
+  };
 }
 
 async function canFinalize(
@@ -100,8 +149,11 @@ async function canFinalize(
         current.error.code === reason))
   )
     return false;
+  const waiting =
+    step.providerJobId !== null ||
+    (step.key.startsWith("media:text:") && step.state === "WAITING_EXTERNAL");
   if (
-    current.state !== (step.providerJobId ? "WAITING_EXTERNAL" : "RUNNING") ||
+    current.state !== (waiting ? "WAITING_EXTERNAL" : "RUNNING") ||
     current.providerJobId !== step.providerJobId ||
     current.idempotencyKey !== step.idempotencyKey
   )

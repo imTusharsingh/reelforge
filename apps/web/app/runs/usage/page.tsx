@@ -52,7 +52,10 @@ function WorkspaceUsage({ workspaceId }: { workspaceId: string }): JSX.Element {
       )}
       {caps.data?.map((cap) => (
         <p key={cap.channelId}>
-          {cap.name} · {"incompatibleCurrencies" in cap ? `USD admission blocked by ${cap.incompatibleCurrencies.join(", ")} budget currency` : `Effective daily cap ${dollars(cap.dailyLimitMinor)} · Monthly cap ${dollars(cap.monthlyLimitMinor)}`}
+          {cap.name} ·{" "}
+          {"incompatibleCurrencies" in cap
+            ? `Paid runs require USD budgets. Incompatible currency: ${cap.incompatibleCurrencies.join(", ")}`
+            : `Effective daily cap ${dollars(cap.dailyLimitMinor)} · Monthly cap ${dollars(cap.monthlyLimitMinor)}`}
         </p>
       ))}
       {!runs && !error && <Skeleton label="Loading run usage…" />}

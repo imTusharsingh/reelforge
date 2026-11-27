@@ -20,7 +20,8 @@ export function useWizardLocation(
   useEffect(() => {
     const original = document.title;
     const read = (): void => {
-      if (!history.state?.briefWizardId) history.replaceState({...history.state, briefWizardId: crypto.randomUUID()}, "");
+      if (!history.state?.briefWizardId)
+        history.replaceState({ ...history.state, briefWizardId: crypto.randomUUID() }, "");
       const state = history.state?.briefWizard;
       const saved = OnboardingInputSchema.safeParse(state?.input);
       const policy = BudgetPolicySchema.safeParse(state?.budget);

@@ -113,7 +113,8 @@ export class RunsService {
       step.runId,
       "provider_submitted",
       async (db, currentRun, tx) => {
-        if (step.key.startsWith("media:text:")) return attachTextEvidence(db, tx, context, currentRun, step, providerJobId, output);
+        if (step.key.startsWith("media:text:"))
+          return attachTextEvidence(db, tx, context, currentRun, step, providerJobId, output);
         const changed = await db.videoRunStep.updateMany({
           where: {
             id: step.id,
@@ -231,7 +232,7 @@ export class RunsService {
       }),
       db.budgetEnvelope.findFirst({ where: { runId: id } }),
       shotReshoots(db, id),
-      completedStages(db,id),
+      completedStages(db, id, run.revision),
     ]);
     const cap = pinnedBudget(run).hardCapMinor;
     return {
@@ -240,7 +241,7 @@ export class RunsService {
       envelope,
       pinnedHardCapMinor: cap,
       remainingBudgetMinor: Math.max(0, cap - claimedRunCost(steps)),
-      completedStages:completed,
+      completedStages: completed,
       remainingReshoots: Object.fromEntries(
         [...new Set(steps.map((step) => step.key))]
           .filter((key) => key.startsWith("shot-"))

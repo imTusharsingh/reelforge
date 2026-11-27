@@ -67,7 +67,7 @@ test("settles an invalid completed interaction with usage and never submits it a
       errorCode: "PROVIDER_INVALID_OUTPUT",
       actualCost: null,
       usage: { input_tokens: 12 },
-      responseMetadata: { providerJobId: step.idempotencyKey, costKnown: false },
+      responseMetadata: { dispatchKey: step.idempotencyKey, costKnown: false },
     },
   );
   expect(
@@ -144,16 +144,14 @@ test("only an owner can close terminal unknown text and book the estimate once",
   expect(await t.db.usageReservation.findMany({ where: { correlationId: step.id } })).toMatchObject(
     [{ category: "LLM", status: "COMMITTED", committedMinor: 17n }],
   );
-  expect(await t.db.runEvent.findMany({ where: { stepId: step.id, type: "step_failed" } })).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          confirmedBy: t.context.userId,
-          committedEstimateMinor: 17,
-        }),
-      }),
-    ]),
-  );
+  const failures = await t.db.runEvent.findMany({
+    where: { stepId: step.id, type: "step_failed" },
+  });
+  expect(failures).toHaveLength(1);
+  expect(failures[0]?.payload).toMatchObject({
+    confirmedBy: t.context.userId,
+    committedEstimateMinor: 17,
+  });
 });
 
 test("reports effective Brief caps in both spend views", async () => {

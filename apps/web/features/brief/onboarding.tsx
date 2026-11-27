@@ -16,9 +16,7 @@ import {
 } from "./onboarding-fields";
 import { BudgetFields } from "./fields";
 import { useWizardLocation } from "./wizard-location";
-import {
-  BudgetPolicySchema,
-} from "../../../../packages/contracts/src/foundations";
+import { BudgetPolicySchema } from "../../../../packages/contracts/src/foundations";
 import { Alert, Panel, StateMessage } from "../../components/ui/primitives";
 import { BrandLogo } from "../../components/brand-logo";
 import { StudioLink } from "../../components/studio-link";
@@ -26,7 +24,7 @@ import { ensureCsrfToken } from "../../lib/csrf";
 import { api, type Workspace } from "../../lib/api";
 import { BriefClient, UnsupportedNarrationLanguageError } from "./client";
 
-import { submissionCheckpoint, type Progress } from "./wizard-attempt";
+import { submissionCheckpoint, SubmissionCheckpointError, type Progress } from "./wizard-attempt";
 const audienceStep = OnboardingInputSchema.pick({ niche: true, audience: true, language: true });
 const cadenceStep = OnboardingInputSchema.pick({ voiceId: true, cadence: true });
 const normalizedLanguage = (language: string): string => language.trim().toLowerCase();
@@ -36,9 +34,10 @@ async function start(
   progress: Progress,
   budgetPolicy: BriefInput["budgetPolicy"],
   queue: boolean,
+  scope: string | undefined,
 ): Promise<Workspace> {
   await ensureCsrfToken();
-  const checkpoint = await submissionCheckpoint(progress);
+  const checkpoint = await submissionCheckpoint(progress, scope);
   if (!progress.workspace) {
     progress.workspaceId ??= (await api.createWorkspace(input.niche)).id;
     checkpoint();
@@ -65,7 +64,10 @@ async function start(
   try {
     await client.queue(progress.brief, progress.key);
   } catch (error) {
-    if (error instanceof UnsupportedNarrationLanguageError) { progress.needsLanguageRepair = true; checkpoint(); }
+    if (error instanceof UnsupportedNarrationLanguageError) {
+      progress.needsLanguageRepair = true;
+      checkpoint();
+    }
     throw error;
   }
   return progress.workspace;
@@ -147,6 +149,7 @@ function useOnboardingState({
   const { busy, error, queued, createdOnly, finish, setError } = useSetupSubmission(
     progress,
     budget,
+    workspace?.id,
     onComplete,
     (message) => {
       setLanguageError(message);
@@ -184,34 +187,57 @@ function useOnboardingState({
 function useSetupSubmission(
   progress: OnboardingState["progress"],
   budget: OnboardingState["budget"],
+  scope: string | undefined,
   onComplete: ((workspace: Workspace) => void) | undefined,
   repair: (message: string) => void,
 ): Pick<OnboardingState, "busy" | "error" | "queued" | "createdOnly"> &
   Pick<SubmitState, "finish" | "setError"> {
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const [restoring, setRestoring] = useState(true);
+  useEffect(() => {
+    let active = true;
+    const restored = { ...progress.current };
+    void submissionCheckpoint(restored, scope)
+      .then(() => {
+        if (active) progress.current = restored;
+      })
+      .catch(() => undefined) // Confirm rechecks before sending anything and can report the error.
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
+    return (): void => {
+      active = false;
+    };
+  }, [progress, scope]);
   const [error, setError] = useState("");
   const [queued, setQueued] = useState(false);
   const [createdOnly, setCreatedOnly] = useState(false);
   const finish = async (input: OnboardingInput, queue: boolean): Promise<void> => {
+    if (inFlight.current || restoring) return;
+    inFlight.current = true;
     setBusy(true);
     try {
-      const workspace = await start(input, progress.current, budget, queue);
+      const workspace = await start(input, progress.current, budget, queue, scope);
       setCreatedOnly(!queue);
       setQueued(true);
       onComplete?.(workspace);
     } catch (error) {
       if (error instanceof UnsupportedNarrationLanguageError) {
         repair(error.message);
+      } else if (error instanceof SubmissionCheckpointError) {
+        setError(error.message);
       } else {
         setError(
           "Setup could not finish. Retry to continue with the saved channel and Brief. The first run service may still be unavailable.",
         );
       }
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
-  return { busy, error, queued, createdOnly, finish, setError };
+  return { busy: busy || restoring, error, queued, createdOnly, finish, setError };
 }
 function stepError(
   step: number,

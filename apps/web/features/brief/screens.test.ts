@@ -49,8 +49,14 @@ async function submit(selector = "form"): Promise<void> {
     ),
   );
 }
+async function submitOnboardingConfirm(): Promise<void> {
+  await change("#setup-niche", "Science");
+  await change("#setup-audience", "Adults");
+  for (let step = 0; step < 3; step++) await submit();
+}
 beforeEach(() => {
   history.replaceState(null, "", "/onboarding");
+  sessionStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   stub = setupStub();
   vi.stubGlobal("fetch", stub.fetch);
@@ -96,29 +102,49 @@ describe("V7 mounted screens", () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
       if (!String(url).endsWith("/runs")) return stub.fetch(url, init);
-      const body=String(init?.body);
-      const {idempotencyKey} = JSON.parse(body) as {idempotencyKey:string};
+      const body = String(init?.body);
+      const { idempotencyKey } = JSON.parse(body) as { idempotencyKey: string };
       requests.push(body);
       if (!created.has(idempotencyKey)) {
-        created.set(idempotencyKey,crypto.randomUUID());
+        created.set(idempotencyKey, crypto.randomUUID());
         throw new TypeError("Response lost after commit");
       }
-      return Response.json({id:created.get(idempotencyKey)},{status:202});
+      return Response.json({ id: created.get(idempotencyKey) }, { status: 202 });
     });
-    const workspace = {id:workspaceId,name:"Science",role:"OWNER" as const};
-    await render(createElement(Onboarding,{workspace}));
-    await change("#setup-niche","Science");
-    await change("#setup-audience","Adults");
-    await submit(); await submit(); await submit();
+    const workspace = { id: workspaceId, name: "Science", role: "OWNER" as const };
+    await render(createElement(Onboarding, { workspace }));
+    await submitOnboardingConfirm();
     expect(location.search).toBe("?step=confirm");
     await render(null);
-    await render(createElement(Onboarding,{workspace}));
+    await render(createElement(Onboarding, { workspace }));
+    expect(container.querySelector("fieldset")!.disabled).toBe(true);
+    expect(container.querySelector('button[value="queue"]')?.textContent).toBe("Retry first Short");
     await submit();
     expect(requests).toHaveLength(2);
     expect(requests[1]).toBe(requests[0]);
     expect(created.size).toBe(1);
-    for (const suffix of ["/channels","/briefs"]) expect(stub.calls.filter(c=>c.method==="POST" && c.path.endsWith(suffix))).toHaveLength(1);
+    for (const suffix of ["/channels", "/briefs"])
+      expect(stub.calls.filter((c) => c.method === "POST" && c.path.endsWith(suffix))).toHaveLength(
+        1,
+      );
     expect(container.textContent).toContain("first Short is queued");
+  });
+  it("does not start over when a submitted Confirm checkpoint is missing on reload", async () => {
+    const workspace = { id: workspaceId, name: "Science", role: "OWNER" as const };
+    stub.failRun = true;
+    await render(createElement(Onboarding, { workspace }));
+    await submitOnboardingConfirm();
+    expect(stub.calls.filter(({ path }) => path.endsWith("/runs"))).toHaveLength(1);
+    await render(null);
+    sessionStorage.clear();
+    await render(createElement(Onboarding, { workspace }));
+    await submit();
+    expect(container.textContent).toContain("No new Short was sent");
+    for (const path of ["/channels", "/briefs", "/runs"]) {
+      expect(
+        stub.calls.filter((call) => call.method === "POST" && call.path.endsWith(path)),
+      ).toHaveLength(1);
+    }
   });
   it("repairs a saved unsupported language without recreating the workspace or channel", async () => {
     const attempts: { channelBriefId: string; idempotencyKey: string }[] = [];
@@ -262,13 +288,17 @@ describe("V7 mounted screens", () => {
     expect(container.textContent).toContain("Health unavailable");
   });
   it("saves an unrelated topic edit with a valid fractional narrator pace", async () => {
-    stub.versions[0]!.narratorVoice!.pace=0.875;
-    await render(createElement(BriefEditor,{channelId}));
-    await change("#brief-topic","Space");
-    const form=container.querySelector("form")!;
+    stub.versions[0]!.narratorVoice!.pace = 0.875;
+    await render(createElement(BriefEditor, { channelId }));
+    await change("#brief-topic", "Space");
+    const form = container.querySelector("form")!;
     expect(form.checkValidity()).toBe(true);
-    await act(async()=>form.requestSubmit());
-    expect(stub.versions[0]).toMatchObject({version:2,topic:"Space",narratorVoice:{pace:0.875}});
+    await act(async () => form.requestSubmit());
+    expect(stub.versions[0]).toMatchObject({
+      version: 2,
+      topic: "Space",
+      narratorVoice: { pace: 0.875 },
+    });
   });
   it("blocks native submission on an invalid legacy pace until corrected", async () => {
     stub.versions[0]!.narratorVoice!.pace = 3;

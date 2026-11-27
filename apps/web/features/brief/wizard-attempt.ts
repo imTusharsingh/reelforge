@@ -1,35 +1,115 @@
-import { z } from "zod";
-import { StoredChannelBriefSchema } from "../../../../packages/contracts/src/foundations";
+import {
+  StoredChannelBriefSchema,
+  type ChannelBrief,
+} from "../../../../packages/contracts/src/foundations";
 import { api, type Workspace } from "../../lib/api";
 
-const savedAttempt = z.object({
-  workspaceId: z.uuid(), channelId: z.uuid().optional(),
-  brief: StoredChannelBriefSchema.optional(), key:z.string(), needsLanguageRepair:z.boolean().optional(),
-});
 export type Progress = {
-  workspace?: Workspace; workspaceId?:string; channelId?:string;
-  brief?:z.infer<typeof StoredChannelBriefSchema>; key:string; needsLanguageRepair?:boolean;
+  checkpointKey?: string;
+  workspace?: Workspace;
+  workspaceId?: string;
+  channelId?: string;
+  brief?: ChannelBrief;
+  key: string;
+  needsLanguageRepair?: boolean;
 };
 
-// Every history entry in one wizard shares an ID. Scope its tab-local checkpoint
-// to the signed-in user, and validate the saved workspace before reusing it.
-export async function submissionCheckpoint(progress: Progress): Promise<() => void> {
-  const {userId} = await api.me();
-  const wizardId = z.uuid().parse(history.state?.briefWizardId);
-  const key = `rf:onboarding:${userId}:${wizardId}`;
-  const raw = sessionStorage.getItem(key);
-  if (raw) {
-    const saved = savedAttempt.parse(JSON.parse(raw));
-    if (progress.workspace && progress.workspace.id !== saved.workspaceId)
-      throw new Error("The saved submission belongs to another workspace");
-    if (saved.brief && (saved.brief.workspaceId !== saved.workspaceId || saved.brief.channelId !== saved.channelId || !saved.key))
-      throw new Error("Invalid saved Brief submission");
-    Object.assign(progress,saved);
-  }
-  return ():void => {
-    sessionStorage.setItem(key,JSON.stringify({
-      workspaceId:progress.workspace?.id ?? progress.workspaceId,channelId:progress.channelId,
-      brief:progress.brief,key:progress.key,needsLanguageRepair:progress.needsLanguageRepair,
-    }));
+type SavedAttempt = Pick<Progress, "channelId" | "brief" | "key" | "needsLanguageRepair"> & {
+  workspaceId: string;
+};
+
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  );
+}
+
+function readSavedAttempt(input: unknown): SavedAttempt {
+  if (typeof input !== "object" || input === null) throw new SubmissionCheckpointError();
+  const { workspaceId, channelId, brief, key, needsLanguageRepair } = input as Record<
+    string,
+    unknown
+  >;
+  if (
+    !isUuid(workspaceId) ||
+    (channelId !== undefined && !isUuid(channelId)) ||
+    typeof key !== "string" ||
+    (brief === undefined ? key !== "" : !isUuid(key)) ||
+    (needsLanguageRepair !== undefined && typeof needsLanguageRepair !== "boolean")
+  )
+    throw new SubmissionCheckpointError();
+  return {
+    workspaceId,
+    key,
+    ...(channelId !== undefined ? { channelId } : {}),
+    ...(brief !== undefined ? { brief: StoredChannelBriefSchema.parse(brief) } : {}),
+    ...(needsLanguageRepair !== undefined ? { needsLanguageRepair } : {}),
   };
+}
+
+export class SubmissionCheckpointError extends Error {
+  public constructor() {
+    super("Setup could not verify the saved submission in this tab. No new Short was sent.");
+  }
+}
+
+// History identifies the wizard across steps and reloads. Checkpoints live in
+// this tab and are separate for every authenticated user and initial workspace.
+export async function submissionCheckpoint(
+  progress: Progress,
+  scope: string | undefined,
+): Promise<() => void> {
+  const { userId } = await api.me();
+  try {
+    const wizardId: unknown = history.state?.briefWizardId;
+    if (!isUuid(wizardId)) throw new SubmissionCheckpointError();
+    const storageKey = `rf:onboarding:${userId}:${scope ?? "new"}:${wizardId}`;
+    if (progress.checkpointKey && progress.checkpointKey !== storageKey)
+      throw new SubmissionCheckpointError();
+    restoreCheckpoint(progress, scope, storageKey);
+    progress.checkpointKey = storageKey;
+    return (): void => saveCheckpoint(progress, storageKey);
+  } catch {
+    throw new SubmissionCheckpointError();
+  }
+}
+
+function restoreCheckpoint(
+  progress: Progress,
+  scope: string | undefined,
+  storageKey: string,
+): void {
+  const raw = sessionStorage.getItem(storageKey);
+  if (raw === null) {
+    if (history.state?.briefAttempt === storageKey) throw new SubmissionCheckpointError();
+    return;
+  }
+  const saved = readSavedAttempt(JSON.parse(raw));
+  if (
+    (scope && scope !== saved.workspaceId) ||
+    (progress.workspace && progress.workspace.id !== saved.workspaceId) ||
+    (saved.brief &&
+      (saved.brief.workspaceId !== saved.workspaceId ||
+        saved.brief.channelId !== saved.channelId ||
+        !saved.key))
+  )
+    throw new SubmissionCheckpointError();
+  Object.assign(progress, saved);
+}
+
+function saveCheckpoint(progress: Progress, storageKey: string): void {
+  try {
+    const saved = readSavedAttempt({
+      workspaceId: progress.workspace?.id ?? progress.workspaceId,
+      channelId: progress.channelId,
+      brief: progress.brief,
+      key: progress.key,
+      needsLanguageRepair: progress.needsLanguageRepair,
+    });
+    sessionStorage.setItem(storageKey, JSON.stringify(saved));
+    history.replaceState({ ...history.state, briefAttempt: storageKey }, "");
+  } catch {
+    throw new SubmissionCheckpointError();
+  }
 }

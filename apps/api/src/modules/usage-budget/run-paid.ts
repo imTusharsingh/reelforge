@@ -1,5 +1,5 @@
 import { remoteTextId } from "./text-evidence.js";
-import { AUDIO_KEYS, failedAudio } from "../runs/run-audio.js";
+import { markDispatching } from "./run-paid-dispatch.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
   canConfirmRejection,
@@ -9,7 +9,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "./run-admission-state.js";
-import { assertCriticAdmissionOpen, assertCriticRevision } from "./critic-admission.js";
+import { assertCriticAdmissionOpen } from "./critic-admission.js";
 import { pinnedBudget, assertPaidRunLimits } from "./run-envelope.js";
 import {
   SubmissionOutcomeUnknown,
@@ -45,7 +45,7 @@ import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js
 
 export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
-export class DispatchAdmissionError extends ConflictException {}
+export { DispatchAdmissionError } from "./run-paid-dispatch.js";
 
 async function assertReserveAdmission(
   db: Scoped,
@@ -147,7 +147,7 @@ export class RunPaidCalls {
     call: () => Promise<T>,
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
-    await this.markDispatching(context, step, assertLocked).catch(async (error: unknown) => {
+    await markDispatching(this.store, context, step, assertLocked).catch(async (error: unknown) => {
       await this.rollbackAdmission(context, step);
       throw error;
     });
@@ -164,50 +164,6 @@ export class RunPaidCalls {
       return this.holdUnknown(context, step, error);
     }
   }
-  private async markDispatching(
-    context: Context,
-    step: Step,
-    assertLocked?: () => Promise<void>,
-  ): Promise<void> {
-    const prepared = await preparePinnedVideoRunLanguage(
-      async () => (await this.store.get(context, step.runId)).inputSnapshot,
-    );
-    await this.store.mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
-      assertPinnedVideoRunLanguage(run.inputSnapshot, prepared);
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      if (
-        ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
-        ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
-        current.state !== "RUNNING" ||
-        current.idempotencyKey !== step.idempotencyKey ||
-        run.pauseReason?.startsWith("RECONCILE_REQUIRED")
-      )
-        throw new DispatchAdmissionError("Paid dispatch is closed");
-      if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
-        throw new DispatchAdmissionError("Required audio input failed");
-      await assertCriticRevision(db, tx, run, current);
-      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
-      const { reservation, evidence } = await readAdmission(tx, context, current);
-      if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
-        throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
-      if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
-      const marked = await tx.providerRequest.updateMany({
-        where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
-        data: {
-          errorCode: DISPATCHING,
-          responseMetadata: { dispatched: true, costKnown: false },
-        },
-      });
-      if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-      try {
-        await assertLocked?.();
-      } catch (cause) {
-        throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
-      }
-      return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
-    });
-  }
-
   public async jobReceipt(context: Context, step: Step): Promise<string | null> {
     return jobIdFromAdmission(await readAdmission(this.store.db, context, step));
   }
@@ -313,7 +269,10 @@ export class RunPaidCalls {
         responseMetadata: {
           dispatched,
           costKnown: !dispatched,
-          ...(step.key.startsWith("media:text:") && { dispatchKey:step.idempotencyKey, costBasis:"RESERVATION" }),
+          ...(step.key.startsWith("media:text:") && {
+            dispatchKey: step.idempotencyKey,
+            costBasis: "RESERVATION",
+          }),
           ...(providerJobId && providerJobId !== step.idempotencyKey ? { providerJobId } : {}),
         },
         errorCode: code,
@@ -347,11 +306,23 @@ export class RunPaidCalls {
       },
       data: {
         status: "SUCCEEDED",
-        ...(step.key.startsWith("media:text:") ? {
-          actualCost:null,
-          responseMetadata:{dispatched:true, costKnown:false, costBasis:"RESERVATION", dispatchKey:step.idempotencyKey,
-            ...(remoteTextId(step,step.providerJobId) && {providerJobId:step.providerJobId})},
-        } : { actualCost: actualMinor / 100, responseMetadata: { dispatched: true, costKnown: true } }),
+        ...(step.key.startsWith("media:text:")
+          ? {
+              actualCost: null,
+              responseMetadata: {
+                dispatched: true,
+                costKnown: false,
+                costBasis: "RESERVATION",
+                dispatchKey: step.idempotencyKey,
+                ...(remoteTextId(step, step.providerJobId) && {
+                  providerJobId: step.providerJobId,
+                }),
+              },
+            }
+          : {
+              actualCost: actualMinor / 100,
+              responseMetadata: { dispatched: true, costKnown: true },
+            }),
         errorCode: null,
       },
     });

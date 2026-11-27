@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunScreen } from "./run-screen";
 import { RunList } from "./run-list";
 import { AutonomyPanel } from "./autonomy-panel";
-import { detail, FakeEventSource, runId, workspaceId } from "./timeline.fixture";
+import { detail, FakeEventSource, levelTwoPlanning, runId, workspaceId } from "./timeline.fixture";
 vi.mock("../../components/studio-workspace-context", () => ({
   useActiveWorkspace: (): { id: string; role: string } => ({ id: workspaceId, role: "OWNER" }),
 }));
@@ -56,6 +56,31 @@ describe("V8 mounted experience with fake HTTP", () => {
     expect(host.textContent).toContain("8/10");
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
+  });
+  it("checks off the L2 Planning transition without a Planning step, and clears rewound stages", async () => {
+    const data = levelTwoPlanning();
+    fakeFetch(data);
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    const timeline = (): string => host.querySelector(".rf-timeline")?.textContent ?? "";
+    const current = (): string | null | undefined =>
+      host.querySelector(".rf-timeline [aria-current=step]")?.textContent;
+    expect(current()).toBe("Planning");
+
+    data.run.state = "SCRIPTING";
+    data.completedStages = ["PLANNING"];
+    await act(async () => FakeEventSource.instances[0]!.emit("transition", 2));
+    expect(current()).toBe("Scripting");
+    expect(timeline()).toContain("✓ Planning");
+    expect(timeline()).not.toContain("✓ Scripting");
+
+    // A redo returns to Generating. An old succeeded assembly cannot light up the new pass.
+    data.run.state = "GENERATING";
+    data.completedStages = ["PLANNING", "SCRIPTING", "SHOT_PLANNING"];
+    data.steps = [{ ...detail().steps[0]!, key: "ASSEMBLING" }];
+    await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
+    expect(current()).toBe("Generating");
+    expect(timeline()).toContain("✓ Shot planning");
+    expect(timeline()).not.toContain("✓ Assembling");
   });
   it.each([
     { reason: "PUBLISH_DRY_RUN", timeline: "Publish simulated (dry run)", header: "Dry run" },

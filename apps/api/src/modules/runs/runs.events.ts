@@ -5,6 +5,8 @@ import type { MessageEvent } from "@nestjs/common";
 import type { Context, Event } from "./runs.types.js";
 import type { RunsStore } from "./runs.store.js";
 
+const subscribeRetryMs = 2_000;
+
 /** Postgres is the replay log. Redis is a wake-up signal, never the ordering authority. */
 export class RunsEvents {
   private readonly publisher: Redis;
@@ -15,22 +17,38 @@ export class RunsEvents {
   private readonly subscribing = new Map<string, symbol>();
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
 
-  private subscribe(channel: string): void {
-    if (!this.subscriber || !this.listeners.has(channel) || this.subscribed.has(channel) || this.subscribing.has(channel)) return;
+  private clearRetry(channel: string): void {
     clearTimeout(this.retries.get(channel));
     this.retries.delete(channel);
+  }
+
+  private subscribe(channel: string): void {
+    if (
+      !this.subscriber ||
+      !this.listeners.has(channel) ||
+      this.subscribed.has(channel) ||
+      this.subscribing.has(channel)
+    )
+      return;
+    this.clearRetry(channel);
     const token = Symbol(channel);
-    this.subscribing.set(channel,token);
-    void this.subscriber.subscribe(channel).then(() => {
-      if (this.subscribing.get(channel) !== token) return;
-      this.subscribing.delete(channel);
-      this.subscribed.add(channel);
-      for (const wake of this.listeners.get(channel) ?? []) wake();
-    }, () => {
-      if (this.subscribing.get(channel) !== token) return;
-      this.subscribing.delete(channel);
-      this.retries.set(channel,setTimeout(()=>this.subscribe(channel),2000));
-    });
+    this.subscribing.set(channel, token);
+    void this.subscriber.subscribe(channel).then(
+      () => {
+        if (this.subscribing.get(channel) !== token) return;
+        this.subscribing.delete(channel);
+        this.subscribed.add(channel);
+        for (const wake of this.listeners.get(channel) ?? []) wake();
+      },
+      () => {
+        if (this.subscribing.get(channel) !== token) return;
+        this.subscribing.delete(channel);
+        this.retries.set(
+          channel,
+          setTimeout(() => this.subscribe(channel), subscribeRetryMs),
+        );
+      },
+    );
   }
 
   private watch(channel: string, drain: () => void): () => void {
@@ -48,16 +66,15 @@ export class RunsEvents {
     if (!listeners) {
       listeners = new Set();
       this.listeners.set(channel, listeners);
-      this.subscribe(channel);
     }
     listeners.add(drain);
+    this.subscribe(channel);
     drain();
     return () => {
       listeners.delete(drain);
       if (!listeners.size) {
         this.listeners.delete(channel);
-        clearTimeout(this.retries.get(channel));
-        this.retries.delete(channel);
+        this.clearRetry(channel);
         this.subscribing.delete(channel);
         this.subscribed.delete(channel);
         void this.subscriber?.unsubscribe(channel).catch(() => undefined);

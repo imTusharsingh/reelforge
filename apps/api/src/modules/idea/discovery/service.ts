@@ -1,4 +1,7 @@
-import { incompatibleCurrencies } from "../../usage-budget/effective-budgets.js";
+import {
+  applicableBudgetWhere,
+  incompatibleCurrencies,
+} from "../../usage-budget/effective-budgets.js";
 import { discoveryEstimate } from "./text-calls.js";
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
@@ -35,8 +38,11 @@ export class DiscoveryService {
     discoveryEstimate();
     const brief = await this.store.brief(context, channelId);
     const slot = discoverySlot(now, brief.cadence.timezone);
-    const budgets = await this.db.usageBudget.findMany({where:{workspaceId:context.workspaceId,scopeKey:{in:["WORKSPACE",channelId]}},select:{currency:true}});
-    if (!budgets.length || incompatibleCurrencies(budgets).length) {
+    const budgets = await this.db.usageBudget.findMany({
+      where: applicableBudgetWhere(context.workspaceId, channelId),
+      select: { currency: true },
+    });
+    if (budgets.length === 0 || incompatibleCurrencies(budgets).length) {
       console.error("[discovery-worker] discovery requires applicable USD budgets", channelId);
       throw new Error("Discovery requires applicable USD budgets");
     }

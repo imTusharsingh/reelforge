@@ -53,7 +53,7 @@ export const RunDetailViewSchema = z.object({
       error: z.unknown().optional(),
     }),
   ),
-  completedStages:z.array(VideoRunStateSchema).optional(),
+  completedStages: z.array(VideoRunStateSchema).optional(),
   remainingBudgetMinor: z.int().nonnegative().optional(),
   pinnedHardCapMinor: z.int().nonnegative().optional(),
   envelope: z
@@ -85,12 +85,19 @@ export const EffectiveCapsViewSchema = z
     z.object({
       effectiveBriefCaps: z
         .array(
-          z.union([z.object({channelId:z.uuid(),name:z.string(),incompatibleCurrencies:z.array(z.string()).min(1)}), z.object({
-            channelId: z.uuid(),
-            name: z.string(),
-            dailyLimitMinor: z.int().nonnegative(),
-            monthlyLimitMinor: z.int().nonnegative(),
-          })]),
+          z.union([
+            z.object({
+              channelId: z.uuid(),
+              name: z.string(),
+              incompatibleCurrencies: z.array(z.string()).min(1),
+            }),
+            z.object({
+              channelId: z.uuid(),
+              name: z.string(),
+              dailyLimitMinor: z.int().nonnegative(),
+              monthlyLimitMinor: z.int().nonnegative(),
+            }),
+          ]),
         )
         .optional(),
     }),

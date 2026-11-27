@@ -141,28 +141,39 @@ export class MediaAccounts {
     call: () => Promise<T>,
   ): Promise<T> {
     return withTextDispatch(step, async (check) => {
-    const result = await this.dispatch(context, step, async () => {
-      await check();
-      return call();
-    }, check).catch(async (error: unknown) => {
-      if (error instanceof InvalidCompletedText) {
-        const event = await finalizeInvalidText(
-          this.access.runs.store,
-          this.access.paid,
-          context,
-          step,
-          error,
-        );
-        await this.access.runs.events?.publish(event);
-      } else if (error instanceof ProviderFailure && !error.dispatched) {
-        const event = await this.access.paid.finalizeRejected(context, step, error);
-        await this.access.runs.events?.publish(event);
-      }
-      throw error;
-    });
-    const attached = await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
-    if (attached.state === "FAILED") throw new ConflictException("Receipt recorded for a closed text attempt");
-    return result;
+      const result = await this.dispatch(
+        context,
+        step,
+        async () => {
+          await check();
+          return call();
+        },
+        check,
+      ).catch(async (error: unknown) => {
+        if (error instanceof InvalidCompletedText) {
+          const event = await finalizeInvalidText(
+            this.access.runs.store,
+            this.access.paid,
+            context,
+            step,
+            error,
+          );
+          await this.access.runs.events?.publish(event);
+        } else if (error instanceof ProviderFailure && !error.dispatched) {
+          const event = await this.access.paid.finalizeRejected(context, step, error);
+          await this.access.runs.events?.publish(event);
+        }
+        throw error;
+      });
+      const attached = await this.access.runs.attachJob(
+        context,
+        step,
+        result.providerJobId,
+        json(result),
+      );
+      if (attached.state === "FAILED")
+        throw new ConflictException("Receipt recorded for a closed text attempt");
+      return result;
     });
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {

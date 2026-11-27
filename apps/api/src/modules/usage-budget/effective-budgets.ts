@@ -1,6 +1,18 @@
 import { StoredChannelBriefSchema, type ChannelBrief } from "@reelforge/contracts";
 import type { Database } from "../identity/identity.types.js";
 import type { BudgetStatusView } from "./usage-budget.types.js";
+export const WORKSPACE_SCOPE = "WORKSPACE";
+
+export function applicableBudgetWhere(
+  workspaceId: string,
+  channelId: string | null,
+): { workspaceId: string; scopeKey: { in: string[] } } {
+  return {
+    workspaceId,
+    scopeKey: { in: channelId === null ? [WORKSPACE_SCOPE] : [WORKSPACE_SCOPE, channelId] },
+  };
+}
+
 export type BudgetRecord = Readonly<{
   id: string;
   workspaceId: string;
@@ -33,8 +45,10 @@ export function admissionBudgets(
   return [effective, ...budgets.filter((budget) => budget.channelId)];
 }
 
-export function incompatibleCurrencies(budgets: {currency:string}[]): string[] {
-  return [...new Set(budgets.map(b=>b.currency).filter(currency=>currency !== "USD"))].sort();
+export function incompatibleCurrencies(budgets: readonly { currency: string }[]): string[] {
+  return [
+    ...new Set(budgets.map(({ currency }) => currency).filter((value) => value !== "USD")),
+  ].sort();
 }
 
 export async function displayBudgets(
@@ -55,19 +69,21 @@ export async function displayBudgets(
   });
   const caps = channels.flatMap((channel): NonNullable<BudgetStatusView["effectiveBriefCaps"]> => {
     const brief = StoredChannelBriefSchema.parse(channel.channelBriefRows[0]!.document);
-    const relevant = budgets.filter(
-      (budget) => !budget.channelId || budget.channelId === channel.id,
-    );
+    const scope = applicableBudgetWhere(workspaceId, channel.id).scopeKey.in;
+    const relevant = budgets.filter((budget) => scope.includes(budget.scopeKey));
     if (!relevant.length) return [];
     const currencies = incompatibleCurrencies(relevant);
-    if (currencies.length) return [{channelId:channel.id,name:channel.name,incompatibleCurrencies:currencies}];
+    if (currencies.length)
+      return [{ channelId: channel.id, name: channel.name, incompatibleCurrencies: currencies }];
     const limits = admissionBudgets(relevant, brief.budgetPolicy);
-    return [{
-      channelId: channel.id,
-      name: channel.name,
-      dailyLimitMinor: Math.min(...limits.map((b) => Number(b.dailyLimitMinor ?? Infinity))),
-      monthlyLimitMinor: Math.min(...limits.map((b) => Number(b.monthlyLimitMinor ?? Infinity))),
-    }];
+    return [
+      {
+        channelId: channel.id,
+        name: channel.name,
+        dailyLimitMinor: Math.min(...limits.map((b) => Number(b.dailyLimitMinor ?? Infinity))),
+        monthlyLimitMinor: Math.min(...limits.map((b) => Number(b.monthlyLimitMinor ?? Infinity))),
+      },
+    ];
   });
   return statuses.map((status) => ({
     ...status,

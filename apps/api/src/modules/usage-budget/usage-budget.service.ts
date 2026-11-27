@@ -56,7 +56,13 @@ import {
 } from "./usage-budget.validation.js";
 
 import { budgetExposure } from "./usage-budget.exposure.js";
-import { admissionBudgets, displayBudgets, type BudgetRecord } from "./effective-budgets.js";
+import {
+  admissionBudgets,
+  applicableBudgetWhere,
+  displayBudgets,
+  WORKSPACE_SCOPE,
+  type BudgetRecord,
+} from "./effective-budgets.js";
 import type { ChannelBrief } from "@reelforge/contracts";
 
 type Tx = Prisma.TransactionClient;
@@ -164,7 +170,6 @@ export type AuditRecordView = Readonly<{
   createdAt: string;
 }>;
 
-const WORKSPACE_SCOPE = "WORKSPACE";
 /** Paid-call holds outlive slow provider calls; on expiry the ledger row counts again (no gap). */
 const PAID_CALL_TTL_MS = 60 * 60 * 1000;
 
@@ -1027,9 +1032,8 @@ export class UsageBudgetService {
     workspaceId: string,
     channelId: string | null,
   ): Promise<BudgetRecord[]> {
-    const scopeKeys = channelId === null ? [WORKSPACE_SCOPE] : [WORKSPACE_SCOPE, channelId];
     return db.usageBudget.findMany({
-      where: { workspaceId, scopeKey: { in: scopeKeys } },
+      where: applicableBudgetWhere(workspaceId, channelId),
       orderBy: { id: "asc" },
     });
   }

@@ -110,8 +110,9 @@ export async function remainingSubmissionHold(
     (run.pauseReason === "EMERGENCY_STOP" && (await stoppedLegacyBillingHold(db, run.id, steps)))
   )
     return legacyBillingHold;
-  const other = admissions.find(({ step, ...admission }) =>
-    !recoverableJob(step) && (!!step.providerJobId || !canRollback(admission)),
+  const other = admissions.find(
+    ({ step, ...admission }) =>
+      !recoverableJob(step) && (!!step.providerJobId || !canRollback(admission)),
   );
   return other ? submissionHold(other.step.id) : null;
 }

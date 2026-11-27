@@ -56,21 +56,55 @@ it("resubscribes active viewers on Redis recovery and cancels retries on last di
     redis.unsubscribe.mockResolvedValue(0);
     const store = { events: vi.fn().mockResolvedValue([]) };
     const events = new RunsEvents(store as unknown as RunsStore, "redis://unused");
-    const context = {workspaceId:"scope",userId:"viewer",role:"VIEWER" as const};
-    const sub = events.stream(context,"run",3).subscribe();
+    const context = { workspaceId: "scope", userId: "viewer", role: "VIEWER" as const };
+    const sub = events.stream(context, "run", 3).subscribe();
+    const second = events.stream(context, "run", 5).subscribe();
     await vi.advanceTimersByTimeAsync(0);
     connection.emit("ready");
     await vi.advanceTimersByTimeAsync(0);
     expect(redis.subscribe).toHaveBeenCalledTimes(2);
     store.events.mockClear();
-    connection.emit("message","runs:scope:run");
+    connection.emit("message", "runs:scope:run");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.events).toHaveBeenCalledExactlyOnceWith(context,"run",3);
+    expect(store.events.mock.calls).toEqual([
+      [context, "run", 3],
+      [context, "run", 5],
+    ]);
     sub.unsubscribe();
+    expect(redis.unsubscribe).not.toHaveBeenCalled();
+    second.unsubscribe();
     expect(redis.unsubscribe).toHaveBeenCalledExactlyOnceWith("runs:scope:run");
     connection.emit("ready");
     await vi.advanceTimersByTimeAsync(30000);
     expect(redis.subscribe).toHaveBeenCalledTimes(2);
     await events.close();
-  } finally { vi.useRealTimers(); }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("retries failed subscriptions on a timer without a new Redis ready event, but not after disconnect", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.clearAllMocks();
+    const connection = Object.assign(new EventEmitter(), redis);
+    redis.duplicate.mockReturnValue(connection);
+    redis.subscribe.mockRejectedValue(new Error("subscription failed"));
+    redis.unsubscribe.mockResolvedValue(0);
+    const store = { events: vi.fn().mockResolvedValue([]) };
+    const events = new RunsEvents(store as unknown as RunsStore, "redis://unused");
+    const context = { workspaceId: "scope", userId: "viewer", role: "VIEWER" as const };
+    const sub = events.stream(context, "run", 0).subscribe();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(redis.subscribe).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(redis.subscribe).toHaveBeenCalledTimes(2);
+    sub.unsubscribe();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(redis.subscribe).toHaveBeenCalledTimes(2);
+    expect(redis.unsubscribe).toHaveBeenCalledExactlyOnceWith("runs:scope:run");
+    await events.close();
+  } finally {
+    vi.useRealTimers();
+  }
 });
