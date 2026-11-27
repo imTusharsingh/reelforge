@@ -1,3 +1,4 @@
+import { isSavedCaptionRejection, pauseRejectedAssembly } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
 import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -112,6 +113,8 @@ export class VideoRunEngine {
               return await this.advance(context, run);
             } catch (error) {
               if (error instanceof AssemblyInterrupted) return error.delay;
+              if (run.state === "ASSEMBLING" && isSavedCaptionRejection(error))
+                return pauseRejectedAssembly(this.runs, context, run, error.message);
               if (
                 !(error instanceof SubmissionOutcomeUnknown) &&
                 error instanceof Error &&

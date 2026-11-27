@@ -1,3 +1,4 @@
+import { RunsQueue } from "../runs/runs.queue.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import { runsFixture, generating } from "../runs/runs.fixture.js";
@@ -45,7 +46,7 @@ it.skipIf(!process.env.DATABASE_URL)(
     const musicSubmit = vi.spyOn(native.music, "submit");
     const fetchNarration = vi.spyOn(native.tts, "fetch");
     const render = vi.spyOn(bindings.renderer, "render");
-    vi.spyOn(native.tts, "poll").mockResolvedValueOnce("running");
+    vi.spyOn(native.tts, "poll").mockResolvedValueOnce("running").mockResolvedValueOnce("running");
     await expect(
       bindings.jobs.tick(
         t.context,
@@ -79,9 +80,30 @@ it.skipIf(!process.env.DATABASE_URL)(
         output: json(plan),
       },
     });
-    await expect(bindings.assembly.execute(t.context, run, t.brief)).rejects.toMatchObject({
-      response: { code: "SAVED_CAPTION_PLAN_UNUSABLE" },
+    const job = { ...t.runs.job(t.context, run.id), assembly: true };
+    await expect(t.engine.process(job)).resolves.toBe(12000);
+    expect(await t.store.get(t.context, run.id)).toMatchObject({
+      state: "ASSEMBLING",
+      pauseReason: "SAVED_CAPTION_PLAN_UNUSABLE",
     });
+    expect(
+      await db.videoRunStep.findFirst({
+        where: { runId: run.id, key: "ASSEMBLING" },
+      }),
+    ).toMatchObject({ state: "FAILED", error: { code: "SAVED_CAPTION_PLAN_UNUSABLE" } });
+    const enqueue = vi.fn();
+    t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
+    await t.engine.recover();
+    expect(
+      enqueue.mock.calls
+        .filter(([payload]) => payload.runId === run.id)
+        .map(([payload]) => payload.assembly),
+    ).toEqual([true]);
+    await expect(t.engine.process(job)).resolves.toBeNull();
+    enqueue.mockClear();
+    await t.engine.recover();
+    expect(enqueue.mock.calls.filter(([payload]) => payload.runId === run.id)).toHaveLength(0);
+    await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Saved captions cannot fit");
     expect(narrationSubmit).toHaveBeenCalledOnce();
     expect(fetchNarration).toHaveBeenCalledOnce();
     expect(musicSubmit).not.toHaveBeenCalled();

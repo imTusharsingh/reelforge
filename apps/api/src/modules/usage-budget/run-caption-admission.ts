@@ -8,6 +8,8 @@ import { z } from "zod";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
+export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
+
 const snapshot = z.object({
   brief: z.object({ targetDurationSeconds: z.number().positive() }),
 });
@@ -57,7 +59,7 @@ export async function assertSavedCaptionAdmission(
     );
   } catch {
     throw new ConflictException({
-      code: "SAVED_CAPTION_PLAN_UNUSABLE",
+      code: SAVED_CAPTION_PLAN_UNUSABLE,
       message:
         "Saved captions cannot be validated for this run. Start a new Short with shorter narration.",
     });
