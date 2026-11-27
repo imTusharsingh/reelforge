@@ -1,4 +1,5 @@
 import { remoteTextId, retainedOwnerEvidence } from "./text-evidence.js";
+import { beginLockedTextSend } from "./run-paid-text-send.js";
 import { markDispatching } from "./run-paid-dispatch.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
@@ -151,9 +152,13 @@ export class RunPaidCalls {
       await this.rollbackAdmission(context, step);
       throw error;
     });
+    const started =
+      assertLocked && step.key.startsWith("media:text:")
+        ? await beginLockedTextSend(this.store, this.usage, context, step, assertLocked, call)
+        : null;
     // The durable dispatch marker protects the claims before invoking the provider.
     try {
-      return await call();
+      return await (started ? started.response : call());
     } catch (error) {
       if (
         error instanceof InvalidCompletedText ||

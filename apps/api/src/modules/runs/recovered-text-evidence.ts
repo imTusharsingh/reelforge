@@ -5,16 +5,24 @@ import { remoteTextId } from "../usage-budget/text-evidence.js";
 import type { RunsService } from "./runs.service.js";
 import type { Context, Step, Transaction } from "./runs.types.js";
 
-const usage = z
-  .record(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/), z.int().nonnegative())
-  .refine((values) => Object.keys(values).length <= 32);
+const counterLimit = 32;
+const usageCounters = z.record(
+  z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
+  z.int().nonnegative(),
+);
+const usage = usageCounters.refine((values) => Object.keys(values).length <= counterLimit);
+const interactionId = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9._:-]{1,256}$/);
+// Read the full existing evidence, even if an older writer let it exceed the limit.
+const storedOwnerEvidence = z
+  .object({ providerJobId: interactionId, usage: usageCounters.optional() })
+  .optional();
 export const RecoveredTextEvidenceSchema = z
   .object({
     dispatchKey: z.string().trim().min(1).max(300),
-    providerJobId: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9._:-]{1,256}$/),
+    providerJobId: interactionId,
     usage: usage.optional(),
     confirmedOriginalAttempt: z.literal(true),
   })
@@ -90,11 +98,17 @@ async function saveEvidence(
     remoteTextId(step, typeof metadata.providerJobId === "string" ? metadata.providerJobId : null);
   if (known && known !== evidence.providerJobId)
     throw new ConflictException("Conflicting Google interaction IDs");
-  const reported = z
-    .object({ providerJobId: z.string(), usage: usage.optional() })
-    .safeParse(metadata.ownerReportedEvidence).data;
+  const stored = storedOwnerEvidence.safeParse(metadata.ownerReportedEvidence);
+  if (!stored.success)
+    throw new ConflictException("Existing owner-reported evidence cannot be merged");
+  const reported = stored.data;
   if (reported && reported.providerJobId !== evidence.providerJobId)
     throw new ConflictException("Conflicting owner-reported interaction IDs");
+  const merged = usage.safeParse({ ...reported?.usage, ...evidence.usage });
+  if (!merged.success)
+    throw new ConflictException(
+      `Owner-reported evidence allows at most ${counterLimit} usage counters`,
+    );
   await tx.providerRequest.update({
     where: { id: row.id },
     data: {
@@ -103,7 +117,7 @@ async function saveEvidence(
         dispatchKey: step.idempotencyKey,
         ownerReportedEvidence: {
           providerJobId: evidence.providerJobId,
-          usage: { ...reported?.usage, ...evidence.usage },
+          usage: merged.data,
           recordedBy: context.userId,
         },
       },

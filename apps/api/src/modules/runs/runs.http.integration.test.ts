@@ -206,6 +206,42 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     expect(
       await receiptTenant.db.usageReservation.findMany({ where: { correlationId: step.id } }),
     ).toMatchObject([{ status: "COMMITTED", committedMinor: 7n }]);
+    const fill = Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [`counter_${index}`, 1]),
+    );
+    await post(owner)
+      .send({ ...data, usage: fill })
+      .expect(204);
+    const readReceipt = (): ReturnType<Tenant["db"]["providerRequest"]["findFirstOrThrow"]> =>
+      receiptTenant.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } });
+    const bounded = await readReceipt();
+    expect(bounded.responseMetadata).toMatchObject({
+      ownerReportedEvidence: {
+        providerJobId: data.providerJobId,
+        usage: { input_tokens: 12, output_tokens: 3, ...fill },
+      },
+    });
+    const revision = (await receiptTenant.store.get(receiptTenant.context, run.id)).revision;
+    const evidenceEvents = { stepId: step.id, type: "text_evidence_recorded" };
+    const eventCount = await receiptTenant.db.runEvent.count({ where: evidenceEvents });
+    await post(owner)
+      .send({ ...data, usage: { one_too_many: 1 } })
+      .expect(409);
+    await post(owner)
+      .send({ ...data, providerJobId: "google_other" })
+      .expect(409);
+    expect(await readReceipt()).toEqual(bounded);
+    expect((await receiptTenant.store.get(receiptTenant.context, run.id)).revision).toBe(revision);
+    expect(await receiptTenant.db.runEvent.count({ where: evidenceEvents })).toBe(eventCount);
+    await post(owner)
+      .send({ ...data, usage: { input_tokens: 13 } })
+      .expect(204);
+    expect((await readReceipt()).responseMetadata).toMatchObject({
+      ownerReportedEvidence: {
+        providerJobId: data.providerJobId,
+        usage: { input_tokens: 13, output_tokens: 3, ...fill },
+      },
+    });
     expect(sent).toHaveBeenCalledOnce();
   });
   it("validates SSE cursors and supports read and control controller boundaries", async () => {

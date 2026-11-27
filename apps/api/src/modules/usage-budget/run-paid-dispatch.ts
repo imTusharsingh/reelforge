@@ -42,7 +42,6 @@ export async function markDispatching(
       throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
     if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
     const lockedText = current.key.startsWith("media:text:") && assertLocked !== undefined;
-    if (lockedText) await checkDispatchLock(assertLocked);
     const marked = await tx.providerRequest.updateMany({
       where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
       data: {
@@ -55,17 +54,18 @@ export async function markDispatching(
       },
     });
     if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-    // Keep the final check inside the transaction. Failure proves no POST and rolls
-    // the marker back before an orphan sweep or owner confirmation can see it.
-    if (assertLocked) await checkDispatchLock(assertLocked);
+    if (assertLocked) await checkDispatchLock(assertLocked, lockedText);
     return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
   });
 }
 
-async function checkDispatchLock(check: () => Promise<void>): Promise<void> {
+async function checkDispatchLock(check: () => Promise<void>, text: boolean): Promise<void> {
   try {
     await check();
   } catch (cause) {
-    throw new DispatchAdmissionError("Ownership lost before dispatch", { cause });
+    throw new DispatchAdmissionError(
+      text ? "Ownership lost before dispatch" : "Reference ownership lost before dispatch",
+      { cause },
+    );
   }
 }

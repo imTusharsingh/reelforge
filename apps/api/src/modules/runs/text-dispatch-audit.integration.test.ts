@@ -159,6 +159,43 @@ test("releases the original reservation when the final pre-POST lock assertion f
   });
 });
 
+test.each([false, true])(
+  "never starts the POST after recovery wins the commit-to-send gap (owner settled: %s)",
+  async (ownerSettled) => {
+    const { t, step, paid } = await textFixture(true);
+    const mutate = t.store.mutate.bind(t.store);
+    const send = vi.fn();
+    const check = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const spy = vi.spyOn(t.store, "mutate").mockImplementation(async (context, id, type, work) => {
+      if (type === "text_dispatch_started") {
+        // The first transaction committed, but the advisory session is gone.
+        await recoverTextDispatches(t.store, context);
+        expect(
+          await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } }),
+        ).toMatchObject({ errorCode: OUTCOME_UNKNOWN });
+        if (ownerSettled) await t.control.abandonTerminalText(context, step.runId, step.id);
+      }
+      return mutate(context, id, type, work);
+    });
+    try {
+      await expect(paid.dispatch(t.context, step, send, check)).rejects.toThrow("claim changed");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledOnce();
+    expect(
+      await t.db.usageReservation.findMany({
+        where: { idempotencyKey: `m08:${step.idempotencyKey}` },
+      }),
+    ).toMatchObject([
+      ownerSettled
+        ? { status: "COMMITTED", committedMinor: 7n }
+        : { status: "RELEASED", committedMinor: null },
+    ]);
+  },
+);
+
 test("id-less valid Gemini output commits the budget estimate but not provider actual cost", async () => {
   const { t, accounts, step } = await textFixture();
   const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(

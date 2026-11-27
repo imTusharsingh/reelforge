@@ -1,3 +1,4 @@
+import { retainedOwnerEvidence } from "./text-evidence.js";
 import { terminalRenderFailure } from "../runs/run-render-stage.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
@@ -5,6 +6,7 @@ import {
   ADMISSION_ORDERING,
   type Admission,
   canRollback,
+  DISPATCHING,
   OUTCOME_UNKNOWN,
   readAdmission,
 } from "./run-admission-state.js";
@@ -67,7 +69,7 @@ export async function rollbackAdmission(
   if (result.value) throw new SubmissionOutcomeUnknown(result.value);
 }
 
-async function releaseAdmission(
+export async function releaseAdmission(
   db: Scoped,
   tx: Transaction,
   usage: Pick<UsageBudgetService, "release">,
@@ -76,17 +78,22 @@ async function releaseAdmission(
   step: Step,
   reservationId: string | undefined,
   budgetDenied: boolean,
+  provenTextNotSent = false,
 ): Promise<number> {
   const where = { workspaceId: context.workspaceId, correlationId: step.id };
   const shot = step.key.startsWith("shot-");
   const rewrite = refusalRewrite(step);
   if (reservationId) await releaseReservation(tx, usage, context, reservationId);
   await tx.providerRequest.updateMany({
-    where: { ...where, errorCode: "PENDING" },
+    where: {
+      ...where,
+      errorCode: provenTextNotSent ? { in: [DISPATCHING, OUTCOME_UNKNOWN] } : "PENDING",
+    },
     data: {
       errorCode: shot ? "ADMISSION_ROLLED_BACK" : "NOT_DISPATCHED",
       actualCost: 0,
       responseMetadata: {
+        ...(provenTextNotSent && (await retainedOwnerEvidence(tx, context, step))),
         admissionOrdering: ADMISSION_ORDERING,
         dispatched: false,
         costKnown: true,
