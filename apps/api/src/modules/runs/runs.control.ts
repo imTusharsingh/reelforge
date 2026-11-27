@@ -312,23 +312,7 @@ export class RunsControl {
     return result.value;
   }
   private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
-    if (
-      current.state === "ASSEMBLING" &&
-      (await db.videoRunStep.findFirst({
-        where: {
-          runId: current.id,
-          key: "ASSEMBLING",
-          state: "FAILED",
-          OR: [
-            { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
-            { error: { path: ["localRenderFailures"], gt: 0 } },
-          ],
-        },
-      }))
-    )
-      throw new ConflictException(
-        "Saved captions cannot fit. Start a new Short with shorter narration.",
-      );
+    if (current.state === "ASSEMBLING") await assertAssemblyResumable(db, current);
     if (
       current.state === "NEEDS_HUMAN" &&
       (await db.videoRunStep.findFirst({
@@ -357,4 +341,33 @@ async function rearmDeniedKeyframes(db: Scoped, run: Run): Promise<void> {
     },
     data: { output: { closedBy: "NOT_DISPATCHED" } },
   });
+}
+
+async function assertAssemblyResumable(db: Scoped, run: Run): Promise<void> {
+  const failed = await db.videoRunStep.findFirst({
+    where: {
+      runId: run.id,
+      key: "ASSEMBLING",
+      state: "FAILED",
+      OR: [
+        { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
+        { error: { path: ["localRenderFailures"], gt: 0 } },
+      ],
+    },
+    select: { error: true },
+  });
+  if (!failed) return;
+  const details = failed.error;
+  if (
+    details &&
+    typeof details === "object" &&
+    "code" in details &&
+    details.code === SAVED_CAPTION_PLAN_UNUSABLE
+  )
+    throw new ConflictException(
+      "Saved captions cannot fit. Start a new Short with shorter narration.",
+    );
+  throw new ConflictException(
+    "The local render cannot resume. Check the recorded assembly failure before making a new Short.",
+  );
 }
