@@ -1,3 +1,4 @@
+import { assertSavedCaptionFit } from "../usage-budget/run-caption-admission.js";
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
 import { currentPrices, shotReceipts } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
@@ -20,7 +21,7 @@ import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import { localRenderFailure } from "./local-assembly-failure.js";
 import { MediaRenderer } from "./media-render.js";
 type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
-type AssemblyAudio = { transcript: string; narration: AudioTrack; music: AudioTrack };
+type AssemblyAudio = { narration: AudioTrack; music: AudioTrack };
 
 @Injectable()
 export class MediaAssembly {
@@ -40,7 +41,10 @@ export class MediaAssembly {
     }
     const plan = await this.planning.saved(context, run, brief);
     if (!plan || !brief.narratorVoice) throw new Error("Pinned plan and channel voice required");
-    const { transcript, narration, music } = await this.audio(context, run, brief, plan);
+    const transcript = planningTranscript(plan.script);
+    const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    assertSavedCaptionFit(transcript, brief.targetDurationSeconds, seconds);
+    const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
     const receipts = await this.receipts(context, run);
     const clips = plan.manifest.shots.map((shot) => {
       const receipt = receipts.findLast((item) => item.key === `shot-${shot.ordinal}`);
@@ -164,12 +168,11 @@ export class MediaAssembly {
     context: Context,
     run: Run,
     brief: ChannelBrief,
-    plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>,
+    transcript: string,
+    seconds: number,
   ): Promise<AssemblyAudio> {
     if (!brief.narratorVoice) throw new Error("Narrator required");
-    const transcript = planningTranscript(plan.script);
-    const ports = await this.ports.get(context),
-      seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    const ports = await this.ports.get(context);
     const costs = audioCosts(seconds);
     await this.drainFailedAudio(context, run, ports, seconds);
     const [narration, music] = await Promise.allSettled([
@@ -208,7 +211,7 @@ export class MediaAssembly {
     if (narration.status === "rejected") throw narration.reason;
     if (music.status === "rejected") throw music.reason;
     if (!narration.value || !music.value) throw new AssemblyInterrupted(12000);
-    return { transcript, narration: narration.value, music: music.value };
+    return { narration: narration.value, music: music.value };
   }
   private async drainFailedAudio(
     context: Context,
