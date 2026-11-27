@@ -1,4 +1,5 @@
 import {
+  EffectiveCapsViewSchema,
   RunDetailViewSchema,
   type RunDetailView,
   RunSummariesSchema,
@@ -63,6 +64,10 @@ function timelineDetail(value: unknown): TimelineDetail {
 }
 
 export const runClient = {
+  caps: async (workspaceId: string): Promise<ReturnType<typeof EffectiveCapsViewSchema.parse>> =>
+    EffectiveCapsViewSchema.parse(
+      await runRequest(`workspaces/${workspaceId}/usage/budgets`, workspaceId),
+    ),
   list: async (workspaceId: string): Promise<ReturnType<typeof RunSummariesSchema.parse>> =>
     RunSummariesSchema.parse(await runRequest("run-experience", workspaceId)),
   detail: async (workspaceId: string, id: string): Promise<TimelineDetail> =>

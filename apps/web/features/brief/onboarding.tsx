@@ -2,18 +2,25 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import {
   defaultBrief,
+  defaultBudgetPolicy,
+  type BriefInput,
   OnboardingInputSchema,
   type OnboardingInput,
 } from "../../../../packages/contracts/src/channel-brief";
-import type { ChannelBrief } from "../../../../packages/contracts/src/foundations";
 import {
-  Alert,
-  Button,
-  Field,
-  Panel,
-  SelectField,
-  StateMessage,
-} from "../../components/ui/primitives";
+  AudienceFields,
+  CadenceFields,
+  WizardActions,
+  WizardProgress,
+  StepLegend,
+} from "./onboarding-fields";
+import { BudgetFields } from "./fields";
+import { useWizardLocation } from "./wizard-location";
+import {
+  BudgetPolicySchema,
+  type ChannelBrief,
+} from "../../../../packages/contracts/src/foundations";
+import { Alert, Panel, StateMessage } from "../../components/ui/primitives";
 import { BrandLogo } from "../../components/brand-logo";
 import { StudioLink } from "../../components/studio-link";
 import { ensureCsrfToken } from "../../lib/csrf";
@@ -32,7 +39,12 @@ const audienceStep = OnboardingInputSchema.pick({ niche: true, audience: true, l
 const cadenceStep = OnboardingInputSchema.pick({ voiceId: true, cadence: true });
 const normalizedLanguage = (language: string): string => language.trim().toLowerCase();
 
-async function start(input: OnboardingInput, progress: Progress): Promise<Workspace> {
+async function start(
+  input: OnboardingInput,
+  progress: Progress,
+  budgetPolicy: BriefInput["budgetPolicy"],
+  queue: boolean,
+): Promise<Workspace> {
   await ensureCsrfToken();
   if (!progress.workspace) {
     progress.workspaceId ??= (await api.createWorkspace(input.niche)).id;
@@ -45,11 +57,15 @@ async function start(input: OnboardingInput, progress: Progress): Promise<Worksp
   const client = new BriefClient(progress.workspace.id);
   progress.channelId ??= await client.createChannel(input.niche);
   if (!progress.brief || progress.needsLanguageRepair) {
-    progress.brief = await client.save(progress.channelId, defaultBrief(input));
+    progress.brief = await client.save(progress.channelId, {
+      ...defaultBrief(input),
+      budgetPolicy,
+    });
     // The unsupported-language response is definitive: no run was created for the old Brief.
     progress.key = crypto.randomUUID();
     progress.needsLanguageRepair = false;
   }
+  if (!queue) return progress.workspace;
   try {
     await client.queue(progress.brief, progress.key);
   } catch (error) {
@@ -75,6 +91,10 @@ type OnboardingState = {
   error: string;
   languageError: string;
   queued: boolean;
+  createdOnly: boolean;
+  budget: BriefInput["budgetPolicy"];
+  setBudget: (policy: BriefInput["budgetPolicy"]) => void;
+  attempted: boolean;
   progress: import("react").RefObject<Progress>;
   step: number;
   back: () => void;
@@ -89,7 +109,9 @@ function initialInput(): OnboardingInput {
     cadence: {
       shortsPerDay: 1,
       localTime: "18:00",
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezone: Intl.DateTimeFormat()
+        .resolvedOptions()
+        .timeZone.replace("Asia/Calcutta", "Asia/Kolkata"),
     },
   };
 }
@@ -116,36 +138,74 @@ function useOnboardingState({
   onComplete?: ((workspace: Workspace) => void) | undefined;
 }): OnboardingState {
   const { setLanguageError, ...draft } = useOnboardingDraft();
+  const [budget, setBudget] = useState<BriefInput["budgetPolicy"]>(defaultBudgetPolicy);
+  const [attempted, setAttempted] = useState(false);
+  const { step, setStep } = useWizardLocation(
+    workspace?.id,
+    draft.input,
+    draft.setInput,
+    budget,
+    setBudget,
+  );
+  const progress = useRef<Progress>({ key: "", ...(workspace ? { workspace } : {}) });
+  const { busy, error, queued, createdOnly, finish, setError } = useSetupSubmission(
+    progress,
+    budget,
+    onComplete,
+    (message) => {
+      setLanguageError(message);
+      setStep(0);
+    },
+  );
+  const submit = wizardSubmit({
+    input: draft.input,
+    step,
+    progress,
+    budget,
+    busy,
+    queued,
+    finish,
+    setStep,
+    setLanguageError,
+    setError,
+    setAttempted,
+  });
+  return {
+    ...draft,
+    budget,
+    setBudget,
+    attempted,
+    createdOnly,
+    busy,
+    error,
+    queued,
+    progress,
+    step,
+    back: () => setStep(step - 1),
+    submit,
+  };
+}
+function useSetupSubmission(
+  progress: OnboardingState["progress"],
+  budget: OnboardingState["budget"],
+  onComplete: ((workspace: Workspace) => void) | undefined,
+  repair: (message: string) => void,
+): Pick<OnboardingState, "busy" | "error" | "queued" | "createdOnly"> &
+  Pick<SubmitState, "finish" | "setError"> {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [queued, setQueued] = useState(false);
-  const [step, setStep] = useState(0);
-  const progress = useRef<Progress>({ key: "", ...(workspace ? { workspace } : {}) });
-  const submit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    if (busy || queued) return;
-    setError("");
-    if (step < 2) {
-      const issue = stepError(step, draft.input, progress.current);
-      if (issue?.language) setLanguageError(issue.message);
-      else if (issue) setError(issue.message);
-      else setStep(step + 1);
-      return;
-    }
-    const validated = OnboardingInputSchema.safeParse(draft.input);
-    if (!validated.success) {
-      setError(validated.error.issues.map((issue) => issue.message).join(" "));
-      return;
-    }
+  const [createdOnly, setCreatedOnly] = useState(false);
+  const finish = async (input: OnboardingInput, queue: boolean): Promise<void> => {
     setBusy(true);
     try {
-      const workspace = await start(validated.data, progress.current);
+      const workspace = await start(input, progress.current, budget, queue);
+      setCreatedOnly(!queue);
       setQueued(true);
       onComplete?.(workspace);
     } catch (error) {
       if (error instanceof UnsupportedNarrationLanguageError) {
-        setLanguageError(error.message);
-        setStep(0);
+        repair(error.message);
       } else {
         setError(
           "Setup could not finish. Retry to continue with the saved channel and Brief. The first run service may still be unavailable.",
@@ -155,16 +215,7 @@ function useOnboardingState({
       setBusy(false);
     }
   };
-  return {
-    ...draft,
-    busy,
-    error,
-    queued,
-    progress,
-    step,
-    back: () => setStep(step - 1),
-    submit,
-  };
+  return { busy, error, queued, createdOnly, finish, setError };
 }
 function stepError(
   step: number,
@@ -194,12 +245,14 @@ function stepError(
   )
     return { language: true, message: new UnsupportedNarrationLanguageError().message };
 }
-function OnboardingView({ error, queued, ...form }: OnboardingState): JSX.Element {
+function OnboardingView({ error, queued, createdOnly, ...form }: OnboardingState): JSX.Element {
   if (queued)
     return (
       <StateMessage
         kind="success"
-        description="Your first Short is queued."
+        description={
+          createdOnly ? "Your channel and Brief are saved." : "Your first Short is queued."
+        }
         action={<StudioLink href="/">Open studio</StudioLink>}
       />
     );
@@ -227,11 +280,14 @@ function OnboardingForm({
   setInput,
   busy,
   languageError,
+  budget,
+  setBudget,
+  attempted,
   progress,
   step,
   back,
   submit,
-}: Omit<OnboardingState, "error" | "queued">): JSX.Element {
+}: Omit<OnboardingState, "error" | "queued" | "createdOnly">): JSX.Element {
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (step === 0 && languageError)
@@ -239,122 +295,85 @@ function OnboardingForm({
   }, [step, languageError]);
   const editingLocked = !!progress.current.channelId && !progress.current.needsLanguageRepair;
   return (
-    <form ref={form} onSubmit={submit} className="rf-form">
+    <form noValidate ref={form} onSubmit={submit} className="rf-form">
       <fieldset key={step} disabled={busy || editingLocked}>
         <StepLegend step={step} />
         {step === 0 && (
-          <AudienceFields input={input} setInput={setInput} languageError={languageError} />
+          <AudienceFields
+            input={input}
+            setInput={setInput}
+            languageError={languageError}
+            attempted={attempted}
+          />
         )}
         {step === 1 && <CadenceFields input={input} setInput={setInput} />}
         {step === 2 && (
-          <p>
-            {input.niche} · {input.audience} · {input.language} · {input.voiceId} ·{" "}
-            {input.cadence.localTime} ({input.cadence.timezone}). Starts at L2 with a $6 target, $8
-            per Short cap, $20 daily cap and $180 monthly cap.
-          </p>
+          <>
+            <p>
+              {input.niche} · {input.audience} · {input.language} · {input.voiceId} ·{" "}
+              {input.cadence.localTime} ({input.cadence.timezone})
+            </p>
+            <p>
+              A typical 45-second Short is estimated at $4.13, with about $4.93 needed for the base
+              budget. Shot planning refines the estimate.
+            </p>
+            <BudgetFields policy={budget} onChange={setBudget} />
+          </>
         )}
       </fieldset>
-      <div className="rf-actions">
-        {step > 0 && !editingLocked && (
-          <Button tone="secondary" disabled={busy} onClick={back}>
-            Back
-          </Button>
-        )}
-        <Button type="submit" loading={busy}>
-          {step < 2
-            ? "Continue"
-            : progress.current.needsLanguageRepair
-              ? "Save corrected Brief and start first Short"
-              : progress.current.brief
-                ? "Retry first Short"
-                : "Create channel and start first Short"}
-        </Button>
-      </div>
+      <WizardActions {...{ step, busy, editingLocked, progress, back }} />
     </form>
   );
 }
 
-function StepLegend({ step }: { step: number }): JSX.Element {
-  const legend = useRef<HTMLLegendElement>(null);
-  useEffect(() => {
-    if (step > 0) legend.current?.focus();
-  }, [step]);
-  return (
-    <legend ref={legend} tabIndex={-1}>
-      {wizardSteps[step]}
-    </legend>
-  );
-}
-
-const wizardSteps = ["Audience", "Voice & cadence", "Confirm"];
-
-function WizardProgress({ step }: { step: number }): JSX.Element {
-  return (
-    <ol className="rf-wizard-steps" aria-label="Setup progress">
-      {wizardSteps.map((name, index) => (
-        <li key={name} aria-current={step === index ? "step" : undefined}>
-          {name}
-        </li>
-      ))}
-    </ol>
-  );
-}
-type Fields = Pick<OnboardingState, "input" | "setInput">;
-function AudienceFields({
+type SubmitState = Pick<
+  OnboardingState,
+  "input" | "step" | "progress" | "budget" | "busy" | "queued"
+> & {
+  finish: (input: OnboardingInput, queue: boolean) => Promise<void>;
+  setStep: (value: number) => void;
+  setLanguageError: (value: string) => void;
+  setError: (value: string) => void;
+  setAttempted: (value: boolean) => void;
+};
+function wizardSubmit({
   input,
-  setInput,
-  languageError,
-}: Fields & { languageError: string }): JSX.Element {
-  return (
-    <>
-      <Field
-        id="setup-niche"
-        label="Niche or topic"
-        required
-        value={input.niche}
-        onChange={(e) => setInput({ ...input, niche: e.target.value })}
-      />
-      <Field
-        id="setup-audience"
-        label="Audience"
-        required
-        value={input.audience}
-        onChange={(e) => setInput({ ...input, audience: e.target.value })}
-      />
-      <Field
-        id="setup-language"
-        label="Language"
-        required
-        error={languageError}
-        value={input.language}
-        onChange={(e) => setInput({ ...input, language: e.target.value })}
-      />
-    </>
-  );
-}
-
-function CadenceFields({ input, setInput }: Fields): JSX.Element {
-  return (
-    <>
-      <SelectField
-        id="setup-voice"
-        label="Narrator voice"
-        value={input.voiceId}
-        onChange={(e) => setInput({ ...input, voiceId: e.target.value })}
-      >
-        <option value="Kore">Kore</option>
-        <option value="Puck">Puck</option>
-      </SelectField>
-      <Field
-        id="setup-cadence"
-        label={`Daily publishing time (${input.cadence.timezone})`}
-        type="time"
-        required
-        value={input.cadence.localTime}
-        onChange={(e) =>
-          setInput({ ...input, cadence: { ...input.cadence, localTime: e.target.value } })
-        }
-      />
-    </>
-  );
+  step,
+  progress,
+  budget,
+  busy,
+  queued,
+  finish,
+  setStep,
+  setLanguageError,
+  setError,
+  setAttempted,
+}: SubmitState): OnboardingState["submit"] {
+  return async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (busy || queued) return;
+    setError("");
+    if (step < 2) {
+      setAttempted(true);
+      const issue = stepError(step, input, progress.current);
+      if (issue?.language) setLanguageError(issue.message);
+      else if (issue) setError(issue.message);
+      else {
+        setAttempted(false);
+        setStep(step + 1);
+      }
+      return;
+    }
+    const validated = OnboardingInputSchema.safeParse(input);
+    if (!validated.success) {
+      setError(validated.error.issues.map((issue) => issue.message).join(" "));
+      return;
+    }
+    if (!BudgetPolicySchema.safeParse(budget).success) {
+      setError("Enter positive caps and keep the target within the per-Short cap.");
+      return;
+    }
+    const queue = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "queue";
+    await finish(validated.data, queue);
+  };
 }

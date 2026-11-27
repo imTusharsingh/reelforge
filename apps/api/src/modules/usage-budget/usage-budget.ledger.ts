@@ -2,6 +2,7 @@ import { Prisma } from "@reelforge/database";
 import { decimalToMinor, isCurrencyCode } from "./usage-budget.money.js";
 import {
   PRE_DISPATCH_ERROR_CODES,
+  runStepCategory,
   type CostKind,
   type UsageCategoryValue,
 } from "./usage-budget.types.js";
@@ -37,6 +38,7 @@ export type LedgerRow = Readonly<{
   confirmedNonDispatch?: boolean;
   currency: string | null;
   createdAt: Date;
+  stepKey?: string | null;
   sceneKind: string | null;
   sceneMediaJobId: string | null;
   scriptId: string | null;
@@ -67,6 +69,7 @@ type RawLedgerRow = {
   confirmed_non_dispatch: boolean;
   currency: string | null;
   created_at: Date | string;
+  step_key: string | null;
   scene_kind: string | null;
   scene_media_job_id: string | null;
   script_id: string | null;
@@ -116,11 +119,13 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
              ${confirmedNonDispatch} AS confirmed_non_dispatch,
              pr.currency,
              pr.created_at,
+             step.key AS step_key,
              scene.kind AS scene_kind,
              scene.job_id AS scene_media_job_id,
              COALESCE(scene.script_id, script_step.result_ref) AS script_id,
              COALESCE(run.id, scene_run.run_id) AS workflow_run_id
       FROM "provider_requests" pr
+      LEFT JOIN video_run_steps step ON step.workspace_id = pr.workspace_id AND step.id = pr.correlation_id
       LEFT JOIN LATERAL (
         SELECT o.kind::text AS kind, g.job_id::text AS job_id, j.script_id::text AS script_id
         FROM "scene_generation_outputs" o
@@ -174,6 +179,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
     confirmedNonDispatch: row.confirmed_non_dispatch,
     currency: row.currency === null ? null : row.currency.trim().toUpperCase(),
     createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
+    stepKey: row.step_key,
     sceneKind: row.scene_kind,
     sceneMediaJobId: row.scene_media_job_id,
     scriptId: row.script_id,
@@ -191,8 +197,9 @@ const KEYWORDS: ReadonlyArray<readonly [UsageCategoryValue, readonly string[]]> 
 ];
 
 export function categorize(
-  row: Pick<LedgerRow, "sceneKind" | "capabilityId" | "providerId">,
+  row: Pick<LedgerRow, "stepKey" | "sceneKind" | "capabilityId" | "providerId">,
 ): UsageCategoryValue {
+  if (row.stepKey) return runStepCategory(row.stepKey);
   if (row.sceneKind === "IMAGE" || row.sceneKind === "VIDEO") return "IMAGE_MEDIA";
   if (row.sceneKind === "NARRATION" || row.sceneKind === "DIALOGUE") return "TTS";
   const haystack = `${row.capabilityId} ${row.providerId}`.toLowerCase();

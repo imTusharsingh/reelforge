@@ -18,7 +18,7 @@ export function StudioSettings({
 }): JSX.Element {
   return (
     <section className="rf-stack">
-      <PageHeading label="05 / Configuration" title="Settings">
+      <PageHeading title="Settings">
         Manage your channel, provider connections, and account.
       </PageHeading>
       <Tabs label="Settings sections" items={settings} current={current} />

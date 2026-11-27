@@ -1,3 +1,4 @@
+import { terminalTextEligible, readAdmission } from "./run-admission-state.js";
 import type { InvalidCompletedText } from "@reelforge/ai-providers";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { failRunIfSettled as settleRunFailure } from "../runs/run-outcomes.js";
@@ -25,18 +26,13 @@ export async function finalizeFailed(
   providerJobId: string | null = step.providerJobId,
   usage?: Record<string, unknown>,
 ): Promise<Event> {
+  const manual = reason === "OWNER_CONFIRMED_TERMINAL_TEXT";
   const result = await store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
     const current = await db.videoRunStep.findFirstOrThrow({
       where: { id: step.id, runId: run.id },
     });
-    if (current.state === "FAILED")
+    if (!(await canFinalize(tx, context, current, step, reason, manual)))
       return { value: null, payload: { replay: true }, stepId: step.id };
-    if (
-      current.state !== (step.providerJobId ? "WAITING_EXTERNAL" : "RUNNING") ||
-      current.providerJobId !== step.providerJobId ||
-      current.idempotencyKey !== step.idempotencyKey
-    )
-      throw new ConflictException("Dispatch claim changed");
     const amount = current.costMinor ?? 0;
     const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
     await paid.settleFailedRequest(
@@ -63,11 +59,45 @@ export async function finalizeFailed(
     await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
     return {
       value: null,
-      payload: { reason, message, releasedMinor: amount },
+      payload: {
+        reason,
+        message,
+        ...(manual
+          ? { confirmedBy: context.userId, committedEstimateMinor: cost }
+          : { releasedMinor: amount }),
+      },
       stepId: step.id,
     };
   });
   return result.event;
+}
+
+async function canFinalize(
+  tx: Transaction,
+  context: Context,
+  current: Step,
+  step: Step,
+  reason: string,
+  manual: boolean,
+): Promise<boolean> {
+  if (
+    current.state === "FAILED" &&
+    (!manual ||
+      (typeof current.error === "object" &&
+        current.error &&
+        "code" in current.error &&
+        current.error.code === reason))
+  )
+    return false;
+  if (
+    current.state !== (step.providerJobId ? "WAITING_EXTERNAL" : "RUNNING") ||
+    current.providerJobId !== step.providerJobId ||
+    current.idempotencyKey !== step.idempotencyKey
+  )
+    throw new ConflictException("Dispatch claim changed");
+  if (manual && !terminalTextEligible(current, await readAdmission(tx, context, current)))
+    throw new ConflictException("Text attempt is not awaiting terminal confirmation");
+  return true;
 }
 
 async function failRunIfSettled(

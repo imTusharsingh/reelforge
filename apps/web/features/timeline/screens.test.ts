@@ -49,7 +49,9 @@ describe("V8 mounted experience with fake HTTP", () => {
     fakeFetch();
     await act(async () => root.render(createElement(RunScreen, { id: runId })));
     expect(host.textContent).toContain("$5.79 used of $8.00 cap");
-    expect(host.querySelectorAll(".rf-timeline li")).toHaveLength(14);
+    expect(host.querySelectorAll(".rf-timeline li")).toHaveLength(10);
+    expect(host.querySelector("details[open] summary")?.textContent).toBe("Step attempts");
+    expect(host.querySelector(".rf-timeline")?.textContent).toContain("✓ Critic");
     expect(host.textContent).toContain("Storyboard");
     expect(host.textContent).toContain("8/10");
     expect(host.textContent).toContain("Try full auto");
@@ -188,6 +190,49 @@ describe("V8 mounted experience with fake HTTP", () => {
     remainingReshoots["shot-0"] = 0;
     await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
     expect(redo()?.disabled).toBe(true);
+  });
+  it("explains held text cost and requires confirmation before the owner can settle", async () => {
+    const data = detail(),
+      id = crypto.randomUUID();
+    data.run.state = "SCRIPTING";
+    data.run.pauseReason = `RECONCILE_REQUIRED: provider submission outcome unknown (${id})`;
+    data.steps = [
+      {
+        id,
+        key: "media:text:scriptwriter",
+        attempt: 1,
+        state: "RUNNING",
+        costMinor: 17,
+        providerId: "gemini",
+        input: {},
+        output: null,
+        awaitingReconciliation: true,
+        confirmTerminalText: true,
+      },
+    ];
+    data.envelope = null;
+    data.pinnedHardCapMinor = 400;
+    data.remainingBudgetMinor = 383;
+    const fetcher = fakeFetch(data);
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    expect(host.textContent).toContain("$0.17 is reserved");
+    expect(host.textContent).toContain("$3.83 remaining");
+    expect(host.textContent).toContain("Pinned cap $4.00");
+    expect(host.textContent).toContain("Awaiting reconciliation");
+    expect(host.textContent).not.toContain(id);
+    const settle = Array.from(host.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Confirm terminal"),
+    )!;
+    await act(async () => settle.click());
+    expect(fetcher.mock.calls.some(([url]) => url.includes("/abandon"))).toBe(false);
+    confirm.mockReturnValue(true);
+    await act(async () => settle.click());
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/abandon?"),
+      expect.objectContaining({ body: JSON.stringify({ confirmedTerminalText: true }) }),
+    );
   });
   it("offers resume at final review after an emergency stop", async () => {
     const data = detail();

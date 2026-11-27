@@ -74,15 +74,15 @@ function useRunActions(
   refresh: () => void,
 ): {
   busy: boolean;
-  action: (path: string) => Promise<void>;
+  action: (path: string, body?: object) => Promise<void>;
 } {
   const notify = useNotify();
   const [busy, setBusy] = useState(false);
-  const action = async (path: string): Promise<void> => {
+  const action = async (path: string, body: object = {}): Promise<void> => {
     if (busy) return;
     setBusy(true);
     try {
-      await runRequest(`runs/${id}/${path}`, workspaceId, {});
+      await runRequest(`runs/${id}/${path}`, workspaceId, body);
       notify({ tone: "success", title: path === "approve" ? "Stage approved." : "Run updated." });
       refresh();
     } catch (e) {
@@ -129,9 +129,11 @@ function RunContent({
     <section className="rf-stack">
       <RunHeading detail={detail} review={review} />
       <RunFeedback paused={runPauseLabel(detail)} error={error} retry={refresh} />
-      {editable && !["LEARNING", "FAILED", "CANCELED"].includes(detail.run.state) && (
-        <RunOperatorControls detail={detail} controls={controls} />
-      )}
+      {editable &&
+        (!["LEARNING", "FAILED", "CANCELED"].includes(detail.run.state) ||
+          detail.steps.some((step) => step.confirmTerminalText)) && (
+          <RunOperatorControls detail={detail} controls={controls} />
+        )}
       {review ? (
         <ApprovalPanel
           detail={detail}
@@ -164,19 +166,23 @@ function RunFeedback({
   error: string;
   retry: () => void;
 }): JSX.Element | null {
-  if (!paused && !error) return null;
+  const visible = Boolean(paused || error);
   return (
-    <Alert tone={error ? "danger" : "warning"} title="Run status">
-      {paused && <div>{paused}</div>}
-      {error && (
-        <div className="rf-action-row">
-          <span>Couldn’t refresh the run. Showing the last loaded status.</span>
-          <Button tone="secondary" onClick={retry}>
-            Retry
-          </Button>
-        </div>
+    <div className="rf-run-status-space" aria-hidden={!visible} tabIndex={visible ? 0 : undefined}>
+      {visible && (
+        <Alert tone={error ? "danger" : "warning"} title="Run status">
+          {paused && <div>{paused}</div>}
+          {error && (
+            <div className="rf-action-row">
+              <span>Couldn’t refresh the run. Showing the last loaded status.</span>
+              <Button tone="secondary" onClick={retry}>
+                Retry
+              </Button>
+            </div>
+          )}
+        </Alert>
       )}
-    </Alert>
+    </div>
   );
 }
 
@@ -193,23 +199,7 @@ function RunOperatorControls({
           Cancel run
         </Button>
       )}
-      {(detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-        detail.run.pauseReason === "OPERATOR_ABANDONED") &&
-        detail.steps
-          .filter(
-            (step) =>
-              step.state === "RUNNING" &&
-              (step.key.startsWith("media:") || step.key.startsWith("shot-")),
-          )
-          .map((step) => (
-            <Button
-              key={step.id}
-              disabled={busy}
-              onClick={() => void action(`steps/${step.id}/abandon`)}
-            >
-              Abandon {step.key}
-            </Button>
-          ))}
+      <AbandonControls detail={detail} controls={controls} />
       {(detail.run.pauseReason === "OPERATOR_ABANDONED" ||
         detail.run.pauseReason === "EMERGENCY_STOP") && (
         <Button disabled={busy} onClick={() => void action("resume")}>
@@ -217,6 +207,53 @@ function RunOperatorControls({
         </Button>
       )}
     </div>
+  );
+}
+
+function AbandonControls({
+  detail,
+  controls: { action, busy },
+}: Pick<RunContentProps, "detail" | "controls">): JSX.Element {
+  const owner = useActiveWorkspace().role === "OWNER";
+  return (
+    <>
+      {" "}
+      {(detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+        detail.run.pauseReason === "OPERATOR_ABANDONED") &&
+        detail.steps
+          .filter(
+            (step) =>
+              step.state === "RUNNING" &&
+              detail.run.pauseReason?.includes(step.id) &&
+              (!step.confirmTerminalText || owner) &&
+              (step.key.startsWith("media:") || step.key.startsWith("shot-")),
+          )
+          .map((step) => (
+            <Button
+              key={step.id}
+              disabled={busy}
+              tone="danger"
+              onClick={() => {
+                const text = step.confirmTerminalText;
+                if (
+                  window.confirm(
+                    text
+                      ? `Have you confirmed the provider call ended? Book the reserved estimate (${dollars(step.costMinor ?? 0)}) and end this run without retrying.`
+                      : "Abandon this attempt? Only a confirmed undispatched attempt can release its reservation.",
+                  )
+                )
+                  void action(
+                    `steps/${step.id}/abandon`,
+                    text ? { confirmedTerminalText: true } : {},
+                  );
+              }}
+            >
+              {step.confirmTerminalText
+                ? "Confirm terminal text call and end run"
+                : `Abandon ${step.key}`}
+            </Button>
+          ))}
+    </>
   );
 }
 
@@ -233,7 +270,9 @@ function RunHeading({ detail, review }: { detail: TimelineDetail; review: boolea
           <Badge tone="info">
             {detail.run.pauseReason === "PUBLISH_DRY_RUN"
               ? "Dry run"
-              : stateLabel(detail.run.state)}
+              : detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+                ? "Awaiting reconciliation"
+                : stateLabel(detail.run.state)}
           </Badge>
         }
       >
@@ -275,16 +314,7 @@ function LiveRun({
     <div className="rf-columns">
       <ProgressStream detail={detail} connection={connection} />
       <div className="rf-stack">
-        <Card>
-          <h2>Run budget</h2>
-          <RunCost workspaceId={workspaceId} id={detail.run.id} revision={detail} />
-          <a href="/runs/usage">Run usage</a>
-          {detail.envelope ? (
-            <Budget envelope={detail.envelope} />
-          ) : (
-            <p>Budget envelope unavailable.</p>
-          )}
-        </Card>
+        <RunBudget detail={detail} workspaceId={workspaceId} />
         {waiting && editable && (
           <Button loading={busy} onClick={approve}>
             Approve stage
@@ -304,6 +334,31 @@ function LiveRun({
         </Card>
       </div>
     </div>
+  );
+}
+
+function RunBudget({
+  detail,
+  workspaceId,
+}: Pick<RunContentProps, "detail" | "workspaceId">): JSX.Element {
+  return (
+    <Card>
+      <h2>Run budget</h2>
+      <RunCost workspaceId={workspaceId} id={detail.run.id} revision={detail} />
+      {detail.remainingBudgetMinor !== undefined && (
+        <p>{dollars(detail.remainingBudgetMinor)} remaining</p>
+      )}
+      <a href="/runs/usage">Run usage</a>
+      {detail.envelope ? (
+        <Budget envelope={detail.envelope} />
+      ) : (
+        <p>
+          The budget envelope is set after shot planning.
+          {detail.pinnedHardCapMinor !== undefined &&
+            ` Pinned cap ${dollars(detail.pinnedHardCapMinor)}.`}
+        </p>
+      )}
+    </Card>
   );
 }
 

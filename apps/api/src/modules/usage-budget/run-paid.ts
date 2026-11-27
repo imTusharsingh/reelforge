@@ -23,7 +23,7 @@ import {
 } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
-import type { PaidCallReservation } from "./usage-budget.types.js";
+import { runStepCategory, type PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
 import {
   assertPinnedVideoRunLanguage,
@@ -90,7 +90,7 @@ export class RunPaidCalls {
         channelId: run.channelId,
         idempotencyKey: `m08:${step.idempotencyKey}`,
         correlationId: step.id,
-        category: "VIDEO_MEDIA",
+        category: runStepCategory(step.key),
         currency: "USD",
         amountMinor: amount,
         ttlMs: 86400000,

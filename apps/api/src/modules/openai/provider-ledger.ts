@@ -132,6 +132,7 @@ export class ProviderLedger {
           workspaceId: spec.workspaceId,
           channelId,
           correlationId,
+          // This entry point accepts only VideoGenPort. Mixed VideoRun steps use runStepCategory.
           category: "VIDEO_MEDIA",
           currency: "USD",
           estimate: reservationCents(estimate) / 100,

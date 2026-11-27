@@ -1,3 +1,5 @@
+import { readAdmission, terminalTextEligible } from "../usage-budget/run-admission-state.js";
+import { claimedRunCost, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { canAdvancePastRender } from "./run-render-stage.js";
 import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
@@ -157,6 +159,13 @@ export class RunsService {
       parseTraceparent(snapshot.traceparent)
     )
       job.traceparent = snapshot.traceparent;
+    if (
+      run.state === "PLANNING" ||
+      run.state === "SCRIPTING" ||
+      run.state === "SHOT_PLANNING" ||
+      run.state === "CRITIC"
+    )
+      job.stage = run.state;
     await this.queue?.enqueue(job, run.revision);
   }
   public async move(
@@ -220,10 +229,13 @@ export class RunsService {
       db.budgetEnvelope.findFirst({ where: { runId: id } }),
       shotReshoots(db, id),
     ]);
+    const cap = pinnedBudget(run).hardCapMinor;
     return {
       run,
-      steps,
+      steps: await this.stepViews(context, run, steps),
       envelope,
+      pinnedHardCapMinor: cap,
+      remainingBudgetMinor: Math.max(0, cap - claimedRunCost(steps)),
       remainingReshoots: Object.fromEntries(
         [...new Set(steps.map((step) => step.key))]
           .filter((key) => key.startsWith("shot-"))
@@ -244,6 +256,33 @@ export class RunsService {
     };
   }
 
+  private async stepViews(
+    context: Context,
+    run: Run,
+    steps: Step[],
+  ): Promise<(Step & { confirmTerminalText: boolean; awaitingReconciliation: boolean })[]> {
+    const held = steps.find(
+      (step) =>
+        step.state === "RUNNING" &&
+        step.key.startsWith("media:text:") &&
+        run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+        run.pauseReason.includes(step.id),
+    );
+    const confirmable =
+      held && terminalTextEligible(held, await readAdmission(this.store.db, context, held))
+        ? held.id
+        : null;
+    return steps.map((step) => ({
+      ...step,
+      confirmTerminalText: confirmable === step.id,
+      awaitingReconciliation:
+        !!run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
+        step.state === "RUNNING" &&
+        (run.pauseReason.includes(step.id) ||
+          step.key === run.state ||
+          step.key === "planning:manifest:v1"),
+    }));
+  }
   public job(context: Context, runId: string, stepId?: string): RunJob {
     const active = currentContext();
     return {

@@ -180,6 +180,13 @@ function useDecision(
 
 export function CriticSummary({ detail }: { detail: RunDetailView }): JSX.Element {
   const report = latestCritic(detail);
+  if (
+    !report &&
+    ["PLANNING", "SCRIPTING", "SHOT_PLANNING", "GENERATING", "ASSEMBLING"].includes(
+      detail.run.state,
+    )
+  )
+    return <p>The critic reviews the assembled video.</p>;
   if (!report) return <p>Critic evidence is unavailable. Approval requires all hard gates.</p>;
   return (
     <div className="rf-stack">

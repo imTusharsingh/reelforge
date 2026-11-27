@@ -1,3 +1,4 @@
+import type { TextPort } from "@reelforge/ai-providers";
 import { z } from "zod";
 import { Injectable } from "@nestjs/common";
 import {
@@ -20,6 +21,11 @@ export class DiscoveryScout {
     private readonly youtube: DiscoveryYouTube,
     private readonly calls: DiscoveryTextCalls,
   ) {}
+  public async textPort(context: WorkspaceContext): Promise<TextPort> {
+    const ports = await this.runtime.ports(context, { resolve: async (): Promise<[]> => [] });
+    ports.assertKey("gemini");
+    return ports.text;
+  }
   public async discover(
     context: WorkspaceContext,
     brief: ChannelBrief,
@@ -27,8 +33,9 @@ export class DiscoveryScout {
     analytics: readonly DiscoverySource[],
     key: string,
     now: Date,
+    prepared?: TextPort,
   ): Promise<DiscoveryCandidate[]> {
-    const ports = await this.runtime.ports(context, { resolve: async (): Promise<[]> => [] });
+    const text = prepared ?? (await this.textPort(context));
     const youtube = await this.youtube.sources(context.workspaceId, brief.niche, now);
     if (!(await this.quota.reserve(context.workspaceId, "grounding", now))) return [];
     const prompt = JSON.stringify({
@@ -42,7 +49,7 @@ export class DiscoveryScout {
     return this.calls.complete(
       context,
       brief.channelId,
-      ports.text,
+      text,
       {
         prompt,
         grounding: true,

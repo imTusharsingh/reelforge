@@ -107,3 +107,16 @@ timeout, partial ledger write, replay, or failed settlement retains held budget;
 retries inspect the M18 idempotency key and request correlation and require human
 reconciliation without resubmitting or assuming a refund. Replayed intent claims
 are rejected so concurrent workers cannot share preflight ownership.
+
+## Local aeneas installation
+
+On Debian-based hosts, install eSpeak and its development library alongside Python 3.10 with venv support. Use the same interpreter for API and worker preflight.
+
+```sh
+sudo apt install espeak libespeak-dev
+python3.10 -m venv ~/reelforge-alignment
+~/reelforge-alignment/bin/pip install numpy==1.26.4 setuptools==59.8.0 wheel
+AENEAS_WITH_CEW=False ~/reelforge-alignment/bin/pip install --no-build-isolation aeneas==1.7.3.0
+export ALIGNMENT_PYTHON_PATH="$HOME/reelforge-alignment/bin/python"
+export PYTHONIOENCODING=UTF-8
+```

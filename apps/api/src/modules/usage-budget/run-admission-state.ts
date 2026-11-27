@@ -131,6 +131,19 @@ export function hasSettledCharge(admission: Admission): boolean {
   );
 }
 
+export function terminalTextEligible(step: Step, admission: Admission): boolean {
+  return (
+    step.state === "RUNNING" &&
+    step.key.startsWith("media:text:") &&
+    !step.providerJobId &&
+    !jobIdFromAdmission(admission) &&
+    admission.request?.errorCode === OUTCOME_UNKNOWN &&
+    !!admission.reservation &&
+    ["RESERVED", "EXPIRED"].includes(admission.reservation.status) &&
+    admission.reservation.amountMinor === BigInt(step.costMinor ?? -1)
+  );
+}
+
 export function canRollback({ evidence }: Admission): boolean {
   return evidence === "never-dispatched" || evidence === "pending" || evidence === "rolled-back";
 }

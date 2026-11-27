@@ -100,7 +100,10 @@ export function clipMoney(
   const cap = mediaCatalog().find(
     (row) => row.kind === "VIDEO" && row.providerId === (fallback ? "xai" : "gemini"),
   )!;
-  const cost = secondsCost(shot.durationSeconds, cap.pricePerSecond["720p"]!);
+  const cost = secondsCost(
+    shot.durationSeconds < 0 ? shot.durationSeconds : Math.ceil(shot.durationSeconds * 1000) / 1000,
+    cap.pricePerSecond["720p"]!,
+  );
   // One generated keyframe, or first + last pinned frames for a continuity shot, plus channel refs.
   const images = (shot.references?.length ?? 0) + (shot.firstFrameFrom ? 2 : 1);
   return { ...cost, microUsd: cost.microUsd + (fallback ? images * imageSurcharge() : 0) };

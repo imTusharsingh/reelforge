@@ -2356,6 +2356,7 @@ model ChannelReport {
 // currency. Provider spend is NOT recorded here: usage views read the M08 provider_requests
 // ledger. Adjustments and audit records are append-only (enforced by database triggers).
 enum UsageCategory {
+  MUSIC
   LLM
   TTS
   IMAGE_MEDIA

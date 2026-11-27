@@ -21,7 +21,7 @@ export class GeminiText implements TextPort {
     spec: TextSpec<T>,
     key: string,
   ): Promise<{ output: T; providerJobId: string; usage: Record<string, unknown> }> {
-    if (!spec.prompt.trim()) throw new ProviderFailure("INVALID", false);
+    if (!key.trim() || !spec.prompt.trim()) throw new ProviderFailure("INVALID", false);
     const response = await this.client.result(
       {
         model: this.model,
@@ -32,17 +32,19 @@ export class GeminiText implements TextPort {
       },
       key,
     );
+    // Unstored sync completions may omit id. Correlate the terminal receipt with the
+    // original dispatch key; replaying a paid POST to obtain a remote id is unsafe.
+    const reference = typeof response.id === "string" && response.id.trim() ? response.id : key;
     try {
       return {
         ...this.parseResponse(response, spec.parse),
-        providerJobId: requiredString(response.id),
+        providerJobId: reference,
       };
     } catch (error) {
-      if (response.status !== "completed" || typeof response.id !== "string" || !response.id.trim())
-        throw error;
+      if (response.status !== "completed") throw error;
       const usage = response.usage;
       throw new InvalidCompletedText(
-        response.id,
+        reference,
         usage && typeof usage === "object" && !Array.isArray(usage) ? record(usage) : {},
       );
     }

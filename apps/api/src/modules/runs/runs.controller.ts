@@ -116,11 +116,23 @@ export class RunsController {
   }
   @Post(":id/steps/:stepId/abandon")
   public async abandon(
+    @Body() body: unknown,
     @Req() request: AuthenticatedRequest,
     @Param("id") id: string,
     @Param("stepId") stepId: string,
     @Query("workspaceId") workspaceId: string,
   ): Promise<void> {
+    const resolution = z
+      .object({ confirmedTerminalText: z.literal(true).optional() })
+      .strict()
+      .safeParse(body ?? {});
+    if (!resolution.success) throw new BadRequestException("Invalid abandon confirmation");
+    if (resolution.data.confirmedTerminalText)
+      return this.control.abandonTerminalText(
+        await this.context(request, workspaceId),
+        this.id(id),
+        this.id(stepId),
+      );
     await this.control.abandon(
       await this.context(request, workspaceId),
       this.id(id),

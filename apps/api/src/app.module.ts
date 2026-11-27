@@ -42,7 +42,7 @@ import { csrfMiddleware } from "./modules/identity/csrf.middleware.js";
 // CSRF is deliberately middleware so it protects every cookie-authenticated unsafe route.
 export class AppModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(csrfMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+    consumer.apply(csrfMiddleware).forRoutes({ path: "{*path}", method: RequestMethod.ALL });
   }
 }
 

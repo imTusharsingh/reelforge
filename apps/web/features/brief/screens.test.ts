@@ -3,6 +3,7 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceProvider } from "../../components/studio-workspace-context";
+import { ChannelOverview } from "./channel-overview";
 import { Onboarding } from "./onboarding";
 import { BriefEditor } from "./editor";
 import { ProviderHealth, ProviderSettings } from "./settings";
@@ -39,12 +40,17 @@ async function change(selector: string, value: string): Promise<void> {
 }
 async function submit(selector = "form"): Promise<void> {
   await act(async () =>
-    container
-      .querySelector(selector)!
-      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    container.querySelector(selector)!.dispatchEvent(
+      new SubmitEvent("submit", {
+        bubbles: true,
+        cancelable: true,
+        submitter: container.querySelector('button[value="queue"]'),
+      }),
+    ),
   );
 }
 beforeEach(() => {
+  history.replaceState(null, "", "/onboarding");
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   stub = setupStub();
   vi.stubGlobal("fetch", stub.fetch);
@@ -144,6 +150,52 @@ describe("V7 mounted screens", () => {
       narratorVoice: { language: "Italian" },
     });
   });
+  it("creates a channel with edited caps without queuing a paid run", async () => {
+    await render(createElement(Onboarding));
+    await submit();
+    expect(container.querySelector("#setup-audience")?.getAttribute("aria-invalid")).toBe("true");
+    await change("#setup-niche", "Science");
+    await change("#setup-audience", "Adults");
+    await submit();
+    expect(location.search).toBe("?step=voice");
+    expect(document.title).toContain("Voice");
+    expect(container.querySelectorAll("#setup-voice option").length).toBeGreaterThan(2);
+    await change("#setup-timezone", "Asia/Kolkata");
+    await submit();
+    expect(document.title).toContain("Confirm");
+    await change("#budget-targetMinor", "350");
+    await change("#budget-hardCapMinor", "400");
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[type="submit"]:not([value])')!.click(),
+    );
+    expect(stub.calls.some((call) => call.path.endsWith("/runs"))).toBe(false);
+    expect(container.textContent).toContain("channel and Brief are saved");
+    expect(stub.versions[0]).toMatchObject({
+      budgetPolicy: { hardCapMinor: 400 },
+      cadence: { timezone: "Asia/Kolkata" },
+    });
+  });
+  it("opens the channel overview with a scoped link to its Brief", async () => {
+    await render(createElement(ChannelOverview, { channelId }));
+    expect(container.querySelector("h1")?.textContent).toBe("Channel overview");
+    expect(container.textContent).toContain("45-second Shorts in English");
+    expect(container.querySelector("a")?.getAttribute("href")).toBe(`/channels/${channelId}/brief`);
+  });
+  it("discards edits including multiline drafts", async () => {
+    await render(createElement(BriefEditor, { channelId }));
+    await change("#palette", "red\n");
+    await change("#brief-topic", "Different");
+    await act(async () =>
+      Array.from(container.querySelectorAll("button"))
+        .find((b) => b.textContent === "Discard changes")!
+        .click(),
+    );
+    expect(container.querySelector<HTMLInputElement>("#brief-topic")!.value).toBe(brief.topic);
+    expect(container.querySelector<HTMLTextAreaElement>("#palette")!.value).toBe(
+      brief.styleBible.palette.join("\n"),
+    );
+    expect(stub.versions).toHaveLength(1);
+  });
   it("checks the audience step before advancing or writing setup data", async () => {
     await render(createElement(Onboarding));
     await change("#setup-niche", "Science");
@@ -183,15 +235,15 @@ describe("V7 mounted screens", () => {
   it("blocks native submission on an invalid legacy pace until corrected", async () => {
     stub.versions[0]!.narratorVoice!.pace = 3;
     await render(createElement(BriefEditor, { channelId }));
-    const field = container.querySelector<HTMLTextAreaElement>("#json-narratorVoice")!;
+    const field = container.querySelector<HTMLTextAreaElement>("#narrator-pace")!;
     const form = container.querySelector("form")!;
-    expect(field.validity.customError).toBe(true);
-    expect(field.validationMessage).toBe("Narrator pace must be between 0.5 and 2.");
+    expect(field.validity.rangeOverflow).toBe(true);
+    expect(container.textContent).toContain("Narrator pace must be between 0.5 and 2.");
     await change("#brief-topic", "Space");
     await act(async () => form.requestSubmit());
     expect(stub.versions).toHaveLength(1);
     expect(container.textContent).not.toContain("Brief was not saved");
-    await change("#json-narratorVoice", JSON.stringify({ ...brief.narratorVoice, pace: 1 }));
+    await change("#narrator-pace", "1");
     expect(field.validity.customError).toBe(false);
     await act(async () => form.requestSubmit());
     expect(stub.versions[0]).toMatchObject({
@@ -225,22 +277,16 @@ describe("V7 mounted screens", () => {
     await change("#topicsToAvoid", "Breaking news");
     await change("#fact-check", "STANDARD");
     await change("#json-constraints", '{"original":true}');
-    await change("#json-narratorVoice", JSON.stringify({ ...brief.narratorVoice, pace: 3 }));
+    await change("#narrator-pace", "3");
     expect(container.textContent).toContain("Narrator pace must be between 0.5 and 2.");
-    expect(
-      container.querySelector<HTMLTextAreaElement>("#json-narratorVoice")!.validity.valid,
-    ).toBe(false);
-    await change("#json-narratorVoice", "{");
-    expect(container.textContent).toContain("valid JSON");
-    await change("#json-narratorVoice", JSON.stringify(brief.narratorVoice));
-    await submit();
-    expect(container.textContent).toContain("Brief was not saved");
-    expect(stub.versions).toEqual([brief]);
-
-    await change(
-      "#json-narratorVoice",
-      JSON.stringify({ ...brief.narratorVoice, language: "Hindi" }),
+    expect(container.querySelector<HTMLTextAreaElement>("#narrator-pace")!.validity.valid).toBe(
+      false,
     );
+    await change("#narrator-pace", "1");
+    await change("#target-duration", "30");
+    await change("#palette", "red\n");
+    expect(container.querySelector<HTMLTextAreaElement>("#palette")!.value).toBe("red\n");
+    await change("#palette", "red\nblue");
     await submit();
     expect(container.textContent).toContain("Saved immutable Brief version 2");
     expect(stub.versions).toHaveLength(2);
@@ -248,6 +294,8 @@ describe("V7 mounted screens", () => {
     expect(stub.versions[0]).toMatchObject({
       version: 2,
       topic: "Space",
+      targetDurationSeconds: 30,
+      styleBible: { palette: ["red", "blue"] },
       narrationLanguage: "Hindi",
       languages: { narration: "Hindi" },
       narratorVoice: { language: "Hindi" },

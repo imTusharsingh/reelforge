@@ -1,3 +1,4 @@
+import { SessionLockBusy } from "../runs/session-lock.js";
 import { isRenderStage, terminalRenderFailure } from "../runs/run-render-stage.js";
 import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
@@ -76,6 +77,7 @@ export class VideoRunEngine {
     const job = RunJobSchema.parse(payload);
     const context = await this.context(job);
     const run = await this.runs.store.get(context, job.runId);
+    if (job.stage && job.stage !== run.state) return null;
     return runWithContext(
       createContext({
         workspaceId: run.workspaceId,
@@ -130,6 +132,7 @@ export class VideoRunEngine {
     run: Run,
     error: unknown,
   ): Promise<number | null> {
+    if (error instanceof SessionLockBusy) return 12000;
     if (error instanceof AssemblyInterrupted) return error.delay;
     const rejected = isRenderStage(run.state) && savedCaptionRejection(error);
     if (rejected) return pauseRejectedAssembly(this.runs, context, run, rejected);

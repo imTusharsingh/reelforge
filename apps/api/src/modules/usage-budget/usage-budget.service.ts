@@ -56,24 +56,11 @@ import {
 } from "./usage-budget.validation.js";
 
 import { budgetExposure } from "./usage-budget.exposure.js";
+import { admissionBudgets, displayBudgets, type BudgetRecord } from "./effective-budgets.js";
 import type { ChannelBrief } from "@reelforge/contracts";
 
 type Tx = Prisma.TransactionClient;
 type Client = Database | Tx;
-
-type BudgetRecord = Readonly<{
-  id: string;
-  workspaceId: string;
-  channelId: string | null;
-  scopeKey: string;
-  currency: string;
-  dailyLimitMinor: bigint | null;
-  monthlyLimitMinor: bigint | null;
-  timezone: string;
-  version: number;
-  createdAt: Date;
-  updatedAt: Date;
-}>;
 
 type ReservationRecord = Readonly<{
   id: string;
@@ -215,7 +202,12 @@ export class UsageBudgetService {
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const now = this.clock();
-    return this.statuses(this.db, budgets, now);
+    return displayBudgets(
+      this.db,
+      context.workspaceId,
+      budgets,
+      await this.statuses(this.db, budgets, now),
+    );
   }
 
   /** OWNER only: create a budget or change its limits; writes one append-only audit record. */
@@ -407,7 +399,7 @@ export class UsageBudgetService {
       await this.expireReservations(tx, now, workspaceId);
       // Re-read under the lock: a concurrent limit change must be seen.
       const budgets = await this.applicableBudgets(tx, workspaceId, channelId);
-      for (const budget of this.admissionBudgets(budgets, brief))
+      for (const budget of admissionBudgets(budgets, brief))
         await this.checkRoom(tx, budget, now, input);
       const created = await tx.usageReservation.create({
         data: {
@@ -445,24 +437,6 @@ export class UsageBudgetService {
         });
       return this.replay(winner, input);
     }
-  }
-
-  private admissionBudgets(
-    budgets: BudgetRecord[],
-    brief?: ChannelBrief["budgetPolicy"],
-  ): BudgetRecord[] {
-    if (!brief) return budgets;
-    const workspace = budgets.find((budget) => !budget.channelId);
-    const tighter = (configured: bigint | null, pinned: number): bigint =>
-      configured !== null && configured < BigInt(pinned) ? configured : BigInt(pinned);
-    const effective = {
-      ...(workspace ?? budgets[0]!),
-      channelId: null,
-      timezone: workspace?.timezone ?? "UTC",
-      dailyLimitMinor: tighter(workspace?.dailyLimitMinor ?? null, brief.dailyLimitMinor),
-      monthlyLimitMinor: tighter(workspace?.monthlyLimitMinor ?? null, brief.monthlyLimitMinor),
-    };
-    return [effective, ...budgets.filter((budget) => budget.channelId)];
   }
 
   private async checkRoom(
@@ -762,7 +736,6 @@ export class UsageBudgetService {
       totals.addReservation(reservation);
     for (const adjustment of await this.db.usageAdjustment.findMany({ where: scope }))
       totals.addAdjustment(adjustment);
-    const budgets = await this.applicableBudgets(this.db, context.workspaceId, channelId);
     return {
       workspaceId: context.workspaceId,
       channelId,
@@ -773,8 +746,27 @@ export class UsageBudgetService {
       periodEnd: bounds.end.toISOString(),
       totals: totals.view(),
       categoriesWithoutLedgerSource: CATEGORIES_WITHOUT_LEDGER_SOURCE,
-      budgets: await this.statuses(this.db, budgets, now),
+      budgets: await this.summaryBudgets(context, channelId, now),
     };
+  }
+
+  private async summaryBudgets(
+    context: WorkspaceContext,
+    channelId: string | null,
+    now: Date,
+  ): Promise<BudgetStatusView[]> {
+    const budgets = await this.db.usageBudget.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        ...(channelId && { OR: [{ channelId: null }, { channelId }] }),
+      },
+    });
+    const statuses = await this.statuses(
+      this.db,
+      channelId ? budgets : budgets.filter((b) => !b.channelId),
+      now,
+    );
+    return displayBudgets(this.db, context.workspaceId, budgets, statuses, channelId);
   }
 
   public async channelUsage(

@@ -58,7 +58,7 @@ function RunGallery({
               <StudioLink className="rf-button rf-button--secondary" href="/runs/usage">
                 Run usage
               </StudioLink>
-              {editable && <NewShort />}
+              {editable && <NewShort onQueued={retry} />}
             </>
           )
         }
@@ -109,7 +109,7 @@ function RunCards({
           <p>
             {inbox
               ? "Shorts that need attention will appear here."
-              : "Create a Channel Brief to queue your first Short."}
+              : "Choose New Short to queue a run from a saved Channel Brief."}
           </p>
         </EmptyState>
       )}

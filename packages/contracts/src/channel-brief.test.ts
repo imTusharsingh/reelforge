@@ -19,10 +19,10 @@ describe("V7 Brief defaults and boundary", () => {
     const brief = defaultBrief(input);
     expect(brief.budgetPolicy).toEqual({
       currency: "USD",
-      targetMinor: 600,
-      hardCapMinor: 800,
-      dailyLimitMinor: 2000,
-      monthlyLimitMinor: 18000,
+      targetMinor: 500,
+      hardCapMinor: 550,
+      dailyLimitMinor: 550,
+      monthlyLimitMinor: 16500,
     });
     expect(brief.requestedAutonomy).toBe("L2");
     expect(brief.formatMix.map((item) => item.formatKey)).toEqual([...BRIEF_FORMATS]);

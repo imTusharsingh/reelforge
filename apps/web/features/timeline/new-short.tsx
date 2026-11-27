@@ -14,7 +14,7 @@ import { PublishingScope } from "../publishing/session";
 
 type QueuedAttempt = { key: string; brief: ChannelBrief };
 
-export function NewShort(): JSX.Element {
+export function NewShort({ onQueued }: { onQueued?: () => void }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const cycle = useRef(0);
@@ -50,6 +50,7 @@ export function NewShort(): JSX.Element {
                   openedCycle={openedCycle}
                   cycle={cycle}
                   inFlight={inFlight}
+                  onQueued={onQueued}
                   onBusy={setLocked}
                 />
               )}
@@ -68,12 +69,14 @@ function QueueShort({
   cycle,
   inFlight,
   onBusy,
+  onQueued,
 }: {
   channel: Channel;
   attempts: Map<string, QueuedAttempt>;
   openedCycle: number;
   cycle: { current: number };
   inFlight: { current: boolean };
+  onQueued: (() => void) | undefined;
   onBusy: (busy: boolean) => void;
 }): JSX.Element {
   const [busy, setBusy] = useState(false);
@@ -92,6 +95,7 @@ function QueueShort({
       const id = await submitScopedAttempt(channel, attempts, scope);
       // Reopening while the same request is in flight must not discard its result.
       setQueued({ id, cycle: cycle.current });
+      onQueued?.();
     } catch (cause) {
       // This specific server rejection means no run exists for the pinned Brief.
       if (cause instanceof UnsupportedNarrationLanguageError) attempts.delete(scope);

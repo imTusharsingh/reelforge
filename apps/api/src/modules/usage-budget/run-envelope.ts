@@ -13,7 +13,7 @@ import {
 } from "@reelforge/contracts";
 
 import { z } from "zod";
-import type { Run, Scoped } from "../runs/runs.types.js";
+import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
 const snapshotPolicy = z.object({ brief: z.object({ budgetPolicy: BudgetPolicySchema }) });
 export function pinnedBudget(run: Run): ChannelBrief["budgetPolicy"] {
@@ -41,14 +41,19 @@ export async function assertPaidRunLimits(
     },
   });
   await assertSavedCaptionAdmission(db, run, claims);
-  const cumulative = claims.reduce((total, claim) => {
-    const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
-    const covered = (claim.costMinor ?? 0) + (retained ?? 0);
-    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0);
-  }, amount);
+  const cumulative = amount + claimedRunCost(claims);
   if (cumulative > pinnedBudget(run).hardCapMinor)
     throw new ConflictException({ code: "BUDGET_CAP", message: "BUDGET_CAP" });
   return cumulative;
+}
+
+export function claimedRunCost(steps: Step[]): number {
+  return steps.reduce((total, claim) => {
+    if (claim.state === "CANCELLED") return total;
+    const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
+    const covered = (claim.costMinor ?? 0) + (retained ?? 0);
+    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0);
+  }, 0);
 }
 
 export type Estimate = Pick<BudgetEnvelope, "baseEstimateMinor" | "reshootReserveMinor" | "route">;

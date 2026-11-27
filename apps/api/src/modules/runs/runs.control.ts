@@ -1,3 +1,6 @@
+import { RunPaidCalls } from "../usage-budget/run-paid.js";
+import { finalizeFailed } from "../usage-budget/run-paid-failure.js";
+import { ForbiddenException } from "@nestjs/common";
 import { terminalRenderFailure } from "./run-render-stage.js";
 import { rearmDeniedKeyframes } from "./run-keyframe-budget-recovery.js";
 import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
@@ -31,6 +34,7 @@ export class RunsControl {
   public constructor(
     private readonly runs: RunsService,
     private readonly boundary: RunsBoundary,
+    private readonly paid: RunPaidCalls,
   ) {}
   public async approve(context: Context, id: string): Promise<void> {
     this.runs.editor(context);
@@ -139,6 +143,23 @@ export class RunsControl {
       return { value: null, payload: { from: run.state, to: "CANCELED" } };
     });
     await this.runs.events?.publish(result.event);
+  }
+  public async abandonTerminalText(context: Context, id: string, stepId: string): Promise<void> {
+    if (context.role !== "OWNER") throw new ForbiddenException("Workspace owner required");
+    const step = await this.runs.store.scoped(context).videoRunStep.findFirst({
+      where: { id: stepId, runId: id, key: { startsWith: "media:text:" }, providerJobId: null },
+    });
+    if (!step) throw new ConflictException("Unknown text attempt");
+    const event = await finalizeFailed(
+      this.runs.store,
+      this.paid,
+      context,
+      step,
+      "OWNER_CONFIRMED_TERMINAL_TEXT",
+      "Owner confirmed the call ended without recoverable output",
+      true,
+    );
+    await this.runs.events?.publish(event);
   }
   public async abandon(context: Context, id: string, stepId: string): Promise<void> {
     this.runs.editor(context);

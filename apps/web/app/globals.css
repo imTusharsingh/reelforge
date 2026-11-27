@@ -1424,3 +1424,14 @@ td {
     animation: none;
   }
 }
+
+.rf-run-status-space {
+  block-size: 6rem;
+  overflow: auto;
+}
+
+@media (max-width: 48rem) {
+  .rf-run-status-space {
+    block-size: 8rem;
+  }
+}

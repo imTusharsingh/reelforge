@@ -138,7 +138,7 @@ export function runsFixture(maxConnections?: number): {
       const planning = new RunPlanning(runs, outputs);
       planning.handlers = fixtureStageHandlers;
       const engine = new VideoRunEngine(runs, boundary, generation, planning, artifacts);
-      const control = new RunsControl(runs, boundary);
+      const control = new RunsControl(runs, boundary, paid);
       const run = await runs.create(context, briefId, randomUUID());
       if (seedShots)
         await db.shotSpec.createMany({

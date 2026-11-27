@@ -17,6 +17,8 @@ describe("V7 contracts bundling", () => {
   });
   it("resolves the V1 ESM specifier to the original TypeScript source for the web bundle", async () => {
     const config = nextConfig(PHASE_DEVELOPMENT_SERVER);
+    expect(config.agentRules).toBe(false);
+    expect(config.devIndicators).toBe(false);
     expect(config.turbopack?.resolveAlias).toEqual({
       "./foundations.js": "../../packages/contracts/src/foundations.ts",
       "./brief-consistency.js": "../../packages/contracts/src/brief-consistency.ts",

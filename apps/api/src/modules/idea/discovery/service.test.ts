@@ -12,6 +12,8 @@ function fixture(): {
     workspaceMembership: { findFirst: ReturnType<typeof vi.fn> };
   };
 } {
+  vi.stubEnv("DISCOVERY_ENABLED", "true");
+  vi.stubEnv("DISCOVERY_TEXT_ESTIMATE_USD", "0.17");
   const brief = briefFixture();
   const store = {
     brief: vi.fn().mockResolvedValue(brief),
@@ -22,6 +24,7 @@ function fixture(): {
     failure: vi.fn().mockResolvedValue(undefined),
   };
   const scout = {
+    textPort: vi.fn().mockResolvedValue({}),
     discover: vi
       .fn()
       .mockResolvedValue([candidateFixture(), candidateFixture("What makes stars shine")]),
@@ -82,6 +85,20 @@ describe("V10 autonomous scheduled discovery", () => {
     const calls = scout.discover.mock.calls.length;
     await service.scheduledTick(now);
     expect(scout.discover).toHaveBeenCalledTimes(calls);
+  });
+  it("skips disabled schedules and leaves unconfigured days and quota available", async () => {
+    const { service, db, store, scout } = fixture();
+    vi.stubEnv("DISCOVERY_ENABLED", "false");
+    await service.scheduledTick(now);
+    expect(db.channel.findMany).not.toHaveBeenCalled();
+    vi.stubEnv("DISCOVERY_ENABLED", "true");
+    vi.stubEnv("DISCOVERY_TEXT_ESTIMATE_USD", "");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await service.scheduledTick(now);
+    expect(log).toHaveBeenCalled();
+    await expect(service.tick(context, channelId)).rejects.toThrow("DISCOVERY_TEXT_ESTIMATE_USD");
+    expect(store.claim).not.toHaveBeenCalled();
+    expect(scout.discover).not.toHaveBeenCalled();
   });
   it("uses the Brief timezone at day boundaries", () => {
     expect(discoverySlot(new Date("2026-11-16T20:00:00Z"), "Asia/Kolkata")).toBe("2026-11-17");

@@ -62,6 +62,19 @@ export function pauseLabel(reason: string): string {
 export function runPauseLabel(detail: RunDetailView): string {
   const reason = detail.run.pauseReason;
   if (!reason || reason === "PUBLISH_DRY_RUN") return "";
+  if (reason.startsWith("RECONCILE_REQUIRED: provider submission outcome unknown")) {
+    const step = detail.steps.find((step) => reason.includes(step.id));
+    const estimate =
+      step?.costMinor == null
+        ? "The reservation is held"
+        : `${dollars(step.costMinor)} is reserved`;
+    return (
+      `The provider may have billed this attempt. ${estimate} until the outcome is confirmed. Check provider billing before taking action.` +
+      (step?.confirmTerminalText
+        ? " Once the call has ended, a workspace owner can book the estimate and close this run. It will not retry automatically."
+        : "")
+    );
+  }
   if (reason !== "SAVED_CAPTION_PLAN_UNUSABLE") return pauseLabel(reason);
   const failure = detail.steps.findLast(
     (step) => step.key === detail.run.state && step.state === "FAILED",

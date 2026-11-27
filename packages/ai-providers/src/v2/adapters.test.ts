@@ -5,7 +5,7 @@ import { ProviderHttp } from "./http.js";
 import { Interactions } from "./interactions.js";
 import { OmniVideo, GrokVideo } from "./video.js";
 import { NanoBanana, GeminiTts, LyriaMusic } from "./media.js";
-import { GeminiText } from "./text.js";
+import { GeminiText, InvalidCompletedText } from "./text.js";
 import { artifact, catalog, completed, json, shot } from "./provider.fixture.js";
 
 function fixture(): {
@@ -217,7 +217,6 @@ describe("Gemini structured multimodal text", () => {
     const { client, fetcher } = fixture();
     const port = new GeminiText(client, "configured-text");
     const response = {
-      id: "text-job",
       status: "completed",
       usage: { input_tokens: 10 },
       steps: [{ type: "model_output", content: [{ type: "text", text: '{"score":8}' }] }],
@@ -238,7 +237,7 @@ describe("Gemini structured multimodal text", () => {
     fetcher.mockResolvedValueOnce(json(response));
     expect(await port.complete(spec, "key")).toMatchObject({
       output: { score: 8 },
-      providerJobId: "text-job",
+      providerJobId: "key",
     });
     expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toMatchObject({
       background: false,
@@ -257,6 +256,8 @@ describe("Gemini structured multimodal text", () => {
     });
     expect(await port.poll("job")).toBe("queued");
     expect(await port.fetch("job", spec.parse)).toMatchObject({ output: { score: 8 } });
+    fetcher.mockResolvedValueOnce(json({ ...response, steps: [] }));
+    await expect(port.complete(spec, "key")).rejects.toBeInstanceOf(InvalidCompletedText);
     fetcher.mockResolvedValueOnce(json({ status: "refused" }));
     await expect(port.complete(spec, "key")).rejects.toMatchObject({ kind: "REFUSAL" });
     fetcher.mockResolvedValueOnce(json(response));
@@ -272,7 +273,7 @@ describe("Gemini structured multimodal text", () => {
       ),
     ).rejects.toMatchObject({
       kind: "INVALID",
-      providerJobId: "text-job",
+      providerJobId: "key",
       usage: { input_tokens: 10 },
     });
     fetcher.mockResolvedValueOnce(
@@ -285,7 +286,7 @@ describe("Gemini structured multimodal text", () => {
       name: "Error",
       kind: "INVALID",
       dispatched: true,
-      providerJobId: "text-job",
+      providerJobId: "key",
       usage: { input_tokens: 10 },
     });
     fetcher.mockRejectedValueOnce(new Error("timeout"));

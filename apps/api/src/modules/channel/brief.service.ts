@@ -14,7 +14,8 @@ import {
   autonomyPolicy,
   type ChannelBrief,
 } from "@reelforge/contracts";
-import { foundationWorkspaceGuard } from "@reelforge/database";
+import { Prisma, foundationWorkspaceGuard } from "@reelforge/database";
+import { scopedTransaction } from "../runs/runs.transaction.js";
 import { BriefApprovals } from "./brief-approvals.js";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 
@@ -64,15 +65,27 @@ export class BriefService {
     });
     // The unique workspace/channel/version index rejects concurrent stale appends.
     try {
-      await scoped.channelBrief.create({
-        data: {
-          id: document.id,
-          workspaceId: context.workspaceId,
-          channelId,
-          version: document.version,
-          schemaVersion: document.schemaVersion,
-          document,
-        },
+      await this.db.$transaction(async (tx) => {
+        await scopedTransaction(tx, context).channelBrief.create({
+          data: {
+            id: document.id,
+            workspaceId: context.workspaceId,
+            channelId,
+            version: document.version,
+            schemaVersion: document.schemaVersion,
+            document,
+          },
+        });
+        await tx.channel.update({
+          where: { id: channelId, workspaceId: context.workspaceId },
+          data: {
+            niche: document.niche,
+            audience: document.audience,
+            language: document.languages.script,
+            timezone: document.cadence.timezone,
+            narratorVoice: document.narratorVoice ?? Prisma.DbNull,
+          },
+        });
       });
     } catch (error) {
       if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002")

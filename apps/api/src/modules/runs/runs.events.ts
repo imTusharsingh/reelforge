@@ -8,6 +8,33 @@ import type { RunsStore } from "./runs.store.js";
 /** Postgres is the replay log. Redis is a wake-up signal, never the ordering authority. */
 export class RunsEvents {
   private readonly publisher: Redis;
+  private subscriber?: Redis;
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  private watch(channel: string, drain: () => void): () => void {
+    if (!this.subscriber) {
+      this.subscriber = this.publisher.duplicate();
+      this.subscriber.on("error", () => undefined);
+      this.subscriber.on("message", (name: string) => {
+        for (const wake of this.listeners.get(name) ?? []) wake();
+      });
+    }
+    let listeners = this.listeners.get(channel);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(channel, listeners);
+      void this.subscriber.subscribe(channel).then(drain, drain);
+    }
+    listeners.add(drain);
+    drain();
+    return () => {
+      listeners.delete(drain);
+      if (!listeners.size) {
+        this.listeners.delete(channel);
+        void this.subscriber?.unsubscribe(channel).catch(() => undefined);
+      }
+    };
+  }
   public constructor(
     private readonly store: RunsStore,
     redisUrl: string,
@@ -23,16 +50,21 @@ export class RunsEvents {
   }
   public stream(context: Context, runId: string, after: number): Observable<MessageEvent> {
     return new Observable((subscriber) => {
-      const redis = this.publisher.duplicate();
+      let pending = false;
       let cursor = after,
         draining = false,
         closed = false;
       const drain = async (): Promise<void> => {
-        if (closed || draining) return;
+        if (closed) return;
+        if (draining) {
+          pending = true;
+          return;
+        }
         draining = true;
         try {
           let batch: Event[];
           do {
+            pending = false;
             batch = await this.store.events(context, runId, cursor);
             for (const event of batch) {
               if (closed) return;
@@ -43,25 +75,21 @@ export class RunsEvents {
               });
               cursor = event.sequence;
             }
-          } while (batch.length === 500);
+          } while (!closed && (pending || batch.length === 500));
         } catch (error) {
           subscriber.error(error);
         } finally {
           draining = false;
         }
       };
-      redis.on("error", () => undefined);
-      redis.on("message", () => {
-        void drain();
-      });
-      void redis.subscribe(`runs:${context.workspaceId}:${runId}`).then(drain).catch(drain);
-      const timer = setInterval(() => {
-        void drain();
-      }, 1000);
+      const unwatch = this.watch(`runs:${context.workspaceId}:${runId}`, () => void drain());
+      const heartbeat = setInterval(() => subscriber.next({ comment: "keepalive" }), 15000);
+      const fallback = setInterval(() => void drain(), 30000);
       return (): void => {
         closed = true;
-        clearInterval(timer);
-        redis.disconnect();
+        clearInterval(heartbeat);
+        clearInterval(fallback);
+        unwatch();
       };
     });
   }
@@ -80,6 +108,7 @@ export class RunsEvents {
     });
   }
   public async close(): Promise<void> {
+    this.subscriber?.disconnect();
     this.publisher.disconnect();
   }
 }

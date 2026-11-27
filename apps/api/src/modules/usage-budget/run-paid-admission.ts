@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { clearResolvedSubmissionHold, submissionHold } from "../runs/run-outcomes.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
+import { runStepCategory } from "./usage-budget.types.js";
 import type { UsageBudgetService } from "./usage-budget.service.js";
 
 export class SubmissionOutcomeUnknown extends ConflictException {}
@@ -143,7 +144,7 @@ async function holdAmbiguousAdmission(
         ...where,
         channelId: run.channelId,
         providerId: step.providerId ?? "unconfigured",
-        capabilityId: "video",
+        capabilityId: runStepCategory(step.key).toLowerCase(),
         status: "FAILED",
         errorCode: OUTCOME_UNKNOWN,
         ...unknownPrice(admission, step),
@@ -236,7 +237,7 @@ export async function recordReservation(
 ): Promise<void> {
   const request = {
     providerId: step.providerId ?? "v3-stub",
-    capabilityId: "video",
+    capabilityId: runStepCategory(step.key).toLowerCase(),
     status: "FAILED" as const,
     estimatedCost: amount / 100,
     actualCost: null,

@@ -1,10 +1,10 @@
-import { Controller, Get, Module, Post, RequestMethod } from "@nestjs/common";
+import { Controller, Get, Module, Post } from "@nestjs/common";
 import type { MiddlewareConsumer, NestModule } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { csrfMiddleware } from "./csrf.middleware.js";
+import { AppModule } from "../../app.module.js";
 
 @Controller()
 class FixtureController {
@@ -25,7 +25,7 @@ class FixtureController {
 @Module({ controllers: [FixtureController] })
 class FixtureModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(csrfMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+    new AppModule().configure(consumer);
   }
 }
 

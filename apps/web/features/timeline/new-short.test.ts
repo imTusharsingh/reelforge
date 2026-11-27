@@ -67,8 +67,10 @@ function transport(reply: (index: number) => Response | Promise<Response>): {
   };
 }
 
-async function mount(): Promise<void> {
-  await act(async () => root.render(createElement(NewShort)));
+async function mount(onQueued?: () => void): Promise<void> {
+  await act(async () =>
+    root.render(createElement<{ onQueued?: () => void }>(NewShort, onQueued ? { onQueued } : {})),
+  );
   const dialog = host.querySelector("dialog")!;
   Object.defineProperties(dialog, {
     showModal: { value: (): void => dialog.setAttribute("open", "") },
@@ -97,7 +99,8 @@ it("queues a second Short against the latest brief after reopening a confirmed s
   const f = transport((index) =>
     Response.json({ id: index === 1 ? runId : runB }, { status: 202 }),
   );
-  await mount();
+  const onQueued = vi.fn();
+  await mount(onQueued);
   await click("New Short");
   await click("Queue Short");
   expect(host.querySelector(`a[href="/runs/${runId}"]`)).not.toBeNull();
@@ -110,6 +113,7 @@ it("queues a second Short against the latest brief after reopening a confirmed s
   expect(f.attempts.map(({ channelBriefId }) => channelBriefId)).toEqual([brief.id, newerBrief.id]);
   expect(f.attempts[0]?.idempotencyKey).not.toBe(f.attempts[1]?.idempotencyKey);
   expect(f.briefReads()).toBe(2);
+  expect(onQueued).toHaveBeenCalledTimes(2);
 });
 
 it("retries an ambiguous request with its original key and brief after reopening", async () => {

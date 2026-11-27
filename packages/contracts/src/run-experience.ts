@@ -43,6 +43,8 @@ export const RunDetailViewSchema = z.object({
       id: z.uuid(),
       key: z.string(),
       attempt: z.int(),
+      confirmTerminalText: z.boolean().optional(),
+      awaitingReconciliation: z.boolean().optional(),
       state: VideoRunStepStateSchema,
       costMinor: z.number().nullable(),
       providerId: z.string().nullable(),
@@ -51,7 +53,11 @@ export const RunDetailViewSchema = z.object({
       error: z.unknown().optional(),
     }),
   ),
-  envelope: z.object({ spentMinor: z.int(), hardCapMinor: z.int() }).nullable(),
+  remainingBudgetMinor: z.int().nonnegative().optional(),
+  pinnedHardCapMinor: z.int().nonnegative().optional(),
+  envelope: z
+    .object({ spentMinor: z.int(), reservedMinor: z.int().optional(), hardCapMinor: z.int() })
+    .nullable(),
   artifactUrls: z.array(
     z.object({
       stepId: z.uuid(),
@@ -73,6 +79,28 @@ export const RunAutonomyStatusSchema = z.object({
   samples: z.int(),
   recommended: z.boolean(),
 });
+export const EffectiveCapsViewSchema = z
+  .array(
+    z.object({
+      effectiveBriefCaps: z
+        .array(
+          z.object({
+            channelId: z.uuid(),
+            name: z.string(),
+            dailyLimitMinor: z.int().nonnegative(),
+            monthlyLimitMinor: z.int().nonnegative(),
+          }),
+        )
+        .optional(),
+    }),
+  )
+  .transform((rows) =>
+    Array.from(
+      new Map(
+        rows.flatMap((row) => row.effectiveBriefCaps ?? []).map((cap) => [cap.channelId, cap]),
+      ).values(),
+    ),
+  );
 export const RunUsageSchema = z.object({
   shorts: z.array(z.object({ runId: z.uuid(), costMinor: z.int() })),
   providers: z.array(z.object({ providerId: z.string(), costMinor: z.int() })),
