@@ -40,7 +40,7 @@ export function ProgressStream({
             return (
               <li key={state} aria-current={current ? "step" : undefined}>
                 {!current &&
-                  detail.steps.some((step) => step.key === state && step.state === "SUCCEEDED") &&
+                  (detail.completedStages?.includes(state) ?? detail.steps.some((step) => step.key === state && step.state === "SUCCEEDED")) &&
                   "✓ "}
                 {simulated ? "Publish simulated (dry run)" : label}
               </li>

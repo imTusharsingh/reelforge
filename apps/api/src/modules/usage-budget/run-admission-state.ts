@@ -61,10 +61,10 @@ export const textResultSchema = z.object({
 });
 
 export function attachedTextResult(
-  step: Pick<Step, "output" | "providerJobId">,
+  step: Pick<Step, "output" | "providerJobId" | "idempotencyKey">,
 ): z.infer<typeof textResultSchema> | null {
   const result = textResultSchema.safeParse(step.output);
-  return result.success && result.data.providerJobId === step.providerJobId ? result.data : null;
+  return result.success && (result.data.providerJobId === step.providerJobId || result.data.providerJobId === step.idempotencyKey) ? result.data : null;
 }
 
 function classify(

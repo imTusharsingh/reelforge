@@ -91,6 +91,35 @@ describe("V7 mounted screens", () => {
     ).toHaveLength(before);
     expect(container.textContent).toContain("first Short is queued");
   });
+  it("reuses the committed queue POST after losing its response and remounting Confirm", async () => {
+    const created = new Map<string, string>();
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(url).endsWith("/runs")) return stub.fetch(url, init);
+      const body=String(init?.body);
+      const {idempotencyKey} = JSON.parse(body) as {idempotencyKey:string};
+      requests.push(body);
+      if (!created.has(idempotencyKey)) {
+        created.set(idempotencyKey,crypto.randomUUID());
+        throw new TypeError("Response lost after commit");
+      }
+      return Response.json({id:created.get(idempotencyKey)},{status:202});
+    });
+    const workspace = {id:workspaceId,name:"Science",role:"OWNER" as const};
+    await render(createElement(Onboarding,{workspace}));
+    await change("#setup-niche","Science");
+    await change("#setup-audience","Adults");
+    await submit(); await submit(); await submit();
+    expect(location.search).toBe("?step=confirm");
+    await render(null);
+    await render(createElement(Onboarding,{workspace}));
+    await submit();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toBe(requests[0]);
+    expect(created.size).toBe(1);
+    for (const suffix of ["/channels","/briefs"]) expect(stub.calls.filter(c=>c.method==="POST" && c.path.endsWith(suffix))).toHaveLength(1);
+    expect(container.textContent).toContain("first Short is queued");
+  });
   it("repairs a saved unsupported language without recreating the workspace or channel", async () => {
     const attempts: { channelBriefId: string; idempotencyKey: string }[] = [];
     let correctedUnavailable = true;
@@ -231,6 +260,15 @@ describe("V7 mounted screens", () => {
     stub.fail = true;
     await render(createElement(ProviderHealth, { key: "reload" }));
     expect(container.textContent).toContain("Health unavailable");
+  });
+  it("saves an unrelated topic edit with a valid fractional narrator pace", async () => {
+    stub.versions[0]!.narratorVoice!.pace=0.875;
+    await render(createElement(BriefEditor,{channelId}));
+    await change("#brief-topic","Space");
+    const form=container.querySelector("form")!;
+    expect(form.checkValidity()).toBe(true);
+    await act(async()=>form.requestSubmit());
+    expect(stub.versions[0]).toMatchObject({version:2,topic:"Space",narratorVoice:{pace:0.875}});
   });
   it("blocks native submission on an invalid legacy pace until corrected", async () => {
     stub.versions[0]!.narratorVoice!.pace = 3;

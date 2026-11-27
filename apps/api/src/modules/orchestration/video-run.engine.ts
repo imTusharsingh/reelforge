@@ -1,3 +1,4 @@
+import { recoverTextDispatches } from "../usage-budget/text-dispatch-recovery.js";
 import { SessionLockBusy } from "../runs/session-lock.js";
 import { isRenderStage, terminalRenderFailure } from "../runs/run-render-stage.js";
 import { assemblyFailure } from "../composition/local-assembly-failure.js";
@@ -342,6 +343,7 @@ export class VideoRunEngine {
         userId: RECOVERY_PRINCIPAL,
         role: "OWNER",
       };
+      await recoverTextDispatches(this.runs.store, context);
       await this.artifacts.sweep(context);
       const db = this.runs.store.scoped(context);
       await this.enqueuePendingCorrections(context, db);

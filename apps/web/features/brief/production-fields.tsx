@@ -42,7 +42,7 @@ function VoiceFields({ value, onChange }: Props): JSX.Element {
           id="narrator-pace"
           label="Speaking speed"
           type="number"
-          step="0.01"
+          step="any"
           min={0.5}
           max={2}
           required

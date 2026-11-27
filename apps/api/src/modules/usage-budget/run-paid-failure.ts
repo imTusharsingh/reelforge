@@ -1,3 +1,4 @@
+import { recordTextEvidence, remoteTextId } from "./text-evidence.js";
 import { terminalTextEligible, readAdmission } from "./run-admission-state.js";
 import type { InvalidCompletedText } from "@reelforge/ai-providers";
 import { readReceiptBudget } from "./run-shot-receipt.js";
@@ -15,6 +16,8 @@ import {
   clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
 
+class ReplayedFailure extends Error { constructor(readonly event: Event) { super(); } }
+
 export async function finalizeFailed(
   store: RunsStore,
   paid: RunPaidCalls,
@@ -31,8 +34,13 @@ export async function finalizeFailed(
     const current = await db.videoRunStep.findFirstOrThrow({
       where: { id: step.id, runId: run.id },
     });
+    if (usage && current.key.startsWith("media:text:") && ["FAILED","SUCCEEDED"].includes(current.state)) {
+      const id = await recordTextEvidence(tx, context, current, providerJobId, usage);
+      await db.videoRunStep.updateMany({where:{id:step.id},data:{providerJobId:id}});
+      return {value:null,stepId:step.id,eventType:"text_evidence_recorded",payload:{providerJobId:id,dispatchKey:step.idempotencyKey,invalidOutput:true}};
+    }
     if (!(await canFinalize(tx, context, current, step, reason, manual)))
-      return { value: null, payload: { replay: true }, stepId: step.id };
+      throw new ReplayedFailure(await db.runEvent.findFirstOrThrow({where:{runId:step.runId,stepId:step.id,type:"step_failed"},orderBy:{sequence:"asc"}}));
     const amount = current.costMinor ?? 0;
     const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
     await paid.settleFailedRequest(
@@ -49,7 +57,7 @@ export async function finalizeFailed(
       where: { id: step.id },
       data: {
         state: "FAILED",
-        providerJobId,
+        providerJobId: current.key.startsWith("media:text:") ? remoteTextId(step, providerJobId) : providerJobId,
         costMinor: cost,
         finishedAt: new Date(),
         error: { code: reason, message },
@@ -68,6 +76,9 @@ export async function finalizeFailed(
       },
       stepId: step.id,
     };
+  }).catch((error: unknown) => {
+    if (error instanceof ReplayedFailure) return {event:error.event};
+    throw error;
   });
   return result.event;
 }

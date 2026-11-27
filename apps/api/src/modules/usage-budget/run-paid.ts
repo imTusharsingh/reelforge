@@ -1,3 +1,4 @@
+import { remoteTextId } from "./text-evidence.js";
 import { AUDIO_KEYS, failedAudio } from "../runs/run-audio.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
@@ -312,7 +313,8 @@ export class RunPaidCalls {
         responseMetadata: {
           dispatched,
           costKnown: !dispatched,
-          ...(providerJobId ? { providerJobId } : {}),
+          ...(step.key.startsWith("media:text:") && { dispatchKey:step.idempotencyKey, costBasis:"RESERVATION" }),
+          ...(providerJobId && providerJobId !== step.idempotencyKey ? { providerJobId } : {}),
         },
         errorCode: code,
         errorMessage: message,
@@ -345,8 +347,11 @@ export class RunPaidCalls {
       },
       data: {
         status: "SUCCEEDED",
-        actualCost: actualMinor / 100,
-        responseMetadata: { dispatched: true, costKnown: true },
+        ...(step.key.startsWith("media:text:") ? {
+          actualCost:null,
+          responseMetadata:{dispatched:true, costKnown:false, costBasis:"RESERVATION", dispatchKey:step.idempotencyKey,
+            ...(remoteTextId(step,step.providerJobId) && {providerJobId:step.providerJobId})},
+        } : { actualCost: actualMinor / 100, responseMetadata: { dispatched: true, costKnown: true } }),
         errorCode: null,
       },
     });

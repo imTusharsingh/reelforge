@@ -33,6 +33,10 @@ export function admissionBudgets(
   return [effective, ...budgets.filter((budget) => budget.channelId)];
 }
 
+export function incompatibleCurrencies(budgets: {currency:string}[]): string[] {
+  return [...new Set(budgets.map(b=>b.currency).filter(currency=>currency !== "USD"))].sort();
+}
+
 export async function displayBudgets(
   db: Database,
   workspaceId: string,
@@ -49,19 +53,21 @@ export async function displayBudgets(
       channelBriefRows: { orderBy: { version: "desc" }, take: 1, select: { document: true } },
     },
   });
-  const caps = channels.flatMap((channel) => {
+  const caps = channels.flatMap((channel): NonNullable<BudgetStatusView["effectiveBriefCaps"]> => {
     const brief = StoredChannelBriefSchema.parse(channel.channelBriefRows[0]!.document);
     const relevant = budgets.filter(
       (budget) => !budget.channelId || budget.channelId === channel.id,
     );
     if (!relevant.length) return [];
+    const currencies = incompatibleCurrencies(relevant);
+    if (currencies.length) return [{channelId:channel.id,name:channel.name,incompatibleCurrencies:currencies}];
     const limits = admissionBudgets(relevant, brief.budgetPolicy);
-    return {
+    return [{
       channelId: channel.id,
       name: channel.name,
       dailyLimitMinor: Math.min(...limits.map((b) => Number(b.dailyLimitMinor ?? Infinity))),
       monthlyLimitMinor: Math.min(...limits.map((b) => Number(b.monthlyLimitMinor ?? Infinity))),
-    };
+    }];
   });
   return statuses.map((status) => ({
     ...status,

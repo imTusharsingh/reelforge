@@ -36,8 +36,7 @@ export function submissionHold(stepId: string): string {
 }
 
 function recoverableJob(step: Step): boolean {
-  if (!step.providerJobId) return false;
-  if (!step.key.startsWith("media:text:")) return true;
+  if (!step.key.startsWith("media:text:")) return !!step.providerJobId;
   const result = attachedTextResult(step);
   return (
     !!result &&
@@ -112,7 +111,7 @@ export async function remainingSubmissionHold(
   )
     return legacyBillingHold;
   const other = admissions.find(({ step, ...admission }) =>
-    step.providerJobId ? !recoverableJob(step) : !canRollback(admission),
+    !recoverableJob(step) && (!!step.providerJobId || !canRollback(admission)),
   );
   return other ? submissionHold(other.step.id) : null;
 }

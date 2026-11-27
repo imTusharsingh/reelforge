@@ -89,12 +89,9 @@ export type BudgetPeriodStatus = Readonly<{
 }>;
 
 export type BudgetStatusView = Readonly<{
-  effectiveBriefCaps?: {
-    channelId: string;
-    name: string;
-    dailyLimitMinor: number;
-    monthlyLimitMinor: number;
-  }[];
+  effectiveBriefCaps?: ({channelId:string; name:string} & (
+    { dailyLimitMinor:number; monthlyLimitMinor:number } | {incompatibleCurrencies:string[]}
+  ))[];
   budgetId: string;
   scope: "WORKSPACE" | "CHANNEL";
   channelId: string | null;

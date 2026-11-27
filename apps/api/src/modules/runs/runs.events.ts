@@ -11,10 +11,35 @@ export class RunsEvents {
   private subscriber?: Redis;
   private readonly listeners = new Map<string, Set<() => void>>();
 
+  private readonly subscribed = new Set<string>();
+  private readonly subscribing = new Map<string, symbol>();
+  private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
+
+  private subscribe(channel: string): void {
+    if (!this.subscriber || !this.listeners.has(channel) || this.subscribed.has(channel) || this.subscribing.has(channel)) return;
+    clearTimeout(this.retries.get(channel));
+    this.retries.delete(channel);
+    const token = Symbol(channel);
+    this.subscribing.set(channel,token);
+    void this.subscriber.subscribe(channel).then(() => {
+      if (this.subscribing.get(channel) !== token) return;
+      this.subscribing.delete(channel);
+      this.subscribed.add(channel);
+      for (const wake of this.listeners.get(channel) ?? []) wake();
+    }, () => {
+      if (this.subscribing.get(channel) !== token) return;
+      this.subscribing.delete(channel);
+      this.retries.set(channel,setTimeout(()=>this.subscribe(channel),2000));
+    });
+  }
+
   private watch(channel: string, drain: () => void): () => void {
     if (!this.subscriber) {
       this.subscriber = this.publisher.duplicate();
       this.subscriber.on("error", () => undefined);
+      this.subscriber.on("ready", () => {
+        for (const name of this.listeners.keys()) this.subscribe(name);
+      });
       this.subscriber.on("message", (name: string) => {
         for (const wake of this.listeners.get(name) ?? []) wake();
       });
@@ -23,7 +48,7 @@ export class RunsEvents {
     if (!listeners) {
       listeners = new Set();
       this.listeners.set(channel, listeners);
-      void this.subscriber.subscribe(channel).then(drain, drain);
+      this.subscribe(channel);
     }
     listeners.add(drain);
     drain();
@@ -31,6 +56,10 @@ export class RunsEvents {
       listeners.delete(drain);
       if (!listeners.size) {
         this.listeners.delete(channel);
+        clearTimeout(this.retries.get(channel));
+        this.retries.delete(channel);
+        this.subscribing.delete(channel);
+        this.subscribed.delete(channel);
         void this.subscriber?.unsubscribe(channel).catch(() => undefined);
       }
     };
@@ -108,6 +137,11 @@ export class RunsEvents {
     });
   }
   public async close(): Promise<void> {
+    for (const retry of this.retries.values()) clearTimeout(retry);
+    this.listeners.clear();
+    this.retries.clear();
+    this.subscribing.clear();
+    this.subscribed.clear();
     this.subscriber?.disconnect();
     this.publisher.disconnect();
   }

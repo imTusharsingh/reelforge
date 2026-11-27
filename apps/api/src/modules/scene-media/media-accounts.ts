@@ -1,3 +1,4 @@
+import { withTextDispatch } from "../usage-budget/text-dispatch-recovery.js";
 import { finalizeInvalidText } from "../usage-budget/run-paid-failure.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import type { Prisma } from "@reelforge/database";
@@ -139,7 +140,11 @@ export class MediaAccounts {
     step: Step,
     call: () => Promise<T>,
   ): Promise<T> {
-    const result = await this.dispatch(context, step, call).catch(async (error: unknown) => {
+    return withTextDispatch(step, async (check) => {
+    const result = await this.dispatch(context, step, async () => {
+      await check();
+      return call();
+    }, check).catch(async (error: unknown) => {
       if (error instanceof InvalidCompletedText) {
         const event = await finalizeInvalidText(
           this.access.runs.store,
@@ -155,8 +160,10 @@ export class MediaAccounts {
       }
       throw error;
     });
-    await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
+    const attached = await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
+    if (attached.state === "FAILED") throw new ConflictException("Receipt recorded for a closed text attempt");
     return result;
+    });
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     const proof = await this.access.paid.prepareReservation(run);
@@ -290,6 +297,7 @@ export class MediaAccounts {
       async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
+        if (current.state === "FAILED") throw new ConflictException("Media attempt already failed");
         await this.access.paid.commitJob(tx, context, current, current.costMinor ?? 0);
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: step.runId } });
         if (budget)

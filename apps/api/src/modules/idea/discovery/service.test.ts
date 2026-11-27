@@ -8,6 +8,7 @@ function fixture(): {
   store: Record<string, ReturnType<typeof vi.fn>>;
   scout: { discover: ReturnType<typeof vi.fn> };
   db: {
+    usageBudget: { findMany:ReturnType<typeof vi.fn> };
     channel: { findMany: ReturnType<typeof vi.fn> };
     workspaceMembership: { findFirst: ReturnType<typeof vi.fn> };
   };
@@ -34,6 +35,7 @@ function fixture(): {
     sources: vi.fn().mockReturnValue([]),
   };
   const db = {
+    usageBudget: {findMany:vi.fn().mockResolvedValue([{currency:"USD"}])},
     channel: {
       findMany: vi.fn().mockResolvedValue([{ id: channelId, workspaceId: context.workspaceId }]),
     },
@@ -99,6 +101,19 @@ describe("V10 autonomous scheduled discovery", () => {
     await expect(service.tick(context, channelId)).rejects.toThrow("DISCOVERY_TEXT_ESTIMATE_USD");
     expect(store.claim).not.toHaveBeenCalled();
     expect(scout.discover).not.toHaveBeenCalled();
+  });
+  it("keeps the day and quotas open until the channel budget can admit USD", async () => {
+    const {service, db, store, scout} = fixture();
+    vi.spyOn(console,"error").mockImplementation(()=>{});
+    db.usageBudget.findMany.mockResolvedValueOnce([{currency:"USD"},{currency:"EUR"}]);
+    await service.scheduledTick(now);
+    expect(db.usageBudget.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{workspaceId:context.workspaceId,scopeKey:{in:["WORKSPACE",channelId]}}}));
+    expect(store.claim).not.toHaveBeenCalled();
+    expect(store.failure).not.toHaveBeenCalled();
+    expect(scout.discover).not.toHaveBeenCalled();
+    await service.scheduledTick(now);
+    expect(store.claim).toHaveBeenCalledOnce();
+    expect(scout.discover).toHaveBeenCalledOnce();
   });
   it("uses the Brief timezone at day boundaries", () => {
     expect(discoverySlot(new Date("2026-11-16T20:00:00Z"), "Asia/Kolkata")).toBe("2026-11-17");

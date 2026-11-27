@@ -1,3 +1,5 @@
+import { completedStages } from "./completed-stages.js";
+import { attachTextEvidence } from "../usage-budget/text-evidence.js";
 import { readAdmission, terminalTextEligible } from "../usage-budget/run-admission-state.js";
 import { claimedRunCost, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { canAdvancePastRender } from "./run-render-stage.js";
@@ -111,6 +113,7 @@ export class RunsService {
       step.runId,
       "provider_submitted",
       async (db, currentRun, tx) => {
+        if (step.key.startsWith("media:text:")) return attachTextEvidence(db, tx, context, currentRun, step, providerJobId, output);
         const changed = await db.videoRunStep.updateMany({
           where: {
             id: step.id,
@@ -221,13 +224,14 @@ export class RunsService {
     await this.artifacts.refreshManifests(context, id);
     const run = await this.store.get(context, id),
       db = this.store.scoped(context);
-    const [steps, envelope, requests] = await Promise.all([
+    const [steps, envelope, requests, completed] = await Promise.all([
       db.videoRunStep.findMany({
         where: { runId: id },
         orderBy: [{ key: "asc" }, { attempt: "asc" }],
       }),
       db.budgetEnvelope.findFirst({ where: { runId: id } }),
       shotReshoots(db, id),
+      completedStages(db,id),
     ]);
     const cap = pinnedBudget(run).hardCapMinor;
     return {
@@ -236,6 +240,7 @@ export class RunsService {
       envelope,
       pinnedHardCapMinor: cap,
       remainingBudgetMinor: Math.max(0, cap - claimedRunCost(steps)),
+      completedStages:completed,
       remainingReshoots: Object.fromEntries(
         [...new Set(steps.map((step) => step.key))]
           .filter((key) => key.startsWith("shot-"))

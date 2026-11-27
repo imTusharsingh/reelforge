@@ -147,7 +147,7 @@ export class RunsControl {
   public async abandonTerminalText(context: Context, id: string, stepId: string): Promise<void> {
     if (context.role !== "OWNER") throw new ForbiddenException("Workspace owner required");
     const step = await this.runs.store.scoped(context).videoRunStep.findFirst({
-      where: { id: stepId, runId: id, key: { startsWith: "media:text:" }, providerJobId: null },
+      where: { id: stepId, runId: id, key: { startsWith: "media:text:" } },
     });
     if (!step) throw new ConflictException("Unknown text attempt");
     const event = await finalizeFailed(

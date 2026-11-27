@@ -18,7 +18,6 @@ import { BudgetFields } from "./fields";
 import { useWizardLocation } from "./wizard-location";
 import {
   BudgetPolicySchema,
-  type ChannelBrief,
 } from "../../../../packages/contracts/src/foundations";
 import { Alert, Panel, StateMessage } from "../../components/ui/primitives";
 import { BrandLogo } from "../../components/brand-logo";
@@ -27,14 +26,7 @@ import { ensureCsrfToken } from "../../lib/csrf";
 import { api, type Workspace } from "../../lib/api";
 import { BriefClient, UnsupportedNarrationLanguageError } from "./client";
 
-type Progress = {
-  workspace?: Workspace;
-  workspaceId?: string;
-  channelId?: string;
-  brief?: ChannelBrief;
-  key: string;
-  needsLanguageRepair?: boolean;
-};
+import { submissionCheckpoint, type Progress } from "./wizard-attempt";
 const audienceStep = OnboardingInputSchema.pick({ niche: true, audience: true, language: true });
 const cadenceStep = OnboardingInputSchema.pick({ voiceId: true, cadence: true });
 const normalizedLanguage = (language: string): string => language.trim().toLowerCase();
@@ -46,8 +38,10 @@ async function start(
   queue: boolean,
 ): Promise<Workspace> {
   await ensureCsrfToken();
+  const checkpoint = await submissionCheckpoint(progress);
   if (!progress.workspace) {
     progress.workspaceId ??= (await api.createWorkspace(input.niche)).id;
+    checkpoint();
     const authorized = (await api.listWorkspaces()).find(
       (item) => item.id === progress.workspaceId,
     );
@@ -56,6 +50,7 @@ async function start(
   }
   const client = new BriefClient(progress.workspace.id);
   progress.channelId ??= await client.createChannel(input.niche);
+  checkpoint();
   if (!progress.brief || progress.needsLanguageRepair) {
     progress.brief = await client.save(progress.channelId, {
       ...defaultBrief(input),
@@ -64,12 +59,13 @@ async function start(
     // The unsupported-language response is definitive: no run was created for the old Brief.
     progress.key = crypto.randomUUID();
     progress.needsLanguageRepair = false;
+    checkpoint();
   }
   if (!queue) return progress.workspace;
   try {
     await client.queue(progress.brief, progress.key);
   } catch (error) {
-    if (error instanceof UnsupportedNarrationLanguageError) progress.needsLanguageRepair = true;
+    if (error instanceof UnsupportedNarrationLanguageError) { progress.needsLanguageRepair = true; checkpoint(); }
     throw error;
   }
   return progress.workspace;
