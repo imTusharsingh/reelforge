@@ -116,18 +116,23 @@ Run these steps from the repository root.
 3. With those settings loaded, connect the channel in **Settings → YouTube connection** and grant the requested `youtube.upload` and `youtube.readonly` scopes.
 4. When ready to upload, set `PUBLISH_DRY_RUN=false` and restart the API and worker with the updated environment. Publish an approved Short through the studio. The automated publishing flow submits live uploads as private videos.
 
-## Checks
+## Toolchain and checks
 
-| Command                    | Purpose                                                              |
-| -------------------------- | -------------------------------------------------------------------- |
-| `pnpm lint`                | ESLint                                                               |
-| `pnpm format:check`        | Prettier                                                             |
-| `pnpm typecheck`           | Workspace TypeScript checks and Prisma generation                    |
-| `pnpm test`                | Vitest unit and integration tests                                    |
-| `pnpm test:e2e`            | Playwright end-to-end suite with disposable Docker services          |
-| `pnpm db:validate`         | Validate the Prisma schema                                           |
-| `pnpm db:check-migrations` | Check migration policy against `origin/main` or `MIGRATION_BASE_REF` |
-| `pnpm build`               | Build the workspace, including the Next.js production build          |
+- **Studio:** Next.js App Router uses Turbopack for development and production builds.
+- **API, worker, and shared packages:** SWC compiles TypeScript to Node.js ESM. TypeScript still checks types and emits package declarations. The build checks that the generated artifacts include working source maps.
+- **Quality and tests:** Oxlint checks code and Oxfmt formats it while preserving intentional single blank lines. Vitest runs unit and integration tests. Playwright runs end-to-end tests, with Rspack used only for the standalone browser fixtures.
+
+| Command                    | Purpose                                                               |
+| -------------------------- | --------------------------------------------------------------------- |
+| `pnpm lint`                | Run Oxlint with warnings treated as failures.                         |
+| `pnpm format`              | Apply Oxfmt formatting.                                               |
+| `pnpm format:check`        | Check Oxfmt formatting and run toolchain configuration tests.         |
+| `pnpm typecheck`           | Run workspace TypeScript checks and generate Prisma Client.           |
+| `pnpm test`                | Run Vitest unit and integration tests.                                |
+| `pnpm test:e2e`            | Run Playwright end-to-end tests with disposable Docker services.      |
+| `pnpm db:validate`         | Validate the Prisma schema.                                           |
+| `pnpm db:check-migrations` | Check migration policy against `origin/main` or `MIGRATION_BASE_REF`. |
+| `pnpm build`               | Build the workspace and verify the generated artifacts.               |
 
 Use a disposable migrated PostgreSQL database and run `pnpm db:generate` for integration tests. Redis and FFmpeg tests have their own service or executable requirements. Export `DATABASE_URL` for Prisma generation and set an explicit `REELFORGE_API_ORIGIN` for the production build. See the [CI workflow](.github/workflows/ci.yml) and [full-suite reliability workflow](.github/workflows/full-suite-reliability.yml).
 
