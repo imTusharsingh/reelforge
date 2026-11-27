@@ -85,6 +85,22 @@ describe("V8 mounted experience with fake HTTP", () => {
       expect(current()).toBe("Failed");
     },
   );
+  it("immediately shows the caption remedy when assembly pauses on a live event", async () => {
+    const data = detail();
+    data.run.state = "ASSEMBLING";
+    const fetcher = fakeFetch(data);
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe("Assembling");
+    const before = fetcher.mock.calls.length;
+    data.run.pauseReason = "SAVED_CAPTION_PLAN_UNUSABLE";
+    await act(async () => FakeEventSource.instances[0]!.emit("assembly_input_failed", 7));
+    expect(fetcher.mock.calls.length).toBeGreaterThan(before);
+    expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(
+      "Assembly paused",
+    );
+    expect(host.textContent).toContain("Start a new Short with shorter narration.");
+    expect(host.textContent).not.toContain("SAVED_CAPTION_PLAN_UNUSABLE");
+  });
   it("enables the remaining quality reshoot after a refusal rewrite and one requested redo", async () => {
     const data = detail();
     data.run.state = "CRITIC";

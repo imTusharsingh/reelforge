@@ -25,7 +25,7 @@ export async function pauseRejectedAssembly(
   const result = await runs.store.mutate(
     context,
     run.id,
-    "assembly_input_invalid",
+    "assembly_input_failed",
     async (db, current) => {
       if (current.state !== "ASSEMBLING" || current.pauseReason)
         return { value: false, payload: { stale: true } };

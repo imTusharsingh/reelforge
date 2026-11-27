@@ -10,6 +10,21 @@ import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
 export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
 
+function savedCaptionRejection(): ConflictException {
+  return new ConflictException({
+    code: SAVED_CAPTION_PLAN_UNUSABLE,
+    message: "Saved captions cannot fit. Start a new Short with shorter narration.",
+  });
+}
+
+export function assertSavedCaptionFit(transcript: string, target: number, actual = Infinity): void {
+  try {
+    assertCaptionDuration(transcript, Math.min(target, 45, actual));
+  } catch {
+    throw savedCaptionRejection();
+  }
+}
+
 const snapshot = z.object({
   brief: z.object({ targetDurationSeconds: z.number().positive() }),
 });
@@ -53,15 +68,9 @@ export async function assertSavedCaptionAdmission(
       ? shots.parse(records.map((row) => row.document))
       : (planned?.manifest.shots ??
         (director && directorReceipt.parse(director.output).result.output));
-    assertCaptionDuration(
-      planningTranscript(script),
-      Math.min(target, 45, directed ? duration(directed) : Infinity),
-    );
-  } catch {
-    throw new ConflictException({
-      code: SAVED_CAPTION_PLAN_UNUSABLE,
-      message:
-        "Saved captions cannot be validated for this run. Start a new Short with shorter narration.",
-    });
+    assertSavedCaptionFit(planningTranscript(script), target, directed && duration(directed));
+  } catch (error) {
+    if (error instanceof ConflictException) throw error;
+    throw savedCaptionRejection();
   }
 }
