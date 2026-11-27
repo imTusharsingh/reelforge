@@ -250,7 +250,10 @@ async function closeUnsubmittedShots(db: Scoped, tx: Transaction, run: Run): Pro
   );
 }
 
-export async function collectibleFailedShots(
+export const referenceMediaPrefix = "media:reference:";
+
+/** A failed run may settle admitted receipts, but must not start another provider job. */
+export async function collectibleFailedSteps(
   db: Scoped,
   tx: Transaction,
   run: Run,
@@ -260,8 +263,16 @@ export async function collectibleFailedShots(
     where: {
       runId: run.id,
       ...(id && { id }),
-      key: { startsWith: "shot-" },
-      OR: [{ state: { in: ["RUNNING", "WAITING_EXTERNAL"] } }, pendingCorrectionWhere],
+      OR: [
+        {
+          key: { startsWith: "shot-" },
+          OR: [{ state: { in: ["RUNNING", "WAITING_EXTERNAL"] } }, pendingCorrectionWhere],
+        },
+        {
+          key: { startsWith: referenceMediaPrefix },
+          state: { in: ["RUNNING", "WAITING_EXTERNAL"] },
+        },
+      ],
     },
   });
   const claims = await readAdmissions(db, tx, run.workspaceId, steps);

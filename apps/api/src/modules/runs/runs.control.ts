@@ -1,3 +1,4 @@
+import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
@@ -311,6 +312,23 @@ export class RunsControl {
     return result.value;
   }
   private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
+    if (
+      current.state === "ASSEMBLING" &&
+      (await db.videoRunStep.findFirst({
+        where: {
+          runId: current.id,
+          key: "ASSEMBLING",
+          state: "FAILED",
+          OR: [
+            { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
+            { error: { path: ["localRenderFailures"], gt: 0 } },
+          ],
+        },
+      }))
+    )
+      throw new ConflictException(
+        "Saved captions cannot fit. Start a new Short with shorter narration.",
+      );
     if (
       current.state === "NEEDS_HUMAN" &&
       (await db.videoRunStep.findFirst({

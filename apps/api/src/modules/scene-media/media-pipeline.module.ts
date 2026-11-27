@@ -44,6 +44,12 @@ export class MediaBindings {
     generation.recoverKeyframe = async (context, step): Promise<number | null> =>
       this.jobs.recoverKeyframe(context, step, (await this.ports.get(context)).image);
     const planning = module.get(RunPlanning, { strict: false });
+    planning.collectAdmittedReference = async (context, step): Promise<number | null> =>
+      this.jobs.collectReference(
+        context,
+        step,
+        (await this.ports.get(context, "collection")).image,
+      );
     planning.collectAdmittedAudio = (context, run): Promise<number | null> =>
       this.assembly.collectAdmittedAudio(context, run);
     planning.handlers = {

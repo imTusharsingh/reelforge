@@ -39,7 +39,7 @@ export function assemblyFailure(error: unknown): LocalAssemblyFailure | undefine
   if (error instanceof LocalAssemblyFailure) return error;
   if (!(error instanceof HttpException)) return;
   const result = z
-    .object({ code: z.enum(["NARRATION_PACE_UNSUPPORTED", "SAVED_CAPTION_PLAN_UNUSABLE"]) })
+    .object({ code: z.literal("NARRATION_PACE_UNSUPPORTED") })
     .safeParse(error.getResponse());
   if (result.success) return new LocalAssemblyFailure(result.data.code, error.message);
 }
