@@ -88,7 +88,9 @@ export function setupStub(): SetupStub {
     if (path.endsWith("/briefs")) {
       if (method === "POST") {
         const input: object = JSON.parse(String(init?.body));
-        const next = { ...brief, ...input, version: state.versions.length + 1 };
+        const version = state.versions.length + 1;
+        const id = `${brief.id.slice(0, -12)}${String(version).padStart(12, "0")}`;
+        const next = { ...brief, ...input, version, id };
         state.versions.unshift(next);
         return Response.json(next);
       }
