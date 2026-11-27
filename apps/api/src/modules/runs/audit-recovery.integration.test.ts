@@ -3,9 +3,6 @@ import { GeminiText, Interactions, ProviderHttp } from "@reelforge/ai-providers"
 import { bindMedia } from "../composition/media-bindings.fixture.js";
 import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
 import { generating, runsFixture } from "./runs.fixture.js";
-import { RunPaidCalls } from "../usage-budget/run-paid.js";
-import { MediaAccounts } from "../scene-media/media-accounts.js";
-import type { MediaAccess } from "../scene-media/media-access.js";
 
 const fixture = runsFixture();
 const test = it.skipIf(!process.env.DATABASE_URL);
@@ -86,12 +83,20 @@ test("settles an invalid completed interaction with usage and never submits it a
 test("rearms a denied keyframe only on explicit budget resume with a fresh key", async () => {
   const t = await fixture.tenant();
   const run = await generating(t);
-  const paid = new RunPaidCalls(t.usage, t.store);
-  const accounts = new MediaAccounts({
-    runs: t.runs,
-    paid,
-    boundary: { check: async (): Promise<void> => {} },
-  } as MediaAccess);
+  const native = fakeMediaPorts(
+    t.context.workspaceId,
+    t.storage,
+    {
+      clip: Buffer.alloc(0),
+      image: Buffer.alloc(0),
+      audio: Buffer.alloc(0),
+    },
+    [],
+  );
+  const {
+    accounts,
+    access: { paid },
+  } = bindMedia(t, native);
   const db = t.store.scoped(t.context);
   await t.usage.upsertBudget(t.context, {
     currency: "USD",
