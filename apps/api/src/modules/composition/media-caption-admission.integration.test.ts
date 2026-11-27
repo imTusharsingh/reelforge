@@ -50,6 +50,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
         30,
       ),
     ).resolves.toBeNull();
+    const musicSeconds = malformed ? 32 : 30;
     if (musicAdmitted)
       await expect(
         bindings.jobs.tick(
@@ -57,11 +58,11 @@ it.skipIf(!process.env.DATABASE_URL).each([
           run,
           "music",
           native.music,
-          { prompt: "Existing music" },
+          { prompt: "Existing music", instrumentalOnly: true, durationSeconds: musicSeconds },
           4,
           "fixture-music",
           "instrumental-bed:v1",
-          30,
+          musicSeconds,
         ),
       ).resolves.toBeNull();
     const line = (n: number): string => Array<string>(n).fill("planet").join(" ");
@@ -177,6 +178,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
     expect(fetchNarration).toHaveBeenCalledOnce();
     expect(musicSubmit).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
     expect(fetchMusic).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
+    if (malformed) expect(fetchMusic).toHaveBeenCalledWith(expect.any(String), musicSeconds);
     expect(render).not.toHaveBeenCalled();
     expect(
       await t.db.usageReservation.findMany({

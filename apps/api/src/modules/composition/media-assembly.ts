@@ -5,6 +5,7 @@ import {
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
 import { currentPrices, shotReceipts } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { Injectable } from "@nestjs/common";
 import {
   AssemblyManifestSchema,
@@ -23,6 +24,12 @@ import { audioCosts } from "../scene-media/media-prices.js";
 import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import { localRenderFailure } from "./local-assembly-failure.js";
 import { MediaRenderer } from "./media-render.js";
+const audioRecoveryDuration = z.number().positive().max(120);
+const admittedMusicInput = z.object({ spec: z.object({ durationSeconds: audioRecoveryDuration }) });
+const pinnedDuration = z.object({
+  brief: z.object({ targetDurationSeconds: audioRecoveryDuration }),
+});
+
 type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
 type AssemblyAudio = { narration: AudioTrack; music: AudioTrack };
 
@@ -243,10 +250,17 @@ export class MediaAssembly {
     const accepted = await acceptedAudio(db, this.access.runs.store.db, run);
     if (!accepted.length) return null;
     const shots = await db.shotSpec.findMany({ where: { runId: run.id } });
-    const seconds = shots.reduce(
-      (total, row) => total + ShotSpecSchema.parse(row.document).durationSeconds,
-      0,
-    );
+    const parsed = z
+      .array(ShotSpecSchema)
+      .min(1)
+      .safeParse(shots.map((row) => row.document));
+    const music = accepted.find((step) => step.key === "media:music");
+    // A malformed storyboard must not strand an already submitted audio job.
+    const seconds = parsed.success
+      ? parsed.data.reduce((total, shot) => total + shot.durationSeconds, 0)
+      : (admittedMusicInput.safeParse(music?.input).data?.spec.durationSeconds ??
+        pinnedDuration.safeParse(run.inputSnapshot).data?.brief.targetDurationSeconds ??
+        45);
     await this.drainAudio(context, run, await this.ports.get(context), seconds, accepted);
     return (await acceptedAudio(db, this.access.runs.store.db, run)).length ? 12000 : null;
   }
