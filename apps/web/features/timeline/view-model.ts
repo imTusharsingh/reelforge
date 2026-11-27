@@ -11,9 +11,12 @@ export function isPublishedRun(run: RunSummary): boolean {
   );
 }
 
+const reconciliationPrefix = "RECONCILE_REQUIRED";
+
 export function needsAttention(run: RunSummary): boolean {
   if (run.pauseReason === "HUMAN_REJECTED" || run.pauseReason === "PUBLISH_DRY_RUN") return false;
-  if (["PUBLISHED", "LEARNING", "CANCELED"].includes(run.state)) return false;
+  if (run.state === "CANCELED") return run.pauseReason?.startsWith(reconciliationPrefix) ?? false;
+  if (["PUBLISHED", "LEARNING"].includes(run.state)) return false;
   return (
     run.pauseReason !== null ||
     ["AWAITING_APPROVAL", "CRITIC", "PAUSED_BUDGET", "NEEDS_HUMAN", "FAILED"].includes(run.state)
@@ -21,12 +24,17 @@ export function needsAttention(run: RunSummary): boolean {
 }
 
 export function pauseLabel(reason: string): string {
+  if (reason.startsWith(reconciliationPrefix)) {
+    const context = reason.slice(reconciliationPrefix.length).replace(/^:\s*/, "").trim();
+    return context
+      ? `Provider reconciliation required: ${context}`
+      : "Provider reconciliation required.";
+  }
   return (
     (
       {
         BUDGET_CAP: "Budget cap reached. Review spend before resuming.",
         PROVIDER_REFUSED: "Provider refused this content. Review the prompt.",
-        RECONCILE_REQUIRED: "Provider outcome is unknown. Reconcile before retrying.",
         HUMAN_REJECTED: "You rejected this Short. Publishing is blocked.",
         EMERGENCY_STOP: "Emergency stop is active.",
       } as Record<string, string>

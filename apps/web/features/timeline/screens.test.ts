@@ -178,6 +178,11 @@ describe("V8 mounted experience with fake HTTP", () => {
     const learnedDryRun = run("LEARNING", "PUBLISH_DRY_RUN");
     const rejected = run("AWAITING_APPROVAL", "HUMAN_REJECTED");
     const canceled = run("CANCELED");
+    const canceledWithBillingHold = run(
+      "CANCELED",
+      "RECONCILE_REQUIRED: provider billing exceeded reservation (video step)",
+    );
+    const canceledWithUnknownOutcome = run("CANCELED", "RECONCILE_REQUIRED");
     const runs = [
       stopped,
       pending,
@@ -187,6 +192,8 @@ describe("V8 mounted experience with fake HTTP", () => {
       run("LEARNING"),
       rejected,
       canceled,
+      canceledWithBillingHold,
+      canceledWithUnknownOutcome,
     ];
     fakeFetch().mockImplementation(async (url: string): Promise<Response> => {
       if (url.includes("/run-experience?")) return Response.json(runs);
@@ -204,13 +211,23 @@ describe("V8 mounted experience with fake HTTP", () => {
         element.querySelector("dd")?.textContent,
       ]),
     );
-    expect(stats).toEqual({ "Shorts loaded": "8", "Needs attention": "2", Published: "2" });
+    expect(stats).toEqual({ "Shorts loaded": "10", "Needs attention": "4", Published: "2" });
     expect(host.querySelector(`a[href="/runs/${dryRun.id}"]`)?.textContent).toContain("Dry run");
 
     await act(async () => root.render(createElement(RunList, { inbox: true })));
     expect(
       Array.from(host.querySelectorAll(".rf-run-tile a"), (link) => link.getAttribute("href")),
-    ).toEqual([`/runs/${stopped.id}/review`, `/runs/${pending.id}/review`]);
+    ).toEqual([
+      `/runs/${stopped.id}/review`,
+      `/runs/${pending.id}/review`,
+      `/runs/${canceledWithBillingHold.id}/review`,
+      `/runs/${canceledWithUnknownOutcome.id}/review`,
+    ]);
+    const heldCard = host.querySelector(`a[href="/runs/${canceledWithBillingHold.id}/review"]`);
+    expect(heldCard?.textContent).toContain("Canceled");
+    expect(heldCard?.textContent).toContain(
+      "Provider reconciliation required: provider billing exceeded reservation (video step)",
+    );
   });
   it("offers explicit L3 selection after ten, and posts selection without auto enabling it", async () => {
     const fetcher = fakeFetch();
