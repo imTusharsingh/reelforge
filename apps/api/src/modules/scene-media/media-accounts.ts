@@ -10,7 +10,7 @@ import {
   BudgetUnresolvableError,
 } from "../usage-budget/usage-budget.types.js";
 import { assertCriticRevision } from "../usage-budget/critic-admission.js";
-import { envelopeRoom, assertRunCap, pinnedBudget } from "../usage-budget/run-envelope.js";
+import { envelopeRoom, assertPaidRunLimits, pinnedBudget } from "../usage-budget/run-envelope.js";
 import {
   json,
   type Context,
@@ -95,7 +95,7 @@ export class MediaAccounts {
     budget: BudgetEnvelope | null;
     warning: { cumulativeMinor: number; warn: boolean } | null;
   }> {
-    const cumulative = await assertRunCap(db, current, cost);
+    const cumulative = await assertPaidRunLimits(db, current, cost);
     const budget = await db.budgetEnvelope.findFirst({ where: { runId: current.id } });
     if (budget && !envelopeRoom(budget, cost)) throw new ConflictException("BUDGET_CAP");
     return { budget, warning: budget ? null : this.targetWarning(current, cumulative) };

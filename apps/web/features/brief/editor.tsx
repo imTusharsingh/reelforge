@@ -2,9 +2,14 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import {
   BriefInputSchema,
+  StoredBriefInputShape,
   defaultBrief,
   type BriefInput,
 } from "../../../../packages/contracts/src/channel-brief";
+import {
+  NarratorVoiceSchema,
+  narratorPaceMessage,
+} from "../../../../packages/contracts/src/narrator-voice";
 import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { draftEdited, registerDraft } from "../../components/studio-navigation";
@@ -195,13 +200,14 @@ function DetailedFields({
       <h2>Voice, formats and references</h2>
       <p>
         Reference pins use an asset ID and immutable version. No recurring characters is the
-        default. Null tuning bounds keep learning recommendations only.
+        default. Null tuning bounds keep learning recommendations only. {narratorPaceMessage}
       </p>
       {fields.map((key) => (
         <JsonField
           key={key}
           label={key}
           value={value[key]}
+          validate={key === "narratorVoice" ? validateVoicePace : undefined}
           onChange={(next) => onChange({ ...value, [key]: next } as BriefInput)}
         />
       ))}
@@ -221,6 +227,12 @@ function DetailedFields({
       <Advanced value={value} onChange={onChange} />
     </>
   );
+}
+
+function validateVoicePace(value: unknown): string {
+  if (value === null) return "";
+  const parsed = NarratorVoiceSchema.safeParse(value);
+  return parsed.error?.issues.some(({ path }) => path[0] === "pace") ? narratorPaceMessage : "";
 }
 
 function Advanced({
@@ -265,7 +277,7 @@ function useEditorLoad(
                 !["id", "workspaceId", "channelId", "version", "schemaVersion"].includes(key),
             ),
           );
-          setValue(BriefInputSchema.parse(input));
+          setValue(StoredBriefInputShape.parse(input));
           setVersion(latest.version);
         }
         setOfferL3(eligible);

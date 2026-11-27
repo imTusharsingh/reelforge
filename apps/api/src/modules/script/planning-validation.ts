@@ -1,5 +1,7 @@
 import {
   PlanningShotsSchema,
+  assertCaptionDuration,
+  planningTranscript,
   type PlanningRequest,
   type PlanningScript,
   type ShotSpec,
@@ -39,10 +41,12 @@ export function validatePlanningShots(
     screenPlanningContent(request, JSON.stringify(shot));
   });
   if (script) {
-    const expected = [script.hook, ...script.beats, script.payoff, script.cta]
-      .join(" ")
-      .replace(/\s+/gu, " ")
-      .trim();
+    const transcript = planningTranscript(script);
+    assertCaptionDuration(
+      transcript,
+      shots.reduce((sum, shot) => sum + shot.durationSeconds, 0),
+    );
+    const expected = transcript.replace(/\s+/gu, " ").trim();
     if (
       shots
         .map((shot) => shot.voLine)

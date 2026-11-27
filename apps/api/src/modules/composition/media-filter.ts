@@ -8,17 +8,27 @@ export function assemblyArguments(
   output: string,
   seconds: number,
 ): string[] {
-  const inputs = clips.flatMap((clip) => ["-i", clip.path]);
-  const filters = assemblyFilters(clips, captions, seconds);
   return [
     "-hide_banner",
     "-nostdin",
     "-y",
-    ...inputs,
+    ...clips.flatMap((clip) => ["-i", clip.path]),
     "-i",
     narration,
     "-i",
     music,
+    ...assemblyOutputArguments(clips, captions, output, seconds),
+  ];
+}
+
+export function assemblyOutputArguments(
+  clips: readonly AssemblyClip[],
+  captions: string,
+  output: string,
+  seconds: number,
+): string[] {
+  const filters = assemblyFilters(clips, captions, seconds);
+  return [
     "-filter_complex_threads",
     "1",
     "-filter_complex",

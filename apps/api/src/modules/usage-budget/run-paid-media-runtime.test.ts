@@ -1,3 +1,4 @@
+import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import { beforeEach, expect, it, vi, type Mock, type MockInstance } from "vitest";
 import { alignmentLanguage } from "../composition/alignment-language.js";
 import type { Context, Run, Step } from "../runs/runs.types.js";
@@ -16,7 +17,11 @@ vi.mock("./run-admission-state.js", async (importOriginal) => ({
   readAdmission: ready.readAdmission,
 }));
 
-function fixture(language: string): {
+function fixture(
+  language: string,
+  pace = 1,
+  saved?: { output: unknown; target: number; actual?: number },
+): {
   calls: RunPaidCalls;
   run: Run;
   step: Step;
@@ -28,10 +33,38 @@ function fixture(language: string): {
 } {
   const run = {
     id: "run",
-    inputSnapshot: { brief: { languages: { narration: language } } },
+    inputSnapshot: {
+      brief: {
+        languages: { narration: language },
+        narratorVoice: { pace },
+        targetDurationSeconds: saved?.target ?? 30,
+      },
+    },
   } as unknown as Run;
-  const step = { id: "step", runId: run.id } as Step;
-  const mutate = vi.fn(async (_context, _run, _event, callback) => callback(null, run, {}));
+  const step = { id: "step", runId: run.id, state: "RUNNING", key: "shot-0" } as Step;
+  const mutate = vi.fn(async (_context, _run, _event, callback) => callback(scoped, run, {}));
+  const scoped = {
+    videoRunStep: {
+      findMany: vi.fn().mockResolvedValue(
+        saved
+          ? [
+              {
+                key: PLANNING_MANIFEST_KEY,
+                state: "SUCCEEDED",
+                attempt: 1,
+                output: saved.output,
+              },
+            ]
+          : [],
+      ),
+      findFirstOrThrow: vi.fn().mockImplementation(async () => step),
+    },
+    shotSpec: {
+      findMany: vi
+        .fn()
+        .mockResolvedValue(saved?.actual ? [{ document: { durationSeconds: saved.actual } }] : []),
+    },
+  };
   const reserve = vi.fn();
   const providerRequestWrite = vi.fn();
   const calls = new RunPaidCalls(
@@ -39,6 +72,7 @@ function fixture(language: string): {
     {
       mutate,
       get: async () => run,
+      scoped: () => scoped,
       db: { providerRequest: { updateMany: providerRequestWrite } },
     } as unknown as RunsStore,
   );
@@ -126,3 +160,76 @@ it("passes the out-of-transaction proof to the pinned guard during reservation",
   );
   expect(reserve).not.toHaveBeenCalled();
 });
+
+it("blocks reservation and dispatch for legacy pace while allowing receipt recovery", async () => {
+  const { calls, run, step, mutate, reserve, context, rollback } = fixture("English", 3);
+  const provider = vi.fn();
+  const error = { response: { code: "NARRATION_PACE_UNSUPPORTED" } };
+  await expect(calls.reserve(context, run, step, 1)).rejects.toMatchObject(error);
+  await expect(calls.dispatch(context, step, provider)).rejects.toMatchObject(error);
+  expect(mutate).not.toHaveBeenCalled();
+  expect(reserve).not.toHaveBeenCalled();
+  expect(provider).not.toHaveBeenCalled();
+  expect(rollback).toHaveBeenCalledWith(context, step);
+  ready.readAdmission.mockResolvedValue({
+    evidence: "dispatching",
+    request: { responseMetadata: { providerJobId: "accepted-job" } },
+  });
+  await expect(calls.jobReceipt(context, step)).resolves.toBe("accepted-job");
+  expect(ready.prepareLanguage).not.toHaveBeenCalled();
+});
+
+it.each([
+  [30, 31, 31, false],
+  [31, 31, 30, false],
+  [31, 30, undefined, false],
+  [31, undefined, undefined, true],
+] as const)(
+  "blocks new charges for target %s and shot totals %s/%s (malformed: %s), but keeps the receipt",
+  async (target, durationSeconds, actual, malformed) => {
+    const line = (n: number): string => Array<string>(n).fill("planet").join(" ");
+    const script = {
+      hook: line(4),
+      beats: [line(26), line(26), line(26)],
+      payoff: line(4),
+      cta: line(4),
+      language: "English",
+      wordCount: 90,
+    };
+    const { calls, run, step, context, reserve, providerRequestWrite } = fixture("English", 1, {
+      output: { script, manifest: { shots: [{ durationSeconds }] } },
+      target,
+      ...(actual ? { actual } : {}),
+    });
+    const submit = vi.fn();
+    ready.readAdmission.mockResolvedValue({
+      evidence: "pending",
+      reservation: { status: "RESERVED", expiresAt: new Date(Date.now() + 60000) },
+      request: { responseMetadata: { providerJobId: "already-submitted" } },
+    });
+    const error = {
+      response: malformed
+        ? {
+            code: "SAVED_CAPTION_PLAN_UNUSABLE",
+            detail: "MALFORMED_PLAN",
+            message:
+              "The saved plan is invalid and its captions could not be validated. Start a new Short.",
+          }
+        : {
+            code: "SAVED_CAPTION_PLAN_UNUSABLE",
+            detail: "CAPTIONS_TOO_LONG",
+            message: "Saved captions cannot fit. Start a new Short with shorter narration.",
+          },
+    };
+    await expect(calls.reserve(context, run, step, 1)).rejects.toMatchObject(error);
+    await expect(calls.dispatch(context, step, submit)).rejects.toMatchObject(error);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(providerRequestWrite).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    ready.readAdmission.mockResolvedValue({
+      evidence: "dispatching",
+      request: { responseMetadata: { providerJobId: "already-submitted" } },
+    });
+    await expect(calls.jobReceipt(context, step)).resolves.toBe("already-submitted");
+  },
+);

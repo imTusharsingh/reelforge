@@ -1,7 +1,25 @@
 import { ConflictException } from "@nestjs/common";
+import { NarratorPaceSchema, narratorPaceMessage } from "@reelforge/contracts";
 import { z } from "zod";
 import { NarrationLanguageUnavailable } from "./alignment-language.js";
 import { mediaRuntimeGate, type MediaReadiness } from "./media-runtime.js";
+
+const snapshotPace = z.object({
+  brief: z.object({ narratorVoice: z.object({ pace: z.unknown() }).nullish() }),
+});
+
+export function assertVideoRunPace(pace: unknown): void {
+  if (!NarratorPaceSchema.safeParse(pace).success)
+    throw new ConflictException({
+      code: "NARRATION_PACE_UNSUPPORTED",
+      message: narratorPaceMessage,
+    });
+}
+
+function assertPinnedVideoRunPace(snapshot: unknown): void {
+  const pinned = snapshotPace.safeParse(snapshot);
+  assertVideoRunPace(pinned.success ? pinned.data.brief.narratorVoice?.pace : null);
+}
 
 const snapshotNarration = z.object({
   brief: z.object({ languages: z.object({ narration: z.string() }) }),
@@ -28,7 +46,9 @@ export async function preparePinnedVideoRunLanguage(
   snapshot: () => unknown,
 ): Promise<MediaReadiness | undefined> {
   try {
-    return await mediaRuntimeGate.prepareLanguage(async () => pinnedNarration(await snapshot()));
+    const pinned = await snapshot();
+    assertPinnedVideoRunPace(pinned);
+    return await mediaRuntimeGate.prepareLanguage(() => pinnedNarration(pinned));
   } catch (error) {
     unsupported(error);
   }
@@ -39,6 +59,7 @@ export function assertPinnedVideoRunLanguage(
   proof: MediaReadiness | undefined,
 ): void {
   try {
+    assertPinnedVideoRunPace(snapshot);
     mediaRuntimeGate.assertFreshLanguage(() => pinnedNarration(snapshot), proof);
   } catch (error) {
     unsupported(error);

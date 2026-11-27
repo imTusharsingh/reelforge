@@ -1,3 +1,5 @@
+import { StoredChannelBriefSchema } from "./foundations.js";
+import { NarratorVoiceSchema } from "./narrator-voice.js";
 import { describe, expect, it } from "vitest";
 import {
   BRIEF_FORMATS,
@@ -94,4 +96,27 @@ describe("V7 Brief defaults and boundary", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it.each([0.49, 3])("rejects new narrator pace %s but reads historical versions", (pace) => {
+  const brief = defaultBrief(input);
+  const narratorVoice = { ...brief.narratorVoice!, pace };
+  expect(NarratorVoiceSchema.safeParse(narratorVoice).success).toBe(false);
+  expect(BriefInputSchema.safeParse({ ...brief, narratorVoice }).success).toBe(false);
+  const id = "3d1b59a3-2471-4e41-8150-a974ff02b7de";
+  for (const schemaVersion of ["1.0", "1.1"]) {
+    expect(
+      StoredChannelBriefSchema.parse({
+        ...brief,
+        id,
+        workspaceId: id,
+        channelId: id,
+        narratorVoice,
+        schemaVersion,
+        version: 1,
+      }).narratorVoice?.pace,
+    ).toBe(pace);
+  }
+  for (const valid of [0.5, 2])
+    expect(NarratorVoiceSchema.parse({ ...narratorVoice, pace: valid }).pace).toBe(valid);
 });

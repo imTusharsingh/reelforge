@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { verifyAssemblyRoundTrip } from "./media-probe.js";
 import { alignmentLanguage } from "./alignment-language.js";
 
 type MediaExecutable = "ffmpeg" | "ffprobe";
@@ -137,6 +138,12 @@ async function verifyMediaTools(run: Probe, env: NodeJS.ProcessEnv): Promise<voi
       "Install FFprobe and check FFPROBE_PATH.",
     ),
   ]);
+  // Exercise the active binaries at every fresh check, including same-path replacements.
+  await verify(
+    "FFmpeg/FFprobe MP4 encode and inspection",
+    () => verifyAssemblyRoundTrip(run, ffmpeg, ffprobe),
+    "Check libass, libx264, AAC and MP4 support in FFMPEG_PATH and FFPROBE_PATH.",
+  );
 }
 
 type Ready = { signature: string; languages: ReadonlyMap<string, string> };

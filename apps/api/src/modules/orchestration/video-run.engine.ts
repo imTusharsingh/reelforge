@@ -1,3 +1,4 @@
+import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
 import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -19,7 +20,8 @@ import {
 } from "../runs/runs.types.js";
 import { SubmissionOutcomeUnknown } from "../usage-budget/run-paid.js";
 import {
-  collectibleFailedShots,
+  collectibleFailedSteps,
+  referenceMediaPrefix,
   failSettledGeneration,
   activeSubmissionHold,
   unsettledShots,
@@ -83,13 +85,15 @@ export class VideoRunEngine {
           async () => {
             if (run.state === "FAILED") {
               if (!job.stepId) return null;
-              const [accepted] = await collectibleFailedShots(
+              const [accepted] = await collectibleFailedSteps(
                 this.runs.store.scoped(context),
                 this.runs.store.db,
                 run,
                 job.stepId,
               );
               if (!accepted) return null;
+              if (accepted.key.startsWith(referenceMediaPrefix))
+                return this.planning.collectAdmittedReference?.(context, accepted) ?? null;
             }
             if (job.stepId) return this.shot(context, run, job.stepId);
             if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
@@ -111,19 +115,28 @@ export class VideoRunEngine {
             try {
               return await this.advance(context, run);
             } catch (error) {
-              if (error instanceof AssemblyInterrupted) return error.delay;
-              if (
-                !(error instanceof SubmissionOutcomeUnknown) &&
-                error instanceof Error &&
-                error.message.startsWith("RECONCILE_REQUIRED")
-              )
-                return this.handleFailure(context, run, error);
-              throw error;
+              return this.handleStageFailure(context, run, error);
             }
           },
           "CONSUMER",
         ),
     );
+  }
+  private async handleStageFailure(
+    context: Context,
+    run: Run,
+    error: unknown,
+  ): Promise<number | null> {
+    if (error instanceof AssemblyInterrupted) return error.delay;
+    const rejected = run.state === "ASSEMBLING" && savedCaptionRejection(error);
+    if (rejected) return pauseRejectedAssembly(this.runs, context, run, rejected);
+    if (
+      !(error instanceof SubmissionOutcomeUnknown) &&
+      error instanceof Error &&
+      error.message.startsWith("RECONCILE_REQUIRED")
+    )
+      return this.handleFailure(context, run, error);
+    throw error;
   }
   private async holdLocked(
     db: Scoped,
@@ -366,7 +379,7 @@ export class VideoRunEngine {
       );
     const admitted =
       run.state === "FAILED"
-        ? await collectibleFailedShots(db, this.runs.store.db, run)
+        ? await collectibleFailedSteps(db, this.runs.store.db, run)
         : await db.videoRunStep.findMany({
             where: {
               runId: run.id,
