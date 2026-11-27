@@ -149,3 +149,24 @@ it("rejects a 99-word script that fits the narration budget but cannot fit reada
   ).rejects.toThrow("readable caption duration");
   expect(generate).not.toHaveBeenCalled();
 });
+
+it("rejects a 30s plan that only fits if the renderer could split its natural phrases", async () => {
+  const line = (count: number): string => Array<string>(count).fill("planet").join(" ");
+  const script = {
+    hook: line(4),
+    beats: [line(26), line(26), line(26)],
+    payoff: line(4),
+    cta: line(4),
+    language: "English",
+    wordCount: 90,
+  };
+  const request = planningFixture();
+  request.brief.targetDurationSeconds = 31;
+  expect(validatePlanningScript(script, request)).toEqual(script);
+  request.brief.targetDurationSeconds = 30;
+  const generate = vi.fn();
+  await expect(
+    new DirectorService({ generate }, prompts).direct(context, request, script),
+  ).rejects.toThrow("readable caption duration");
+  expect(generate).not.toHaveBeenCalled();
+});

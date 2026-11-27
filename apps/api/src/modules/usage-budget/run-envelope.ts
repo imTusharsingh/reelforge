@@ -1,3 +1,4 @@
+import { assertSavedCaptionAdmission } from "./run-caption-admission.js";
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { pendingCorrection } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
@@ -26,7 +27,7 @@ export function pinnedBudget(run: Run): ChannelBrief["budgetPolicy"] {
 }
 
 /** Include paid work performed before envelope creation, and pre-existing envelopes with old defaults. */
-export async function assertRunCap(
+export async function assertPaidRunLimits(
   db: Scoped,
   run: Run,
   amount: number,
@@ -39,6 +40,7 @@ export async function assertRunCap(
       ...(excludingStepId ? { id: { not: excludingStepId } } : {}),
     },
   });
+  await assertSavedCaptionAdmission(db, run, claims);
   const cumulative = claims.reduce((total, claim) => {
     const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
     const covered = (claim.costMinor ?? 0) + (retained ?? 0);

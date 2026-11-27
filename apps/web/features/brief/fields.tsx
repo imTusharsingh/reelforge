@@ -169,17 +169,17 @@ export function JsonField({
       rows={5}
       value={raw}
       error={error}
+      ref={(element) => {
+        element?.setCustomValidity(error);
+      }}
       onChange={(e) => {
         setRaw(e.target.value);
-        e.target.setCustomValidity("");
         try {
           const parsed: unknown = JSON.parse(e.target.value);
           onChange(parsed);
           const issue = validate?.(parsed) ?? "";
-          e.target.setCustomValidity(issue);
           setError(issue);
         } catch {
-          e.target.setCustomValidity("Enter valid JSON before saving.");
           setError("Enter valid JSON before saving.");
         }
       }}
