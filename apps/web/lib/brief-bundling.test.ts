@@ -20,6 +20,7 @@ describe("V7 contracts bundling", () => {
     expect(config.turbopack?.resolveAlias).toEqual({
       "./foundations.js": "../../packages/contracts/src/foundations.ts",
       "./brief-consistency.js": "../../packages/contracts/src/brief-consistency.ts",
+      "./narrator-voice.js": "../../packages/contracts/src/narrator-voice.ts",
     });
     expect(config.turbopack?.root).toBe(
       resolve(fileURLToPath(new URL("../../..", import.meta.url))),
