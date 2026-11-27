@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { type ProcessRunner } from "@reelforge/media";
+import { mediaExecutable } from "./media-runtime.js";
 
 @Injectable()
 export class SpawnProcessRunner implements ProcessRunner {
@@ -12,9 +13,7 @@ export class SpawnProcessRunner implements ProcessRunner {
     }>,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve, reject) => {
-      const configured =
-        input.executable === "ffmpeg" ? process.env.FFMPEG_PATH : process.env.FFPROBE_PATH;
-      const executable = configured?.trim() || input.executable;
+      const executable = mediaExecutable(input.executable);
       const child = spawn(executable, [...input.argv], {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],

@@ -46,9 +46,46 @@ music bed, -14 LUFS normalization, captions inside the safe zone and a cover.
 Install **aeneas==1.7.3.0**, local eSpeak language data and FFmpeg/FFprobe. The
 alignment Python interpreter is selected by `ALIGNMENT_PYTHON_PATH` (default
 `python3`); `FFMPEG_PATH`/`FFPROBE_PATH` select local media binaries. Install fonts
-covering the channel's language. Aeneas is invoked locally with the actual audio
-and one transcript word per line. Invalid, overlapping or mismatched timestamps
-fail closed. There is no uniform-timing or network-transcription fallback.
+covering the channel's language. Put `espeak` and its language data on PATH.
+The API and worker preflight the configured Python/aeneas, eSpeak (including
+reference speech synthesis), FFmpeg with libass, and FFprobe before starting the
+HTTP listener or consuming jobs. Before each new reservation and dispatch, a
+targeted local probe rechecks the current FFmpeg/FFprobe, Aeneas and the pinned
+eSpeak voice outside the ledger transaction. The locked admission verifies a
+short-lived result for the same language and runtime configuration. Restart the
+affected process after a media configuration change. Startup also reads the
+installed Aeneas language catalogue and probes
+the matching local eSpeak voices once in bounded batches. New VideoRuns reject an
+unsupported narration language before creation. Paid admission for an existing
+VideoRun checks its pinned narration language again, without blocking collection
+or reconciliation of already-submitted work. Language names such as English and
+Italian, supported short aliases such as en and it, and available ISO 639-3 codes
+use the same resolver as rendering. Preflight is entirely local and uses no
+provider credentials.
+
+ReelForge aligns to the paced narration before
+adding the final mix's silence. Aeneas analyzes both the narration and eSpeak
+reference at 22,050 Hz. A separate phrase alignment controls how long the whole
+caption is displayed. Each unrepaired, usable word timing retains at least one
+visible frame of highlight within its phrase. Unmeasured words remain readable
+without a guessed highlight. If a punctuation split cannot fit, adjacent fragments
+may merge if they remain readable; incompatible measured words fail closed. The evidence gate counts usable word timings before any
+neighbor repair, then the media renderer keeps the complete word timeline for
+assembly evidence.
+
+Each visible phrase stays on screen for at least 20 frames at 24 fps and targets
+no more than 20 characters per second. Cue boundaries can adjust within 0.6
+seconds of the measured phrase windows without overlapping or extending into
+the mix's padded tail. Timing that cannot meet these limits fails closed. There
+is no uniform-timing or network-transcription fallback.
+
+To verify the complete offline caption render at two narration speeds, including
+visible pixels for the active word and the cleared caption region after
+narration, configure the local aligner and media binaries, then run:
+
+```bash
+RF_ALIGNMENT_RENDER_TEST=1 pnpm exec vitest run apps/api/src/modules/composition/media-caption-render.local.test.ts
+```
 
 Legacy synchronous POST generation/retry/regenerate/replace endpoints and their
 still-image production/dispatch ledger are removed. History/export readers and

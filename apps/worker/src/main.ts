@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { mediaRuntimeGate } from "@reelforge/api/app-module";
 import { Logger } from "@nestjs/common";
 import {
   bootstrapProcessObservability,
@@ -15,6 +16,7 @@ Logger.overrideLogger(observability.frameworkLogger);
 // M19 R2: uncaught exceptions and unhandled rejections are logged through redaction and exit 1.
 installProcessErrorHandlers(observability.logger);
 
+await mediaRuntimeGate.activate();
 const orchestrationRuntime = await createOrchestrationRuntime(process.env);
 const orchestrationHandler = new OrchestrationWorkerHandler(orchestrationRuntime);
 

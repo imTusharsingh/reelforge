@@ -259,6 +259,7 @@ export class RunGeneration {
     shot: ReturnType<typeof ShotSpecSchema.parse>,
     ports: { primary: VideoGenPort; fallback: VideoGenPort },
   ): Promise<{ step: Step; provider: VideoGenPort }> {
+    const proof = await this.paid.prepareReservation(run);
     const claim = await this.runs.store.mutate(
       context,
       run.id,
@@ -291,7 +292,7 @@ export class RunGeneration {
           data: { reservedMinor: budget.reservedMinor + amount, revision: budget.revision + 1 },
         });
         const updated = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        await this.paid.reserve(context, current, updated, amount, tx);
+        await this.paid.reserve(context, current, updated, amount, tx, proof);
         if (provider.modelId)
           await tx.providerRequest.updateMany({
             where: { workspaceId: context.workspaceId, correlationId: step.id },

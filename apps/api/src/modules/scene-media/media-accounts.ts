@@ -149,6 +149,7 @@ export class MediaAccounts {
     return result;
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
+    const proof = await this.access.paid.prepareReservation(run);
     await this.access.runs.store.mutate(
       context,
       run.id,
@@ -157,7 +158,7 @@ export class MediaAccounts {
         this.requireDispatchable(run, current);
         const intent = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (intent.state !== "RUNNING") throw new ConflictException("Media intent changed");
-        await this.access.paid.reserve(context, run, step, step.costMinor ?? 0, tx);
+        await this.access.paid.reserve(context, current, step, step.costMinor ?? 0, tx, proof);
         await tx.providerRequest.updateMany({
           where: { workspaceId: context.workspaceId, correlationId: step.id },
           data: { providerId: "gemini", capabilityId: modelId },

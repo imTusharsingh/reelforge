@@ -24,6 +24,11 @@ import { ConflictException, Injectable, ServiceUnavailableException } from "@nes
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
+import {
+  assertPinnedVideoRunLanguage,
+  preparePinnedVideoRunLanguage,
+} from "../composition/video-run-language.js";
+import type { MediaReadiness } from "../composition/media-runtime.js";
 import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js";
@@ -54,26 +59,19 @@ export class RunPaidCalls {
     public readonly usage: UsageBudgetService,
     private readonly store: RunsStore,
   ) {}
+  public prepareReservation(run: Run): Promise<MediaReadiness | undefined> {
+    return preparePinnedVideoRunLanguage(() => run.inputSnapshot);
+  }
   public async reserve(
     context: Context,
     run: Run,
     step: Step,
     amount: number,
     transaction?: Transaction,
+    proof?: MediaReadiness,
   ): Promise<PaidCallReservation> {
-    if (!transaction) {
-      const result = await this.store.mutate(
-        context,
-        run.id,
-        "dispatch_reserved",
-        async (_db, current, tx) => ({
-          value: await this.reserve(context, current, step, amount, tx),
-          payload: { amountMinor: amount },
-          stepId: step.id,
-        }),
-      );
-      return result.value;
-    }
+    if (!transaction) return this.reserveWithPreflight(context, run, step, amount);
+    assertPinnedVideoRunLanguage(run.inputSnapshot, proof);
     const db = this.store.scoped(context, transaction);
     const admission = await assertReserveAdmission(db, transaction, run, step, amount, context);
     const result = await this.usage.reserve(
@@ -112,50 +110,36 @@ export class RunPaidCalls {
       estimateMinor: amount,
     };
   }
+  private async reserveWithPreflight(
+    context: Context,
+    run: Run,
+    step: Step,
+    amount: number,
+  ): Promise<PaidCallReservation> {
+    const prepared = await this.prepareReservation(run);
+    const result = await this.store.mutate(
+      context,
+      run.id,
+      "dispatch_reserved",
+      async (_db, current, tx) => ({
+        value: await this.reserve(context, current, step, amount, tx, prepared),
+        payload: { amountMinor: amount },
+        stepId: step.id,
+      }),
+    );
+    return result.value;
+  }
+
   public async dispatch<T>(
     context: Context,
     step: Step,
     call: () => Promise<T>,
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
-    await this.store
-      .mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
-        const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        if (
-          ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
-          ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
-          current.state !== "RUNNING" ||
-          current.idempotencyKey !== step.idempotencyKey ||
-          run.pauseReason?.startsWith("RECONCILE_REQUIRED")
-        )
-          throw new DispatchAdmissionError("Paid dispatch is closed");
-        if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
-          throw new DispatchAdmissionError("Required audio input failed");
-        await assertRunCap(db, run, current.costMinor ?? 0, current.id);
-        await assertCriticRevision(db, tx, run, current);
-        const { reservation, evidence } = await readAdmission(tx, context, current);
-        if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
-          throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
-        if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
-        const marked = await tx.providerRequest.updateMany({
-          where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
-          data: {
-            errorCode: DISPATCHING,
-            responseMetadata: { dispatched: true, costKnown: false },
-          },
-        });
-        if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-        try {
-          await assertLocked?.();
-        } catch (cause) {
-          throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
-        }
-        return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
-      })
-      .catch(async (error: unknown) => {
-        await this.rollbackAdmission(context, step);
-        throw error;
-      });
+    await this.markDispatching(context, step, assertLocked).catch(async (error: unknown) => {
+      await this.rollbackAdmission(context, step);
+      throw error;
+    });
     // The durable dispatch marker protects the claims before invoking the provider.
     try {
       return await call();
@@ -167,6 +151,49 @@ export class RunPaidCalls {
         throw error;
       return this.holdUnknown(context, step, error);
     }
+  }
+  private async markDispatching(
+    context: Context,
+    step: Step,
+    assertLocked?: () => Promise<void>,
+  ): Promise<void> {
+    const prepared = await preparePinnedVideoRunLanguage(
+      async () => (await this.store.get(context, step.runId)).inputSnapshot,
+    );
+    await this.store.mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
+      assertPinnedVideoRunLanguage(run.inputSnapshot, prepared);
+      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      if (
+        ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
+        ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
+        current.state !== "RUNNING" ||
+        current.idempotencyKey !== step.idempotencyKey ||
+        run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+      )
+        throw new DispatchAdmissionError("Paid dispatch is closed");
+      if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
+        throw new DispatchAdmissionError("Required audio input failed");
+      await assertRunCap(db, run, current.costMinor ?? 0, current.id);
+      await assertCriticRevision(db, tx, run, current);
+      const { reservation, evidence } = await readAdmission(tx, context, current);
+      if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
+        throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
+      if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
+      const marked = await tx.providerRequest.updateMany({
+        where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
+        data: {
+          errorCode: DISPATCHING,
+          responseMetadata: { dispatched: true, costKnown: false },
+        },
+      });
+      if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
+      try {
+        await assertLocked?.();
+      } catch (cause) {
+        throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
+      }
+      return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
+    });
   }
 
   public async jobReceipt(context: Context, step: Step): Promise<string | null> {
