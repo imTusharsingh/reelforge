@@ -14,7 +14,7 @@ import { useRun } from "./use-run";
 import { RunCost } from "./run-cost";
 import { runRequest } from "./client";
 import { PageHeading } from "../../components/ui/page-heading";
-import { dollars, pauseLabel, runMetadata, stateLabel } from "./view-model";
+import { dollars, runMetadata, runPauseLabel, stateLabel } from "./view-model";
 import { ApprovalPanel, CriticSummary } from "../approvals/approval-panel";
 
 export function RunScreen({ id, review = false }: { id: string; review?: boolean }): JSX.Element {
@@ -128,7 +128,7 @@ function RunContent({
   return (
     <section className="rf-stack">
       <RunHeading detail={detail} review={review} />
-      <RunFeedback pauseReason={detail.run.pauseReason} error={error} retry={refresh} />
+      <RunFeedback paused={runPauseLabel(detail)} error={error} retry={refresh} />
       {editable && !["LEARNING", "FAILED", "CANCELED"].includes(detail.run.state) && (
         <RunOperatorControls detail={detail} controls={controls} />
       )}
@@ -156,15 +156,14 @@ function RunContent({
 }
 
 function RunFeedback({
-  pauseReason,
+  paused,
   error,
   retry,
 }: {
-  pauseReason: string | null;
+  paused: string;
   error: string;
   retry: () => void;
 }): JSX.Element | null {
-  const paused = pauseReason && pauseReason !== "PUBLISH_DRY_RUN" ? pauseLabel(pauseReason) : "";
   if (!paused && !error) return null;
   return (
     <Alert tone={error ? "danger" : "warning"} title="Run status">

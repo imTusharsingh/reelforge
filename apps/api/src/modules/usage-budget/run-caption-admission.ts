@@ -9,11 +9,11 @@ import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
 export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
-export const SAVED_CAPTION_PLAN_INVALID = "SAVED_CAPTION_PLAN_INVALID";
 
 function savedCaptionRejection(): ConflictException {
   return new ConflictException({
     code: SAVED_CAPTION_PLAN_UNUSABLE,
+    detail: "CAPTIONS_TOO_LONG",
     message: "Saved captions cannot fit. Start a new Short with shorter narration.",
   });
 }
@@ -79,7 +79,8 @@ export function rejectInvalidSavedCaptionPlan(error: unknown): never {
   if (!(error instanceof z.ZodError)) throw error;
   throw new ConflictException(
     {
-      code: SAVED_CAPTION_PLAN_INVALID,
+      code: SAVED_CAPTION_PLAN_UNUSABLE,
+      detail: "MALFORMED_PLAN",
       message:
         "The saved plan is invalid and its captions could not be validated. Start a new Short.",
     },
