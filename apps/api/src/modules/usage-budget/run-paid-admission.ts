@@ -107,7 +107,7 @@ async function releaseAdmission(
       : {
           state: "CANCELLED",
           finishedAt: new Date(),
-          ...(budgetDenied ? {} : { output: { closedBy: "NOT_DISPATCHED" } }),
+          output: { closedBy: budgetDenied ? "BUDGET_DENIED_NOT_DISPATCHED" : "NOT_DISPATCHED" },
         },
   });
   const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });

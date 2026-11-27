@@ -270,7 +270,24 @@ describe("Gemini structured multimodal text", () => {
         },
         "key",
       ),
-    ).rejects.toMatchObject({ kind: "INVALID" });
+    ).rejects.toMatchObject({
+      kind: "INVALID",
+      providerJobId: "text-job",
+      usage: { input_tokens: 10 },
+    });
+    fetcher.mockResolvedValueOnce(
+      json({
+        ...response,
+        steps: [{ type: "model_output", content: [{ type: "text", text: "{invalid" }] }],
+      }),
+    );
+    await expect(port.complete(spec, "key")).rejects.toMatchObject({
+      name: "Error",
+      kind: "INVALID",
+      dispatched: true,
+      providerJobId: "text-job",
+      usage: { input_tokens: 10 },
+    });
     fetcher.mockRejectedValueOnce(new Error("timeout"));
     await expect(port.complete(spec, "key")).rejects.toMatchObject({ kind: "OUTAGE" });
     await expect(port.submit({ ...spec, prompt: "" }, "key")).rejects.toMatchObject({

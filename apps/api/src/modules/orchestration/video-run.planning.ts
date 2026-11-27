@@ -1,3 +1,4 @@
+import { Prisma } from "@reelforge/database";
 import { fitsAssemblyDuration } from "../script/planning-validation.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import { assemblyStageOutput } from "../composition/assembly-receipts.js";
@@ -58,6 +59,7 @@ export class RunPlanning {
                 ? await assemblyStageOutput(scoped, run.id, output, artifacts)
                 : json({ result: output, storageArtifacts: artifacts }),
             state: waiting ? "WAITING_APPROVAL" : "SUCCEEDED",
+            ...(run.state === "ASSEMBLING" ? { error: Prisma.DbNull } : {}),
             finishedAt: new Date(),
           },
         });

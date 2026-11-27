@@ -1,3 +1,4 @@
+import type { InvalidCompletedText } from "@reelforge/ai-providers";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { failRunIfSettled as settleRunFailure } from "../runs/run-outcomes.js";
 import { closeSteps } from "../runs/run-close-steps.js";
@@ -21,6 +22,7 @@ export async function finalizeFailed(
   message: string,
   dispatched: boolean,
   providerJobId: string | null = step.providerJobId,
+  usage?: Record<string, unknown>,
 ): Promise<Event> {
   const result = await store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
     const current = await db.videoRunStep.findFirstOrThrow({
@@ -36,7 +38,16 @@ export async function finalizeFailed(
       throw new ConflictException("Dispatch claim changed");
     const amount = current.costMinor ?? 0;
     const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
-    await paid.settleFailedRequest(tx, context, current, message, dispatched, cost, providerJobId);
+    await paid.settleFailedRequest(
+      tx,
+      context,
+      current,
+      message,
+      dispatched,
+      cost,
+      providerJobId,
+      usage,
+    );
     await db.videoRunStep.updateMany({
       where: { id: step.id },
       data: {
@@ -47,16 +58,7 @@ export async function finalizeFailed(
         error: { code: reason, message },
       },
     });
-    const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
-    if (budget)
-      await db.budgetEnvelope.updateMany({
-        where: { id: budget.id },
-        data: {
-          reservedMinor: budget.reservedMinor - amount,
-          spentMinor: budget.spentMinor + cost,
-          revision: budget.revision + 1,
-        },
-      });
+    await settleEnvelope(db, run, amount, cost);
     await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
     return {
       value: null,
@@ -158,4 +160,37 @@ async function closeGeneration(
   };
   await db.videoRun.updateMany({ where: { id: run.id }, data: draining });
   await failSettledGeneration(db, { ...run, ...draining });
+}
+
+async function settleEnvelope(db: Scoped, run: Run, amount: number, cost: number): Promise<void> {
+  const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
+  if (budget)
+    await db.budgetEnvelope.updateMany({
+      where: { id: budget.id },
+      data: {
+        reservedMinor: budget.reservedMinor - amount,
+        spentMinor: budget.spentMinor + cost,
+        revision: budget.revision + 1,
+      },
+    });
+}
+
+export function finalizeInvalidText(
+  store: RunsStore,
+  paid: RunPaidCalls,
+  context: Context,
+  step: Step,
+  receipt: InvalidCompletedText,
+): Promise<Event> {
+  return finalizeFailed(
+    store,
+    paid,
+    context,
+    step,
+    "PROVIDER_INVALID_OUTPUT",
+    "Provider completed the text call but returned invalid output",
+    true,
+    receipt.providerJobId,
+    receipt.usage,
+  );
 }

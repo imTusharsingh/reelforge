@@ -17,6 +17,7 @@ import { MediaPorts } from "../scene-media/media-ports.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
 import { audioCosts } from "../scene-media/media-prices.js";
 import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
+import { localRenderFailure } from "./local-assembly-failure.js";
 import { MediaRenderer } from "./media-render.js";
 type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
 type AssemblyAudio = { transcript: string; narration: AudioTrack; music: AudioTrack };
@@ -47,15 +48,19 @@ export class MediaAssembly {
         throw new Error("Every shot requires a playable video receipt");
       return { receipt, seconds: shot.durationSeconds, transition: shot.transition };
     });
-    const rendered = await this.renderer.render({
-      workspaceId: context.workspaceId,
-      clips,
-      narration: narration.receipt,
-      music: music.receipt,
-      transcript,
-      language: brief.languages.narration,
-      pace: brief.narratorVoice.pace,
-    });
+    const rendered = await this.renderer
+      .render({
+        workspaceId: context.workspaceId,
+        clips,
+        narration: narration.receipt,
+        music: music.receipt,
+        transcript,
+        language: brief.languages.narration,
+        pace: brief.narratorVoice.pace,
+      })
+      .catch((error: unknown) => {
+        throw localRenderFailure(error);
+      });
     return this.persist(context, run, brief, plan, receipts, rendered);
   }
   private manifest(

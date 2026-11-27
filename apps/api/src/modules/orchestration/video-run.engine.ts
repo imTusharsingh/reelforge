@@ -1,3 +1,5 @@
+import { assemblyFailure } from "../composition/local-assembly-failure.js";
+import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
 import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -112,6 +114,8 @@ export class VideoRunEngine {
               return await this.advance(context, run);
             } catch (error) {
               if (error instanceof AssemblyInterrupted) return error.delay;
+              const local = run.state === "ASSEMBLING" ? assemblyFailure(error) : undefined;
+              if (local) return recordAssemblyFailure(this.runs, context, run, local);
               if (
                 !(error instanceof SubmissionOutcomeUnknown) &&
                 error instanceof Error &&

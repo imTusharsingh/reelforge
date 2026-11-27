@@ -1,3 +1,4 @@
+import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import {
   mergeCaptionText,
   captionMinimumTicks,
@@ -179,7 +180,8 @@ export function readableCaptionCues(
 }
 
 function unreadable(): Error {
-  return new Error(
+  return new LocalAssemblyFailure(
+    "CAPTIONS_UNREADABLE",
     "Captions cannot fit at a readable speed near the speech. Shorten the narration or use a slower pace.",
   );
 }

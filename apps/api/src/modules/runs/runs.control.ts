@@ -249,6 +249,7 @@ export class RunsControl {
         (clearedStop || resolved || abandoned) && current.state !== "PAUSED_BUDGET"
           ? current.state
           : "GENERATING";
+      if (current.state === "PAUSED_BUDGET") await rearmDeniedKeyframes(db, current);
       await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
       return {
         value: true,
@@ -325,4 +326,17 @@ export class RunsControl {
     if (current.state === "NEEDS_HUMAN" && (await generationFailure(db, current.id)))
       throw new ConflictException("Required generation input failed");
   }
+}
+
+async function rearmDeniedKeyframes(db: Scoped, run: Run): Promise<void> {
+  await db.videoRunStep.updateMany({
+    where: {
+      runId: run.id,
+      state: "CANCELLED",
+      providerJobId: null,
+      key: { startsWith: "media:keyframe:" },
+      output: { path: ["closedBy"], equals: "BUDGET_DENIED_NOT_DISPATCHED" },
+    },
+    data: { output: { closedBy: "NOT_DISPATCHED" } },
+  });
 }

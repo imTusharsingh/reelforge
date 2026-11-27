@@ -16,6 +16,7 @@ import {
   recordReservation,
 } from "./run-paid-admission.js";
 import {
+  InvalidCompletedText,
   ProviderFailure,
   SubmissionRefused,
   providerFailureMessage,
@@ -29,7 +30,15 @@ import {
   preparePinnedVideoRunLanguage,
 } from "../composition/video-run-language.js";
 import type { MediaReadiness } from "../composition/media-runtime.js";
-import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
+import {
+  json,
+  type Context,
+  type Event,
+  type Run,
+  type Scoped,
+  type Step,
+  type Transaction,
+} from "../runs/runs.types.js";
 
 import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js";
 
@@ -145,6 +154,7 @@ export class RunPaidCalls {
       return await call();
     } catch (error) {
       if (
+        error instanceof InvalidCompletedText ||
         error instanceof SubmissionRefused ||
         (error instanceof ProviderFailure && !error.dispatched)
       )
@@ -278,10 +288,16 @@ export class RunPaidCalls {
     dispatched: boolean,
     cost: number,
     providerJobId = step.providerJobId,
+    usage?: Record<string, unknown>,
   ): Promise<void> {
     if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
       throw new ConflictException("Paid dispatch outcome changed");
-    const code = dispatched ? "PROVIDER_JOB_FAILED" : "NOT_DISPATCHED";
+    const code =
+      usage !== undefined
+        ? "PROVIDER_INVALID_OUTPUT"
+        : dispatched
+          ? "PROVIDER_JOB_FAILED"
+          : "NOT_DISPATCHED";
     const updated = await tx.providerRequest.updateMany({
       where: {
         workspaceId: context.workspaceId,
@@ -291,6 +307,7 @@ export class RunPaidCalls {
       data: {
         status: "FAILED",
         actualCost: dispatched ? null : 0,
+        ...(usage !== undefined ? { usage: json(usage) } : {}),
         responseMetadata: {
           dispatched,
           costKnown: !dispatched,
