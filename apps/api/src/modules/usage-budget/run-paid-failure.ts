@@ -1,3 +1,4 @@
+import { OWNER_TERMINAL_TEXT, reconcileOwnerEstimate } from "./run-paid-rejection.js";
 import { recordTextEvidence, remoteTextId } from "./text-evidence.js";
 import { terminalTextEligible, readAdmission } from "./run-admission-state.js";
 import type { InvalidCompletedText } from "@reelforge/ai-providers";
@@ -33,12 +34,17 @@ export async function finalizeFailed(
   providerJobId: string | null = step.providerJobId,
   usage?: Record<string, unknown>,
 ): Promise<Event> {
-  const manual = reason === "OWNER_CONFIRMED_TERMINAL_TEXT";
-  const result = await store
-    .mutate(context, step.runId, "step_failed", async (db, run, tx) => {
-      const current = await db.videoRunStep.findFirstOrThrow({
-        where: { id: step.id, runId: run.id },
-      });
+  const manual = reason === OWNER_TERMINAL_TEXT;
+  return failureEvent(
+    store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
+      const current = await currentStep(db, run, step);
+      if (!dispatched && current.idempotencyKey === step.idempotencyKey) {
+        const corrected = await reconcileOwnerEstimate(db, tx, context, run, current, {
+          code: reason,
+          message,
+        });
+        if (corrected) return corrected;
+      }
       if (
         usage &&
         current.key.startsWith("media:text:") &&
@@ -73,12 +79,17 @@ export async function finalizeFailed(
         },
         stepId: step.id,
       };
-    })
-    .catch((error: unknown) => {
-      if (error instanceof ReplayedFailure) return { event: error.event };
-      throw error;
-    });
-  return result.event;
+    }),
+  );
+}
+
+async function failureEvent(result: Promise<{ event: Event }>): Promise<Event> {
+  try {
+    return (await result).event;
+  } catch (error) {
+    if (error instanceof ReplayedFailure) return error.event;
+    throw error;
+  }
 }
 
 async function markStepFailed(
@@ -291,4 +302,8 @@ export function finalizeInvalidText(
     receipt.providerJobId,
     receipt.usage,
   );
+}
+
+function currentStep(db: Scoped, run: Run, step: Step): Promise<Step> {
+  return db.videoRunStep.findFirstOrThrow({ where: { id: step.id, runId: run.id } });
 }

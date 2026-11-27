@@ -1,11 +1,10 @@
 import { z } from "zod";
+import { type TextDispatchCheck } from "./text-dispatch-recovery.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import {
   type Admission,
-  DISPATCHING,
   jobIdFromAdmission,
-  OUTCOME_UNKNOWN,
   readAdmission,
   TEXT_DISPATCH_PROTOCOL,
 } from "./run-admission-state.js";
@@ -19,16 +18,16 @@ const protocol = z.object({ textDispatchProtocol: z.literal(TEXT_DISPATCH_PROTOC
 type Started<T> = { response: Promise<T> };
 
 /**
- * The marker is already durable. Serialize actual POST initiation with orphan
- * recovery and owner confirmation on the run lock, but never wait for the
- * provider response in that transaction.
+ * Preparation is durable but proves no POST was authorized. Hold the run lock
+ * across the final checks, durable arming and synchronous transport initiation.
+ * Never wait for the provider response inside that transaction.
  */
 export async function beginLockedTextSend<T>(
   store: RunsStore,
   usage: Pick<UsageBudgetService, "release">,
   context: Context,
   claim: Step,
-  check: () => Promise<void>,
+  check: TextDispatchCheck,
   send: () => Promise<T>,
 ): Promise<Started<T>> {
   let started: Started<T> | undefined;
@@ -39,12 +38,12 @@ export async function beginLockedTextSend<T>(
       "text_dispatch_started",
       async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: claim.id } });
-        const { code, reservation } = validateClaim(
+        const reservation = validateClaim(
           claim,
           current,
           await readAdmission(tx, context, current),
         );
-        const reason = await checkSend(db, tx, run, current, code, reservation, check);
+        const reason = await checkSend(db, tx, run, current, reservation, check);
         if (reason) {
           const amountMinor = await releaseAdmission(
             db,
@@ -64,17 +63,20 @@ export async function beginLockedTextSend<T>(
             stepId: claim.id,
           };
         }
+        // Arm on the same standalone session that owns the advisory lock.
+        if (!check.arm || !(await check.arm(current)))
+          throw new DispatchAdmissionError("Text dispatch claim changed");
         // The sync text adapter starts its fetch in this turn, before the first await.
-        const response = send();
+        const response = (async (): Promise<T> => send())();
         void response.catch(() => undefined);
         started = { response };
-        return { value: null, payload: { dispatchKey: claim.idempotencyKey }, stepId: claim.id };
+        return { value: null, payload: { idempotencyKey: claim.idempotencyKey }, stepId: claim.id };
       },
     );
     if (result.value) throw new DispatchAdmissionError(result.value);
   } catch (error) {
-    // A database failure after initiation is not proof of non-dispatch. The first
-    // transaction committed the marker, so still collect the original response.
+    // Arming committed independently before transport. A later failure of the
+    // enclosing transaction must not discard the original response.
     if (!started) throw error;
   }
   if (!started) throw new DispatchAdmissionError("Text dispatch did not start");
@@ -85,23 +87,19 @@ function validateClaim(
   claim: Step,
   current: Step,
   admission: Admission,
-): {
-  code: typeof DISPATCHING | typeof OUTCOME_UNKNOWN;
-  reservation: NonNullable<Admission["reservation"]>;
-} {
-  const code = admission.request?.errorCode;
+): NonNullable<Admission["reservation"]> {
   if (
     current.state !== "RUNNING" ||
     current.idempotencyKey !== claim.idempotencyKey ||
     current.providerJobId ||
     jobIdFromAdmission(admission) ||
     !protocol.safeParse(admission.request?.responseMetadata).success ||
-    (code !== DISPATCHING && code !== OUTCOME_UNKNOWN) ||
+    admission.evidence !== "text-prepared" ||
     !admission.reservation ||
     !["RESERVED", "EXPIRED"].includes(admission.reservation.status)
   )
     throw new DispatchAdmissionError("Text dispatch claim changed");
-  return { code, reservation: admission.reservation };
+  return admission.reservation;
 }
 
 async function checkSend(
@@ -109,12 +107,10 @@ async function checkSend(
   tx: Transaction,
   run: Run,
   step: Step,
-  code: string,
   reservation: { status: string; expiresAt: Date },
   check: () => Promise<void>,
 ): Promise<string | null> {
   if (
-    code !== DISPATCHING ||
     ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
     run.pauseReason ||
     reservation.status !== "RESERVED" ||

@@ -1,3 +1,4 @@
+import { withTextDispatch } from "../usage-budget/text-dispatch-recovery.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, generating, generateClips } from "./runs.fixture.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
@@ -129,10 +130,17 @@ suite("V3 approval, caps and retention", () => {
     await paid.reserve(t.context, t.run, step, 10);
     const started = Promise.withResolvers<void>();
     const completed = Promise.withResolvers<number>();
-    const dispatched = paid.dispatch(t.context, step, () => {
-      started.resolve();
-      return completed.promise;
-    });
+    const dispatched = withTextDispatch(step, (check) =>
+      paid.dispatch(
+        t.context,
+        step,
+        () => {
+          started.resolve();
+          return completed.promise;
+        },
+        check,
+      ),
+    );
     await started.promise;
     await t.control.cancel(t.context, t.run.id);
     expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
@@ -142,9 +150,9 @@ suite("V3 approval, caps and retention", () => {
     completed.resolve(7);
     await paid.finish(t.context, step, true, await dispatched);
     const provider = vi.fn();
-    await expect(paid.dispatch(t.context, step, provider)).rejects.toThrow(
-      "Paid dispatch is closed",
-    );
+    await expect(
+      withTextDispatch(step, (check) => paid.dispatch(t.context, step, provider, check)),
+    ).rejects.toThrow("Paid dispatch is closed");
     expect(provider).not.toHaveBeenCalled();
     expect((await usage.runBreakdown(t.context, t.run.id)).totals.currencies[0]).toMatchObject({
       reservedMinor: 0,

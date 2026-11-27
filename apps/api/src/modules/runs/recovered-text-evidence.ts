@@ -63,6 +63,7 @@ export async function attachRecoveredTextEvidence(
           dispatchKey: step.idempotencyKey,
           providerJobId: evidence.providerJobId,
           recordedBy: context.userId,
+          ...(evidence.usage && { usage: evidence.usage }),
         },
       };
     },
@@ -104,11 +105,7 @@ async function saveEvidence(
   const reported = stored.data;
   if (reported && reported.providerJobId !== evidence.providerJobId)
     throw new ConflictException("Conflicting owner-reported interaction IDs");
-  const merged = usage.safeParse({ ...reported?.usage, ...evidence.usage });
-  if (!merged.success)
-    throw new ConflictException(
-      `Owner-reported evidence allows at most ${counterLimit} usage counters`,
-    );
+  const counters = mergeCounters(reported?.usage ?? {}, evidence.usage ?? {});
   await tx.providerRequest.update({
     where: { id: row.id },
     data: {
@@ -117,10 +114,28 @@ async function saveEvidence(
         dispatchKey: step.idempotencyKey,
         ownerReportedEvidence: {
           providerJobId: evidence.providerJobId,
-          usage: merged.data,
+          usage: counters,
           recordedBy: context.userId,
         },
       },
     },
   });
+}
+
+function mergeCounters(
+  existing: Record<string, number>,
+  incoming: Record<string, number>,
+): Record<string, number> {
+  if (
+    Object.entries(incoming).some(
+      ([key, value]) => Object.hasOwn(existing, key) && existing[key] !== value,
+    )
+  )
+    throw new ConflictException("Conflicting owner-reported usage counters");
+  const merged = usage.safeParse({ ...existing, ...incoming });
+  if (!merged.success)
+    throw new ConflictException(
+      `Owner-reported evidence allows at most ${counterLimit} usage counters`,
+    );
+  return merged.data;
 }

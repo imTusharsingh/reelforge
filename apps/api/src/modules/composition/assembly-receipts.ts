@@ -1,3 +1,4 @@
+import { textReceiptReference } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import { createHash } from "node:crypto";
 import {
@@ -17,6 +18,25 @@ import {
 import type { RunsStore } from "../runs/runs.store.js";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
+
+export async function assemblyReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
+  const steps = await db.videoRunStep.findMany({
+    where: { runId, state: "SUCCEEDED" },
+    orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
+  });
+  return steps.flatMap((step) => {
+    const record = step.output as Record<string, unknown> | null;
+    const result = record?.result as Record<string, unknown> | undefined;
+    const receipt = MediaReceiptSchema.safeParse(record?.receipt ?? result?.receipt);
+    if (!receipt.success) return [];
+    const value = receipt.data;
+    return [
+      step.key.startsWith("media:text:") && value.key === step.key
+        ? { ...value, ...textReceiptReference(step, value.providerJobId) }
+        : value,
+    ];
+  });
+}
 
 const assemblyOutput = z
   .object({

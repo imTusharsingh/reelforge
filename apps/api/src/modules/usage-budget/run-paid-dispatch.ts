@@ -9,7 +9,12 @@ import {
 } from "../composition/video-run-language.js";
 import { assertCriticRevision } from "./critic-admission.js";
 import { assertPaidRunLimits } from "./run-envelope.js";
-import { DISPATCHING, readAdmission, TEXT_DISPATCH_PROTOCOL } from "./run-admission-state.js";
+import {
+  DISPATCHING,
+  readAdmission,
+  TEXT_DISPATCH_PROTOCOL,
+  TEXT_PREPARED,
+} from "./run-admission-state.js";
 
 export class DispatchAdmissionError extends ConflictException {}
 
@@ -45,9 +50,9 @@ export async function markDispatching(
     const marked = await tx.providerRequest.updateMany({
       where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
       data: {
-        errorCode: DISPATCHING,
+        errorCode: lockedText ? TEXT_PREPARED : DISPATCHING,
         responseMetadata: {
-          dispatched: true,
+          dispatched: !lockedText,
           costKnown: false,
           ...(lockedText && { textDispatchProtocol: TEXT_DISPATCH_PROTOCOL }),
         },
@@ -55,7 +60,12 @@ export async function markDispatching(
     });
     if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
     if (assertLocked) await checkDispatchLock(assertLocked, lockedText);
-    return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
+    return {
+      value: null,
+      payload: { idempotencyKey: step.idempotencyKey },
+      stepId: step.id,
+      ...(lockedText && { eventType: "text_dispatch_prepared" }),
+    };
   });
 }
 

@@ -21,7 +21,7 @@ export function remoteTextId(step: Step, reference: string | null): string | nul
 
 export function textReceiptReference(
   step: Step,
-  observedReference: string,
+  observedReference: string | null,
 ): { providerJobId: string | null; dispatchKey: string } {
   return {
     providerJobId: remoteTextId(step, observedReference) ?? remoteTextId(step, step.providerJobId),

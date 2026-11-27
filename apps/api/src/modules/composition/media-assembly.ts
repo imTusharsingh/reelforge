@@ -8,6 +8,7 @@ import {
   assertAssemblyCost,
   assertCurrentAssemblyCost,
   currentPrices,
+  assemblyReceipts,
   shotReceipts,
 } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
@@ -18,7 +19,6 @@ import { hasOpenRenderStage, isRenderStage } from "../runs/run-render-stage.js";
 import {
   AssemblyManifestSchema,
   ShotSpecSchema,
-  MediaReceiptSchema,
   planningTranscript,
   type ChannelBrief,
   type MediaReceipt,
@@ -72,10 +72,10 @@ export class MediaAssembly {
     const transcript = planningTranscript(plan.script);
     const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
     assertSavedCaptionFit(transcript, brief.targetDurationSeconds, seconds);
-    const beforeAudio = await this.receipts(context, run);
+    const beforeAudio = await assemblyReceipts(this.access.runs.store.scoped(context), run.id);
     const clips = plan.manifest.shots.map((shot) => {
       const receipt = beforeAudio.findLast((item) => item.key === `shot-${shot.ordinal}`);
-      if (!receipt || receipt.mimeType !== "video/mp4")
+      if (!receipt?.providerJobId || receipt.mimeType !== "video/mp4")
         throw new LocalAssemblyFailure(
           "ASSEMBLY_SHOT_RECEIPT_MISSING",
           "Every shot requires a playable video receipt. Check the missing shot before making a new Short.",
@@ -84,7 +84,7 @@ export class MediaAssembly {
     });
     const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
     await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
-    const receipts = await this.receipts(context, run);
+    const receipts = await assemblyReceipts(this.access.runs.store.scoped(context), run.id);
     const rendered = await this.renderer
       .render({
         workspaceId: context.workspaceId,
@@ -389,17 +389,5 @@ export class MediaAssembly {
       where: { runId: run.id, key: "local:assembly", state: "SUCCEEDED" },
     });
     return this.access.artifacts.descriptors(step?.output);
-  }
-  private async receipts(context: Context, run: Run): Promise<MediaReceipt[]> {
-    const steps = await this.access.runs.store.scoped(context).videoRunStep.findMany({
-      where: { runId: run.id, state: "SUCCEEDED" },
-      orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
-    });
-    return steps.flatMap((step) => {
-      const record = step.output as Record<string, unknown> | null;
-      const result = record?.result as Record<string, unknown> | undefined;
-      const receipt = MediaReceiptSchema.safeParse(record?.receipt ?? result?.receipt);
-      return receipt.success ? [receipt.data] : [];
-    });
   }
 }

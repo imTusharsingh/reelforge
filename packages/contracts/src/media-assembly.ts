@@ -22,8 +22,12 @@ export const MediaReceiptSchema = z
   })
   .strict()
   .refine(
-    (receipt) => receipt.providerJobId !== null || !!receipt.dispatchKey,
-    "Missing dispatch reference",
+    (receipt) =>
+      receipt.providerJobId !== null ||
+      (receipt.key.startsWith("media:text:") &&
+        receipt.mimeType === "application/json" &&
+        !!receipt.dispatchKey),
+    "Missing provider job ID or synchronous text dispatch reference",
   );
 export type MediaReceipt = z.infer<typeof MediaReceiptSchema>;
 export const AssemblyManifestSchema = z

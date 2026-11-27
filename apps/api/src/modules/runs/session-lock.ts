@@ -8,7 +8,7 @@ export async function withSessionLock<T>(
   applicationName: string,
   message: string,
   lockLost: string,
-  work: (assertLocked: () => Promise<void>) => Promise<T>,
+  work: (assertLocked: () => Promise<void>, session: Client) => Promise<T>,
 ): Promise<T> {
   // A standalone session keeps the application pool available while providers poll.
   const connectionString = process.env.DIRECT_DATABASE_URL?.trim() || process.env.DATABASE_URL;
@@ -53,7 +53,7 @@ export async function withSessionLock<T>(
           throw lost;
         });
       if (disconnected || status?.held !== true) throw lost;
-    });
+    }, client);
   } finally {
     // Closing this session releases its sole advisory lock, including on failure.
     await client.end();

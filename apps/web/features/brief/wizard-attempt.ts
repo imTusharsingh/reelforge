@@ -53,13 +53,19 @@ function readSavedAttempt(input: unknown): SavedAttempt {
     ...(brief !== undefined ? { brief: StoredChannelBriefSchema.parse(brief) } : {}),
     ...(needsLanguageRepair !== undefined ? { needsLanguageRepair } : {}),
     ...(action !== undefined ? { action } : {}),
-    ...(completed !== undefined ? { completed } : {}),
+    ...(action === "create" && brief
+      ? { completed: true }
+      : completed !== undefined
+        ? { completed }
+        : {}),
   };
 }
 
 export class SubmissionCheckpointError extends Error {
-  public constructor() {
-    super("Setup could not verify the saved submission in this tab. No new Short was sent.");
+  public constructor(
+    message = "Setup could not verify the saved submission in this tab. No new Short was sent.",
+  ) {
+    super(message);
   }
 }
 

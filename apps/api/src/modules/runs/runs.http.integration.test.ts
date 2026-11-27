@@ -215,6 +215,12 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     const readReceipt = (): ReturnType<Tenant["db"]["providerRequest"]["findFirstOrThrow"]> =>
       receiptTenant.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } });
     const bounded = await readReceipt();
+    expect(
+      await receiptTenant.db.runEvent.findFirst({
+        where: { stepId: step.id, type: "text_evidence_recorded" },
+        orderBy: { sequence: "desc" },
+      }),
+    ).toMatchObject({ payload: { usage: fill } });
     expect(bounded.responseMetadata).toMatchObject({
       ownerReportedEvidence: {
         providerJobId: data.providerJobId,
@@ -235,11 +241,14 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
     expect(await receiptTenant.db.runEvent.count({ where: evidenceEvents })).toBe(eventCount);
     await post(owner)
       .send({ ...data, usage: { input_tokens: 13 } })
-      .expect(204);
+      .expect(409);
+    expect(await readReceipt()).toEqual(bounded);
+    expect(await receiptTenant.db.runEvent.count({ where: evidenceEvents })).toBe(eventCount);
+    await post(owner).send(data).expect(204);
     expect((await readReceipt()).responseMetadata).toMatchObject({
       ownerReportedEvidence: {
         providerJobId: data.providerJobId,
-        usage: { input_tokens: 13, output_tokens: 3, ...fill },
+        usage: { input_tokens: 12, output_tokens: 3, ...fill },
       },
     });
     expect(sent).toHaveBeenCalledOnce();

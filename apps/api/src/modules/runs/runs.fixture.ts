@@ -135,7 +135,7 @@ export function runsFixture(maxConnections?: number): {
       generation.provider = new StubVideoGenPort();
       generation.fallbackProvider = new StubVideoGenPort("xai");
       const outputs = new RunOutputs(artifacts, store);
-      const planning = new RunPlanning(runs, outputs);
+      const planning = new RunPlanning(runs, outputs, usage);
       planning.handlers = fixtureStageHandlers;
       const engine = new VideoRunEngine(runs, boundary, generation, planning, artifacts);
       const control = new RunsControl(runs, boundary, paid);

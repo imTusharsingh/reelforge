@@ -4,7 +4,8 @@ import { scopedTransaction } from "../runs/runs.transaction.js";
 import type { Context, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 export const ADMISSION_ORDERING = "v2-commit-before-dispatch";
-export const TEXT_DISPATCH_PROTOCOL = "sync-text-advisory-v1";
+export const TEXT_DISPATCH_PROTOCOL = "sync-text-advisory-v2";
+export const TEXT_PREPARED = "VIDEO_RUN_TEXT_PREPARED";
 export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
 export const BILLING_OVERAGE = "VIDEO_RUN_BILLING_OVERAGE";
 export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";
@@ -17,6 +18,7 @@ const providerRequestSelect = {
   responseMetadata: true,
   createdAt: true,
   actualCost: true,
+  usage: true,
   estimatedCost: true,
   channelId: true,
   currency: true,
@@ -40,6 +42,7 @@ type Evidence =
   | "pending"
   | "rolled-back"
   | "ambiguous"
+  | "text-prepared"
   | "dispatching"
   | "recorded"
   | "released-nondispatch"
@@ -76,8 +79,9 @@ function classify(
   request: Request | null,
   reservation: Reservation | null,
   marked: boolean,
-  jobId: string | null,
+  step: Attempt,
 ): Evidence {
+  const jobId = step.providerJobId;
   const dispatched = !!jobId || marked;
   if (!request) return dispatched || reservation ? "ambiguous" : "never-dispatched";
   if (request.errorCode === BILLING_OVERAGE) return "billing-overage";
@@ -89,7 +93,7 @@ function classify(
     (!request.actualCost || request.actualCost.isZero()) &&
     (reservation?.status === "RELEASED" ||
       (reservation?.status === "EXPIRED" &&
-        !marked &&
+        (!marked || isFencedTextRelease(request, step.idempotencyKey)) &&
         request.errorCode === "NOT_DISPATCHED" &&
         z
           .object({
@@ -103,6 +107,7 @@ function classify(
     z.object({ dispatched: z.literal(false) }).safeParse(request.responseMetadata).success
   )
     return "released-nondispatch";
+  if (request.errorCode === TEXT_PREPARED) return "text-prepared";
   if (request.errorCode === DISPATCHING) return "dispatching";
   if (request.errorCode !== "PENDING" && request.errorCode !== "ADMISSION_ROLLED_BACK")
     return "recorded"; // Includes OUTCOME_UNKNOWN and provider receipts. Reconcile by the original key.
@@ -121,6 +126,16 @@ function classify(
   )
     return "ambiguous";
   return request.errorCode === "PENDING" ? "pending" : "rolled-back";
+}
+
+function isFencedTextRelease(request: Request, idempotencyKey: string): boolean {
+  return z
+    .object({
+      fencedTextNotSent: z.literal(true),
+      idempotencyKey: z.literal(idempotencyKey),
+      textDispatchProtocol: z.literal(TEXT_DISPATCH_PROTOCOL),
+    })
+    .safeParse(request.responseMetadata).success;
 }
 
 export function isBillingHold(error: unknown): boolean {
@@ -185,6 +200,7 @@ function markedSteps(
 
 const dispatchEvents = [
   "provider_dispatch",
+  "text_dispatch_started",
   "provider_submitted",
   "reconcile_required",
   "step_completed",
@@ -229,7 +245,7 @@ export async function readAdmissions<T extends Attempt>(
       reservation,
       evidence: isBillingHold(step.error)
         ? "billing-overage"
-        : classify(request, reservation, marked.has(step.id), step.providerJobId),
+        : classify(request, reservation, marked.has(step.id), step),
     };
   });
 }

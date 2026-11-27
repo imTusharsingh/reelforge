@@ -17,7 +17,14 @@ export async function submitSetup(
 ): Promise<Workspace> {
   await ensureCsrfToken();
   const checkpoint = await submissionCheckpoint(progress, scope);
-  progress.action ??= queue ? "queue" : "create";
+  const action = queue ? "queue" : "create";
+  if (progress.action && progress.action !== action)
+    throw new SubmissionCheckpointError(
+      progress.action === "queue"
+        ? "An earlier first Short submission is saved. No new Short was sent. Choose the Short action to continue."
+        : "This setup was saved as create-only. No Short was sent.",
+    );
+  progress.action = action;
   checkpoint();
   if (!progress.workspace) {
     progress.workspaceId ??= (await api.createWorkspace(input.niche)).id;
@@ -40,9 +47,11 @@ export async function submitSetup(
     // The unsupported-language response is definitive: no run was created for the old Brief.
     progress.key = crypto.randomUUID();
     progress.needsLanguageRepair = false;
+    if (action === "create") progress.completed = true;
     checkpoint();
   }
-  if (progress.action === "queue") await queueFirstShort(client, progress, checkpoint);
+  if (action === "create") return progress.workspace;
+  await queueFirstShort(client, progress, checkpoint);
   progress.completed = true;
   try {
     checkpoint();

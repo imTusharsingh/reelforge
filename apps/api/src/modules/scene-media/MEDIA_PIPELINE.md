@@ -113,14 +113,24 @@ are rejected so concurrent workers cannot share preflight ownership.
 Drain existing workers before enabling workers that write the new planning receipts.
 Readers on this revision still accept old receipts. New text receipts keep the local
 `dispatchKey` separate from `providerJobId`, which is null when Google returned no ID.
-The orphan sweep only promotes dispatch markers written by workers using the
-versioned text lock. It leaves older in-flight markers untouched.
+New assembly exports also normalize historical text receipts without changing the
+stored records. Media jobs such as video shots still require their provider job ID.
+
+The text lock uses the `sync-text-advisory-v2` protocol. The orphan sweep releases
+a stranded preparation without committing spend. An armed attempt may have sent
+its POST; it becomes confirmable after the session lock is lost, with no second
+POST. A definitive provider rejection releases an uncommitted reservation or
+corrects an already-committed owner estimate to zero, with an audit event.
+Before rollouts, inventory older and unversioned dispatch markers before and after
+draining workers. The new sweep leaves them untouched for evidence-led reconciliation.
 
 An authenticated workspace owner can attach evidence from a recovered Google receipt
 with `POST /api/v1/runs/:runId/steps/:stepId/text-evidence?workspaceId=…`.
 Send the original `dispatchKey`, recovered `providerJobId`, optional integer
 `usage` counters, and `confirmedOriginalAttempt: true`. This records
-owner-reported evidence and the actor on that attempt. It does not contact Google,
+owner-reported evidence, the submitted counters, and the actor on that attempt.
+New counters can be added; a retry cannot overwrite a stored counter.
+The endpoint does not contact Google,
 replace the generated output, treat reported usage as verified cost, or settle
 the reservation. Terminal confirmation remains a separate operation.
 

@@ -117,6 +117,7 @@ const eventTypes = [
   "media_intent",
   "provider_submitted",
   "text_evidence_recorded",
+  "text_rejection_reconciled",
   "budget_estimated",
   "fallback",
   "reedit_requested",

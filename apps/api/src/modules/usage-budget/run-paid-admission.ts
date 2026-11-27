@@ -1,4 +1,3 @@
-import { retainedOwnerEvidence } from "./text-evidence.js";
 import { terminalRenderFailure } from "../runs/run-render-stage.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
@@ -6,7 +5,8 @@ import {
   ADMISSION_ORDERING,
   type Admission,
   canRollback,
-  DISPATCHING,
+  TEXT_PREPARED,
+  TEXT_DISPATCH_PROTOCOL,
   OUTCOME_UNKNOWN,
   readAdmission,
 } from "./run-admission-state.js";
@@ -87,19 +87,12 @@ export async function releaseAdmission(
   await tx.providerRequest.updateMany({
     where: {
       ...where,
-      errorCode: provenTextNotSent ? { in: [DISPATCHING, OUTCOME_UNKNOWN] } : "PENDING",
+      errorCode: provenTextNotSent ? TEXT_PREPARED : "PENDING",
     },
     data: {
       errorCode: shot ? "ADMISSION_ROLLED_BACK" : "NOT_DISPATCHED",
       actualCost: 0,
-      responseMetadata: {
-        ...(provenTextNotSent && (await retainedOwnerEvidence(tx, context, step))),
-        admissionOrdering: ADMISSION_ORDERING,
-        dispatched: false,
-        costKnown: true,
-        stepId: step.id,
-        idempotencyKey: step.idempotencyKey,
-      },
+      responseMetadata: releaseProof(step, provenTextNotSent),
     },
   });
   await db.videoRunStep.updateMany({
@@ -267,4 +260,18 @@ export async function recordReservation(
   await db.providerRequest.create({
     data: { ...where, channelId: run.channelId, createdAt, ...request },
   });
+}
+
+function releaseProof(step: Step, provenTextNotSent: boolean): Prisma.InputJsonObject {
+  return {
+    ...(provenTextNotSent && {
+      fencedTextNotSent: true,
+      textDispatchProtocol: TEXT_DISPATCH_PROTOCOL,
+    }),
+    admissionOrdering: ADMISSION_ORDERING,
+    dispatched: false,
+    costKnown: true,
+    stepId: step.id,
+    idempotencyKey: step.idempotencyKey,
+  };
 }

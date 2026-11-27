@@ -18,11 +18,16 @@ describe("additive V5 media contracts", () => {
     };
     expect(MediaReceiptSchema.parse(receipt).costBasis).toBe("RESERVATION");
     expect(MediaReceiptSchema.safeParse({ ...receipt, providerJobId: null }).success).toBe(false);
+    const local = { ...receipt, providerJobId: null, dispatchKey: "local-attempt" };
+    expect(MediaReceiptSchema.safeParse(local).success).toBe(false);
+    expect(MediaReceiptSchema.safeParse({ ...local, key: "media:text:director" }).success).toBe(
+      false,
+    );
     expect(
       MediaReceiptSchema.parse({
-        ...receipt,
-        providerJobId: null,
-        dispatchKey: "local-attempt",
+        ...local,
+        key: "media:text:director",
+        mimeType: "application/json",
       }),
     ).toMatchObject({ providerJobId: null, dispatchKey: "local-attempt" });
     expect(MediaReceiptSchema.safeParse({ ...receipt, apiKey: "never" }).success).toBe(false);

@@ -1,3 +1,4 @@
+import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabaseClient } from "@reelforge/database";
@@ -98,7 +99,13 @@ describe.skipIf(!enabled)("V7 persisted Brief versions", () => {
     });
     const inFlight = await store.get(context, run.id);
     expect(inFlight.inputSnapshot).toMatchObject({ brief: legacy });
-    expect(new RunPlanning(runs, new RunOutputs(artifacts, store)).brief(inFlight)).toEqual(legacy);
+    expect(
+      new RunPlanning(
+        runs,
+        new RunOutputs(artifacts, store),
+        new UsageBudgetService(db, () => new Date()),
+      ).brief(inFlight),
+    ).toEqual(legacy);
   });
 
   it("rejects foreign reads, writes, eligibility, viewers and forged identity", async () => {

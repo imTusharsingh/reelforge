@@ -1,3 +1,4 @@
+import { settleFailedRequest } from "./run-paid-rejection.js";
 import { remoteTextId, retainedOwnerEvidence } from "./text-evidence.js";
 import { beginLockedTextSend } from "./run-paid-text-send.js";
 import { markDispatching } from "./run-paid-dispatch.js";
@@ -33,7 +34,6 @@ import {
 } from "../composition/video-run-language.js";
 import type { MediaReadiness } from "../composition/media-runtime.js";
 import {
-  json,
   type Context,
   type Event,
   type Run,
@@ -148,6 +148,8 @@ export class RunPaidCalls {
     call: () => Promise<T>,
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
+    if (step.key.startsWith("media:text:") && !assertLocked)
+      throw new ConflictException("Text dispatch requires its advisory session");
     await markDispatching(this.store, context, step, assertLocked).catch(async (error: unknown) => {
       await this.rollbackAdmission(context, step);
       throw error;
@@ -253,45 +255,15 @@ export class RunPaidCalls {
     providerJobId = step.providerJobId,
     usage?: Record<string, unknown>,
   ): Promise<void> {
-    if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
-      throw new ConflictException("Paid dispatch outcome changed");
-    const code =
-      usage !== undefined
-        ? "PROVIDER_INVALID_OUTPUT"
-        : dispatched
-          ? "PROVIDER_JOB_FAILED"
-          : "NOT_DISPATCHED";
-    const updated = await tx.providerRequest.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: step.id,
-        errorCode: dispatched ? { in: [DISPATCHING, OUTCOME_UNKNOWN] } : DISPATCHING,
-      },
-      data: {
-        status: "FAILED",
-        actualCost: dispatched ? null : 0,
-        ...(usage !== undefined ? { usage: json(usage) } : {}),
-        responseMetadata: {
-          ...(await retainedOwnerEvidence(tx, context, step)),
-          dispatched,
-          costKnown: !dispatched,
-          ...(step.key.startsWith("media:text:") && {
-            dispatchKey: step.idempotencyKey,
-            costBasis: "RESERVATION",
-          }),
-          ...(providerJobId && providerJobId !== step.idempotencyKey ? { providerJobId } : {}),
-        },
-        errorCode: code,
-        errorMessage: message,
-      },
+    return settleFailedRequest(this.usage, tx, context, step, {
+      message,
+      dispatched,
+      cost,
+      providerJobId,
+      ...(usage !== undefined && { usage }),
     });
-    if (updated.count !== 1) throw new ConflictException("Paid dispatch outcome changed");
-    const reservation = await tx.usageReservation.findFirstOrThrow({
-      where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
-    });
-    if (dispatched) await this.usage.commit(context.workspaceId, reservation.id, cost, tx);
-    else await this.usage.release(context.workspaceId, reservation.id, code, tx);
   }
+
   public async commitJob(
     tx: Transaction,
     context: Context,
