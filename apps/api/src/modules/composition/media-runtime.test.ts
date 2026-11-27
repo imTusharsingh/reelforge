@@ -6,7 +6,17 @@ const env = {
   FFMPEG_PATH: "/local/ffmpeg",
   FFPROBE_PATH: "/local/ffprobe",
 };
-const readyOutput = (binary: string): Buffer => {
+const readyOutput = (binary: string, args: string[] = []): Buffer => {
+  if (binary === env.FFPROBE_PATH && args.includes("-show_format"))
+    return Buffer.from(
+      JSON.stringify({
+        format: { format_name: "mov,mp4" },
+        streams: [
+          { codec_type: "video", codec_name: "h264", width: 1080, height: 1920 },
+          { codec_type: "audio", codec_name: "aac" },
+        ],
+      }),
+    );
   if (binary === env.FFMPEG_PATH)
     return Buffer.from(" ... subtitles  V->V   Render text subtitles onto input video\n");
   if (binary === env.FFPROBE_PATH) return Buffer.from("ffprobe version fixture");
@@ -17,10 +27,12 @@ const readyOutput = (binary: string): Buffer => {
 
 describe("local media readiness", () => {
   it("probes local capabilities, caches success and blocks after a configuration change", async () => {
-    const run = vi.fn(async (binary: string) => readyOutput(binary));
+    const run = vi.fn(async (binary: string, args: string[]) => readyOutput(binary, args));
     const gate = createMediaRuntimeGate(run);
     await gate.activate(env);
     expect(run.mock.calls.map(([executable]) => executable)).toEqual([
+      env.FFMPEG_PATH,
+      env.FFPROBE_PATH,
       env.FFMPEG_PATH,
       env.FFPROBE_PATH,
       env.ALIGNMENT_PYTHON_PATH,
@@ -28,7 +40,7 @@ describe("local media readiness", () => {
     ]);
     gate.assertReady(env);
     expect(() => gate.assertReady({ ...env, FFMPEG_PATH: "/missing" })).toThrow("preflight");
-    expect(run).toHaveBeenCalledTimes(4);
+    expect(run).toHaveBeenCalledTimes(6);
   });
   it.each([
     [env.FFMPEG_PATH, "FFmpeg with libass"],
@@ -36,9 +48,9 @@ describe("local media readiness", () => {
     [env.ALIGNMENT_PYTHON_PATH, "Install aeneas"],
     ["espeak", "Install eSpeak"],
   ])("fails closed on a missing executable (%s)", async (missing, message) => {
-    const gate = createMediaRuntimeGate(async (binary) => {
+    const gate = createMediaRuntimeGate(async (binary, args) => {
       if (binary === missing) throw new Error("sensitive child output must not be reflected");
-      return readyOutput(binary);
+      return readyOutput(binary, args);
     });
     await expect(gate.activate(env)).rejects.toThrow(message);
     expect(() => gate.assertReady(env)).toThrow("preflight");
@@ -49,7 +61,7 @@ describe("local media readiness", () => {
         return Buffer.from('{"eng":"en","ita":"it","spa":"es","fra":"fr"}');
       if (binary === "espeak" && args[1] === "es") throw new Error("No Spanish voice");
       if (binary === "espeak" && args[1] === "fr") return Buffer.from("not audio");
-      return readyOutput(binary);
+      return readyOutput(binary, args);
     });
     const gate = createMediaRuntimeGate(run);
     await gate.activate(env);
@@ -61,7 +73,7 @@ describe("local media readiness", () => {
       expect(() => gate.resolveLanguage(input, env)).toThrow("cannot be aligned locally");
       expect(() => gate.assertLanguage(() => input, env)).toThrow("cannot be aligned locally");
     }
-    expect(run).toHaveBeenCalledTimes(7);
+    expect(run).toHaveBeenCalledTimes(9);
   });
 
   it("rechecks current tools and only the pinned voice before each paid boundary", async () => {
@@ -71,7 +83,7 @@ describe("local media readiness", () => {
         throw new Error("tool removed at the same path");
       if (binary === env.ALIGNMENT_PYTHON_PATH)
         return Buffer.from('{"eng":"en","ita":"it","spa":"es"}');
-      return readyOutput(binary);
+      return readyOutput(binary, args);
     });
     const gate = createMediaRuntimeGate(run);
     await gate.activate(env);
@@ -112,9 +124,37 @@ describe("local media readiness", () => {
   });
 
   it("rejects eSpeak that exits successfully without any reference audio", async () => {
-    const gate = createMediaRuntimeGate(async (binary) =>
-      binary === "espeak" ? Buffer.from("not audio") : readyOutput(binary),
+    const gate = createMediaRuntimeGate(async (binary, args) =>
+      binary === "espeak" ? Buffer.from("not audio") : readyOutput(binary, args),
     );
     await expect(gate.activate(env)).rejects.toThrow("voice data");
   });
+});
+
+it.each(["libx264", "aac"])(
+  "fails before paid work when %s stops encoding at the same path",
+  async (encoder) => {
+    let available = true;
+    const gate = createMediaRuntimeGate(async (binary, args) => {
+      if (!available && binary === env.FFMPEG_PATH && args.includes(encoder))
+        throw new Error("secret raw subprocess details");
+      return readyOutput(binary, args);
+    });
+    await gate.activate(env);
+    await expect(gate.prepareLanguage(() => "English", env)).resolves.toBeDefined();
+    available = false;
+    await expect(gate.prepareLanguage(() => "English", env)).rejects.toThrow(
+      "MP4 encode and inspection",
+    );
+    await expect(gate.activate(env)).rejects.toThrow("MP4 encode and inspection");
+  },
+);
+
+it("rejects a probe that executes but reports the wrong MP4 streams", async () => {
+  const gate = createMediaRuntimeGate(async (binary, args) =>
+    args.includes("-show_format")
+      ? Buffer.from('{"format":{"format_name":"mp4"},"streams":[]}')
+      : readyOutput(binary, args),
+  );
+  await expect(gate.activate(env)).rejects.toThrow("MP4 encode and inspection");
 });

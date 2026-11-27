@@ -6,6 +6,7 @@ import {
   AssemblyManifestSchema,
   ShotSpecSchema,
   MediaReceiptSchema,
+  planningTranscript,
   type ChannelBrief,
   type MediaReceipt,
 } from "@reelforge/contracts";
@@ -161,12 +162,7 @@ export class MediaAssembly {
     plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>,
   ): Promise<AssemblyAudio> {
     if (!brief.narratorVoice) throw new Error("Narrator required");
-    const transcript = [
-      plan.script.hook,
-      ...plan.script.beats,
-      plan.script.payoff,
-      plan.script.cta,
-    ].join(" ");
+    const transcript = planningTranscript(plan.script);
     const ports = await this.ports.get(context),
       seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
     const costs = audioCosts(seconds);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NarratorVoiceSchema } from "./narrator-voice.js";
 import { validateBriefDuplicates } from "./brief-consistency.js";
 import { ChannelBriefShape, CadenceSchema } from "./foundations.js";
 
@@ -12,13 +13,17 @@ export const BRIEF_FORMATS = [
   "quick-how-to",
   "news-recap",
 ] as const;
-/** V7 write DTO. Identity and version are assigned by the server, never by the editor. */
-export const BriefInputSchema = ChannelBriefShape.omit({
+export const StoredBriefInputShape = ChannelBriefShape.omit({
   id: true,
   workspaceId: true,
   channelId: true,
   version: true,
   schemaVersion: true,
+});
+
+/** V7 write DTO. Identity and version are assigned by the server, never by the editor. */
+export const BriefInputSchema = StoredBriefInputShape.extend({
+  narratorVoice: NarratorVoiceSchema.nullable(),
 }).superRefine((brief, ctx) => {
   validateBriefDuplicates(brief, ctx);
   const keys = brief.formatMix.map((item) => item.formatKey);

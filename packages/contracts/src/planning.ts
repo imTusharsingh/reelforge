@@ -1,3 +1,4 @@
+import { assertCaptionDuration } from "./caption-readability.js";
 import { z } from "zod";
 import { HookSchema, CtaSchema, scriptWordBudget, words } from "./script-content.js";
 import { StoredChannelBriefSchema, ReferencePinSchema, ShotSpecSchema } from "./foundations.js";
@@ -67,7 +68,8 @@ export function validatePlanningScript(value: unknown, request: PlanningRequest)
   const script = PlanningScriptSchema.parse(value);
   const pace = request.brief.narratorVoice?.pace ?? 1;
   const body = [...script.beats, script.payoff].join(" ");
-  const count = words(`${script.hook} ${body} ${script.cta}`);
+  const transcript = planningTranscript(script);
+  const count = words(transcript);
   if (script.wordCount !== count) throw new Error("Incorrect script word count");
   if (words(script.hook) / (3.5 * pace) > 3) throw new Error("Hook exceeds three seconds");
   if (
@@ -82,5 +84,10 @@ export function validatePlanningScript(value: unknown, request: PlanningRequest)
     throw new Error("Script exceeds narration duration budget");
   if (script.language !== request.brief.languages.script)
     throw new Error("Script must use Brief language");
+  assertCaptionDuration(transcript, Math.min(request.brief.targetDurationSeconds, 45));
   return script;
+}
+
+export function planningTranscript(script: PlanningScript): string {
+  return [script.hook, ...script.beats, script.payoff, script.cta].join(" ");
 }

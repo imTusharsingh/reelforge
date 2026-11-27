@@ -136,6 +136,11 @@ describe("V7 mounted screens", () => {
     await change("#topicsToAvoid", "Breaking news");
     await change("#fact-check", "STANDARD");
     await change("#json-constraints", '{"original":true}');
+    await change("#json-narratorVoice", JSON.stringify({ ...brief.narratorVoice, pace: 3 }));
+    expect(container.textContent).toContain("Narrator pace must be between 0.5 and 2.");
+    expect(
+      container.querySelector<HTMLTextAreaElement>("#json-narratorVoice")!.validity.valid,
+    ).toBe(false);
     await change("#json-narratorVoice", "{");
     expect(container.textContent).toContain("valid JSON");
     await change("#json-narratorVoice", JSON.stringify(brief.narratorVoice));

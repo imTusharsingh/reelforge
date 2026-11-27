@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NarratorVoiceSchema, StoredNarratorVoiceSchema } from "./narrator-voice.js";
 import { validateBriefDuplicates } from "./brief-consistency.js";
 
 export const FOUNDATION_VERSION = "1.0" as const;
@@ -63,14 +64,6 @@ export const ReferenceSourceSchema = z.enum(["SYSTEM", "PRESET", "UPLOADED", "US
 /** referenceAssetId is the stable ReferenceAsset.referenceId; version selects the immutable row. */
 export const ReferencePinSchema = z
   .object({ referenceAssetId: uuid, version: z.int().positive() })
-  .strict();
-export const NarratorVoiceSchema = z
-  .object({
-    providerId: text,
-    voiceId: text,
-    language: text.default("English"),
-    pace: z.number().positive().default(1),
-  })
   .strict();
 export const CadenceSchema = z
   .object({
@@ -156,14 +149,14 @@ export const ChannelBriefShape = owned
     formatMix: FormatMixSchema,
     tuningBounds: TuningBoundsSchema.nullable(),
     languages: z.object({ script: text, narration: text, captions: text }).strict(),
-    onCameraVoice: NarratorVoiceSchema.nullable(),
+    onCameraVoice: StoredNarratorVoiceSchema.nullable(),
     /** @deprecated Use formatMix for format selection. */
     formatKey: text,
     targetDurationSeconds: z.number().positive().max(180),
     /** @deprecated Use languages.narration. */
     narrationLanguage: text,
     /** @deprecated Use languages.narration for the voice language. Voice identity remains here. */
-    narratorVoice: NarratorVoiceSchema.nullable(),
+    narratorVoice: StoredNarratorVoiceSchema.nullable(),
     requestedAutonomy: AutonomyLevelSchema,
     cadence: CadenceSchema,
     /** @deprecated Use guardrails.aiDisclosure. */
@@ -183,14 +176,19 @@ export const ChannelBriefShape = owned
     constraints: z.record(z.string(), z.json()),
   })
   .strict();
-export const ChannelBriefSchema = ChannelBriefShape.extend({
+const VersionedBriefShape = ChannelBriefShape.extend({
   schemaVersion: z.enum(["1.0", "1.1"]),
+});
+export const ChannelBriefSchema = VersionedBriefShape.extend({
+  narratorVoice: NarratorVoiceSchema.nullable(),
 }).superRefine(validateBriefDuplicates);
 
-// 1.0 documents written before consistency validation retain their pinned field values.
+// Keep historical versions readable, including voice speeds that are no longer allowed on write.
 export const StoredChannelBriefSchema = z.union([
   ChannelBriefShape,
-  ChannelBriefSchema.refine((brief) => brief.schemaVersion === "1.1"),
+  VersionedBriefShape.extend({ schemaVersion: z.literal("1.1") }).superRefine(
+    validateBriefDuplicates,
+  ),
 ]);
 export type ChannelBrief = z.infer<typeof ChannelBriefSchema>;
 export const VideoRunSchema = owned

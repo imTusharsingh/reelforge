@@ -1,18 +1,20 @@
-import type { AlignedWord } from "@reelforge/contracts";
+import {
+  captionCharacters as characters,
+  captionMaxCharacters as maxCharacters,
+  captionMinimumTicks,
+  type AlignedWord,
+} from "@reelforge/contracts";
 
 // Captions are timed separately against the speech. They do not reuse word boundaries.
 export type CaptionCue = Readonly<{ text: string; start: number; end: number }>;
 
-const maxCharacters = 36;
 const targetCharacters = 27;
-const minFramesAt24Fps = 20;
-const targetCharactersPerSecond = 20;
+export { captionMinimumTicks };
 export const minimumCue = 5; // Five ASS centiseconds span one 24 fps frame.
 const tolerance = 60; // Choose display bounds up to 0.6s from measured speech.
 const nominalBoundaryTolerance = 0.001;
 export const captionTicks = (seconds: number): number => Math.round(seconds * 100);
 const ticks = captionTicks;
-const characters = (text: string): number => Array.from(text).length;
 
 const titleAbbreviations =
   /^(?:dr|mr|mrs|ms|prof|sr|jr|st|rev|hon|gen|sgt|lt|capt|mt|vs|e\.g|i\.e)\.$/iu;
@@ -60,13 +62,6 @@ function splitSentence(words: readonly string[]): string[] {
   const result: string[] = [];
   for (let i = 0; i < length; i = next[i]!) result.push(words.slice(i, next[i]).join(" "));
   return result;
-}
-
-export function captionMinimumTicks(text: string): number {
-  return Math.max(
-    Math.ceil((minFramesAt24Fps / 24) * 100),
-    Math.ceil((characters(text) / targetCharactersPerSecond) * 100),
-  );
 }
 
 function validPhraseTimeline(

@@ -16,7 +16,10 @@ vi.mock("./run-admission-state.js", async (importOriginal) => ({
   readAdmission: ready.readAdmission,
 }));
 
-function fixture(language: string): {
+function fixture(
+  language: string,
+  pace = 1,
+): {
   calls: RunPaidCalls;
   run: Run;
   step: Step;
@@ -28,7 +31,7 @@ function fixture(language: string): {
 } {
   const run = {
     id: "run",
-    inputSnapshot: { brief: { languages: { narration: language } } },
+    inputSnapshot: { brief: { languages: { narration: language }, narratorVoice: { pace } } },
   } as unknown as Run;
   const step = { id: "step", runId: run.id } as Step;
   const mutate = vi.fn(async (_context, _run, _event, callback) => callback(null, run, {}));
@@ -125,4 +128,22 @@ it("passes the out-of-transaction proof to the pinned guard during reservation",
     ready.assertFreshLanguage.mock.invocationCallOrder[0]!,
   );
   expect(reserve).not.toHaveBeenCalled();
+});
+
+it("blocks reservation and dispatch for legacy pace while allowing receipt recovery", async () => {
+  const { calls, run, step, mutate, reserve, context, rollback } = fixture("English", 3);
+  const provider = vi.fn();
+  const error = { response: { code: "NARRATION_PACE_UNSUPPORTED" } };
+  await expect(calls.reserve(context, run, step, 1)).rejects.toMatchObject(error);
+  await expect(calls.dispatch(context, step, provider)).rejects.toMatchObject(error);
+  expect(mutate).not.toHaveBeenCalled();
+  expect(reserve).not.toHaveBeenCalled();
+  expect(provider).not.toHaveBeenCalled();
+  expect(rollback).toHaveBeenCalledWith(context, step);
+  ready.readAdmission.mockResolvedValue({
+    evidence: "dispatching",
+    request: { responseMetadata: { providerJobId: "accepted-job" } },
+  });
+  await expect(calls.jobReceipt(context, step)).resolves.toBe("accepted-job");
+  expect(ready.prepareLanguage).not.toHaveBeenCalled();
 });

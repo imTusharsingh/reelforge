@@ -152,14 +152,16 @@ export function StyleFields({ value, onChange }: Omit<Props, "offerL3">): JSX.El
 export function JsonField({
   label,
   value,
+  validate,
   onChange,
 }: {
   label: string;
   value: unknown;
+  validate?: ((value: unknown) => string) | undefined;
   onChange: (value: unknown) => void;
 }): JSX.Element {
   const [raw, setRaw] = useState(JSON.stringify(value, null, 2));
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => validate?.(value) ?? "");
   return (
     <TextAreaField
       id={`json-${label.replaceAll(" ", "-")}`}
@@ -173,7 +175,9 @@ export function JsonField({
         try {
           const parsed: unknown = JSON.parse(e.target.value);
           onChange(parsed);
-          setError("");
+          const issue = validate?.(parsed) ?? "";
+          e.target.setCustomValidity(issue);
+          setError(issue);
         } catch {
           e.target.setCustomValidity("Enter valid JSON before saving.");
           setError("Enter valid JSON before saving.");
