@@ -87,6 +87,7 @@ const eventTypes = [
   "step_failed",
   "shot_refused",
   "assembly_input_failed",
+  "assembly_local_failure",
   "assembly_failed",
   "shot_started",
   "shot_completed",

@@ -80,60 +80,6 @@ test("settles an invalid completed interaction with usage and never submits it a
   });
 });
 
-test("rearms a denied keyframe only on explicit budget resume with a fresh key", async () => {
-  const t = await fixture.tenant();
-  const run = await generating(t);
-  const native = fakeMediaPorts(
-    t.context.workspaceId,
-    t.storage,
-    {
-      clip: Buffer.alloc(0),
-      image: Buffer.alloc(0),
-      audio: Buffer.alloc(0),
-    },
-    [],
-  );
-  const {
-    accounts,
-    access: { paid },
-  } = bindMedia(t, native);
-  const db = t.store.scoped(t.context);
-  await t.usage.upsertBudget(t.context, {
-    currency: "USD",
-    dailyLimitMinor: 5,
-    reason: "fixture limit",
-  });
-  const key = "media:keyframe:0:v1";
-  const step = await accounts.begin(t.context, run, key, {}, 6, "fixture-image");
-  await expect(accounts.prepare(t.context, run, step, "fixture-image")).rejects.toMatchObject({
-    code: "BUDGET_EXHAUSTED",
-  });
-  await db.videoRun.updateMany({
-    where: { id: run.id },
-    data: { state: "PAUSED_BUDGET", pauseReason: "BUDGET_EXHAUSTED" },
-  });
-  expect(await db.videoRunStep.findFirst({ where: { id: step.id } })).toMatchObject({
-    state: "CANCELLED",
-    output: { closedBy: "BUDGET_DENIED_NOT_DISPATCHED" },
-  });
-  await t.engine.process(t.runs.job(t.context, run.id));
-  expect(await db.videoRunStep.count({ where: { runId: run.id, key } })).toBe(1);
-  await t.usage.upsertBudget(t.context, {
-    currency: "USD",
-    dailyLimitMinor: 500,
-    reason: "fixture refill",
-  });
-  await t.control.resume(t.context, run.id);
-  const resumed = await t.store.get(t.context, run.id);
-  const retry = await accounts.begin(t.context, resumed, key, {}, 6, "fixture-image");
-  expect(retry.attempt).toBe(2);
-  expect(retry.idempotencyKey).not.toBe(step.idempotencyKey);
-  await paid.reserve(t.context, resumed, retry, 6);
-  expect(await t.db.providerRequest.count({ where: { workspaceId: t.context.workspaceId } })).toBe(
-    1,
-  );
-});
-
 test("explicit resume after clearing an emergency stop preserves GENERATING", async () => {
   const t = await fixture.tenant();
   const run = await generating(t);

@@ -1,29 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMediaRuntimeGate } from "./media-runtime.js";
 
-const env = {
-  ALIGNMENT_PYTHON_PATH: "/local/python",
-  FFMPEG_PATH: "/local/ffmpeg",
-  FFPROBE_PATH: "/local/ffprobe",
-};
-const readyOutput = (binary: string, args: string[] = []): Buffer => {
-  if (binary === env.FFPROBE_PATH && args.includes("-show_format"))
-    return Buffer.from(
-      JSON.stringify({
-        format: { format_name: "mov,mp4" },
-        streams: [
-          { codec_type: "video", codec_name: "h264", width: 1080, height: 1920 },
-          { codec_type: "audio", codec_name: "aac" },
-        ],
-      }),
-    );
-  if (binary === env.FFMPEG_PATH)
-    return Buffer.from(" ... subtitles  V->V   Render text subtitles onto input video\n");
-  if (binary === env.FFPROBE_PATH) return Buffer.from("ffprobe version fixture");
-  if (binary === env.ALIGNMENT_PYTHON_PATH) return Buffer.from('{"eng":"en"}');
-  if (binary === "espeak") return Buffer.concat([Buffer.from("RIFF1234WAVE"), Buffer.alloc(100)]);
-  return Buffer.alloc(0);
-};
+import { mediaProbeEnv as env, readyProbeOutput as readyOutput } from "./media-runtime.fixture.js";
 
 describe("local media readiness", () => {
   it("probes local capabilities, caches success and blocks after a configuration change", async () => {

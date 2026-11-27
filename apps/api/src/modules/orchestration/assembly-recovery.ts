@@ -1,3 +1,5 @@
+import { acceptedAudio } from "../runs/run-audio.js";
+import { isRenderStage } from "../runs/run-render-stage.js";
 import { z } from "zod";
 import type { LocalAssemblyFailure } from "../composition/local-assembly-failure.js";
 import type { RunsService } from "../runs/runs.service.js";
@@ -17,12 +19,12 @@ export async function recordAssemblyFailure(
     run.id,
     "assembly_local_failure",
     async (db, current) => {
-      if (current.state !== "ASSEMBLING" || current.pauseReason)
-        return { value: null, payload: { stale: true } };
+      if (!isRenderStage(run.state) || current.state !== run.state || current.pauseReason)
+        return { value: { delay: null, drain: false }, payload: { stale: true } };
       const step = await db.videoRunStep.findFirst({
-        where: { runId: run.id, key: "ASSEMBLING", attempt: 1, state: "RUNNING" },
+        where: { runId: run.id, key: run.state, attempt: 1, state: "RUNNING" },
       });
-      if (!step) return { value: null, payload: { stale: true } };
+      if (!step) return { value: { delay: null, drain: false }, payload: { stale: true } };
       const prior = attempts.safeParse(step.error).data?.localRenderFailures ?? 0;
       const delay = failure.retryable ? (retryDelays[prior] ?? null) : null;
       const error = {
@@ -39,9 +41,16 @@ export async function recordAssemblyFailure(
       });
       if (delay === null)
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: error.code } });
-      return { value: delay, payload: { ...error, retryInMs: delay }, stepId: step.id };
+      return {
+        value: { delay, drain: delay === null },
+        payload: { ...error, stage: run.state, retryInMs: delay },
+        stepId: step.id,
+      };
     },
   );
   await runs.events?.publish(result.event);
-  return result.value;
+  if (!result.value.drain) return result.value.delay;
+  return (await acceptedAudio(runs.store.scoped(context), runs.store.db, run)).length
+    ? 12000
+    : null;
 }

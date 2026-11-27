@@ -1,3 +1,5 @@
+import { isRenderStage } from "./run-render-stage.js";
+import { rearmDeniedKeyframes } from "./run-keyframe-budget-recovery.js";
 import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
@@ -99,6 +101,7 @@ export class RunsControl {
       throw new ConflictException("Resume the stopped run before editing");
     if (await activeSubmissionHold(db, tx, run))
       throw new ConflictException("Reconcile the unknown attempt before editing");
+    if (run.pauseReason) throw new ConflictException("Resolve the run pause before editing");
     const critics = await openCritics(db, tx, run);
     if (critics.some((critic) => !canRollback(critic)))
       throw new ConflictException("Settle the prior critic before editing");
@@ -250,7 +253,7 @@ export class RunsControl {
         (clearedStop || resolved || abandoned) && current.state !== "PAUSED_BUDGET"
           ? current.state
           : "GENERATING";
-      if (current.state === "PAUSED_BUDGET") await rearmDeniedKeyframes(db, current);
+      if (current.state === "PAUSED_BUDGET") await rearmDeniedKeyframes(db, tx, current);
       await db.videoRun.updateMany({ where: { id }, data: { state, pauseReason: null } });
       return {
         value: true,
@@ -312,7 +315,7 @@ export class RunsControl {
     return result.value;
   }
   private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
-    if (current.state === "ASSEMBLING") await assertAssemblyResumable(db, current);
+    if (isRenderStage(current.state)) await assertAssemblyResumable(db, current);
     if (
       current.state === "NEEDS_HUMAN" &&
       (await db.videoRunStep.findFirst({
@@ -330,24 +333,11 @@ export class RunsControl {
   }
 }
 
-async function rearmDeniedKeyframes(db: Scoped, run: Run): Promise<void> {
-  await db.videoRunStep.updateMany({
-    where: {
-      runId: run.id,
-      state: "CANCELLED",
-      providerJobId: null,
-      key: { startsWith: "media:keyframe:" },
-      output: { path: ["closedBy"], equals: "BUDGET_DENIED_NOT_DISPATCHED" },
-    },
-    data: { output: { closedBy: "NOT_DISPATCHED" } },
-  });
-}
-
 async function assertAssemblyResumable(db: Scoped, run: Run): Promise<void> {
   const failed = await db.videoRunStep.findFirst({
     where: {
       runId: run.id,
-      key: "ASSEMBLING",
+      key: run.state,
       state: "FAILED",
       OR: [
         { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },

@@ -120,7 +120,7 @@ function RunContent({
 }: RunContentProps): JSX.Element {
   const { action, busy } = controls;
   const redo =
-    editable && detail.run.state === "CRITIC"
+    editable && detail.run.state === "CRITIC" && !detail.run.pauseReason
       ? (ordinal: number, sourceStepId: string): void => {
           void action(`reshoot/${ordinal}?sourceStepId=${encodeURIComponent(sourceStepId)}`);
         }

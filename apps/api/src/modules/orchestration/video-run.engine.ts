@@ -1,3 +1,4 @@
+import { isRenderStage } from "../runs/run-render-stage.js";
 import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
@@ -102,7 +103,7 @@ export class VideoRunEngine {
               await this.runs.enqueue(context, run);
               return null;
             }
-            if (run.state === "CANCELED" || (run.state === "ASSEMBLING" && run.pauseReason)) {
+            if (run.state === "CANCELED" || (isRenderStage(run.state) && run.pauseReason)) {
               if (!job.assembly && this.runs.queue) return null;
               return this.planning.collectAdmittedAudio?.(context, run) ?? null;
             }
@@ -130,9 +131,9 @@ export class VideoRunEngine {
     error: unknown,
   ): Promise<number | null> {
     if (error instanceof AssemblyInterrupted) return error.delay;
-    const rejected = run.state === "ASSEMBLING" && savedCaptionRejection(error);
+    const rejected = isRenderStage(run.state) && savedCaptionRejection(error);
     if (rejected) return pauseRejectedAssembly(this.runs, context, run, rejected);
-    const local = run.state === "ASSEMBLING" ? assemblyFailure(error) : undefined;
+    const local = isRenderStage(run.state) ? assemblyFailure(error) : undefined;
     if (local) return recordAssemblyFailure(this.runs, context, run, local);
     if (
       !(error instanceof SubmissionOutcomeUnknown) &&
@@ -225,10 +226,11 @@ export class VideoRunEngine {
       if (!(await this.runs.move(context, await this.runs.store.get(context, run.id), "SCRIPTING")))
         return 12000;
     } else if (["SCRIPTING", "SHOT_PLANNING", "ASSEMBLING", "CRITIC"].includes(run.state)) {
-      if (run.state === "CRITIC") await this.planning.reedit(context, run);
       const step = await this.planning.stage(context, run);
       if (step.state === "WAITING_APPROVAL") return null;
       const current = await this.runs.store.get(context, run.id);
+      if (isRenderStage(run.state) && (current.state !== run.state || current.pauseReason))
+        return null;
       if (run.state === "SHOT_PLANNING") await this.planning.prepare(context, current);
       const next = {
         SCRIPTING: "SHOT_PLANNING",
@@ -239,7 +241,7 @@ export class VideoRunEngine {
       if (
         !(await this.runs.move(
           context,
-          await this.runs.store.get(context, run.id),
+          run.state === "SHOT_PLANNING" ? await this.runs.store.get(context, run.id) : current,
           next[run.state as keyof typeof next],
         ))
       )
@@ -374,7 +376,7 @@ export class VideoRunEngine {
   }
   private async enqueueAdmitted(context: Context, db: Scoped, run: Run): Promise<void> {
     if (
-      ["CANCELED", "ASSEMBLING"].includes(run.state) &&
+      (run.state === "CANCELED" || isRenderStage(run.state)) &&
       (await acceptedAudio(db, this.runs.store.db, run)).length
     )
       await this.runs.queue?.enqueue(

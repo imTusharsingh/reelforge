@@ -1,3 +1,4 @@
+import { isRenderStage } from "../runs/run-render-stage.js";
 import { ConflictException } from "@nestjs/common";
 import { acceptedAudio } from "../runs/run-audio.js";
 import type { RunsService } from "../runs/runs.service.js";
@@ -35,10 +36,10 @@ export async function pauseRejectedAssembly(
     run.id,
     "assembly_input_failed",
     async (db, current) => {
-      if (current.state !== "ASSEMBLING" || current.pauseReason)
+      if (!isRenderStage(run.state) || current.state !== run.state || current.pauseReason)
         return { value: false, payload: { stale: true } };
       const changed = await db.videoRunStep.updateMany({
-        where: { runId: run.id, key: "ASSEMBLING", attempt: 1, state: "RUNNING" },
+        where: { runId: run.id, key: run.state, attempt: 1, state: "RUNNING" },
         data: { state: "FAILED", finishedAt: new Date(), error: rejection },
       });
       if (!changed.count) return { value: false, payload: { stale: true } };

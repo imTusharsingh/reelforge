@@ -1,3 +1,4 @@
+import { canAdvancePastRender } from "./run-render-stage.js";
 import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
 import { countApprovedShorts } from "../channel/brief-approvals.js";
@@ -169,6 +170,8 @@ export class RunsService {
       run.id,
       "transition",
       async (db, current, tx) => {
+        if (!(await canAdvancePastRender(db, current, state)))
+          return { value: false, payload: { stale: true }, eventType: "stage_advance_discarded" };
         const advances =
           state === "SCRIPTING" ||
           state === "SHOT_PLANNING" ||

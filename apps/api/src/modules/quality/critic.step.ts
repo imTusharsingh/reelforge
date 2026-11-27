@@ -3,7 +3,7 @@ import { assemblyStageOutput } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import type { ModuleRef } from "@nestjs/core";
 import { RunCriticReportSchema, type ChannelBrief } from "@reelforge/contracts";
-import type { StepHandler } from "../orchestration/video-run.handlers.js";
+import { AssemblyInterrupted, type StepHandler } from "../orchestration/video-run.handlers.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { MediaAssembly } from "../composition/media-assembly.js";
 import { RunsControl } from "../runs/runs.control.js";
@@ -145,7 +145,8 @@ export class CriticStep implements StepHandler {
         run.id,
         "critic_assembly_invalidated",
         async (scoped, current) => {
-          if (current.state !== "CRITIC") throw new ConflictException("Critic stage changed");
+          if (current.state !== "CRITIC" || current.pauseReason)
+            throw new AssemblyInterrupted(null);
           await scoped.videoRunStep.updateMany({
             where: { id: cached.id, key: "local:assembly" },
             data: {
@@ -160,19 +161,25 @@ export class CriticStep implements StepHandler {
     }
     const assembly = this.modules.get(MediaAssembly, { strict: false });
     const artifacts = await assembly.execute(context, run, brief);
-    await runs.store.mutate(context, run.id, "critic_assembly_refreshed", async (scoped) => {
-      await scoped.videoRunStep.updateMany({
-        where: { runId: run.id, key: { in: ["ASSEMBLING", "REEDIT"] }, state: "SUCCEEDED" },
-        data: {
-          output: await assemblyStageOutput(
-            scoped,
-            run.id,
-            json({ storageArtifacts: artifacts }),
-            artifacts,
-          ),
-        },
-      });
-      return { value: null, payload: {} };
-    });
+    await runs.store.mutate(
+      context,
+      run.id,
+      "critic_assembly_refreshed",
+      async (scoped, current) => {
+        if (current.state !== "CRITIC" || current.pauseReason) throw new AssemblyInterrupted(null);
+        await scoped.videoRunStep.updateMany({
+          where: { runId: run.id, key: { in: ["ASSEMBLING", "REEDIT"] }, state: "SUCCEEDED" },
+          data: {
+            output: await assemblyStageOutput(
+              scoped,
+              run.id,
+              json({ storageArtifacts: artifacts }),
+              artifacts,
+            ),
+          },
+        });
+        return { value: null, payload: {} };
+      },
+    );
   }
 }
