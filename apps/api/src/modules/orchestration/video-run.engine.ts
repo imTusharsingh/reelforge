@@ -115,21 +115,28 @@ export class VideoRunEngine {
             try {
               return await this.advance(context, run);
             } catch (error) {
-              if (error instanceof AssemblyInterrupted) return error.delay;
-              if (run.state === "ASSEMBLING" && isSavedCaptionRejection(error))
-                return pauseRejectedAssembly(this.runs, context, run, error.message);
-              if (
-                !(error instanceof SubmissionOutcomeUnknown) &&
-                error instanceof Error &&
-                error.message.startsWith("RECONCILE_REQUIRED")
-              )
-                return this.handleFailure(context, run, error);
-              throw error;
+              return this.handleStageFailure(context, run, error);
             }
           },
           "CONSUMER",
         ),
     );
+  }
+  private async handleStageFailure(
+    context: Context,
+    run: Run,
+    error: unknown,
+  ): Promise<number | null> {
+    if (error instanceof AssemblyInterrupted) return error.delay;
+    if (run.state === "ASSEMBLING" && isSavedCaptionRejection(error))
+      return pauseRejectedAssembly(this.runs, context, run, error.message);
+    if (
+      !(error instanceof SubmissionOutcomeUnknown) &&
+      error instanceof Error &&
+      error.message.startsWith("RECONCILE_REQUIRED")
+    )
+      return this.handleFailure(context, run, error);
+    throw error;
   }
   private async holdLocked(
     db: Scoped,
