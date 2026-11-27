@@ -1,10 +1,18 @@
 import { completedRedos, shotReshoots } from "../runs/shot-reshoots.js";
 import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
+import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import type { Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import { readAdmissions, canRollback } from "./run-admission-state.js";
 
 export const criticPrefix = "media:text:critic:";
+
+/** Only gate new paid work; accepted critic receipts may still be collected and settled. */
+export function assertCriticAdmissionOpen(run: Run, key: string): void {
+  if (!key.startsWith(criticPrefix)) return;
+  if (run.state !== "CRITIC") throw new ConflictException("Critic assembly revision changed");
+  if (run.pauseReason) throw new AssemblyInterrupted(null);
+}
 
 export async function openCritics(
   db: Scoped,
@@ -29,6 +37,7 @@ export async function assertCriticRevision(
   step: { key: string; input: unknown; id?: string },
 ): Promise<void> {
   if (!step.key.startsWith(criticPrefix)) return;
+  assertCriticAdmissionOpen(run, step.key);
   const input = z
     .object({ spec: z.object({ assemblyRevision: z.int().positive() }) })
     .safeParse(step.input);
@@ -41,7 +50,6 @@ export async function assertCriticRevision(
   });
   const revision = 1 + completedRedos(changes, await shotReshoots(db, run.id)).length;
   if (
-    run.state !== "CRITIC" ||
     changes.some((s) => s.key === "REEDIT" && s.state !== "SUCCEEDED") ||
     !input.success ||
     input.data.spec.assemblyRevision !== revision ||

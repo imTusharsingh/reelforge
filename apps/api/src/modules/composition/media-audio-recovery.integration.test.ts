@@ -6,9 +6,9 @@ import { runsFixture, generating, type Tenant } from "../runs/runs.fixture.js";
 import { RunsQueue } from "../runs/runs.queue.js";
 import type { Run, RunJob } from "../runs/runs.types.js";
 import type { MediaPlanning } from "../scene-media/media-planning.js";
-import { scriptFixture, shotsFixture, planningFixture } from "../script/planning.fixture.js";
+import { scriptFixture } from "../script/planning.fixture.js";
 import { bindMedia } from "./media-bindings.fixture.js";
-import { fakeMediaPorts } from "./media-recovery.fixture.js";
+import { fakeMediaPorts, seedPlayableShotReceipts } from "./media-recovery.fixture.js";
 const narrator = {
   providerId: "gemini" as const,
   voiceId: "narrator",
@@ -22,7 +22,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     vi.stubEnv("GEMINI_MUSIC_MODEL", "fixture-music");
   });
   afterEach(() => vi.unstubAllEnvs());
-  async function setup(): Promise<{
+  async function setup(leaveFirstShotPending = false): Promise<{
     t: Tenant;
     run: Run;
     plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>;
@@ -33,9 +33,9 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     const t = await fixture.tenant("L2", 30, narrator);
     await generating(t);
     const run = await t.store.get(t.context, t.run.id);
-    await t.store
-      .scoped(t.context)
-      .videoRun.updateMany({ where: { id: run.id }, data: { state: "ASSEMBLING" } });
+    const db = t.store.scoped(t.context);
+    const shots = await seedPlayableShotReceipts(t, leaveFirstShotPending);
+    await db.videoRun.updateMany({ where: { id: run.id }, data: { state: "ASSEMBLING" } });
     const plan = {
       script: scriptFixture(),
       manifest: {
@@ -46,7 +46,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
         briefVersion: 1,
         narratorVoice: narrator,
         prompts: [],
-        shots: shotsFixture(planningFixture()).map((shot) => ({ ...shot, durationSeconds: 5 })),
+        shots,
       },
     };
     const native = fakeMediaPorts(
@@ -127,13 +127,9 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     "forwards a late generation flow parent to the one delayed assembly job",
     async () => {
       vi.stubEnv("GEMINI_IMAGE_MODEL", "fixture-image");
-      const { t, run, native } = await setup();
+      const { t, run, native } = await setup(true);
       const db = t.store.scoped(t.context);
       await db.videoRun.updateMany({ where: { id: run.id }, data: { state: "GENERATING" } });
-      await db.videoRunStep.updateMany({
-        where: { runId: run.id, key: { startsWith: "shot-" }, NOT: { key: "shot-0" } },
-        data: { state: "SKIPPED" },
-      });
       const last = await db.videoRunStep.findFirstOrThrow({
         where: { runId: run.id, key: "shot-0" },
       });

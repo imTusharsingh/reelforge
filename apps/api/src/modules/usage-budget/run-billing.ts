@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { RunsStore } from "../runs/runs.store.js";
 import {
   billingHold,
+  recordShotBillingHold,
   SETTLED_SHOTS,
   clearResolvedSubmissionHold,
   failSettledGeneration,
@@ -287,11 +288,7 @@ export async function captureShotReceipt(
       });
       if (pending && run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
         await clearResolvedSubmissionHold(db, tx, run, step.id);
-      if (!settled && priceChanged && overage && run.pauseReason !== "EMERGENCY_STOP")
-        await db.videoRun.updateMany({
-          where: { id: run.id },
-          data: { pauseReason: billingHold(step.id) },
-        });
+      if (!settled && priceChanged && overage) await recordShotBillingHold(db, run, step.id);
       return {
         value: await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } }),
         payload: settled ? correctionPayload(current, price) : { costMinor: cost, overage },

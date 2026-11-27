@@ -121,6 +121,19 @@ describe("V8 mounted experience with fake HTTP", () => {
       expect(host.textContent).not.toContain(reason);
     },
   );
+  it("shows a terminal local re-render failure while watching CRITIC", async () => {
+    const data = detail();
+    data.run.state = "CRITIC";
+    fakeFetch(data);
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    data.run.pauseReason = "MEDIA_CODEC_UNAVAILABLE";
+    await act(async () => FakeEventSource.instances[0]!.emit("assembly_local_failure", 7));
+    expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(
+      "Critic paused",
+    );
+    expect(host.textContent).toContain("FFmpeg is missing a required encoder");
+    expect(host.textContent).not.toContain("MEDIA_CODEC_UNAVAILABLE");
+  });
   it("enables the remaining quality reshoot after a refusal rewrite and one requested redo", async () => {
     const data = detail();
     data.run.state = "CRITIC";

@@ -3,10 +3,18 @@ import {
   rejectInvalidSavedCaptionPlan,
 } from "../usage-budget/run-caption-admission.js";
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
-import { currentPrices, shotReceipts } from "./assembly-receipts.js";
+import {
+  artifactTooLarge,
+  assertAssemblyCost,
+  assertCurrentAssemblyCost,
+  currentPrices,
+  shotReceipts,
+} from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { Injectable } from "@nestjs/common";
+import { Injectable, PayloadTooLargeException } from "@nestjs/common";
+import { maxDeliveryBytes } from "../asset/content-delivery.js";
+import { hasOpenRenderStage, isRenderStage } from "../runs/run-render-stage.js";
 import {
   AssemblyManifestSchema,
   ShotSpecSchema,
@@ -22,6 +30,7 @@ import { MediaPorts } from "../scene-media/media-ports.js";
 import { MediaPlanning } from "../scene-media/media-planning.js";
 import { audioCosts } from "../scene-media/media-prices.js";
 import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
+import { LocalAssemblyFailure, localRenderFailure } from "./local-assembly-failure.js";
 import { MediaRenderer } from "./media-render.js";
 const audioRecoveryDuration = z.number().positive().max(120);
 const admittedMusicInput = z.object({ spec: z.object({ durationSeconds: audioRecoveryDuration }) });
@@ -43,36 +52,57 @@ export class MediaAssembly {
   ) {}
   public async execute(context: Context, run: Run, brief: ChannelBrief): Promise<Artifact[]> {
     const existing = await this.artifacts(context, run);
+    await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
     if (existing.length) {
       if (!existing.some((a) => a.kind === "manifest"))
-        throw new Error("Assembly manifest exceeds delivery budget");
+        throw new LocalAssemblyFailure(
+          "ASSEMBLY_ARTIFACT_TOO_LARGE",
+          "Assembly manifest exceeds delivery budget",
+        );
       return existing;
     }
     const plan = await this.planning
       .saved(context, run, brief)
       .catch(rejectInvalidSavedCaptionPlan);
-    if (!plan || !brief.narratorVoice) throw new Error("Pinned plan and channel voice required");
+    if (!plan || !brief.narratorVoice)
+      throw new LocalAssemblyFailure(
+        "ASSEMBLY_INPUTS_MISSING",
+        "Pinned plan and channel voice required",
+      );
     const transcript = planningTranscript(plan.script);
     const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
     assertSavedCaptionFit(transcript, brief.targetDurationSeconds, seconds);
-    const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
-    const receipts = await this.receipts(context, run);
+    const beforeAudio = await this.receipts(context, run);
     const clips = plan.manifest.shots.map((shot) => {
-      const receipt = receipts.findLast((item) => item.key === `shot-${shot.ordinal}`);
+      const receipt = beforeAudio.findLast((item) => item.key === `shot-${shot.ordinal}`);
       if (!receipt || receipt.mimeType !== "video/mp4")
-        throw new Error("Every shot requires a playable video receipt");
+        throw new LocalAssemblyFailure(
+          "ASSEMBLY_SHOT_RECEIPT_MISSING",
+          "Every shot requires a playable video receipt. Check the missing shot before making a new Short.",
+        );
       return { receipt, seconds: shot.durationSeconds, transition: shot.transition };
     });
-    const rendered = await this.renderer.render({
-      workspaceId: context.workspaceId,
-      clips,
-      narration: narration.receipt,
-      music: music.receipt,
-      transcript,
-      language: brief.languages.narration,
-      pace: brief.narratorVoice.pace,
+    const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
+    await assertCurrentAssemblyCost(this.access.runs.store.scoped(context), run.id);
+    const receipts = await this.receipts(context, run);
+    const rendered = await this.renderer
+      .render({
+        workspaceId: context.workspaceId,
+        clips,
+        narration: narration.receipt,
+        music: music.receipt,
+        transcript,
+        language: brief.languages.narration,
+        pace: brief.narratorVoice.pace,
+      })
+      .catch((error: unknown) => {
+        throw localRenderFailure(error);
+      });
+    if (rendered.video.byteLength > maxDeliveryBytes) throw artifactTooLarge();
+    return this.persist(context, run, brief, plan, receipts, rendered).catch((error: unknown) => {
+      if (error instanceof PayloadTooLargeException) throw artifactTooLarge();
+      throw error;
     });
-    return this.persist(context, run, brief, plan, receipts, rendered);
   }
   private manifest(
     context: Context,
@@ -115,13 +145,16 @@ export class MediaAssembly {
       context,
       run.id,
       "assembly_created",
-      async (db) => {
+      async (db, current) => {
+        if (isRenderStage(run.state) && !(await hasOpenRenderStage(db, current, run.state)))
+          throw new AssemblyInterrupted(null);
         const cached = await db.videoRunStep.findFirst({
           where: { runId: run.id, key: "local:assembly" },
         });
         if (cached) return { value: null, payload: { replay: true } };
         const prices = currentPrices(receipts, await shotReceipts(db, run.id));
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+        assertAssemblyCost(budget.spentMinor);
         const manifest = this.manifest(
           context,
           run,
@@ -232,7 +265,7 @@ export class MediaAssembly {
       const db = this.access.runs.store.scoped(context);
       if (
         (await db.videoRunStep.findFirst({
-          where: { runId: run.id, key: "ASSEMBLING", state: "FAILED" },
+          where: { runId: run.id, key: run.state, state: "FAILED" },
         })) &&
         (await acceptedAudio(db, this.access.runs.store.db, run)).length
       )
@@ -306,7 +339,8 @@ export class MediaAssembly {
       run.id,
       "assembly_input_failed",
       async (db, locked) => {
-        if (locked.state !== "ASSEMBLING") throw new AssemblyInterrupted(null);
+        if (!isRenderStage(run.state) || locked.state !== run.state || locked.pauseReason)
+          throw new AssemblyInterrupted(null);
         const code =
           failure.error &&
           typeof failure.error === "object" &&
@@ -315,7 +349,7 @@ export class MediaAssembly {
             ? failure.error.code
             : "PROVIDER_FAILED";
         const changed = await db.videoRunStep.updateMany({
-          where: { runId: run.id, key: "ASSEMBLING", state: "RUNNING" },
+          where: { runId: run.id, key: run.state, state: "RUNNING" },
           data: {
             state: "FAILED",
             finishedAt: new Date(),

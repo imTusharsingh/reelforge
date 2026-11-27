@@ -8,7 +8,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "./run-admission-state.js";
-import { assertCriticRevision } from "./critic-admission.js";
+import { assertCriticAdmissionOpen, assertCriticRevision } from "./critic-admission.js";
 import { pinnedBudget, assertPaidRunLimits } from "./run-envelope.js";
 import {
   SubmissionOutcomeUnknown,
@@ -16,6 +16,7 @@ import {
   recordReservation,
 } from "./run-paid-admission.js";
 import {
+  InvalidCompletedText,
   ProviderFailure,
   SubmissionRefused,
   providerFailureMessage,
@@ -29,7 +30,15 @@ import {
   preparePinnedVideoRunLanguage,
 } from "../composition/video-run-language.js";
 import type { MediaReadiness } from "../composition/media-runtime.js";
-import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
+import {
+  json,
+  type Context,
+  type Event,
+  type Run,
+  type Scoped,
+  type Step,
+  type Transaction,
+} from "../runs/runs.types.js";
 
 import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js";
 
@@ -45,6 +54,7 @@ async function assertReserveAdmission(
   amount: number,
   context: Context,
 ): Promise<Awaited<ReturnType<typeof readAdmission>>> {
+  assertCriticAdmissionOpen(run, step.key);
   await assertPaidRunLimits(db, run, amount, step.id);
   const admission = await readAdmission(transaction, context, step);
   if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
@@ -145,6 +155,7 @@ export class RunPaidCalls {
       return await call();
     } catch (error) {
       if (
+        error instanceof InvalidCompletedText ||
         error instanceof SubmissionRefused ||
         (error instanceof ProviderFailure && !error.dispatched)
       )
@@ -173,8 +184,8 @@ export class RunPaidCalls {
         throw new DispatchAdmissionError("Paid dispatch is closed");
       if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
         throw new DispatchAdmissionError("Required audio input failed");
-      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
       await assertCriticRevision(db, tx, run, current);
+      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
       const { reservation, evidence } = await readAdmission(tx, context, current);
       if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
         throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
@@ -278,10 +289,16 @@ export class RunPaidCalls {
     dispatched: boolean,
     cost: number,
     providerJobId = step.providerJobId,
+    usage?: Record<string, unknown>,
   ): Promise<void> {
     if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
       throw new ConflictException("Paid dispatch outcome changed");
-    const code = dispatched ? "PROVIDER_JOB_FAILED" : "NOT_DISPATCHED";
+    const code =
+      usage !== undefined
+        ? "PROVIDER_INVALID_OUTPUT"
+        : dispatched
+          ? "PROVIDER_JOB_FAILED"
+          : "NOT_DISPATCHED";
     const updated = await tx.providerRequest.updateMany({
       where: {
         workspaceId: context.workspaceId,
@@ -291,6 +308,7 @@ export class RunPaidCalls {
       data: {
         status: "FAILED",
         actualCost: dispatched ? null : 0,
+        ...(usage !== undefined ? { usage: json(usage) } : {}),
         responseMetadata: {
           dispatched,
           costKnown: !dispatched,

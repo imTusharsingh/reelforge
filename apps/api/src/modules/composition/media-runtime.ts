@@ -1,3 +1,4 @@
+import { LocalAssemblyFailure, localRenderFailure } from "./local-assembly-failure.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { verifyAssemblyRoundTrip } from "./media-probe.js";
@@ -37,6 +38,15 @@ const probe: Probe = async (executable, args) => {
   return stdout;
 };
 
+function propagateTransientProbeFailure(error: unknown): void {
+  if (localRenderFailure(error).retryable)
+    throw new LocalAssemblyFailure(
+      "LOCAL_RENDER_TRANSIENT",
+      "Local media preflight was temporarily interrupted.",
+      true,
+    );
+}
+
 async function verify(
   label: string,
   execute: () => Promise<boolean>,
@@ -44,10 +54,14 @@ async function verify(
 ): Promise<void> {
   try {
     if (await execute()) return;
-  } catch {
-    // Keep raw subprocess output (including environment information) out of errors.
+  } catch (error) {
+    // Check runtime pressure before redacting subprocess errors and output.
+    propagateTransientProbeFailure(error);
   }
-  throw new Error(`Local media runtime is unavailable: ${label}. ${instructions}`);
+  throw new LocalAssemblyFailure(
+    "MEDIA_TOOL_UNAVAILABLE",
+    `Local media runtime is unavailable: ${label}. ${instructions}`,
+  );
 }
 
 const languageCatalogue = [
@@ -89,7 +103,8 @@ async function canSynthesize(run: Probe, voice: string): Promise<boolean> {
       wav.toString("ascii", 0, 4) === "RIFF" &&
       wav.toString("ascii", 8, 12) === "WAVE"
     );
-  } catch {
+  } catch (error) {
+    propagateTransientProbeFailure(error);
     return false;
   }
 }
@@ -191,7 +206,19 @@ function verifyFreshLanguage(
     proof.code !== code ||
     performance.now() - proof.checkedAt > 10000
   )
-    throw new Error("Fresh local media readiness is missing or expired for the pinned narration");
+    throw new LocalAssemblyFailure(
+      "LOCAL_RENDER_TRANSIENT",
+      "Fresh local media readiness is missing or expired for the pinned narration",
+      true,
+    );
+}
+
+function readinessChanged(): LocalAssemblyFailure {
+  return new LocalAssemblyFailure(
+    "LOCAL_RENDER_TRANSIENT",
+    "Media runtime changed during readiness check",
+    true,
+  );
 }
 
 export function createMediaRuntimeGate(run: Probe = probe): {
@@ -216,7 +243,8 @@ export function createMediaRuntimeGate(run: Probe = probe): {
   function ready(env: NodeJS.ProcessEnv): Ready | undefined {
     if (!state) return undefined;
     if (state.ready?.signature !== signature(env))
-      throw new Error(
+      throw new LocalAssemblyFailure(
+        "MEDIA_TOOL_UNAVAILABLE",
         "Local media runtime has not passed preflight. Restart after fixing its configuration.",
       );
     return state.ready;
@@ -245,7 +273,7 @@ export function createMediaRuntimeGate(run: Probe = probe): {
       if (!checked) return undefined;
       const code = alignmentLanguage(await language(), checked.languages);
       await refreshVoice(run, env, code, checked.languages.get(code)!);
-      if (ready(env) !== checked) throw new Error("Media runtime changed during readiness check");
+      if (ready(env) !== checked) throw readinessChanged();
       return Object.freeze({ runtime: checked, code, checkedAt: performance.now() });
     },
     assertFreshLanguage(language, evidence, env = process.env): void {

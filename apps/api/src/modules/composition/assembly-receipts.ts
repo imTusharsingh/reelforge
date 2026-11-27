@@ -1,3 +1,4 @@
+import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import { createHash } from "node:crypto";
 import {
   AssemblyManifestSchema,
@@ -200,4 +201,27 @@ export async function assemblyStageOutput(
     storageArtifacts,
     ...(pendingManifest && { pendingManifest }),
   });
+}
+
+export function assertAssemblyCost(spentMinor: number): void {
+  if (!AssemblyManifestSchema.shape.totalCostMinor.safeParse(spentMinor).success)
+    throw new LocalAssemblyFailure(
+      "ASSEMBLY_BUDGET_OVERRUN",
+      "The final provider charges exceed the assembly delivery budget. Review the recorded spend before starting a new Short.",
+    );
+}
+
+export async function assertCurrentAssemblyCost(db: Scoped, runId: string): Promise<void> {
+  const budget = await db.budgetEnvelope.findFirst({
+    where: { runId },
+    select: { spentMinor: true },
+  });
+  if (budget) assertAssemblyCost(budget.spentMinor);
+}
+
+export function artifactTooLarge(): LocalAssemblyFailure {
+  return new LocalAssemblyFailure(
+    "ASSEMBLY_ARTIFACT_TOO_LARGE",
+    "The assembled video exceeds the 128 MiB delivery limit. Use smaller source media before making a new Short.",
+  );
 }

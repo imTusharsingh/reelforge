@@ -1,3 +1,4 @@
+import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,8 +38,10 @@ export class MediaRenderer {
     const root = await mkdtemp(join(tmpdir(), "reelforge-v5-"));
     try {
       const seconds = input.clips.reduce((sum, clip) => sum + clip.seconds, 0);
-      if (seconds < 30 || seconds > 45 || !NarratorPaceSchema.safeParse(input.pace).success)
-        throw new Error("Unsupported v2 duration or narration pace");
+      if (!NarratorPaceSchema.safeParse(input.pace).success)
+        throw new LocalAssemblyFailure("NARRATION_PACE_UNSUPPORTED", "Unsupported narration pace");
+      if (seconds < 30 || seconds > 45)
+        throw new LocalAssemblyFailure("RENDER_DURATION_UNSUPPORTED", "Unsupported video duration");
       const clips = await this.prepareClips(input, root);
       const rawVoice = join(root, "raw-voice"),
         narration = join(root, "narration.wav"),
@@ -163,6 +166,14 @@ export class MediaRenderer {
   }
   private async call(executable: "ffmpeg" | "ffprobe", argv: string[]): Promise<string> {
     const result = await this.runner.run({ executable, argv, signal: AbortSignal.timeout(300000) });
+    if (
+      result.exitCode &&
+      /Unknown encoder|Encoder .*not found|No such filter|Muxer .*not found/iu.test(result.stderr)
+    )
+      throw new LocalAssemblyFailure(
+        "MEDIA_CODEC_UNAVAILABLE",
+        "Install FFmpeg with the required encoder, MP4 muxer and subtitle support.",
+      );
     if (result.exitCode)
       throw new Error("Local media process failed", {
         cause: new Error(result.stderr.slice(-3000)),

@@ -1,7 +1,8 @@
+import { finalizeInvalidText } from "../usage-budget/run-paid-failure.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import type { Prisma } from "@reelforge/database";
 type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
-import { ProviderFailure } from "@reelforge/ai-providers";
+import { InvalidCompletedText, ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
 import { clearResolvedSubmissionHold, failSettledGeneration } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
@@ -139,7 +140,16 @@ export class MediaAccounts {
     call: () => Promise<T>,
   ): Promise<T> {
     const result = await this.dispatch(context, step, call).catch(async (error: unknown) => {
-      if (error instanceof ProviderFailure && !error.dispatched) {
+      if (error instanceof InvalidCompletedText) {
+        const event = await finalizeInvalidText(
+          this.access.runs.store,
+          this.access.paid,
+          context,
+          step,
+          error,
+        );
+        await this.access.runs.events?.publish(event);
+      } else if (error instanceof ProviderFailure && !error.dispatched) {
         const event = await this.access.paid.finalizeRejected(context, step, error);
         await this.access.runs.events?.publish(event);
       }

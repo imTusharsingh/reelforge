@@ -2,6 +2,16 @@ import { ProviderFailure, record, requiredString } from "./http.js";
 import { Interactions } from "./interactions.js";
 import type { TextPort, TextSpec } from "./ports.js";
 
+/** The provider completed the call and returned billing evidence, but no usable output. */
+export class InvalidCompletedText extends ProviderFailure {
+  public constructor(
+    public readonly providerJobId: string,
+    public readonly usage: Record<string, unknown>,
+  ) {
+    super("INVALID", true);
+  }
+}
+
 export class GeminiText implements TextPort {
   public constructor(
     private readonly client: Interactions,
@@ -22,10 +32,20 @@ export class GeminiText implements TextPort {
       },
       key,
     );
-    return {
-      ...this.parseResponse(response, spec.parse),
-      providerJobId: requiredString(response.id),
-    };
+    try {
+      return {
+        ...this.parseResponse(response, spec.parse),
+        providerJobId: requiredString(response.id),
+      };
+    } catch (error) {
+      if (response.status !== "completed" || typeof response.id !== "string" || !response.id.trim())
+        throw error;
+      const usage = response.usage;
+      throw new InvalidCompletedText(
+        response.id,
+        usage && typeof usage === "object" && !Array.isArray(usage) ? record(usage) : {},
+      );
+    }
   }
 
   public async submit<T>(spec: TextSpec<T>, key: string): Promise<{ providerJobId: string }> {

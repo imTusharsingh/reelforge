@@ -1,3 +1,5 @@
+import { isRenderStage, pendingRenderEdit } from "../runs/run-render-stage.js";
+import { Prisma } from "@reelforge/database";
 import { fitsAssemblyDuration } from "../script/planning-validation.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import { assemblyStageOutput } from "../composition/assembly-receipts.js";
@@ -12,7 +14,12 @@ import {
 import { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import { pinnedBudget, runEstimate } from "../usage-budget/run-envelope.js";
-import { stepHandlers, stubShots, type StepHandler } from "./video-run.handlers.js";
+import {
+  AssemblyInterrupted,
+  stepHandlers,
+  stubShots,
+  type StepHandler,
+} from "./video-run.handlers.js";
 
 @Injectable()
 export class RunPlanning {
@@ -29,13 +36,20 @@ export class RunPlanning {
   }
   public async stage(context: Context, run: Run): Promise<Step> {
     const db = this.runs.store.scoped(context);
-    const previous = await db.videoRunStep.findFirst({
+    let previous = await db.videoRunStep.findFirst({
       where: { runId: run.id, key: run.state, attempt: 1 },
     });
+    if (
+      run.state === "CRITIC" &&
+      previous?.state === "SUCCEEDED" &&
+      (await pendingRenderEdit(db, run.id))
+    )
+      previous = await this.reopenCritic(context, run, previous);
     if (previous?.state === "SUCCEEDED" || previous?.state === "WAITING_APPROVAL") return previous;
     const handler = this.handlers[run.state];
     if (!handler) throw new ConflictException("Step handler unavailable");
     const step = previous ?? (await this.begin(context, run));
+    if (run.state === "CRITIC") await this.reedit(context, run);
     const output = previous
       ? await handler.reconcile(run, this.brief(run), step, context)
       : await handler.execute(run, this.brief(run), step, context);
@@ -47,21 +61,26 @@ export class RunPlanning {
       run.id,
       "stage_completed",
       async (scoped, current) => {
+        const renderStage = isRenderStage(run.state);
+        if (renderStage && (current.state !== run.state || current.pauseReason))
+          throw new AssemblyInterrupted(null);
         if (current.state !== run.state) throw new ConflictException("Stage changed");
         const waiting =
           run.effectiveAutonomy === "L1" &&
           ["PLANNING", "SCRIPTING", "SHOT_PLANNING"].includes(run.state);
-        await scoped.videoRunStep.updateMany({
-          where: { id: step.id, runId: run.id },
+        const changed = await scoped.videoRunStep.updateMany({
+          where: { id: step.id, runId: run.id, ...(renderStage ? { state: "RUNNING" } : {}) },
           data: {
             output:
               run.state === "ASSEMBLING"
                 ? await assemblyStageOutput(scoped, run.id, output, artifacts)
                 : json({ result: output, storageArtifacts: artifacts }),
             state: waiting ? "WAITING_APPROVAL" : "SUCCEEDED",
+            ...(renderStage ? { error: Prisma.DbNull } : {}),
             finishedAt: new Date(),
           },
         });
+        if (renderStage && changed.count !== 1) throw new AssemblyInterrupted(null);
         const saved = await scoped.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         return {
           value: saved,
@@ -73,12 +92,32 @@ export class RunPlanning {
     await this.runs.events?.publish(result.event);
     return result.value;
   }
+  private async reopenCritic(context: Context, run: Run, step: Step): Promise<Step> {
+    const result = await this.runs.store.mutate(
+      context,
+      run.id,
+      "critic_reopened",
+      async (db, current) => {
+        if (current.state !== "CRITIC" || current.pauseReason) throw new AssemblyInterrupted(null);
+        if (await pendingRenderEdit(db, run.id))
+          await db.videoRunStep.updateMany({
+            where: { id: step.id, state: "SUCCEEDED" },
+            data: { state: "RUNNING", finishedAt: null },
+          });
+        const value = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+        return { value, payload: {}, stepId: step.id };
+      },
+    );
+    await this.runs.events?.publish(result.event);
+    return result.value;
+  }
   private async begin(context: Context, run: Run): Promise<Step> {
     const result = await this.runs.store.mutate(
       context,
       run.id,
       "stage_started",
       async (db, current) => {
+        if (isRenderStage(run.state) && current.pauseReason) throw new AssemblyInterrupted(null);
         if (current.state !== run.state) throw new ConflictException("Stage changed");
         const key = `${run.id}:${run.state}:1`;
         const existing = await db.videoRunStep.findFirst({
@@ -153,7 +192,7 @@ export class RunPlanning {
     });
     await this.runs.events?.publish(result.event);
   }
-  public async reedit(context: Context, run: Run): Promise<void> {
+  private async reedit(context: Context, run: Run): Promise<void> {
     const db = this.runs.store.scoped(context);
     const step = await db.videoRunStep.findFirst({
       where: { runId: run.id, key: "REEDIT", state: "PENDING" },
@@ -165,9 +204,10 @@ export class RunPlanning {
       context,
       run.id,
       "reedit_completed",
-      async (scoped) => {
+      async (scoped, current) => {
+        if (current.state !== run.state || current.pauseReason) throw new AssemblyInterrupted(null);
         await scoped.videoRunStep.updateMany({
-          where: { id: step.id },
+          where: { id: step.id, state: "PENDING" },
           data: {
             state: "SUCCEEDED",
             output: await assemblyStageOutput(scoped, run.id, output, artifacts),

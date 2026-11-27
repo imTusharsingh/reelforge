@@ -36,6 +36,21 @@ export function pauseLabel(reason: string): string {
       {
         SAVED_CAPTION_PLAN_UNUSABLE:
           "The saved caption plan can’t be used. Open the run for details.",
+        MEDIA_TOOL_UNAVAILABLE:
+          "Local media tools are unavailable. Check FFmpeg and narration tools before starting a new Short.",
+        MEDIA_CODEC_UNAVAILABLE:
+          "FFmpeg is missing a required encoder, MP4 muxer, or subtitle filter.",
+        RENDER_DURATION_UNSUPPORTED: "The saved storyboard is outside the supported video length.",
+        ASSEMBLY_BUDGET_OVERRUN:
+          "Final provider charges exceed the budget for delivering this Short.",
+        ASSEMBLY_ARTIFACT_TOO_LARGE: "The video exceeds the 128 MiB delivery limit.",
+        ASSEMBLY_SHOT_RECEIPT_MISSING: "A shot is missing its playable video receipt.",
+        ASSEMBLY_INPUTS_MISSING: "The saved plan or narrator is missing.",
+        LOCAL_RENDER_FAILED: "Local rendering failed. Check the input media and local tools.",
+        LOCAL_RENDER_RETRIES_EXHAUSTED: "Local rendering stopped after two retries.",
+        CAPTIONS_UNREADABLE: "The rendered captions aren’t readable. Try shorter narration.",
+        NARRATION_PACE_UNSUPPORTED: "The saved narrator pace isn’t supported.",
+        NARRATION_LANGUAGE_UNSUPPORTED: "The saved narration language isn’t supported.",
         BUDGET_CAP: "Budget cap reached. Review spend before resuming.",
         PROVIDER_REFUSED: "Provider refused this content. Review the prompt.",
         HUMAN_REJECTED: "You rejected this Short. Publishing is blocked.",
@@ -49,7 +64,7 @@ export function runPauseLabel(detail: RunDetailView): string {
   if (!reason || reason === "PUBLISH_DRY_RUN") return "";
   if (reason !== "SAVED_CAPTION_PLAN_UNUSABLE") return pauseLabel(reason);
   const failure = detail.steps.findLast(
-    (step) => step.key === "ASSEMBLING" && step.state === "FAILED",
+    (step) => step.key === detail.run.state && step.state === "FAILED",
   );
   const error = failure?.error;
   if (error && typeof error === "object" && "code" in error && error.code === reason) {
