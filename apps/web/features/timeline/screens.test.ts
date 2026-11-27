@@ -55,6 +55,20 @@ describe("V8 mounted experience with fake HTTP", () => {
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
   });
+  it.each([
+    { reason: "PUBLISH_DRY_RUN", timeline: "Publish simulated (dry run)", header: "Dry run" },
+    { reason: null, timeline: "Published", header: "Published" },
+  ])("labels the current publish step $timeline", async ({ reason, timeline, header }) => {
+    const data = detail();
+    data.run.state = "PUBLISHED";
+    data.run.pauseReason = reason;
+    fakeFetch(data);
+
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    expect(host.querySelector(".rf-page-heading .rf-badge")?.textContent).toBe(header);
+    expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(timeline);
+    expect(host.querySelectorAll(".rf-timeline [aria-current=step]")).toHaveLength(1);
+  });
   it.each(["assembly_input_failed", "assembly_failed", "shot_refused", "step_failed"])(
     "refreshes the open timeline on %s",
     async (event) => {
