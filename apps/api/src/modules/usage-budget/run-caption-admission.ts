@@ -9,6 +9,7 @@ import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import type { Run, Scoped, Step } from "../runs/runs.types.js";
 
 export const SAVED_CAPTION_PLAN_UNUSABLE = "SAVED_CAPTION_PLAN_UNUSABLE";
+export const SAVED_CAPTION_PLAN_INVALID = "SAVED_CAPTION_PLAN_INVALID";
 
 function savedCaptionRejection(): ConflictException {
   return new ConflictException({
@@ -70,7 +71,18 @@ export async function assertSavedCaptionAdmission(
         (director && directorReceipt.parse(director.output).result.output));
     assertSavedCaptionFit(planningTranscript(script), target, directed && duration(directed));
   } catch (error) {
-    if (error instanceof ConflictException) throw error;
-    throw savedCaptionRejection();
+    rejectInvalidSavedCaptionPlan(error);
   }
+}
+
+export function rejectInvalidSavedCaptionPlan(error: unknown): never {
+  if (!(error instanceof z.ZodError)) throw error;
+  throw new ConflictException(
+    {
+      code: SAVED_CAPTION_PLAN_INVALID,
+      message:
+        "The saved plan is invalid and its captions could not be validated. Start a new Short.",
+    },
+    { cause: error },
+  );
 }

@@ -1,4 +1,7 @@
-import { assertSavedCaptionFit } from "../usage-budget/run-caption-admission.js";
+import {
+  assertSavedCaptionFit,
+  rejectInvalidSavedCaptionPlan,
+} from "../usage-budget/run-caption-admission.js";
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
 import { currentPrices, shotReceipts } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
@@ -39,7 +42,9 @@ export class MediaAssembly {
         throw new Error("Assembly manifest exceeds delivery budget");
       return existing;
     }
-    const plan = await this.planning.saved(context, run, brief);
+    const plan = await this.planning
+      .saved(context, run, brief)
+      .catch(rejectInvalidSavedCaptionPlan);
     if (!plan || !brief.narratorVoice) throw new Error("Pinned plan and channel voice required");
     const transcript = planningTranscript(plan.script);
     const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);

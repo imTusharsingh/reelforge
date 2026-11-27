@@ -1,4 +1,7 @@
-import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
+import {
+  SAVED_CAPTION_PLAN_INVALID,
+  SAVED_CAPTION_PLAN_UNUSABLE,
+} from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
@@ -350,7 +353,9 @@ async function assertAssemblyResumable(db: Scoped, run: Run): Promise<void> {
       key: "ASSEMBLING",
       state: "FAILED",
       OR: [
-        { error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE } },
+        ...[SAVED_CAPTION_PLAN_UNUSABLE, SAVED_CAPTION_PLAN_INVALID].map((code) => ({
+          error: { path: ["code"], equals: code },
+        })),
         { error: { path: ["localRenderFailures"], gt: 0 } },
       ],
     },
@@ -362,10 +367,12 @@ async function assertAssemblyResumable(db: Scoped, run: Run): Promise<void> {
     details &&
     typeof details === "object" &&
     "code" in details &&
-    details.code === SAVED_CAPTION_PLAN_UNUSABLE
+    (details.code === SAVED_CAPTION_PLAN_UNUSABLE || details.code === SAVED_CAPTION_PLAN_INVALID)
   )
     throw new ConflictException(
-      "Saved captions cannot fit. Start a new Short with shorter narration.",
+      "message" in details && typeof details.message === "string"
+        ? details.message
+        : "The saved plan cannot resume. Start a new Short.",
     );
   throw new ConflictException(
     "The local render cannot resume. Check the recorded assembly failure before making a new Short.",

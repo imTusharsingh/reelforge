@@ -2,16 +2,18 @@ import { ConflictException } from "@nestjs/common";
 import { acceptedAudio } from "../runs/run-audio.js";
 import type { RunsService } from "../runs/runs.service.js";
 import type { Context, Run } from "../runs/runs.types.js";
-import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
+import {
+  SAVED_CAPTION_PLAN_INVALID,
+  SAVED_CAPTION_PLAN_UNUSABLE,
+} from "../usage-budget/run-caption-admission.js";
 
-export function isSavedCaptionRejection(error: unknown): error is ConflictException {
-  if (!(error instanceof ConflictException)) return false;
+export function savedCaptionRejection(error: unknown): { code: string; message: string } | null {
+  if (!(error instanceof ConflictException)) return null;
   const response = error.getResponse();
-  return (
-    typeof response === "object" &&
-    "code" in response &&
-    response.code === SAVED_CAPTION_PLAN_UNUSABLE
-  );
+  if (typeof response !== "object" || !("code" in response)) return null;
+  const { code } = response;
+  if (code !== SAVED_CAPTION_PLAN_UNUSABLE && code !== SAVED_CAPTION_PLAN_INVALID) return null;
+  return { code, message: error.message };
 }
 
 /** Stop new assembly work durably. The normal paused-run path drains admitted audio by ID. */
@@ -19,9 +21,8 @@ export async function pauseRejectedAssembly(
   runs: RunsService,
   context: Context,
   run: Run,
-  message: string,
+  { code, message }: NonNullable<ReturnType<typeof savedCaptionRejection>>,
 ): Promise<number | null> {
-  const code = SAVED_CAPTION_PLAN_UNUSABLE;
   const result = await runs.store.mutate(
     context,
     run.id,

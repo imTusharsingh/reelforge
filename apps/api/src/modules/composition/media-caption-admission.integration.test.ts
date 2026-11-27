@@ -10,9 +10,13 @@ const fixture = runsFixture();
 const narrator = { providerId: "gemini", voiceId: "narrator", language: "English", pace: 1 };
 afterEach(() => vi.unstubAllEnvs());
 
-it.skipIf(!process.env.DATABASE_URL).each([false, true])(
-  "rejects an impossible saved plan before audio or rendering (music already submitted: %s)",
-  async (musicAdmitted) => {
+it.skipIf(!process.env.DATABASE_URL).each([
+  [false, false],
+  [true, false],
+  [true, true],
+])(
+  "rejects a saved plan before rendering (music already submitted: %s, malformed shot: %s)",
+  async (musicAdmitted, malformed) => {
     vi.stubEnv("GEMINI_TTS_MODEL", "fixture-TTS");
     vi.stubEnv("GEMINI_MUSIC_MODEL", "fixture-music");
     const t = await fixture.tenant("L2", 30, narrator);
@@ -104,6 +108,29 @@ it.skipIf(!process.env.DATABASE_URL).each([false, true])(
     expect(accepted.every(({ providerJobId }) => providerJobId?.startsWith("fixture-media-"))).toBe(
       true,
     );
+    if (malformed) {
+      const shot = await db.shotSpec.findFirstOrThrow({ where: { runId: run.id, ordinal: 0 } });
+      const document = shot.document;
+      if (!document || typeof document !== "object" || Array.isArray(document))
+        throw new Error("Expected a valid fixture shot");
+      await db.shotSpec.create({
+        data: {
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          ordinal: shot.ordinal,
+          version: shot.version + 1,
+          document: json(
+            Object.fromEntries(
+              Object.entries(document).filter(([key]) => key !== "durationSeconds"),
+            ),
+          ),
+        },
+      });
+    }
+    const code = malformed ? "SAVED_CAPTION_PLAN_INVALID" : "SAVED_CAPTION_PLAN_UNUSABLE";
+    const message = malformed
+      ? "The saved plan is invalid and its captions could not be validated. Start a new Short."
+      : "Saved captions cannot fit. Start a new Short with shorter narration.";
     const restarted = bindMedia(t, native);
     const render = vi.spyOn(restarted.renderer, "render");
     const engine = new VideoRunEngine(
@@ -117,13 +144,13 @@ it.skipIf(!process.env.DATABASE_URL).each([false, true])(
     await expect(engine.process(job)).resolves.toBe(12000);
     expect(await t.store.get(t.context, run.id)).toMatchObject({
       state: "ASSEMBLING",
-      pauseReason: "SAVED_CAPTION_PLAN_UNUSABLE",
+      pauseReason: code,
     });
     expect(
       await db.videoRunStep.findFirst({
         where: { runId: run.id, key: "ASSEMBLING" },
       }),
-    ).toMatchObject({ state: "FAILED", error: { code: "SAVED_CAPTION_PLAN_UNUSABLE" } });
+    ).toMatchObject({ state: "FAILED", error: { code, message } });
     expect(narrationPoll).toHaveBeenCalledOnce();
     expect(musicPoll).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
     expect(
@@ -131,10 +158,7 @@ it.skipIf(!process.env.DATABASE_URL).each([false, true])(
         where: { runId: run.id, type: "assembly_input_failed" },
       }),
     ).toMatchObject({
-      payload: {
-        code: "SAVED_CAPTION_PLAN_UNUSABLE",
-        message: "Saved captions cannot fit. Start a new Short with shorter narration.",
-      },
+      payload: { code, message },
     });
     const enqueue = vi.fn();
     t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
@@ -148,7 +172,7 @@ it.skipIf(!process.env.DATABASE_URL).each([false, true])(
     enqueue.mockClear();
     await engine.recover();
     expect(enqueue.mock.calls.filter(([payload]) => payload.runId === run.id)).toHaveLength(0);
-    await expect(t.control.resume(t.context, run.id)).rejects.toThrow("Saved captions cannot fit");
+    await expect(t.control.resume(t.context, run.id)).rejects.toThrow(message);
     expect(narrationSubmit).toHaveBeenCalledOnce();
     expect(fetchNarration).toHaveBeenCalledOnce();
     expect(musicSubmit).toHaveBeenCalledTimes(musicAdmitted ? 1 : 0);
