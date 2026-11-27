@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { highlightedCaptions } from "./highlighted-captions.js";
+import { readableCaptionCues } from "./phrase-captions.js";
 
 it("holds the whole phrase while changing only the measured word, without highlighting a repaired cue", () => {
   const words = [
@@ -27,4 +28,13 @@ it("clips an anchor to the displayed phrase and escapes transcript ASS commands"
   const ass = highlightedCaptions([{ ...word, start: 0.5, end: 1.5 }], [word], [word]);
   expect(ass).toContain("0:00:00.50,0:00:01.50");
   expect(ass).toContain("Hi(＼r)");
+});
+
+it("retains at least 50ms of real timing for an otherwise-clipped word, or rejects", () => {
+  const word = { text: "Word", start: 1, end: 1.2 };
+  const raw = { text: "Word", start: 1.18, end: 2.2 };
+  expect(() => highlightedCaptions([raw], [word], [word])).toThrow("visible highlight");
+  const fitted = readableCaptionCues([raw], ["Word"], 2.2, [word]);
+  const result = highlightedCaptions(fitted, [word], [word]);
+  expect(result).toContain("0:00:01.15,0:00:01.20,Default,,0,0,0,,{\\1c&H007AF4C4&}Word");
 });

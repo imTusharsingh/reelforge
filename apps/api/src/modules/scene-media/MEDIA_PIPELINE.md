@@ -49,10 +49,12 @@ alignment Python interpreter is selected by `ALIGNMENT_PYTHON_PATH` (default
 covering the channel's language. Put `espeak` and its language data on PATH.
 The API and worker preflight the configured Python/aeneas, eSpeak (including
 reference speech synthesis), FFmpeg with libass, and FFprobe before starting the
-HTTP listener or consuming jobs. VideoRun's paid reservation and dispatch gates
-reuse that startup capability result, without running subprocesses inside a
-ledger transaction. Restart the affected process after a media configuration
-change. Startup also reads the installed Aeneas language catalogue and probes
+HTTP listener or consuming jobs. Before each new reservation and dispatch, a
+targeted local probe rechecks the current FFmpeg/FFprobe, Aeneas and the pinned
+eSpeak voice outside the ledger transaction. The locked admission verifies a
+short-lived result for the same language and runtime configuration. Restart the
+affected process after a media configuration change. Startup also reads the
+installed Aeneas language catalogue and probes
 the matching local eSpeak voices once in bounded batches. New VideoRuns reject an
 unsupported narration language before creation. Paid admission for an existing
 VideoRun checks its pinned narration language again, without blocking collection
@@ -64,9 +66,10 @@ provider credentials.
 ReelForge aligns to the paced narration before
 adding the final mix's silence. Aeneas analyzes both the narration and eSpeak
 reference at 22,050 Hz. A separate phrase alignment controls how long the whole
-caption is displayed. A word changes color only while it has an unrepaired,
-usable timing within its phrase; unmeasured words remain readable without a
-guessed highlight. The evidence gate counts usable word timings before any
+caption is displayed. Each unrepaired, usable word timing retains at least one
+visible frame of highlight within its phrase. Unmeasured words remain readable
+without a guessed highlight. If a punctuation split cannot fit, adjacent fragments
+may merge if they remain readable; incompatible measured words fail closed. The evidence gate counts usable word timings before any
 neighbor repair, then the media renderer keeps the complete word timeline for
 assembly evidence.
 

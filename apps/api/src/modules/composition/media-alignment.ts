@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { AlignedWordSchema, type AlignedWord } from "@reelforge/contracts";
 import { z } from "zod";
-import { captionPhrases, readableCaptionCues, type CaptionCue } from "./phrase-captions.js";
+import {
+  captionPhrases,
+  readableCaptionCues,
+  captionTicks,
+  minimumCue,
+  type CaptionCue,
+} from "./phrase-captions.js";
 import { alignmentPython, mediaExecutable, mediaRuntimeGate } from "./media-runtime.js";
 const alignment = z.object({
   fragments: z.array(
@@ -21,7 +27,9 @@ type Align<T = AlignedWord[]> = (
 ) => Promise<T>;
 export interface WordAligner {
   alignMeasured: Align<WordAlignment>;
-  alignPhrases: Align;
+  alignPhrases: (
+    ...args: [...Parameters<Align>, observed?: readonly (AlignedWord | null)[]]
+  ) => Promise<CaptionCue[]>;
 }
 
 export type WordAlignment = {
@@ -65,10 +73,11 @@ export class LocalWordAligner implements WordAligner {
     language: string,
     root: string,
     duration: number,
+    observed?: readonly (AlignedWord | null)[],
   ): Promise<CaptionCue[]> {
     const phrases = captionPhrases(text);
     const measured = await measure(audio, phrases, language, root, "phrases");
-    return readableCaptionCues(measured, phrases, duration);
+    return readableCaptionCues(measured, phrases, duration, observed);
   }
 }
 
@@ -107,9 +116,7 @@ async function measure(
     }));
 }
 
-export const centis = (seconds: number): number => Math.round(seconds * 100);
-// ASS is centisecond-based. Five ticks cover at least one frame at 24 fps.
-export const minimumCue = 5;
+const centis = captionTicks;
 const maximumAdjustment = 80;
 
 function usableAnchor(word: AlignedWord): boolean {

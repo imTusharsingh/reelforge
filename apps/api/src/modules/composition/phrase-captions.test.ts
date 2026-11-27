@@ -21,6 +21,43 @@ describe("phrase captions", () => {
     expect(captionPhrases("J. R. Li and Prof. Wu met. They waved.")).not.toContain("J.");
   });
 
+  it("merges adjacent measurements when a hard punctuation split cannot fit", () => {
+    const transcript = "Adm. Li met Adm. Wu.";
+    const phrases = captionPhrases(transcript);
+    expect(phrases).toEqual(["Adm.", "Li met Adm.", "Wu."]);
+    const bounds = [0, 0.36, 1.29, 1.81];
+    const measured = phrases.map((text, index) => ({
+      text,
+      start: bounds[index]!,
+      end: bounds[index + 1]!,
+    }));
+    expect(readableCaptionCues(measured, phrases, 1.81)).toEqual([
+      { text: transcript, start: 0, end: 1.81 },
+    ]);
+  });
+
+  it("fits an adjusted phrase around the measured word even near its leading edge", () => {
+    const words = [
+      { text: "One", start: 1.0, end: 1.2 },
+      { text: "word", start: 1.49, end: 2.03 },
+    ];
+    const result = readableCaptionCues(
+      [{ text: "One word", start: 1.18, end: 2.2 }],
+      ["One word"],
+      2.2,
+      words,
+    );
+    expect(result).toEqual([{ text: "One word", start: 1.15, end: 2.2 }]);
+  });
+
+  it("rejects measurable words too far from the phrase rather than dropping them", () => {
+    expect(() =>
+      readableCaptionCues([{ text: "One", start: 1.9, end: 2.75 }], ["One"], 2.75, [
+        { text: "One", start: 1.0, end: 1.2 },
+      ]),
+    ).toThrow("readable speed");
+  });
+
   it("gives a fast cue enough reading time by using neighboring measured room", () => {
     const cues = [
       { text: "Look outside", start: 0.12, end: 1.3 },

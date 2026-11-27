@@ -89,17 +89,22 @@ export class MediaRenderer {
     maximum: number,
   ): Promise<{ cues: CaptionCue[] } & WordAlignment> {
     const duration = Math.min(await this.narrationDuration(path), maximum);
-    const cues = await this.aligner.alignPhrases(
+    const aligned = await this.aligner.alignMeasured(
       path,
       input.transcript,
       input.language,
       root,
       duration,
     );
-    return {
-      cues,
-      ...(await this.aligner.alignMeasured(path, input.transcript, input.language, root, duration)),
-    };
+    const cues = await this.aligner.alignPhrases(
+      path,
+      input.transcript,
+      input.language,
+      root,
+      duration,
+      aligned.highlights,
+    );
+    return { ...aligned, cues };
   }
   private async narrationDuration(path: string): Promise<number> {
     const audio = (await this.inspect(path)).find((stream) => stream.codec_type === "audio");

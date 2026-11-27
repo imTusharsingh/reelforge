@@ -137,6 +137,7 @@ function harness(): {
     },
   };
   const paid = {
+    prepareReservation: vi.fn(),
     reserve: vi.fn(async () => {
       state.reservation = { id: "reservation" };
       state.request = {

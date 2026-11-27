@@ -64,6 +64,53 @@ describe("local media readiness", () => {
     expect(run).toHaveBeenCalledTimes(7);
   });
 
+  it("rechecks current tools and only the pinned voice before each paid boundary", async () => {
+    let missing: string | undefined;
+    const run = vi.fn(async (binary: string, args: string[]) => {
+      if (missing === binary || (binary === "espeak" && args[1] === missing))
+        throw new Error("tool removed at the same path");
+      if (binary === env.ALIGNMENT_PYTHON_PATH)
+        return Buffer.from('{"eng":"en","ita":"it","spa":"es"}');
+      return readyOutput(binary);
+    });
+    const gate = createMediaRuntimeGate(run);
+    await gate.activate(env);
+    run.mockClear();
+    const evidence = await gate.prepareLanguage(() => "Italian", env);
+    expect(
+      run.mock.calls.filter(([binary]) => binary === "espeak").map(([, args]) => args[1]),
+    ).toEqual(["it"]);
+    expect(
+      run.mock.calls.find(([binary]) => binary === env.ALIGNMENT_PYTHON_PATH)?.[1].slice(-2),
+    ).toEqual(["ita", "it"]);
+    expect(() => gate.assertFreshLanguage(() => "ita", evidence, env)).not.toThrow();
+    expect(() => gate.assertFreshLanguage(() => "Spanish", evidence, env)).toThrow(
+      "missing or expired",
+    );
+    expect(() => gate.assertFreshLanguage(() => "Italian", undefined, env)).toThrow(
+      "missing or expired",
+    );
+    expect(() =>
+      gate.assertFreshLanguage(
+        () => "Italian",
+        evidence && { ...evidence, checkedAt: performance.now() - 20000 },
+        env,
+      ),
+    ).toThrow("missing or expired");
+
+    for (const [dependency, label] of [
+      [env.ALIGNMENT_PYTHON_PATH, "aeneas"],
+      [env.FFMPEG_PATH, "FFmpeg"],
+      [env.FFPROBE_PATH, "FFprobe"],
+      ["it", "eSpeak narration voice"],
+    ] as const) {
+      missing = dependency;
+      await expect(gate.prepareLanguage(() => "Italian", env)).rejects.toThrow(label);
+      // The old, configured path did not change; the new subprocess itself detected the loss.
+      expect(gate.resolveLanguage("Italian", env)).toBe("ita");
+    }
+  });
+
   it("rejects eSpeak that exits successfully without any reference audio", async () => {
     const gate = createMediaRuntimeGate(async (binary) =>
       binary === "espeak" ? Buffer.from("not audio") : readyOutput(binary),

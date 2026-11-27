@@ -1,12 +1,6 @@
 import type { AlignedWord } from "@reelforge/contracts";
-import {
-  assCaptions,
-  centis,
-  minimumCue,
-  safeCaptionText,
-  type AssEvent,
-} from "./media-alignment.js";
-import type { CaptionCue } from "./phrase-captions.js";
+import { assCaptions, safeCaptionText, type AssEvent } from "./media-alignment.js";
+import { captionTicks as centis, minimumCue, type CaptionCue } from "./phrase-captions.js";
 
 // ASS color is BBGGRR; lime stands out from the default white and keeps the same outline.
 const highlight = "{\\1c&H007AF4C4&}";
@@ -26,10 +20,12 @@ function phraseEvents(
     if (end > start) events.push({ start: start / 100, end: end / 100, assText });
   };
   observed.forEach((word, index) => {
-    if (!word || word.text !== words[index]?.text) return;
+    if (!word) return;
+    if (word.text !== words[index]?.text)
+      throw new Error("Caption phrases and measured words do not match");
     const start = Math.max(cursor, centis(word.start));
     const end = Math.min(stop, centis(word.end));
-    if (end - start < minimumCue) return;
+    if (end - start < minimumCue) throw new Error("Measured word does not fit a visible highlight");
     const visible = plain.map((text, i) => (i === index ? highlight + text + clear : text));
     emit(cursor, start, neutral);
     emit(start, end, visible.join(" "));

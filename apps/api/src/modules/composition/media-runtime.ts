@@ -96,7 +96,7 @@ async function canSynthesize(run: Probe, voice: string): Promise<boolean> {
 async function installedLanguages(
   run: Probe,
   catalogue: ReadonlyMap<string, string>,
-): Promise<Set<string>> {
+): Promise<Map<string, string>> {
   const english = catalogue.get("eng")!;
   await verify(
     "eSpeak reference speech and language data",
@@ -114,7 +114,77 @@ async function installedLanguages(
       }),
     );
   }
-  return new Set([...catalogue].filter(([, voice]) => working.has(voice)).map(([code]) => code));
+  return new Map([...catalogue].filter(([, voice]) => working.has(voice)));
+}
+
+async function verifyMediaTools(run: Probe, env: NodeJS.ProcessEnv): Promise<void> {
+  const ffmpeg = mediaExecutable("ffmpeg", env);
+  const ffprobe = mediaExecutable("ffprobe", env);
+  if (/[|=]/u.test(ffmpeg) || /[|=]/u.test(ffprobe))
+    throw new Error("Use FFMPEG_PATH and FFPROBE_PATH without | or = in aeneas configuration.");
+  await Promise.all([
+    verify(
+      "FFmpeg with the subtitles filter",
+      async () =>
+        /\bV->V\s+Render text subtitles/u.test(
+          (await run(ffmpeg, ["-hide_banner", "-filters"])).toString(),
+        ),
+      "Install FFmpeg with libass and check FFMPEG_PATH.",
+    ),
+    verify(
+      "FFprobe",
+      async () => (await run(ffprobe, ["-version"])).toString().startsWith("ffprobe version "),
+      "Install FFprobe and check FFPROBE_PATH.",
+    ),
+  ]);
+}
+
+type Ready = { signature: string; languages: ReadonlyMap<string, string> };
+export type MediaReadiness = Readonly<{ runtime: Ready; code: string; checkedAt: number }>;
+
+const voiceCheck = [
+  "import sys",
+  "from aeneas.tools.execute_task import ExecuteTaskCLI",
+  "from aeneas.ttswrappers.espeakttswrapper import ESPEAKTTSWrapper",
+  "sys.exit(0 if ESPEAKTTSWrapper.LANGUAGE_TO_VOICE_CODE.get(sys.argv[1]) == sys.argv[2] else 1)",
+].join("; ");
+
+async function refreshVoice(
+  run: Probe,
+  env: NodeJS.ProcessEnv,
+  code: string,
+  voice: string,
+): Promise<void> {
+  await Promise.all([
+    verifyMediaTools(run, env),
+    verify(
+      "aeneas command-line module or narration mapping",
+      async () => {
+        await run(alignmentPython(env), ["-c", voiceCheck, code, voice]);
+        return true;
+      },
+      "Install aeneas==1.7.3.0 and check ALIGNMENT_PYTHON_PATH.",
+    ),
+    verify(
+      "eSpeak narration voice",
+      () => canSynthesize(run, voice),
+      "Restore the pinned eSpeak voice and language data.",
+    ),
+  ]);
+}
+
+function verifyFreshLanguage(
+  checked: Ready,
+  language: unknown,
+  proof: MediaReadiness | undefined,
+): void {
+  const code = alignmentLanguage(language, checked.languages);
+  if (
+    proof?.runtime !== checked ||
+    proof.code !== code ||
+    performance.now() - proof.checkedAt > 10000
+  )
+    throw new Error("Fresh local media readiness is missing or expired for the pinned narration");
 }
 
 export function createMediaRuntimeGate(run: Probe = probe): {
@@ -122,10 +192,19 @@ export function createMediaRuntimeGate(run: Probe = probe): {
   assertReady: (env?: NodeJS.ProcessEnv) => void;
   assertLanguage: (language: () => unknown, env?: NodeJS.ProcessEnv) => void;
   resolveLanguage: (language: unknown, env?: NodeJS.ProcessEnv) => string;
+  prepareLanguage: (
+    language: () => unknown,
+    env?: NodeJS.ProcessEnv,
+  ) => Promise<MediaReadiness | undefined>;
+  assertFreshLanguage: (
+    language: () => unknown,
+    evidence?: MediaReadiness,
+    env?: NodeJS.ProcessEnv,
+  ) => void;
 } {
   // The production entry points explicitly activate this guard before Nest boots.
   // Isolated test harnesses that inject fake ports do not activate it.
-  type Ready = { signature: string; languages: ReadonlySet<string> };
+
   let state: { ready: Ready | null } | undefined;
   function ready(env: NodeJS.ProcessEnv): Ready | undefined {
     if (!state) return undefined;
@@ -140,25 +219,8 @@ export function createMediaRuntimeGate(run: Probe = probe): {
       const pending: { ready: Ready | null } = { ready: null };
       state = pending;
       const checkedSignature = signature(env);
-      const ffmpeg = mediaExecutable("ffmpeg", env);
-      const ffprobe = mediaExecutable("ffprobe", env);
-      const python = alignmentPython(env);
-      if (/[|=]/u.test(ffmpeg) || /[|=]/u.test(ffprobe))
-        throw new Error("Use FFMPEG_PATH and FFPROBE_PATH without | or = in aeneas configuration.");
-      await verify(
-        "FFmpeg with the subtitles filter",
-        async () =>
-          /\bV->V\s+Render text subtitles/u.test(
-            (await run(ffmpeg, ["-hide_banner", "-filters"])).toString(),
-          ),
-        "Install FFmpeg with libass and check FFMPEG_PATH.",
-      );
-      await verify(
-        "FFprobe",
-        async () => (await run(ffprobe, ["-version"])).toString().startsWith("ffprobe version "),
-        "Install FFprobe and check FFPROBE_PATH.",
-      );
-      const languages = await installedLanguages(run, await loadVoices(run, python));
+      await verifyMediaTools(run, env);
+      const languages = await installedLanguages(run, await loadVoices(run, alignmentPython(env)));
       pending.ready = { signature: checkedSignature, languages };
     },
     assertReady(env = process.env): void {
@@ -170,6 +232,18 @@ export function createMediaRuntimeGate(run: Probe = probe): {
     },
     resolveLanguage(language, env = process.env): string {
       return alignmentLanguage(language, ready(env)?.languages);
+    },
+    async prepareLanguage(language, env = process.env): Promise<MediaReadiness | undefined> {
+      const checked = ready(env);
+      if (!checked) return undefined;
+      const code = alignmentLanguage(await language(), checked.languages);
+      await refreshVoice(run, env, code, checked.languages.get(code)!);
+      if (ready(env) !== checked) throw new Error("Media runtime changed during readiness check");
+      return Object.freeze({ runtime: checked, code, checkedAt: performance.now() });
+    },
+    assertFreshLanguage(language, evidence, env = process.env): void {
+      const checked = ready(env);
+      if (checked) verifyFreshLanguage(checked, language(), evidence);
     },
   };
 }

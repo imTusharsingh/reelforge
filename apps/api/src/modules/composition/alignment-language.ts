@@ -22,7 +22,10 @@ export class NarrationLanguageUnavailable extends Error {
 }
 
 /** Match both the aligner's ISO codes and what this process actually has voice data for. */
-export function alignmentLanguage(value: unknown, installed?: ReadonlySet<string>): string {
+export function alignmentLanguage(
+  value: unknown,
+  installed?: Pick<ReadonlySet<string>, "has">,
+): string {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   const code = aliases.get(normalized) ?? normalized;
   if (!/^[a-z]{3}$/u.test(code) || (installed && !installed.has(code)))
