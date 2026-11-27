@@ -313,14 +313,19 @@ export class RunsControl {
         if (!source) throw new ConflictException("Reshoot source changed");
         const replacement = await replayedReshoot(db, current, ordinal, source, shots);
         if (replacement) {
-          if (current.state === "CRITIC" && replacement.state === "PENDING") {
+          const rewound = current.state === "CRITIC" && replacement.state === "PENDING";
+          if (rewound) {
             await this.fenceCritics(context, db, tx, current);
             await db.videoRun.updateMany({ where: { id }, data: { state: "GENERATING" } });
           }
           return {
             value: replacement.id,
             eventType: "reshoot_replayed",
-            payload: { ordinal, attempt: replacement.attempt },
+            payload: {
+              ordinal,
+              attempt: replacement.attempt,
+              ...(rewound && { from: "CRITIC", to: "GENERATING" }),
+            },
           };
         }
         if (current.state !== "CRITIC" || source.id !== latest.id || source.state !== "SUCCEEDED")

@@ -9,15 +9,20 @@ import { bindMedia } from "../composition/media-bindings.fixture.js";
 import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
 import { markDispatching } from "../usage-budget/run-paid-dispatch.js";
 import { finalizeFailed, finalizeInvalidText } from "../usage-budget/run-paid-failure.js";
-import { DISPATCHING, OUTCOME_UNKNOWN } from "../usage-budget/run-admission-state.js";
+import {
+  DISPATCHING,
+  OUTCOME_UNKNOWN,
+  TEXT_DISPATCH_PROTOCOL,
+} from "../usage-budget/run-admission-state.js";
 import { recoverTextDispatches, withTextDispatch } from "../usage-budget/text-dispatch-recovery.js";
+import { textReceiptReference } from "../usage-budget/text-evidence.js";
 import { runsFixture } from "./runs.fixture.js";
 import { json, type Step } from "./runs.types.js";
 
 const fixture = runsFixture();
 const test = it.skipIf(!process.env.DATABASE_URL);
 
-async function textFixture(): Promise<{
+async function textFixture(withEnvelope = false): Promise<{
   t: Awaited<ReturnType<typeof fixture.tenant>>;
   accounts: ReturnType<typeof bindMedia>["accounts"];
   paid: ReturnType<typeof bindMedia>["access"]["paid"];
@@ -26,6 +31,19 @@ async function textFixture(): Promise<{
   const t = await fixture.tenant();
   await t.engine.process(t.runs.job(t.context, t.run.id));
   const run = await t.store.get(t.context, t.run.id);
+  if (withEnvelope) {
+    await t.db.budgetEnvelope.create({
+      data: {
+        workspaceId: t.context.workspaceId,
+        runId: run.id,
+        currency: "USD",
+        baseEstimateMinor: 200,
+        reshootReserveMinor: 100,
+        hardCapMinor: 800,
+        route: "PRIMARY",
+      },
+    });
+  }
   const native = fakeMediaPorts(
     t.context.workspaceId,
     t.storage,
@@ -65,7 +83,10 @@ test("worker recovery fences a live dispatcher, then promotes the orphaned paid 
     await recoverTextDispatches(t.store, t.context);
     expect(
       await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } }),
-    ).toMatchObject({ errorCode: DISPATCHING });
+    ).toMatchObject({
+      errorCode: DISPATCHING,
+      responseMetadata: { textDispatchProtocol: TEXT_DISPATCH_PROTOCOL },
+    });
     await expect(t.control.abandonTerminalText(t.context, step.runId, step.id)).rejects.toThrow(
       "confirmation",
     );
@@ -95,6 +116,49 @@ test("worker recovery fences a live dispatcher, then promotes the orphaned paid 
   );
 });
 
+test("never promotes an unversioned dispatch while an old worker could still be sending", async () => {
+  const { t, step } = await textFixture();
+  await markDispatching(t.store, t.context, step);
+  await recoverTextDispatches(t.store, t.context);
+  expect(
+    await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } }),
+  ).toMatchObject({ errorCode: DISPATCHING, responseMetadata: { dispatched: true } });
+  await expect(t.control.abandonTerminalText(t.context, step.runId, step.id)).rejects.toThrow(
+    "confirmation",
+  );
+  expect(await t.db.usageReservation.findMany({ where: { correlationId: step.id } })).toMatchObject(
+    [{ status: "RESERVED", committedMinor: null }],
+  );
+});
+
+test("releases the original reservation when the final pre-POST lock assertion fails", async () => {
+  const { t, step, paid } = await textFixture(true);
+  const check = vi
+    .fn<() => Promise<void>>()
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(new Error("lost lock"));
+  const send = vi.fn();
+  await expect(paid.dispatch(t.context, step, send, check)).rejects.toThrow("Ownership lost");
+  await recoverTextDispatches(t.store, t.context);
+  expect(check).toHaveBeenCalledTimes(2);
+  expect(send).not.toHaveBeenCalled();
+  expect(
+    await t.db.usageReservation.findMany({
+      where: { idempotencyKey: `m08:${step.idempotencyKey}` },
+    }),
+  ).toMatchObject([{ status: "RELEASED", committedMinor: null }]);
+  const row = await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } });
+  expect(row).toMatchObject({
+    errorCode: "NOT_DISPATCHED",
+    responseMetadata: { dispatched: false, costKnown: true },
+  });
+  expect(row.actualCost?.isZero()).toBe(true);
+  expect(await t.db.budgetEnvelope.findFirst({ where: { runId: step.runId } })).toMatchObject({
+    spentMinor: 0,
+    reservedMinor: 0,
+  });
+});
+
 test("id-less valid Gemini output commits the budget estimate but not provider actual cost", async () => {
   const { t, accounts, step } = await textFixture();
   const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
@@ -119,6 +183,13 @@ test("id-less valid Gemini output commits the budget estimate but not provider a
     ),
   );
   expect(result.providerJobId).toBe(step.idempotencyKey);
+  expect(textReceiptReference(step, result.providerJobId)).toEqual({
+    providerJobId: null,
+    dispatchKey: step.idempotencyKey,
+  });
+  expect(
+    textReceiptReference({ ...step, providerJobId: "google-recovered" }, result.providerJobId),
+  ).toEqual({ providerJobId: "google-recovered", dispatchKey: step.idempotencyKey });
   await accounts.complete(t.context, step, result);
   expect(fetcher).toHaveBeenCalledOnce();
   const row = await t.db.providerRequest.findFirstOrThrow({ where: { correlationId: step.id } });

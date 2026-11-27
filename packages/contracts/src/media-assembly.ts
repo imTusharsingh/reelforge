@@ -8,7 +8,8 @@ export const MediaReceiptSchema = z
   .object({
     key: z.string().min(1),
     providerId: z.string().min(1),
-    providerJobId: z.string().min(1),
+    providerJobId: z.string().min(1).nullable(),
+    dispatchKey: z.string().min(1).optional(),
     costBasis: z.enum(["RESERVATION", "BILLED"]).default("RESERVATION"),
     modelId: z.string().min(1),
     promptVersion: z.string().min(1),
@@ -19,7 +20,11 @@ export const MediaReceiptSchema = z
     checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
     mimeType: z.string().min(1),
   })
-  .strict();
+  .strict()
+  .refine(
+    (receipt) => receipt.providerJobId !== null || !!receipt.dispatchKey,
+    "Missing dispatch reference",
+  );
 export type MediaReceipt = z.infer<typeof MediaReceiptSchema>;
 export const AssemblyManifestSchema = z
   .object({

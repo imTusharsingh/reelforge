@@ -1,4 +1,4 @@
-import { remoteTextId } from "./text-evidence.js";
+import { remoteTextId, retainedOwnerEvidence } from "./text-evidence.js";
 import { markDispatching } from "./run-paid-dispatch.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
@@ -267,6 +267,7 @@ export class RunPaidCalls {
         actualCost: dispatched ? null : 0,
         ...(usage !== undefined ? { usage: json(usage) } : {}),
         responseMetadata: {
+          ...(await retainedOwnerEvidence(tx, context, step)),
           dispatched,
           costKnown: !dispatched,
           ...(step.key.startsWith("media:text:") && {
@@ -310,6 +311,7 @@ export class RunPaidCalls {
           ? {
               actualCost: null,
               responseMetadata: {
+                ...(await retainedOwnerEvidence(tx, context, step)),
                 dispatched: true,
                 costKnown: false,
                 costBasis: "RESERVATION",

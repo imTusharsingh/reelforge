@@ -1,3 +1,4 @@
+import { textReceiptReference } from "../usage-budget/text-evidence.js";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
 import { Injectable } from "@nestjs/common";
 import { z } from "zod";
@@ -197,7 +198,7 @@ export class MediaPlanning {
       admitted.spec.promptVersion,
       result,
       admitted.modelId,
-      step.costMinor!,
+      step,
     );
     await this.accounts.complete(context, step, {
       ...result,
@@ -322,7 +323,7 @@ export class MediaPlanning {
     promptVersion: z.infer<typeof planningPromptReceiptSchema>,
     result: { output: unknown; providerJobId: string },
     modelId: string,
-    cost: number,
+    step: Step,
   ): Promise<{
     artifact: import("../runs/runs.types.js").Artifact;
     receipt: import("@reelforge/contracts").MediaReceipt;
@@ -336,11 +337,11 @@ export class MediaPlanning {
     const receipt = {
       key,
       providerId: "gemini",
-      providerJobId: result.providerJobId,
+      ...textReceiptReference(step, result.providerJobId),
       modelId,
       promptVersion: JSON.stringify(promptVersion),
       seconds: 0,
-      costMinor: cost,
+      costMinor: step.costMinor ?? 0,
       objectKey: artifact.objectKey,
       checksumSha256: artifact.checksumSha256,
       mimeType: "application/json",

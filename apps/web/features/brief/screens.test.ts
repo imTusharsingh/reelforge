@@ -205,26 +205,25 @@ describe("V7 mounted screens", () => {
       narratorVoice: { language: "Italian" },
     });
   });
-  it("creates a channel with edited caps without queuing a paid run", async () => {
+  it("restores the successful create-only action on remount without queuing a Short", async () => {
     await render(createElement(Onboarding));
     await submit();
     expect(container.querySelector("#setup-audience")?.getAttribute("aria-invalid")).toBe("true");
     await change("#setup-niche", "Science");
     await change("#setup-audience", "Adults");
     await submit();
-    expect(location.search).toBe("?step=voice");
-    expect(document.title).toContain("Voice");
-    expect(container.querySelectorAll("#setup-voice option").length).toBeGreaterThan(2);
     await change("#setup-timezone", "Asia/Kolkata");
     await submit();
-    expect(document.title).toContain("Confirm");
     await change("#budget-targetMinor", "350");
     await change("#budget-hardCapMinor", "400");
     await act(async () =>
       container.querySelector<HTMLButtonElement>('button[type="submit"]:not([value])')!.click(),
     );
-    expect(stub.calls.some((call) => call.path.endsWith("/runs"))).toBe(false);
+    await render(null);
+    await render(createElement(Onboarding));
+    expect(stub.calls.filter(({ method }) => method === "POST")).toHaveLength(3);
     expect(container.textContent).toContain("channel and Brief are saved");
+    expect(container.querySelector('button[value="queue"]')).toBeNull();
     expect(stub.versions[0]).toMatchObject({
       budgetPolicy: { hardCapMinor: 400 },
       cadence: { timezone: "Asia/Kolkata" },

@@ -77,7 +77,7 @@ describe("V8 mounted experience with fake HTTP", () => {
     data.run.state = "GENERATING";
     data.completedStages = ["PLANNING", "SCRIPTING", "SHOT_PLANNING"];
     data.steps = [{ ...detail().steps[0]!, key: "ASSEMBLING" }];
-    await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
+    await act(async () => FakeEventSource.instances[0]!.emit("reshoot_replayed", 8));
     expect(current()).toBe("Generating");
     expect(timeline()).toContain("✓ Shot planning");
     expect(timeline()).not.toContain("✓ Assembling");

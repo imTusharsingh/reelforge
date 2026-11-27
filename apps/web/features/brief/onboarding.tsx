@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import {
-  defaultBrief,
   defaultBudgetPolicy,
   type BriefInput,
   OnboardingInputSchema,
@@ -20,58 +19,20 @@ import { BudgetPolicySchema } from "../../../../packages/contracts/src/foundatio
 import { Alert, Panel, StateMessage } from "../../components/ui/primitives";
 import { BrandLogo } from "../../components/brand-logo";
 import { StudioLink } from "../../components/studio-link";
-import { ensureCsrfToken } from "../../lib/csrf";
-import { api, type Workspace } from "../../lib/api";
-import { BriefClient, UnsupportedNarrationLanguageError } from "./client";
+import type { Workspace } from "../../lib/api";
+import { UnsupportedNarrationLanguageError } from "./client";
 
-import { submissionCheckpoint, SubmissionCheckpointError, type Progress } from "./wizard-attempt";
+import {
+  submissionCheckpoint,
+  SubmissionCheckpointError,
+  type Progress,
+  type SetupAction,
+} from "./wizard-attempt";
+import { submitSetup } from "./wizard-submission";
 const audienceStep = OnboardingInputSchema.pick({ niche: true, audience: true, language: true });
 const cadenceStep = OnboardingInputSchema.pick({ voiceId: true, cadence: true });
 const normalizedLanguage = (language: string): string => language.trim().toLowerCase();
 
-async function start(
-  input: OnboardingInput,
-  progress: Progress,
-  budgetPolicy: BriefInput["budgetPolicy"],
-  queue: boolean,
-  scope: string | undefined,
-): Promise<Workspace> {
-  await ensureCsrfToken();
-  const checkpoint = await submissionCheckpoint(progress, scope);
-  if (!progress.workspace) {
-    progress.workspaceId ??= (await api.createWorkspace(input.niche)).id;
-    checkpoint();
-    const authorized = (await api.listWorkspaces()).find(
-      (item) => item.id === progress.workspaceId,
-    );
-    if (!authorized) throw new Error("Workspace access could not be verified.");
-    progress.workspace = authorized;
-  }
-  const client = new BriefClient(progress.workspace.id);
-  progress.channelId ??= await client.createChannel(input.niche);
-  checkpoint();
-  if (!progress.brief || progress.needsLanguageRepair) {
-    progress.brief = await client.save(progress.channelId, {
-      ...defaultBrief(input),
-      budgetPolicy,
-    });
-    // The unsupported-language response is definitive: no run was created for the old Brief.
-    progress.key = crypto.randomUUID();
-    progress.needsLanguageRepair = false;
-    checkpoint();
-  }
-  if (!queue) return progress.workspace;
-  try {
-    await client.queue(progress.brief, progress.key);
-  } catch (error) {
-    if (error instanceof UnsupportedNarrationLanguageError) {
-      progress.needsLanguageRepair = true;
-      checkpoint();
-    }
-    throw error;
-  }
-  return progress.workspace;
-}
 export function Onboarding({
   onComplete,
   workspace,
@@ -194,33 +155,15 @@ function useSetupSubmission(
   Pick<SubmitState, "finish" | "setError"> {
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
-  const [restoring, setRestoring] = useState(true);
-  useEffect(() => {
-    let active = true;
-    const restored = { ...progress.current };
-    void submissionCheckpoint(restored, scope)
-      .then(() => {
-        if (active) progress.current = restored;
-      })
-      .catch(() => undefined) // Confirm rechecks before sending anything and can report the error.
-      .finally(() => {
-        if (active) setRestoring(false);
-      });
-    return (): void => {
-      active = false;
-    };
-  }, [progress, scope]);
+  const { restoring, completed, setCompleted } = useRestoredSubmission(progress, scope);
   const [error, setError] = useState("");
-  const [queued, setQueued] = useState(false);
-  const [createdOnly, setCreatedOnly] = useState(false);
   const finish = async (input: OnboardingInput, queue: boolean): Promise<void> => {
     if (inFlight.current || restoring) return;
     inFlight.current = true;
     setBusy(true);
     try {
-      const workspace = await start(input, progress.current, budget, queue, scope);
-      setCreatedOnly(!queue);
-      setQueued(true);
+      const workspace = await submitSetup(input, progress.current, budget, queue, scope);
+      setCompleted(progress.current.action);
       onComplete?.(workspace);
     } catch (error) {
       if (error instanceof UnsupportedNarrationLanguageError) {
@@ -237,7 +180,43 @@ function useSetupSubmission(
       setBusy(false);
     }
   };
-  return { busy: busy || restoring, error, queued, createdOnly, finish, setError };
+  return {
+    busy: busy || restoring,
+    error,
+    queued: completed !== undefined,
+    createdOnly: completed === "create",
+    finish,
+    setError,
+  };
+}
+function useRestoredSubmission(
+  progress: OnboardingState["progress"],
+  scope: string | undefined,
+): {
+  restoring: boolean;
+  completed: SetupAction | undefined;
+  setCompleted: (action: SetupAction | undefined) => void;
+} {
+  const [restoring, setRestoring] = useState(true);
+  const [completed, setCompleted] = useState<SetupAction>();
+  useEffect(() => {
+    let active = true;
+    const restored = { ...progress.current };
+    void submissionCheckpoint(restored, scope)
+      .then(() => {
+        if (!active) return;
+        progress.current = restored;
+        if (restored.completed) setCompleted(restored.action);
+      })
+      .catch(() => undefined) // Confirm rechecks before sending anything and can report the error.
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
+    return (): void => {
+      active = false;
+    };
+  }, [progress, scope]);
+  return { restoring, completed, setCompleted };
 }
 function stepError(
   step: number,

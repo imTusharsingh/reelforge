@@ -1,5 +1,6 @@
 import { useEffect, useRef, type JSX } from "react";
 import type { OnboardingInput } from "../../../../packages/contracts/src/channel-brief";
+import type { Progress } from "./wizard-attempt";
 import { Button, Field, SelectField } from "../../components/ui/primitives";
 type Fields = { input: OnboardingInput; setInput: (value: OnboardingInput) => void };
 export function AudienceFields({
@@ -123,7 +124,7 @@ export function WizardActions({
   step: number;
   busy: boolean;
   back: () => void;
-  progress: { current: { brief?: unknown; needsLanguageRepair?: boolean } };
+  progress: { current: Pick<Progress, "action" | "brief" | "needsLanguageRepair"> };
   editingLocked: boolean;
 }): JSX.Element {
   return (
@@ -133,25 +134,27 @@ export function WizardActions({
           Back
         </Button>
       )}
-      {step === 2 && !progress.current.brief && (
+      {step === 2 && progress.current.action !== "queue" && (
         <Button type="submit" loading={busy}>
           Create channel
         </Button>
       )}
-      <Button
-        type="submit"
-        value="queue"
-        tone={step === 2 ? "secondary" : "primary"}
-        loading={busy}
-      >
-        {step < 2
-          ? "Continue"
-          : progress.current.needsLanguageRepair
-            ? "Save corrected Brief and start first Short"
-            : progress.current.brief
-              ? "Retry first Short"
-              : "Create channel and start first Short"}
-      </Button>
+      {(step < 2 || progress.current.action !== "create") && (
+        <Button
+          type="submit"
+          value="queue"
+          tone={step === 2 ? "secondary" : "primary"}
+          loading={busy}
+        >
+          {step < 2
+            ? "Continue"
+            : progress.current.needsLanguageRepair
+              ? "Save corrected Brief and start first Short"
+              : progress.current.action === "queue" && progress.current.brief
+                ? "Retry first Short"
+                : "Create channel and start first Short"}
+        </Button>
+      )}
     </div>
   );
 }

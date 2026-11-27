@@ -17,6 +17,14 @@ describe("additive V5 media contracts", () => {
       mimeType: "video/mp4",
     };
     expect(MediaReceiptSchema.parse(receipt).costBasis).toBe("RESERVATION");
+    expect(MediaReceiptSchema.safeParse({ ...receipt, providerJobId: null }).success).toBe(false);
+    expect(
+      MediaReceiptSchema.parse({
+        ...receipt,
+        providerJobId: null,
+        dispatchKey: "local-attempt",
+      }),
+    ).toMatchObject({ providerJobId: null, dispatchKey: "local-attempt" });
     expect(MediaReceiptSchema.safeParse({ ...receipt, apiKey: "never" }).success).toBe(false);
     expect(AssemblyManifestSchema.safeParse({ totalCostMinor: 801 }).success).toBe(false);
   });

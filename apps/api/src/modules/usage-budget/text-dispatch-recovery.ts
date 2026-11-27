@@ -1,7 +1,7 @@
 import { withSessionLock } from "../runs/session-lock.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { Context, Step } from "../runs/runs.types.js";
-import { DISPATCHING, OUTCOME_UNKNOWN } from "./run-admission-state.js";
+import { DISPATCHING, OUTCOME_UNKNOWN, TEXT_DISPATCH_PROTOCOL } from "./run-admission-state.js";
 import { remainingSubmissionHold, submissionHold } from "../runs/run-outcomes.js";
 
 const lockKey = (step: Step): string => `sync-text:${step.id}`;
@@ -24,7 +24,13 @@ class ActiveOrSettled extends Error {}
  * ledger marker, so a slow but live POST can still finish normally. */
 export async function recoverTextDispatches(store: RunsStore, context: Context): Promise<void> {
   const requests = await store.db.providerRequest.findMany({
-    where: { workspaceId: context.workspaceId, errorCode: DISPATCHING },
+    // Old workers may have a live POST and do not necessarily own our advisory lock.
+    // Their unversioned markers require evidence or operator-led rollout reconciliation.
+    where: {
+      workspaceId: context.workspaceId,
+      errorCode: DISPATCHING,
+      responseMetadata: { path: ["textDispatchProtocol"], equals: TEXT_DISPATCH_PROTOCOL },
+    },
     select: { correlationId: true },
   });
   if (!requests.length) return;
@@ -52,6 +58,7 @@ export async function recoverTextDispatches(store: RunsStore, context: Context):
             workspaceId: context.workspaceId,
             correlationId: step.id,
             errorCode: DISPATCHING,
+            responseMetadata: { path: ["textDispatchProtocol"], equals: TEXT_DISPATCH_PROTOCOL },
           },
           data: { errorCode: OUTCOME_UNKNOWN },
         });

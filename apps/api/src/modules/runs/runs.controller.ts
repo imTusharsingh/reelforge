@@ -28,6 +28,10 @@ import { NotFoundException } from "@nestjs/common";
 import { AuthGuard, type AuthenticatedRequest } from "../identity/auth.guard.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
 import { RunsService } from "./runs.service.js";
+import {
+  attachRecoveredTextEvidence,
+  RecoveredTextEvidenceSchema,
+} from "./recovered-text-evidence.js";
 import { RunsControl } from "./runs.control.js";
 import { RunsArtifacts } from "./runs.artifacts.js";
 import { RunCreateSchema, type Context } from "./runs.types.js";
@@ -137,6 +141,25 @@ export class RunsController {
       await this.context(request, workspaceId),
       this.id(id),
       this.id(stepId),
+    );
+  }
+  @Post(":id/steps/:stepId/text-evidence")
+  @HttpCode(204)
+  public async recordTextEvidence(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Param("stepId") stepId: string,
+    @Query("workspaceId") workspaceId: string,
+  ): Promise<void> {
+    const parsed = RecoveredTextEvidenceSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException("Invalid text receipt evidence");
+    await attachRecoveredTextEvidence(
+      this.runs,
+      await this.context(request, workspaceId),
+      this.id(id),
+      this.id(stepId),
+      parsed.data,
     );
   }
   @Post(":id/reshoot/:ordinal")

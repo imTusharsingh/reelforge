@@ -4,6 +4,7 @@ import { scopedTransaction } from "../runs/runs.transaction.js";
 import type { Context, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 export const ADMISSION_ORDERING = "v2-commit-before-dispatch";
+export const TEXT_DISPATCH_PROTOCOL = "sync-text-advisory-v1";
 export const DISPATCHING = "VIDEO_RUN_DISPATCHING";
 export const BILLING_OVERAGE = "VIDEO_RUN_BILLING_OVERAGE";
 export const OUTCOME_UNKNOWN = "VIDEO_RUN_OUTCOME_UNKNOWN";

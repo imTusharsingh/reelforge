@@ -14,14 +14,19 @@ export const pendingCorrectionWhere = {
   error: { path: ["code"], equals: PENDING_RECEIPT_CORRECTION },
 };
 
-const pendingPrice = MediaReceiptSchema.pick({
-  providerId: true,
-  providerJobId: true,
-  seconds: true,
-  costMinor: true,
-  modelId: true,
-  promptVersion: true,
-}).extend({ code: z.literal(PENDING_RECEIPT_CORRECTION), costBasis: z.literal("BILLED") });
+const receiptFields = MediaReceiptSchema.shape;
+const pendingPrice = z
+  .object({
+    providerId: receiptFields.providerId,
+    providerJobId: receiptFields.providerJobId.unwrap(),
+    seconds: receiptFields.seconds,
+    costMinor: receiptFields.costMinor,
+    modelId: receiptFields.modelId,
+    promptVersion: receiptFields.promptVersion,
+    code: z.literal(PENDING_RECEIPT_CORRECTION),
+    costBasis: z.literal("BILLED"),
+  })
+  .strict();
 
 export function pendingCorrection(step: Step): VideoReceipt | null {
   const marker = step.error;

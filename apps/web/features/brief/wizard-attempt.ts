@@ -4,6 +4,8 @@ import {
 } from "../../../../packages/contracts/src/foundations";
 import { api, type Workspace } from "../../lib/api";
 
+export type SetupAction = "create" | "queue";
+
 export type Progress = {
   checkpointKey?: string;
   workspace?: Workspace;
@@ -12,11 +14,14 @@ export type Progress = {
   brief?: ChannelBrief;
   key: string;
   needsLanguageRepair?: boolean;
+  action?: SetupAction;
+  completed?: boolean;
 };
 
-type SavedAttempt = Pick<Progress, "channelId" | "brief" | "key" | "needsLanguageRepair"> & {
-  workspaceId: string;
-};
+type SavedAttempt = Pick<
+  Progress,
+  "workspaceId" | "channelId" | "brief" | "key" | "needsLanguageRepair" | "action" | "completed"
+>;
 
 function isUuid(value: unknown): value is string {
   return (
@@ -27,24 +32,28 @@ function isUuid(value: unknown): value is string {
 
 function readSavedAttempt(input: unknown): SavedAttempt {
   if (typeof input !== "object" || input === null) throw new SubmissionCheckpointError();
-  const { workspaceId, channelId, brief, key, needsLanguageRepair } = input as Record<
-    string,
-    unknown
-  >;
+  const { workspaceId, channelId, brief, key, needsLanguageRepair, action, completed } =
+    input as Record<string, unknown>;
   if (
-    !isUuid(workspaceId) ||
+    (workspaceId !== undefined && !isUuid(workspaceId)) ||
+    ((channelId !== undefined || brief !== undefined) && !workspaceId) ||
     (channelId !== undefined && !isUuid(channelId)) ||
     typeof key !== "string" ||
     (brief === undefined ? key !== "" : !isUuid(key)) ||
-    (needsLanguageRepair !== undefined && typeof needsLanguageRepair !== "boolean")
+    (needsLanguageRepair !== undefined && typeof needsLanguageRepair !== "boolean") ||
+    (action !== undefined && action !== "create" && action !== "queue") ||
+    (completed !== undefined && typeof completed !== "boolean") ||
+    (completed && (!brief || !action || needsLanguageRepair))
   )
     throw new SubmissionCheckpointError();
   return {
-    workspaceId,
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
     key,
     ...(channelId !== undefined ? { channelId } : {}),
     ...(brief !== undefined ? { brief: StoredChannelBriefSchema.parse(brief) } : {}),
     ...(needsLanguageRepair !== undefined ? { needsLanguageRepair } : {}),
+    ...(action !== undefined ? { action } : {}),
+    ...(completed !== undefined ? { completed } : {}),
   };
 }
 
@@ -106,6 +115,8 @@ function saveCheckpoint(progress: Progress, storageKey: string): void {
       brief: progress.brief,
       key: progress.key,
       needsLanguageRepair: progress.needsLanguageRepair,
+      action: progress.action,
+      completed: progress.completed,
     });
     sessionStorage.setItem(storageKey, JSON.stringify(saved));
     history.replaceState({ ...history.state, briefAttempt: storageKey }, "");

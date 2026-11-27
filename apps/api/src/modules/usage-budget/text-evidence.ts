@@ -19,6 +19,16 @@ export function remoteTextId(step: Step, reference: string | null): string | nul
   return reference && reference !== step.idempotencyKey ? reference : null;
 }
 
+export function textReceiptReference(
+  step: Step,
+  observedReference: string,
+): { providerJobId: string | null; dispatchKey: string } {
+  return {
+    providerJobId: remoteTextId(step, observedReference) ?? remoteTextId(step, step.providerJobId),
+    dispatchKey: step.idempotencyKey,
+  };
+}
+
 export async function recordTextEvidence(
   tx: Transaction,
   context: Context,
@@ -101,4 +111,20 @@ export async function attachTextEvidence(
     stepId: claim.id,
     eventType: closed ? "text_evidence_recorded" : "provider_submitted",
   };
+}
+
+export async function retainedOwnerEvidence(
+  tx: Transaction,
+  context: Context,
+  step: Step,
+): Promise<{ ownerReportedEvidence?: z.infer<typeof fields>[string] }> {
+  if (!step.key.startsWith("media:text:")) return {};
+  const row = await tx.providerRequest.findUnique({
+    where: {
+      workspaceId_correlationId: { workspaceId: context.workspaceId, correlationId: step.id },
+    },
+    select: { responseMetadata: true },
+  });
+  const ownerReportedEvidence = fields.safeParse(row?.responseMetadata).data?.ownerReportedEvidence;
+  return ownerReportedEvidence === undefined ? {} : { ownerReportedEvidence };
 }

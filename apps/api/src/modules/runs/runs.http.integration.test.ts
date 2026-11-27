@@ -4,6 +4,8 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
+import { bindMedia } from "../composition/media-bindings.fixture.js";
+import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
 import { RunsModule } from "./runs.module.js";
 import { RunsService } from "./runs.service.js";
 import { RunsController } from "./runs.controller.js";
@@ -107,6 +109,104 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .get(`/api/v1/runs/nope?workspaceId=${t.context.workspaceId}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
+  });
+  it("records owner-recovered text evidence on the original dispatched attempt without posting or marking it verified", async () => {
+    const receiptTenant = await fixture.tenant("L2", 30);
+    const owner = randomUUID();
+    await receiptTenant.db.session.create({
+      data: {
+        userId: receiptTenant.context.userId,
+        tokenHash: hashSessionToken(owner),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const run = receiptTenant.run;
+    await receiptTenant.engine.process(receiptTenant.runs.job(receiptTenant.context, run.id));
+    const current = await receiptTenant.store.get(receiptTenant.context, run.id);
+    const native = fakeMediaPorts(
+      receiptTenant.context.workspaceId,
+      receiptTenant.storage,
+      {
+        clip: Buffer.alloc(0),
+        image: Buffer.alloc(0),
+        audio: Buffer.alloc(0),
+      },
+      [],
+    );
+    const { accounts } = bindMedia(receiptTenant, native);
+    const step = await accounts.begin(
+      receiptTenant.context,
+      current,
+      "media:text:scriptwriter",
+      {},
+      7,
+      "fixture-text",
+    );
+    await accounts.prepare(receiptTenant.context, current, step, "fixture-text");
+    const sent = vi.fn().mockRejectedValue(new Error("lost reply"));
+    await expect(accounts.dispatchText(receiptTenant.context, step, sent)).rejects.toThrow(
+      "RECONCILE_REQUIRED",
+    );
+
+    const path = `/api/v1/runs/${run.id}/steps/${step.id}/text-evidence?workspaceId=${receiptTenant.context.workspaceId}`;
+    const data = {
+      dispatchKey: step.idempotencyKey,
+      providerJobId: "google_fixture_recovered",
+      confirmedOriginalAttempt: true,
+      usage: { input_tokens: 12 },
+    };
+    const editor = randomUUID();
+    await receiptTenant.db.workspaceMembership.create({
+      data: {
+        workspaceId: receiptTenant.context.workspaceId,
+        userId: other.context.userId,
+        role: "EDITOR",
+      },
+    });
+    await receiptTenant.db.session.create({
+      data: {
+        userId: other.context.userId,
+        tokenHash: hashSessionToken(editor),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const post = (asToken: string): request.Test =>
+      request(app.getHttpServer() as never)
+        .post(path)
+        .set("Authorization", `Bearer ${asToken}`);
+    await request(app.getHttpServer() as never)
+      .post(path)
+      .send(data)
+      .expect(401);
+    await post(editor).send(data).expect(403);
+    await post(owner)
+      .send({ ...data, dispatchKey: "wrong-attempt" })
+      .expect(409);
+    await post(owner).send(data).expect(204);
+    await receiptTenant.control.abandonTerminalText(receiptTenant.context, run.id, step.id);
+    await post(owner)
+      .send({ ...data, usage: { output_tokens: 3 } })
+      .expect(204);
+    expect(
+      await receiptTenant.db.providerRequest.findFirstOrThrow({
+        where: { correlationId: step.id },
+      }),
+    ).toMatchObject({
+      actualCost: null,
+      usage: null,
+      responseMetadata: {
+        dispatchKey: step.idempotencyKey,
+        ownerReportedEvidence: {
+          providerJobId: data.providerJobId,
+          usage: { input_tokens: 12, output_tokens: 3 },
+          recordedBy: receiptTenant.context.userId,
+        },
+      },
+    });
+    expect(
+      await receiptTenant.db.usageReservation.findMany({ where: { correlationId: step.id } }),
+    ).toMatchObject([{ status: "COMMITTED", committedMinor: 7n }]);
+    expect(sent).toHaveBeenCalledOnce();
   });
   it("validates SSE cursors and supports read and control controller boundaries", async () => {
     const controller = app.get(RunsController);

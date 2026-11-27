@@ -108,6 +108,22 @@ retries inspect the M18 idempotency key and request correlation and require huma
 reconciliation without resubmitting or assuming a refund. Replayed intent claims
 are rejected so concurrent workers cannot share preflight ownership.
 
+## Text receipt recovery
+
+Drain existing workers before enabling workers that write the new planning receipts.
+Readers on this revision still accept old receipts. New text receipts keep the local
+`dispatchKey` separate from `providerJobId`, which is null when Google returned no ID.
+The orphan sweep only promotes dispatch markers written by workers using the
+versioned text lock. It leaves older in-flight markers untouched.
+
+An authenticated workspace owner can attach evidence from a recovered Google receipt
+with `POST /api/v1/runs/:runId/steps/:stepId/text-evidence?workspaceId=…`.
+Send the original `dispatchKey`, recovered `providerJobId`, optional integer
+`usage` counters, and `confirmedOriginalAttempt: true`. This records
+owner-reported evidence and the actor on that attempt. It does not contact Google,
+replace the generated output, treat reported usage as verified cost, or settle
+the reservation. Terminal confirmation remains a separate operation.
+
 ## Local aeneas installation
 
 On Debian-based hosts, install eSpeak and its development library alongside Python 3.10 with venv support. Use the same interpreter for API and worker preflight.
