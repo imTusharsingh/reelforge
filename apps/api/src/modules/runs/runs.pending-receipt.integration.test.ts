@@ -275,23 +275,29 @@ describe.skipIf(!process.env.DATABASE_URL)("pending receipt correction", () => {
     expect(native.fetch).toHaveBeenCalledOnce();
   });
 
-  it("holds assembly-to-critic advancement while a receipt correction is pending", async () => {
-    const t = await fixture.tenant();
-    const run = await generating(t);
-    await t.db.videoRun.update({ where: { id: run.id }, data: { state: "ASSEMBLING" } });
-    const shot = await t.db.videoRunStep.findFirstOrThrow({
-      where: { runId: run.id, key: "shot-0" },
-    });
-    await installPendingCorrection(t, shot);
+  it.each([null, "MEDIA_TOOL_UNAVAILABLE"] as const)(
+    "holds assembly-to-critic advancement for a pending receipt correction (existing pause: %s)",
+    async (pauseReason) => {
+      const t = await fixture.tenant();
+      const run = await generating(t);
+      const shot = await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: run.id, key: "shot-0" },
+      });
+      await installPendingCorrection(t, shot);
+      await t.db.videoRun.update({
+        where: { id: run.id },
+        data: { state: "ASSEMBLING", pauseReason },
+      });
 
-    expect(await t.runs.move(t.context, await t.store.get(t.context, run.id), "CRITIC")).toBe(
-      false,
-    );
-    expect(await t.store.get(t.context, run.id)).toMatchObject({
-      state: "ASSEMBLING",
-      pauseReason: expect.stringContaining("RECONCILE_REQUIRED"),
-    });
-  });
+      expect(await t.runs.move(t.context, await t.store.get(t.context, run.id), "CRITIC")).toBe(
+        false,
+      );
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: "ASSEMBLING",
+        pauseReason: pauseReason ?? expect.stringContaining("RECONCILE_REQUIRED"),
+      });
+    },
+  );
 
   it("blocks final approval while a settled receipt correction is pending", async () => {
     const t = await fixture.tenant();

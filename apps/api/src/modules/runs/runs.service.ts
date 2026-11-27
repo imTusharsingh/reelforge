@@ -170,8 +170,7 @@ export class RunsService {
       run.id,
       "transition",
       async (db, current, tx) => {
-        if (!(await canAdvancePastRender(db, current, state)))
-          return { value: false, payload: { stale: true }, eventType: "stage_advance_discarded" };
+        const renderAdvanceAllowed = await canAdvancePastRender(db, current, state);
         const advances =
           state === "SCRIPTING" ||
           state === "SHOT_PLANNING" ||
@@ -179,7 +178,12 @@ export class RunsService {
           state === "ASSEMBLING" ||
           state === "CRITIC" ||
           state === "AWAITING_APPROVAL";
-        const hold = advances ? await activeSubmissionHold(db, tx, current) : null;
+        // A pending correction still needs a durable hold even if rendering has not completed.
+        // But never replace an existing render pause while discarding stale advancement.
+        const hold =
+          advances && (renderAdvanceAllowed || !current.pauseReason)
+            ? await activeSubmissionHold(db, tx, current)
+            : null;
         if (hold) {
           if (
             current.pauseReason !== "EMERGENCY_STOP" &&
@@ -195,6 +199,8 @@ export class RunsService {
             eventType: "reconcile_required",
           };
         }
+        if (!renderAdvanceAllowed)
+          return { value: false, payload: { stale: true }, eventType: "stage_advance_discarded" };
         await transitionLocked(db, current, state, reason, run.revision);
         return { value: true, payload: { from: current.state, to: state, reason } };
       },

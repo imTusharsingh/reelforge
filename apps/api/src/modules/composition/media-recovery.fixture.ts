@@ -7,7 +7,9 @@ import type {
   VideoOptions,
 } from "@reelforge/ai-providers";
 import { capabilityCatalog, secondsCost } from "@reelforge/ai-providers";
-import type { ShotSpec } from "@reelforge/contracts";
+import { MediaReceiptSchema, ShotSpecSchema, type ShotSpec } from "@reelforge/contracts";
+import type { Tenant } from "../runs/runs.fixture.js";
+import { json } from "../runs/runs.types.js";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 export function fakeMediaPorts(
   workspaceId: string,
@@ -92,4 +94,39 @@ export function fakeMediaPorts(
     },
     submitted,
   };
+}
+
+export async function seedPlayableShotReceipts(
+  t: Tenant,
+  leaveFirstShotPending: boolean,
+): Promise<ShotSpec[]> {
+  const db = t.store.scoped(t.context);
+  const records = await db.shotSpec.findMany({
+    where: { runId: t.run.id },
+    orderBy: { ordinal: "asc" },
+  });
+  const shots = records.map((row) => ShotSpecSchema.parse(row.document));
+  // Audio recovery starts after generation. Seed playable receipts without opening paid jobs.
+  for (const shot of leaveFirstShotPending ? shots.slice(1) : shots) {
+    const key = `shot-${shot.ordinal}`;
+    const artifact = await t.artifacts.put(t.context, "clips", Buffer.from(key), "video/mp4");
+    const receipt = MediaReceiptSchema.parse({
+      key,
+      providerId: "gemini",
+      providerJobId: `fixture-clip-${shot.ordinal}`,
+      modelId: "fixture-video",
+      promptVersion: "fixture:v1",
+      seconds: shot.durationSeconds,
+      costMinor: 0,
+      objectKey: artifact.objectKey,
+      checksumSha256: artifact.checksumSha256,
+      mimeType: "video/mp4",
+    });
+    const changed = await db.videoRunStep.updateMany({
+      where: { runId: t.run.id, key, state: "PENDING" },
+      data: { state: "SUCCEEDED", output: json({ receipt, storageArtifacts: [artifact] }) },
+    });
+    if (changed.count !== 1) throw new Error(`Expected one pending fixture step for ${key}`);
+  }
+  return shots;
 }
