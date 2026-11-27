@@ -573,6 +573,8 @@ export class PublishingService {
   ): Promise<ScheduledPostView> {
     this.requireEditor(context);
     const destination = await this.requireDestination(context.workspaceId, destinationId);
+    if (destination.status === "PUBLISHED")
+      return this.getScheduledPost(context, destination.scheduledPostId);
     const job = destination.publishJob;
     const attempt = job?.attempts[0] ?? null;
     if (!job || !attempt) throw new ConflictException("No upload attempt exists to reconcile");
@@ -605,15 +607,12 @@ export class PublishingService {
             verified,
           );
         } else {
-          await this.db.publishAttempt.update({
-            where: { workspaceId_id: { workspaceId: context.workspaceId, id: attempt.id } },
-            data: { confirmedBytes: BigInt(progress.nextByte), status: "FAILED_RETRYABLE" },
-          });
-          await this.setDestinationState(
+          await this.recordPartialUpload(
             context.workspaceId,
             destination.id,
             job.id,
-            "FAILED_RETRYABLE",
+            attempt.id,
+            progress.nextByte,
           );
         }
       } else {
@@ -621,7 +620,7 @@ export class PublishingService {
       }
     } catch (error) {
       if (!(error instanceof SocialProviderError) && !isExpectedPreflightError(error)) throw error;
-      await this.markReconciliationRequired(
+      const recorded = await this.markReconciliationRequired(
         context.workspaceId,
         destination,
         job.id,
@@ -630,6 +629,7 @@ export class PublishingService {
         "The upload could not be reconciled; do not retry until its outcome is known.",
       );
       if (
+        recorded &&
         reconnectRequired(error) &&
         (await isScheduledAutomation(this.db, context.workspaceId, destination.scheduledPostId))
       )
@@ -1191,10 +1191,14 @@ export class PublishingService {
     const status = rejected ? "FAILED_FINAL" : published ? "PUBLISHED" : "REMOTE_PROCESSING";
     const now = new Date();
     await this.db.$transaction(async (tx) => {
-      const currentDestination = await tx.publishingDestination.findUnique({
-        where: { workspaceId_id: { workspaceId, id: destination.id } },
-        select: { status: true, publishedAt: true },
-      });
+      const currentDestination = await lockPublishingDestination(
+        tx,
+        workspaceId,
+        destination.id,
+        jobId,
+      );
+      if (!currentDestination || currentDestination.status === "PUBLISHED") return;
+      if (currentDestination.status === "FAILED_FINAL" && !published) return;
       await tx.publishAttempt.update({
         where: { workspaceId_id: { workspaceId, id: attemptId } },
         data: {
@@ -1224,7 +1228,7 @@ export class PublishingService {
         data: { status },
       });
       await this.updateParentStatus(tx, workspaceId, destination.scheduledPostId);
-      if (published && currentDestination?.status !== "PUBLISHED") {
+      if (published) {
         const event = PostPublishedV1Schema.parse({
           eventId: randomUUID(),
           eventType: "PostPublished",
@@ -1264,7 +1268,7 @@ export class PublishingService {
           },
           update: {},
         });
-      } else if (rejected && currentDestination?.status !== "FAILED_FINAL") {
+      } else if (rejected) {
         const event = PublishFailedV1Schema.parse({
           eventId: randomUUID(),
           eventType: "PublishFailed",
@@ -1439,6 +1443,8 @@ export class PublishingService {
     const code = safeErrorCode(error);
     const message = safeErrorMessage(error);
     await this.db.$transaction(async (tx) => {
+      const current = await lockPublishingDestination(tx, workspaceId, destination.id, jobId);
+      if (!current || current.status === "PUBLISHED") return;
       await tx.publishAttempt.update({
         where: { workspaceId_id: { workspaceId, id: attemptId } },
         data: {
@@ -1467,8 +1473,11 @@ export class PublishingService {
     attemptId: string,
     code: string,
     message: string,
-  ): Promise<void> {
-    await this.db.$transaction(async (tx) => {
+  ): Promise<boolean> {
+    return this.db.$transaction(async (tx) => {
+      const current = await lockPublishingDestination(tx, workspaceId, destination.id, jobId);
+      if (!current || current.status === "PUBLISHED" || current.status === "FAILED_FINAL")
+        return false;
       await tx.publishAttempt.update({
         where: { workspaceId_id: { workspaceId, id: attemptId } },
         data: {
@@ -1487,16 +1496,25 @@ export class PublishingService {
         data: { status: "RECONCILIATION_REQUIRED", nextAttemptAt: null },
       });
       await this.updateParentStatus(tx, workspaceId, destination.scheduledPostId);
+      return true;
     });
   }
 
-  private async setDestinationState(
+  private async recordPartialUpload(
     workspaceId: string,
     destinationId: string,
     jobId: string,
-    status: "FAILED_RETRYABLE",
+    attemptId: string,
+    nextByte: number,
   ): Promise<void> {
+    const status = "FAILED_RETRYABLE";
     await this.db.$transaction(async (tx) => {
+      const current = await lockPublishingDestination(tx, workspaceId, destinationId, jobId);
+      if (!current || current.remotePostId !== null || current.status === "FAILED_FINAL") return;
+      await tx.publishAttempt.update({
+        where: { workspaceId_id: { workspaceId, id: attemptId } },
+        data: { confirmedBytes: BigInt(nextByte), status },
+      });
       await tx.publishingDestination.update({
         where: { workspaceId_id: { workspaceId, id: destinationId } },
         data: { status },
@@ -1746,6 +1764,25 @@ function renderDurationSeconds(input: Prisma.JsonValue): number | null {
       ? transitionDurationMs
       : 0;
   return Math.max(0, totalMs - (scenes.length - 1) * transition) / 1000;
+}
+
+async function lockPublishingDestination(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  destinationId: string,
+  jobId: string,
+): Promise<{
+  status: DestinationRecord["status"];
+  publishedAt: Date | null;
+  remotePostId: string | null;
+} | null> {
+  // Attempt claims already lock the job first; use the same order during reconciliation.
+  await tx.$queryRaw`SELECT id FROM publish_jobs
+    WHERE workspace_id = ${workspaceId}::uuid AND id = ${jobId}::uuid FOR UPDATE`;
+  return tx.publishingDestination.findUnique({
+    where: { workspaceId_id: { workspaceId, id: destinationId } },
+    select: { status: true, publishedAt: true, remotePostId: true },
+  });
 }
 
 function isExpectedPreflightError(error: unknown): boolean {

@@ -107,7 +107,11 @@ export class PublishingAutomation {
         return;
       }
       await this.db.v9PublishSlot.updateMany({
-        where: { workspaceId: context.workspaceId, id: slot.id },
+        where: {
+          workspaceId: context.workspaceId,
+          id: slot.id,
+          status: { notIn: published ? ["DRY_RUN"] : ["COMPLETE", "DRY_RUN", "MISSED"] },
+        },
         data: { status: published ? "COMPLETE" : "WAITING", lastError: null },
       });
       if (published) {
@@ -125,13 +129,19 @@ export class PublishingAutomation {
     destination: PublishingDestinationView,
   ): Promise<ScheduledPostView | null> {
     const attempted = destination.latestAttempt !== null;
-    if (!attempted && youTubeSlotElapsed(slot.scheduledAt)) return this.markMissed(context, slot);
+    const elapsed = youTubeSlotElapsed(slot.scheduledAt);
+    const blockedBeforeInsert =
+      destination.status === "FAILED_FINAL" && destination.lastErrorCode === missedYouTubeSlot;
+    if (elapsed && (!attempted || blockedBeforeInsert)) return this.markMissed(context, slot);
     const result = attempted
       ? await this.publishing.reconcile(context, destination.id)
       : await this.publishing.publishNow(context, destination.id);
     if (attempted && result.destinations[0]?.status === "FAILED_RETRYABLE") {
-      if (youTubeSlotElapsed(slot.scheduledAt)) return this.markMissed(context, slot);
-      return this.publishing.retry(context, destination.id);
+      if (!youTubeSlotElapsed(slot.scheduledAt))
+        return this.publishing.retry(context, destination.id);
+      // A pre-slot final chunk may still be in flight (transport timeout is 120 seconds).
+      // Read again after a grace period before declaring the incomplete upload missed.
+      if (Date.now() - slot.scheduledAt.getTime() >= 180_000) return this.markMissed(context, slot);
     }
     return result;
   }
@@ -172,7 +182,11 @@ export class PublishingAutomation {
     const reconnect = reconnectRequired(error);
     if (slot)
       await this.db.v9PublishSlot.updateMany({
-        where: { workspaceId: context.workspaceId, id: slot.id },
+        where: {
+          workspaceId: context.workspaceId,
+          id: slot.id,
+          status: { notIn: ["COMPLETE", "DRY_RUN", "MISSED"] },
+        },
         data: {
           status: reconnect ? "NEEDS_HUMAN" : "WAITING",
           lastError: reconnect ? "RECONNECT_YOUTUBE" : "PREFLIGHT_OR_RECONCILE_REQUIRED",

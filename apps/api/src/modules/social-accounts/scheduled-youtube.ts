@@ -64,7 +64,7 @@ export class ScheduledYouTube {
       },
     );
     const location = response.headers.get("location");
-    if (!location) throw this.failure("UNKNOWN_UPLOAD_OUTCOME", "TRANSIENT");
+    if (!location) throw this.failure("UPLOAD_OUTCOME_UNKNOWN", "TRANSIENT");
     return normalizeUploadSession(location, [
       "www.googleapis.com",
       "upload.youtube.com",
@@ -137,7 +137,7 @@ export class ScheduledYouTube {
         signal: AbortSignal.timeout(30000),
       });
     } catch {
-      throw this.failure("UNKNOWN_UPLOAD_OUTCOME", "TRANSIENT");
+      throw this.failure("UPLOAD_OUTCOME_UNKNOWN", "TRANSIENT");
     }
     if (!response.ok)
       throw this.failure(

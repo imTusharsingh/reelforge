@@ -13,6 +13,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { hashSessionToken } from "../identity/auth.crypto.js";
 import { WorkspaceModule } from "../workspace/workspace.module.js";
 import { PublishingService } from "./publishing.service.js";
+import { verifyScheduledReconciliation } from "./scheduled-reconciliation.fixture.js";
 import { PublishingController } from "./publishing.controller.js";
 import { PublishingSessionVault } from "./publishing-session-vault.js";
 import {
@@ -337,6 +338,16 @@ describe.skipIf(databaseUrl === undefined)("M27 persisted publishing behavior", 
     } finally {
       assertPublishable.mockResolvedValue([]);
     }
+  });
+  it("reconciles one scheduled YouTube ID to public without a new upload or duplicate event", async () => {
+    if (!db) return;
+    const context: WorkspaceContext = { workspaceId: own.workspaceId, userId, role: "OWNER" };
+    const scheduledAt = new Date(Date.now() + 300_000);
+    const post = await publishing.createScheduledPost(context, {
+      ...createBody(own, output),
+      scheduledAt: scheduledAt.toISOString(),
+    });
+    await verifyScheduledReconciliation(db, context, own, post, scheduledAt);
   });
   it("lets viewers read platform availability", async () => {
     const platforms = await request(app.getHttpServer() as never)

@@ -110,7 +110,7 @@ it("marks a missed unused slot without sending a new upload", async () => {
 it("only reads a previously submitted upload after its slot and never resumes an incomplete one", async () => {
   const f = automationFixture();
   await f.service.dispatch(context, f.run.id);
-  vi.setSystemTime(f.slot.scheduledAt);
+  vi.setSystemTime(new Date(f.slot.scheduledAt.getTime() + 180_000));
   const post = await f.publishing.getScheduledPost(context, f.slot.scheduledPostId!);
   f.publishing.reconcile.mockResolvedValueOnce({
     ...post,
