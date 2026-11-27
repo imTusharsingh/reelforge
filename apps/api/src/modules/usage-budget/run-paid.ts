@@ -24,6 +24,7 @@ import { ConflictException, Injectable, ServiceUnavailableException } from "@nes
 import { UsageBudgetService } from "./usage-budget.service.js";
 import type { PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
+import { mediaRuntimeGate } from "../composition/media-runtime.js";
 import type { Context, Event, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 
 import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js";
@@ -61,6 +62,7 @@ export class RunPaidCalls {
     amount: number,
     transaction?: Transaction,
   ): Promise<PaidCallReservation> {
+    mediaRuntimeGate.assertReady();
     if (!transaction) {
       const result = await this.store.mutate(
         context,
@@ -120,6 +122,7 @@ export class RunPaidCalls {
   ): Promise<T> {
     await this.store
       .mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
+        mediaRuntimeGate.assertReady();
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (
           ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||

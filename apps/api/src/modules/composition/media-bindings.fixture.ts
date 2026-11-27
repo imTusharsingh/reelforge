@@ -1,3 +1,4 @@
+import type { WordAlignment } from "./media-alignment.js";
 import { randomUUID } from "node:crypto";
 import { ModuleRef } from "@nestjs/core";
 import type { PlanningPromptReceipt } from "@reelforge/contracts";
@@ -98,13 +99,14 @@ export function bindMedia(
       _path: string,
       text: string,
     ): Promise<{ text: string; start: number; end: number }[]> => [{ text, start: 0, end: 20 }],
-    align: async (
-      _path: string,
-      text: string,
-    ): Promise<{ text: string; start: number; end: number }[]> =>
-      text
-        .split(/\s+/)
-        .map((word, index) => ({ text: word, start: index * 0.3, end: index * 0.3 + 0.25 })),
+    alignMeasured: async (_path: string, text: string): Promise<WordAlignment> => {
+      const words = text.split(/\s+/).map((word, index) => ({
+        text: word,
+        start: index * 0.3,
+        end: index * 0.3 + 0.25,
+      }));
+      return { words, highlights: words };
+    },
   };
   const renderer = new MediaRenderer(t.storage, new SpawnProcessRunner(), aligner);
   const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);

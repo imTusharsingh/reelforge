@@ -10,15 +10,88 @@ import type { StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
 import { LocalWordAligner } from "./media-alignment.js";
 import { captionMinimumTicks } from "./phrase-captions.js";
+import { mediaExecutable, mediaRuntimeGate } from "./media-runtime.js";
 import { MediaRenderer } from "./media-render.js";
 
 const transcript =
   "Imagine a tiny satellite circling the Earth every ninety minutes. From its window mountains look like wrinkles and rivers shine like ribbons. Each sunrise sweeps across the horizon in seconds. The satellite carries a camera that helps scientists track storms watch forests and learn how our planet changes over time.";
 
+const bandWidth = 1080;
+const bandHeight = 180;
+async function captionPixels(
+  video: string,
+  time: number,
+): Promise<{ white: number; lime: number; limeX: number }> {
+  const { stdout } = await promisify(execFile)(
+    mediaExecutable("ffmpeg"),
+    [
+      "-v",
+      "error",
+      "-ss",
+      String(time),
+      "-i",
+      video,
+      "-vf",
+      `crop=${bandWidth}:${bandHeight}:0:1510`,
+      "-frames:v",
+      "1",
+      "-threads",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "pipe:1",
+    ],
+    { encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 15000 },
+  );
+  expect(stdout.length).toBe(bandWidth * bandHeight * 3);
+  let white = 0,
+    lime = 0,
+    xSum = 0;
+  for (let i = 0; i < stdout.length; i += 3) {
+    const r = stdout[i]!,
+      g = stdout[i + 1]!,
+      b = stdout[i + 2]!;
+    if (r > 200 && g > 200 && b > 200) white++;
+    if (g > 180 && g > r + 15 && r > 105 && b > 55 && b < 165) {
+      lime++;
+      xSum += (i / 3) % bandWidth;
+    }
+  }
+  return { white, lime, limeX: lime ? xSum / lime : 0 };
+}
+
+async function assertCaptionFrames(
+  filename: string,
+  result: Awaited<ReturnType<MediaRenderer["render"]>>,
+): Promise<void> {
+  const first = result.cues[0]!;
+  const visible = result.highlights.slice(0, first.text.split(" ").length).flatMap((word) => {
+    if (!word) return [];
+    const start = Math.max(word.start, first.start),
+      end = Math.min(word.end, first.end);
+    return end - start > 0.12 ? [(start + end) / 2] : [];
+  });
+  expect(visible.length).toBeGreaterThanOrEqual(2);
+  const [left, right, after] = await Promise.all([
+    captionPixels(filename, visible[0]!),
+    captionPixels(filename, visible[1]!),
+    captionPixels(filename, result.cues.at(-1)!.end + 0.25),
+  ]);
+  expect(left.white).toBeGreaterThan(200);
+  expect(right.white).toBeGreaterThan(200);
+  expect(left.lime).toBeGreaterThan(35);
+  expect(right.lime).toBeGreaterThan(35);
+  expect(right.limeX - left.limeX).toBeGreaterThan(20);
+  expect(after).toEqual({ white: 0, lime: 0, limeX: 0 });
+}
+
 describe.skipIf(process.env.RF_ALIGNMENT_RENDER_TEST !== "1")("offline caption render", () => {
   it.each([175, 115])(
     "renders readable phrase captions on the 30-second Short at %i wpm",
     async (speed) => {
+      await mediaRuntimeGate.activate();
       const root = await mkdtemp(join(tmpdir(), "caption-render-test-"));
       const exec = promisify(execFile);
       const runner = new SpawnProcessRunner();
@@ -37,7 +110,7 @@ describe.skipIf(process.env.RF_ALIGNMENT_RENDER_TEST !== "1")("offline caption r
           "-f",
           "lavfi",
           "-i",
-          "testsrc2=size=720x1280:rate=24:duration=10",
+          "color=c=black:s=720x1280:r=24:d=10",
           "-an",
           "-c:v",
           "libx264",
@@ -99,6 +172,9 @@ describe.skipIf(process.env.RF_ALIGNMENT_RENDER_TEST !== "1")("offline caption r
           );
           if (index) expect(cue.start).toBeGreaterThanOrEqual(result.cues[index - 1]!.end);
         }
+        const rendered = join(root, "rendered.mp4");
+        await writeFile(rendered, result.video);
+        await assertCaptionFrames(rendered, result);
         if (speed === 175 && process.env.RF_ALIGNMENT_OUTPUT) {
           await writeFile(process.env.RF_ALIGNMENT_OUTPUT, result.video, { flag: "wx" });
           await writeFile(

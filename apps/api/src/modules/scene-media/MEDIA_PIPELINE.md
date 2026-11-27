@@ -46,19 +46,32 @@ music bed, -14 LUFS normalization, captions inside the safe zone and a cover.
 Install **aeneas==1.7.3.0**, local eSpeak language data and FFmpeg/FFprobe. The
 alignment Python interpreter is selected by `ALIGNMENT_PYTHON_PATH` (default
 `python3`); `FFMPEG_PATH`/`FFPROBE_PATH` select local media binaries. Install fonts
-covering the channel's language. ReelForge aligns to the paced narration before
-adding the final mix's silence. Aeneas analyzes both the narration and eSpeak
-reference at 22,050 Hz. The word alignment is kept for existing assembly
-evidence, and a separate phrase alignment supplies the visible burned-in captions.
+covering the channel's language. Put `espeak` and its language data on PATH.
+The API and worker preflight the configured Python/aeneas, eSpeak (including
+reference speech synthesis), FFmpeg with libass, and FFprobe before starting the
+HTTP listener or consuming jobs. VideoRun's paid reservation and dispatch gates
+reuse that startup capability result, without running subprocesses inside a
+ledger transaction. Restart the affected process after a media configuration
+change. Preflight is entirely local and uses no provider credentials.
 
-Each visible cue stays on screen for at least 20 frames at 24 fps and targets
+ReelForge aligns to the paced narration before
+adding the final mix's silence. Aeneas analyzes both the narration and eSpeak
+reference at 22,050 Hz. A separate phrase alignment controls how long the whole
+caption is displayed. A word changes color only while it has an unrepaired,
+usable timing within its phrase; unmeasured words remain readable without a
+guessed highlight. The evidence gate counts usable word timings before any
+neighbor repair, then the media renderer keeps the complete word timeline for
+assembly evidence.
+
+Each visible phrase stays on screen for at least 20 frames at 24 fps and targets
 no more than 20 characters per second. Cue boundaries can adjust within 0.6
 seconds of the measured phrase windows without overlapping or extending into
 the mix's padded tail. Timing that cannot meet these limits fails closed. There
 is no uniform-timing or network-transcription fallback.
 
-To verify the complete offline caption render at two narration speeds, configure
-the local aligner and media binaries, then run:
+To verify the complete offline caption render at two narration speeds, including
+visible pixels for the active word and the cleared caption region after
+narration, configure the local aligner and media binaries, then run:
 
 ```bash
 RF_ALIGNMENT_RENDER_TEST=1 pnpm exec vitest run apps/api/src/modules/composition/media-caption-render.local.test.ts

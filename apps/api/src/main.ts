@@ -6,6 +6,7 @@ import {
   installProcessErrorHandlers,
 } from "@reelforge/observability";
 import { AppModule } from "./app.module.js";
+import { mediaRuntimeGate } from "./modules/composition/media-runtime.js";
 
 // M19-T03: redacting JSON logs for console.* and the Nest logger.
 const { logger, frameworkLogger } = bootstrapProcessObservability("api");
@@ -14,6 +15,7 @@ const { logger, frameworkLogger } = bootstrapProcessObservability("api");
 installProcessErrorHandlers(logger);
 
 async function bootstrap(): Promise<void> {
+  await mediaRuntimeGate.activate();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: frameworkLogger,
   });

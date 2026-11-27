@@ -1,3 +1,4 @@
+import type { WordAlignment } from "./media-alignment.js";
 import type { ReferenceResolver, VideoRoutingState } from "@reelforge/ai-providers";
 import { CriticEvidence } from "../quality/critic-evidence.js";
 import { CriticPipeline } from "../quality/critic.pipeline.js";
@@ -156,13 +157,14 @@ describe.skipIf(
         _path: string,
         text: string,
       ): Promise<{ text: string; start: number; end: number }[]> => [{ text, start: 0, end: 20 }],
-      align: async (
-        _path: string,
-        text: string,
-      ): Promise<{ text: string; start: number; end: number }[]> =>
-        text
-          .split(/\s+/)
-          .map((word, index) => ({ text: word, start: index * 0.3, end: index * 0.3 + 0.25 })),
+      alignMeasured: async (_path: string, text: string): Promise<WordAlignment> => {
+        const words = text.split(/\s+/).map((word, index) => ({
+          text: word,
+          start: index * 0.3,
+          end: index * 0.3 + 0.25,
+        }));
+        return { words, highlights: words };
+      },
     };
     const renderer = new MediaRenderer(t.storage, new SpawnProcessRunner(), aligner);
     const assembly = new MediaAssembly(access, jobs, ports, planning, renderer);

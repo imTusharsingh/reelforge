@@ -6,7 +6,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type AlignedWord, type MediaReceipt } from "@reelforge/contracts";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
-import { LocalWordAligner, wordCaptions, type WordAligner } from "./media-alignment.js";
+import { LocalWordAligner, type WordAligner, type WordAlignment } from "./media-alignment.js";
+import { highlightedCaptions } from "./highlighted-captions.js";
 import type { CaptionCue } from "./phrase-captions.js";
 import { assemblyArguments, type AssemblyClip } from "./media-filter.js";
 type RenderMediaInput = {
@@ -29,6 +30,7 @@ export class MediaRenderer {
     video: Buffer;
     cover: Buffer;
     words: AlignedWord[];
+    highlights: (AlignedWord | null)[];
     cues: CaptionCue[];
     duration: number;
   }> {
@@ -60,11 +62,11 @@ export class MediaRenderer {
       ]);
       // The mix pads voice to the video duration later. Align only the paced speech:
       // trailing mix silence can collapse the last several words onto the final frame.
-      const { words, cues } = await this.timings(narration, input, root, seconds);
+      const { words, highlights, cues } = await this.timings(narration, input, root, seconds);
       const captions = join(root, "captions.ass"),
         output = join(root, "final.mp4"),
         cover = join(root, "cover.jpg");
-      await writeFile(captions, wordCaptions(cues));
+      await writeFile(captions, highlightedCaptions(cues, words, highlights));
       await this.call(
         "ffmpeg",
         assemblyArguments(clips, narration, music, captions, output, seconds),
@@ -75,7 +77,7 @@ export class MediaRenderer {
         coverBytes = await readFile(cover);
       if (!bytes.length || !coverBytes.subarray(0, 2).equals(Buffer.from([255, 216])))
         throw new Error("Assembly outputs missing or invalid");
-      return { video: bytes, cover: coverBytes, words, cues, duration: seconds };
+      return { video: bytes, cover: coverBytes, words, highlights, cues, duration: seconds };
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -85,7 +87,7 @@ export class MediaRenderer {
     input: RenderMediaInput,
     root: string,
     maximum: number,
-  ): Promise<{ cues: CaptionCue[]; words: AlignedWord[] }> {
+  ): Promise<{ cues: CaptionCue[] } & WordAlignment> {
     const duration = Math.min(await this.narrationDuration(path), maximum);
     const cues = await this.aligner.alignPhrases(
       path,
@@ -94,8 +96,10 @@ export class MediaRenderer {
       root,
       duration,
     );
-    const words = await this.aligner.align(path, input.transcript, input.language, root, duration);
-    return { cues, words };
+    return {
+      cues,
+      ...(await this.aligner.alignMeasured(path, input.transcript, input.language, root, duration)),
+    };
   }
   private async narrationDuration(path: string): Promise<number> {
     const audio = (await this.inspect(path)).find((stream) => stream.codec_type === "audio");

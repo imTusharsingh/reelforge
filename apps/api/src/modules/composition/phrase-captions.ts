@@ -10,6 +10,15 @@ const nominalBoundaryTolerance = 0.001;
 const ticks = (seconds: number): number => Math.round(seconds * 100);
 const characters = (text: string): number => Array.from(text).length;
 
+const titleAbbreviations =
+  /^(?:dr|mr|mrs|ms|prof|sr|jr|st|rev|hon|gen|sgt|lt|capt|mt|vs|e\.g|i\.e)\.$/iu;
+const initials = /^(?:\p{Lu}\.)+$/u;
+
+function sentenceEnd(word: string): boolean {
+  const clean = word.replace(/["'’”)\]]+$/u, "").replace(/^["'‘“(\[]+/u, "");
+  return /[.!?…।！？。]$/u.test(clean) && !titleAbbreviations.test(clean) && !initials.test(clean);
+}
+
 export function captionPhrases(transcript: string): string[] {
   const words = transcript.trim().split(/\s+/u).filter(Boolean);
   if (words.length === 0) throw new Error("Narration transcript required");
@@ -17,7 +26,7 @@ export function captionPhrases(transcript: string): string[] {
   let sentence: string[] = [];
   for (const word of words) {
     sentence.push(word);
-    if (/[.!?…।！？。]["'’”)]*$/u.test(word)) {
+    if (sentenceEnd(word)) {
       result.push(...splitSentence(sentence));
       sentence = [];
     }

@@ -26,7 +26,7 @@ describe("local word forced alignment", () => {
       mocked.command.mockImplementation(async (_file: string, args: string[]): Promise<void> => {
         expect(args[0]).toBe("-m");
         expect(args[1]).toBe("aeneas.tools.execute_task");
-        expect(args[4]).toContain("task_adjust_boundary_no_zero=True");
+        expect(args[4]).toContain("task_adjust_boundary_no_zero=False");
         expect(args[6]).toContain("mfcc_mask_nonspeech=True");
         expect(args[6]).toContain("ffmpeg_sample_rate=22050");
         expect(await readFile(args[3]!, "utf8")).toBe("Hello\nworld");
@@ -104,6 +104,31 @@ describe("local word forced alignment", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("does not let three zero raw fragments borrow one 800ms anchor to pass admission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "v5-align-test-"));
+    try {
+      mocked.command.mockImplementation(async (_file: string, args: string[]): Promise<void> => {
+        expect(args[4]).toContain("task_adjust_boundary_no_zero=False");
+        await writeFile(
+          args[5]!,
+          JSON.stringify({
+            fragments: [
+              { begin: "0", end: "0", lines: ["one"] },
+              { begin: "0", end: "0", lines: ["two"] },
+              { begin: "0", end: "0", lines: ["three"] },
+              { begin: "0", end: "0.8", lines: ["four"] },
+            ],
+          }),
+        );
+      });
+      await expect(
+        new LocalWordAligner().align("voice.wav", "one two three four", "eng", root, 1),
+      ).rejects.toThrow("too few usable speech anchors");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects missing transcripts, unsupported languages and invalid alignment output", async () => {
     const aligner = new LocalWordAligner();
     await expect(aligner.align("voice.wav", " ", "English", "unused", 1)).rejects.toThrow(

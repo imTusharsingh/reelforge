@@ -11,6 +11,16 @@ describe("phrase captions", () => {
     expect(phrases).not.toContainEqual(expect.stringContaining("storms. It"));
   });
 
+  it("does not treat honorifics or names with initials as sentence breaks", () => {
+    const transcript = "Dr. Li met Dr. Wu.";
+    const phrases = captionPhrases(transcript);
+    expect(phrases).toEqual([transcript]);
+    expect(readableCaptionCues([{ text: transcript, start: 0, end: 1.81 }], phrases, 1.81)).toEqual(
+      [{ text: transcript, start: 0, end: 1.81 }],
+    );
+    expect(captionPhrases("J. R. Li and Prof. Wu met. They waved.")).not.toContain("J.");
+  });
+
   it("gives a fast cue enough reading time by using neighboring measured room", () => {
     const cues = [
       { text: "Look outside", start: 0.12, end: 1.3 },
