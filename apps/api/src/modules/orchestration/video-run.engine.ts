@@ -1,4 +1,4 @@
-import { isSavedCaptionRejection, pauseRejectedAssembly } from "./saved-caption-recovery.js";
+import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
 import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -128,8 +128,8 @@ export class VideoRunEngine {
     error: unknown,
   ): Promise<number | null> {
     if (error instanceof AssemblyInterrupted) return error.delay;
-    if (run.state === "ASSEMBLING" && isSavedCaptionRejection(error))
-      return pauseRejectedAssembly(this.runs, context, run, error.message);
+    const rejected = run.state === "ASSEMBLING" && savedCaptionRejection(error);
+    if (rejected) return pauseRejectedAssembly(this.runs, context, run, rejected);
     if (
       !(error instanceof SubmissionOutcomeUnknown) &&
       error instanceof Error &&

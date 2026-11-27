@@ -35,6 +35,7 @@ export function pauseLabel(reason: string): string {
       {
         SAVED_CAPTION_PLAN_UNUSABLE:
           "The captions won’t fit. Start a new Short with shorter narration.",
+        SAVED_CAPTION_PLAN_INVALID: "The saved plan is invalid. Start a new Short.",
         BUDGET_CAP: "Budget cap reached. Review spend before resuming.",
         PROVIDER_REFUSED: "Provider refused this content. Review the prompt.",
         HUMAN_REJECTED: "You rejected this Short. Publishing is blocked.",

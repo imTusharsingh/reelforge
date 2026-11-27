@@ -180,12 +180,13 @@ it("blocks reservation and dispatch for legacy pace while allowing receipt recov
 });
 
 it.each([
-  [30, 31, 31],
-  [31, 31, 30],
-  [31, 30, undefined],
+  [30, 31, 31, false],
+  [31, 31, 30, false],
+  [31, 30, undefined, false],
+  [31, undefined, undefined, true],
 ] as const)(
-  "blocks new charges for a saved script with target %s and shot totals %s/%s, but keeps the existing receipt",
-  async (target, durationSeconds, actual) => {
+  "blocks new charges for target %s and shot totals %s/%s (malformed: %s), but keeps the receipt",
+  async (target, durationSeconds, actual, malformed) => {
     const line = (n: number): string => Array<string>(n).fill("planet").join(" ");
     const script = {
       hook: line(4),
@@ -206,7 +207,18 @@ it.each([
       reservation: { status: "RESERVED", expiresAt: new Date(Date.now() + 60000) },
       request: { responseMetadata: { providerJobId: "already-submitted" } },
     });
-    const error = { response: { code: "SAVED_CAPTION_PLAN_UNUSABLE" } };
+    const error = {
+      response: malformed
+        ? {
+            code: "SAVED_CAPTION_PLAN_INVALID",
+            message:
+              "The saved plan is invalid and its captions could not be validated. Start a new Short.",
+          }
+        : {
+            code: "SAVED_CAPTION_PLAN_UNUSABLE",
+            message: "Saved captions cannot fit. Start a new Short with shorter narration.",
+          },
+    };
     await expect(calls.reserve(context, run, step, 1)).rejects.toMatchObject(error);
     await expect(calls.dispatch(context, step, submit)).rejects.toMatchObject(error);
     expect(reserve).not.toHaveBeenCalled();
