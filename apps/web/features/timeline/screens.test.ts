@@ -85,6 +85,42 @@ describe("V8 mounted experience with fake HTTP", () => {
       expect(current()).toBe("Failed");
     },
   );
+  it.each([
+    ["CAPTIONS_TOO_LONG", "Start a new Short with shorter narration."],
+    ["MALFORMED_PLAN", "The saved plan is invalid. Start a new Short."],
+  ])(
+    "immediately shows the correct assembly pause message for %s",
+    async (captionDetail, message) => {
+      const reason = "SAVED_CAPTION_PLAN_UNUSABLE";
+      const data = detail();
+      data.run.state = "ASSEMBLING";
+      const fetcher = fakeFetch(data);
+      await act(async () => root.render(createElement(RunScreen, { id: runId })));
+      expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(
+        "Assembling",
+      );
+      const before = fetcher.mock.calls.length;
+      data.run.pauseReason = reason;
+      data.steps.push({
+        id: crypto.randomUUID(),
+        key: "ASSEMBLING",
+        attempt: 1,
+        state: "FAILED",
+        costMinor: null,
+        providerId: null,
+        input: {},
+        output: null,
+        error: { code: reason, detail: captionDetail },
+      });
+      await act(async () => FakeEventSource.instances[0]!.emit("assembly_input_failed", 7));
+      expect(fetcher.mock.calls.length).toBeGreaterThan(before);
+      expect(host.querySelector(".rf-timeline [aria-current=step]")?.textContent).toBe(
+        "Assembly paused",
+      );
+      expect(host.textContent).toContain(message);
+      expect(host.textContent).not.toContain(reason);
+    },
+  );
   it("enables the remaining quality reshoot after a refusal rewrite and one requested redo", async () => {
     const data = detail();
     data.run.state = "CRITIC";

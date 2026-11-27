@@ -9,7 +9,7 @@ import {
   readAdmission,
 } from "./run-admission-state.js";
 import { assertCriticRevision } from "./critic-admission.js";
-import { pinnedBudget, assertRunCap } from "./run-envelope.js";
+import { pinnedBudget, assertPaidRunLimits } from "./run-envelope.js";
 import {
   SubmissionOutcomeUnknown,
   rollbackAdmission,
@@ -45,7 +45,7 @@ async function assertReserveAdmission(
   amount: number,
   context: Context,
 ): Promise<Awaited<ReturnType<typeof readAdmission>>> {
-  await assertRunCap(db, run, amount, step.id);
+  await assertPaidRunLimits(db, run, amount, step.id);
   const admission = await readAdmission(transaction, context, step);
   if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
     throw new ConflictException(submissionHold(step.id));
@@ -173,7 +173,7 @@ export class RunPaidCalls {
         throw new DispatchAdmissionError("Paid dispatch is closed");
       if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
         throw new DispatchAdmissionError("Required audio input failed");
-      await assertRunCap(db, run, current.costMinor ?? 0, current.id);
+      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
       await assertCriticRevision(db, tx, run, current);
       const { reservation, evidence } = await readAdmission(tx, context, current);
       if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())

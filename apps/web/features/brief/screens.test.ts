@@ -111,6 +111,26 @@ describe("V7 mounted screens", () => {
     await render(createElement(ProviderHealth, { key: "reload" }));
     expect(container.textContent).toContain("Health unavailable");
   });
+  it("blocks native submission on an invalid legacy pace until corrected", async () => {
+    stub.versions[0]!.narratorVoice!.pace = 3;
+    await render(createElement(BriefEditor, { channelId }));
+    const field = container.querySelector<HTMLTextAreaElement>("#json-narratorVoice")!;
+    const form = container.querySelector("form")!;
+    expect(field.validity.customError).toBe(true);
+    expect(field.validationMessage).toBe("Narrator pace must be between 0.5 and 2.");
+    await change("#brief-topic", "Space");
+    await act(async () => form.requestSubmit());
+    expect(stub.versions).toHaveLength(1);
+    expect(container.textContent).not.toContain("Brief was not saved");
+    await change("#json-narratorVoice", JSON.stringify({ ...brief.narratorVoice, pace: 1 }));
+    expect(field.validity.customError).toBe(false);
+    await act(async () => form.requestSubmit());
+    expect(stub.versions[0]).toMatchObject({
+      version: 2,
+      topic: "Space",
+      narratorVoice: { pace: 1 },
+    });
+  });
   it("loads and edits a Brief with L3 locked and preserves prior versions", async () => {
     await render(createElement(BriefEditor, { channelId }));
     expect(container.querySelector<HTMLOptionElement>('option[value="L3"]')!.disabled).toBe(true);
@@ -136,6 +156,11 @@ describe("V7 mounted screens", () => {
     await change("#topicsToAvoid", "Breaking news");
     await change("#fact-check", "STANDARD");
     await change("#json-constraints", '{"original":true}');
+    await change("#json-narratorVoice", JSON.stringify({ ...brief.narratorVoice, pace: 3 }));
+    expect(container.textContent).toContain("Narrator pace must be between 0.5 and 2.");
+    expect(
+      container.querySelector<HTMLTextAreaElement>("#json-narratorVoice")!.validity.valid,
+    ).toBe(false);
     await change("#json-narratorVoice", "{");
     expect(container.textContent).toContain("valid JSON");
     await change("#json-narratorVoice", JSON.stringify(brief.narratorVoice));

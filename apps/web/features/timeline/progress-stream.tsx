@@ -24,9 +24,17 @@ export function ProgressStream({
           const current = detail.run.state === state;
           const simulated =
             current && state === "PUBLISHED" && detail.run.pauseReason === "PUBLISH_DRY_RUN";
+          const captionPaused =
+            current &&
+            state === "ASSEMBLING" &&
+            detail.run.pauseReason === "SAVED_CAPTION_PLAN_UNUSABLE";
           return (
             <li key={state} aria-current={current ? "step" : undefined}>
-              {simulated ? "Publish simulated (dry run)" : stateLabel(state)}
+              {simulated
+                ? "Publish simulated (dry run)"
+                : captionPaused
+                  ? "Assembly paused"
+                  : stateLabel(state)}
             </li>
           );
         })}

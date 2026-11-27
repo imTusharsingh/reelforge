@@ -1,3 +1,4 @@
+import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
 import { closeSteps, releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
@@ -310,6 +311,27 @@ export class RunsControl {
     return result.value;
   }
   private async assertGenerationResumable(db: Scoped, current: Run): Promise<void> {
+    if (current.state === "ASSEMBLING") {
+      const failure = await db.videoRunStep.findFirst({
+        where: {
+          runId: current.id,
+          key: "ASSEMBLING",
+          state: "FAILED",
+          error: { path: ["code"], equals: SAVED_CAPTION_PLAN_UNUSABLE },
+        },
+        select: { error: true },
+      });
+      if (failure) {
+        const details = failure.error;
+        const message =
+          details && typeof details === "object" && "message" in details ? details.message : null;
+        throw new ConflictException(
+          typeof message === "string"
+            ? message
+            : "The saved plan cannot resume. Start a new Short.",
+        );
+      }
+    }
     if (
       current.state === "NEEDS_HUMAN" &&
       (await db.videoRunStep.findFirst({

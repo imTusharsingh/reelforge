@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Inject, Injectable } from "@nestjs/common";
-import { type AlignedWord, type MediaReceipt } from "@reelforge/contracts";
+import { NarratorPaceSchema, type AlignedWord, type MediaReceipt } from "@reelforge/contracts";
 import { STORAGE_PORT, type StoragePort } from "../asset/storage/storage.port.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
 import { LocalWordAligner, type WordAligner, type WordAlignment } from "./media-alignment.js";
@@ -37,7 +37,7 @@ export class MediaRenderer {
     const root = await mkdtemp(join(tmpdir(), "reelforge-v5-"));
     try {
       const seconds = input.clips.reduce((sum, clip) => sum + clip.seconds, 0);
-      if (seconds < 30 || seconds > 45 || input.pace < 0.5 || input.pace > 2)
+      if (seconds < 30 || seconds > 45 || !NarratorPaceSchema.safeParse(input.pace).success)
         throw new Error("Unsupported v2 duration or narration pace");
       const clips = await this.prepareClips(input, root);
       const rawVoice = join(root, "raw-voice"),

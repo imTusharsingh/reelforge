@@ -8,6 +8,7 @@ import type { Context, Run, Scoped, Step, Transaction, Event } from "../runs/run
 import type { RunPaidCalls } from "./run-paid.js";
 import {
   PLANNING_MANIFEST_KEY,
+  referenceMediaPrefix,
   failSettledGeneration,
   clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
@@ -77,7 +78,11 @@ async function failRunIfSettled(
 ): Promise<void> {
   if (step.key.startsWith("media:text:critic:")) return settleRunFailure(db, tx, run, step, error);
   const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
-  if (run.state === "CANCELED") return;
+  if (
+    run.state === "CANCELED" ||
+    (run.state === "FAILED" && step.key.startsWith(referenceMediaPrefix))
+  )
+    return;
   const frame = /^media:keyframe:(\d+):v(\d+)$/.exec(step.key);
   if (frame || (step.key.startsWith("shot-") && refusalRewrite(step))) {
     // A keyframe is bought before its owning shot can claim a video reservation.

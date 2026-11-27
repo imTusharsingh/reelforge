@@ -1,11 +1,17 @@
+import {
+  assertSavedCaptionFit,
+  rejectInvalidSavedCaptionPlan,
+} from "../usage-budget/run-caption-admission.js";
 import { AUDIO_KEYS, acceptedAudio, failedAudio } from "../runs/run-audio.js";
 import { currentPrices, shotReceipts } from "./assembly-receipts.js";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { Injectable } from "@nestjs/common";
 import {
   AssemblyManifestSchema,
   ShotSpecSchema,
   MediaReceiptSchema,
+  planningTranscript,
   type ChannelBrief,
   type MediaReceipt,
 } from "@reelforge/contracts";
@@ -17,8 +23,14 @@ import { MediaPlanning } from "../scene-media/media-planning.js";
 import { audioCosts } from "../scene-media/media-prices.js";
 import { AssemblyInterrupted } from "../orchestration/video-run.handlers.js";
 import { MediaRenderer } from "./media-render.js";
+const audioRecoveryDuration = z.number().positive().max(120);
+const admittedMusicInput = z.object({ spec: z.object({ durationSeconds: audioRecoveryDuration }) });
+const pinnedDuration = z.object({
+  brief: z.object({ targetDurationSeconds: audioRecoveryDuration }),
+});
+
 type AudioTrack = NonNullable<Awaited<ReturnType<MediaJobs["tick"]>>>;
-type AssemblyAudio = { transcript: string; narration: AudioTrack; music: AudioTrack };
+type AssemblyAudio = { narration: AudioTrack; music: AudioTrack };
 
 @Injectable()
 export class MediaAssembly {
@@ -36,9 +48,14 @@ export class MediaAssembly {
         throw new Error("Assembly manifest exceeds delivery budget");
       return existing;
     }
-    const plan = await this.planning.saved(context, run, brief);
+    const plan = await this.planning
+      .saved(context, run, brief)
+      .catch(rejectInvalidSavedCaptionPlan);
     if (!plan || !brief.narratorVoice) throw new Error("Pinned plan and channel voice required");
-    const { transcript, narration, music } = await this.audio(context, run, brief, plan);
+    const transcript = planningTranscript(plan.script);
+    const seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    assertSavedCaptionFit(transcript, brief.targetDurationSeconds, seconds);
+    const { narration, music } = await this.audio(context, run, brief, transcript, seconds);
     const receipts = await this.receipts(context, run);
     const clips = plan.manifest.shots.map((shot) => {
       const receipt = receipts.findLast((item) => item.key === `shot-${shot.ordinal}`);
@@ -158,17 +175,11 @@ export class MediaAssembly {
     context: Context,
     run: Run,
     brief: ChannelBrief,
-    plan: NonNullable<Awaited<ReturnType<MediaPlanning["saved"]>>>,
+    transcript: string,
+    seconds: number,
   ): Promise<AssemblyAudio> {
     if (!brief.narratorVoice) throw new Error("Narrator required");
-    const transcript = [
-      plan.script.hook,
-      ...plan.script.beats,
-      plan.script.payoff,
-      plan.script.cta,
-    ].join(" ");
-    const ports = await this.ports.get(context),
-      seconds = plan.manifest.shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+    const ports = await this.ports.get(context);
     const costs = audioCosts(seconds);
     await this.drainFailedAudio(context, run, ports, seconds);
     const [narration, music] = await Promise.allSettled([
@@ -207,7 +218,7 @@ export class MediaAssembly {
     if (narration.status === "rejected") throw narration.reason;
     if (music.status === "rejected") throw music.reason;
     if (!narration.value || !music.value) throw new AssemblyInterrupted(12000);
-    return { transcript, narration: narration.value, music: music.value };
+    return { narration: narration.value, music: music.value };
   }
   private async drainFailedAudio(
     context: Context,
@@ -234,12 +245,37 @@ export class MediaAssembly {
     const accepted = await acceptedAudio(db, this.access.runs.store.db, run);
     if (!accepted.length) return null;
     const shots = await db.shotSpec.findMany({ where: { runId: run.id } });
-    const seconds = shots.reduce(
-      (total, row) => total + ShotSpecSchema.parse(row.document).durationSeconds,
-      0,
-    );
+    const parsed = z
+      .array(ShotSpecSchema)
+      .min(1)
+      .safeParse(shots.map((row) => row.document));
+    // A malformed storyboard must not strand an already submitted audio job.
+    const seconds = parsed.success
+      ? parsed.data.reduce((total, shot) => total + shot.durationSeconds, 0)
+      : await this.savedAudioDuration(context, run, accepted);
     await this.drainAudio(context, run, await this.ports.get(context), seconds, accepted);
     return (await acceptedAudio(db, this.access.runs.store.db, run)).length ? 12000 : null;
+  }
+
+  private async savedAudioDuration(context: Context, run: Run, accepted: Step[]): Promise<number> {
+    const db = this.access.runs.store.scoped(context);
+    const music =
+      accepted.find((step) => step.key === "media:music") ??
+      (await db.videoRunStep.findFirst({
+        where: {
+          runId: run.id,
+          key: "media:music",
+          providerJobId: { not: null },
+          state: { in: ["SUCCEEDED", "FAILED"] },
+        },
+        orderBy: { attempt: "desc" },
+        select: { input: true },
+      }));
+    return (
+      admittedMusicInput.safeParse(music?.input).data?.spec.durationSeconds ??
+      pinnedDuration.safeParse(run.inputSnapshot).data?.brief.targetDurationSeconds ??
+      45
+    );
   }
 
   private async drainAudio(

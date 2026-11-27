@@ -5,7 +5,6 @@ import type {
   JSX,
   ReactNode,
   SelectHTMLAttributes,
-  TextareaHTMLAttributes,
 } from "react";
 
 import { Icon } from "./icon";
@@ -68,7 +67,7 @@ export function Field({ id, label, hint, error, ...props }: FieldProps): JSX.Ele
   );
 }
 
-type TextAreaFieldProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "id"> & {
+type TextAreaFieldProps = Omit<ComponentPropsWithRef<"textarea">, "id"> & {
   id: string;
   label: string;
   hint?: string;

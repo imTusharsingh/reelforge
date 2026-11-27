@@ -15,6 +15,7 @@ export default function nextConfig(phase: string): NextConfig {
       resolveAlias: {
         "./foundations.js": "../../packages/contracts/src/foundations.ts",
         "./brief-consistency.js": "../../packages/contracts/src/brief-consistency.ts",
+        "./narrator-voice.js": "../../packages/contracts/src/narrator-voice.ts",
       },
     },
     async rewrites(): Promise<{ source: string; destination: string }[]> {

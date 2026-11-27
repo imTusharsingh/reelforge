@@ -1,4 +1,4 @@
-import type { PlanningRequest } from "@reelforge/contracts";
+import { NarratorPaceSchema, type PlanningRequest } from "@reelforge/contracts";
 /** Local preflight runs before dispatch; all generated prompts are screened again before images. */
 export function screenPlanningContent(request: PlanningRequest, content: string): void {
   const normalized = content.normalize("NFKC").toLocaleLowerCase("en");
@@ -34,6 +34,7 @@ export function validatePlanningAccess(
   if (request.brief.workspaceId !== context.workspaceId || context.role === "VIEWER")
     throw new Error("Owned Brief and editor permission required");
   if (!request.brief.narratorVoice) throw new Error("Channel narrator voice required");
+  NarratorPaceSchema.parse(request.brief.narratorVoice.pace);
   if (request.brief.languages.script !== request.brief.languages.narration)
     throw new Error("Script and narration must use the same Brief language");
   screenPlanningContent(

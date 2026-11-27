@@ -1,73 +1,19 @@
-import type { AlignedWord } from "@reelforge/contracts";
+import {
+  mergeCaptionText,
+  captionMinimumTicks,
+  captionPhrases,
+  type AlignedWord,
+} from "@reelforge/contracts";
 
 // Captions are timed separately against the speech. They do not reuse word boundaries.
 export type CaptionCue = Readonly<{ text: string; start: number; end: number }>;
 
-const maxCharacters = 36;
-const targetCharacters = 27;
-const minFramesAt24Fps = 20;
-const targetCharactersPerSecond = 20;
+export { captionMinimumTicks, captionPhrases };
 export const minimumCue = 5; // Five ASS centiseconds span one 24 fps frame.
 const tolerance = 60; // Choose display bounds up to 0.6s from measured speech.
 const nominalBoundaryTolerance = 0.001;
 export const captionTicks = (seconds: number): number => Math.round(seconds * 100);
 const ticks = captionTicks;
-const characters = (text: string): number => Array.from(text).length;
-
-const titleAbbreviations =
-  /^(?:dr|mr|mrs|ms|prof|sr|jr|st|rev|hon|gen|sgt|lt|capt|mt|vs|e\.g|i\.e)\.$/iu;
-const initials = /^(?:\p{Lu}\.)+$/u;
-
-function sentenceEnd(word: string): boolean {
-  const clean = word.replace(/["'’”)\]]+$/u, "").replace(/^["'‘“(\[]+/u, "");
-  return /[.!?…।！？。]$/u.test(clean) && !titleAbbreviations.test(clean) && !initials.test(clean);
-}
-
-export function captionPhrases(transcript: string): string[] {
-  const words = transcript.trim().split(/\s+/u).filter(Boolean);
-  if (words.length === 0) throw new Error("Narration transcript required");
-  const result: string[] = [];
-  let sentence: string[] = [];
-  for (const word of words) {
-    sentence.push(word);
-    if (sentenceEnd(word)) {
-      result.push(...splitSentence(sentence));
-      sentence = [];
-    }
-  }
-  return result.concat(splitSentence(sentence));
-}
-
-function splitSentence(words: readonly string[]): string[] {
-  const length = words.length;
-  const best = Array<number>(length + 1).fill(Infinity);
-  const next = Array<number>(length);
-  best[length] = 0;
-  for (let i = length - 1; i >= 0; i--) {
-    let size = 0;
-    for (let j = i; j < length; j++) {
-      size += characters(words[j]!) + Number(j > i);
-      if (j > i && size > maxCharacters) break;
-      const penalty = (targetCharacters - size) ** 2 + (size < 12 ? 180 : 0);
-      const punctuation = /[,;:]["'’”)]*$/u.test(words[j]!) ? 28 : 0;
-      const score = penalty - punctuation + best[j + 1]!;
-      if (score < best[i]!) {
-        next[i] = j + 1;
-        best[i] = score;
-      }
-    }
-  }
-  const result: string[] = [];
-  for (let i = 0; i < length; i = next[i]!) result.push(words.slice(i, next[i]).join(" "));
-  return result;
-}
-
-export function captionMinimumTicks(text: string): number {
-  return Math.max(
-    Math.ceil((minFramesAt24Fps / 24) * 100),
-    Math.ceil((characters(text) / targetCharactersPerSecond) * 100),
-  );
-}
 
 function validPhraseTimeline(
   raw: readonly CaptionCue[],
@@ -173,9 +119,9 @@ function fitCues(cues: readonly AnchoredCue[], duration: number): CaptionCue[] |
 }
 
 function mergeCue(left: AnchoredCue, right: AnchoredCue): AnchoredCue | null {
-  const text = `${left.cue.text} ${right.cue.text}`;
-  if (characters(text) > maxCharacters || ticks(right.cue.start) - ticks(left.cue.end) > tolerance)
-    return null;
+  if (ticks(right.cue.start) - ticks(left.cue.end) > tolerance) return null;
+  const text = mergeCaptionText(left.cue.text, right.cue.text);
+  if (!text) return null;
   const firstEnd = left.firstEnd ?? right.firstEnd;
   const lastStart = right.lastStart ?? left.lastStart;
   return {

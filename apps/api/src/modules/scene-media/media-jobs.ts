@@ -16,6 +16,7 @@ import {
   type Step,
   type Artifact,
 } from "../runs/runs.types.js";
+import { referenceMediaPrefix } from "../runs/run-outcomes.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
 class TerminalMediaJobFailure extends ConflictException {}
@@ -107,6 +108,36 @@ export class MediaJobs {
       0,
     );
     return result ? null : 12000;
+  }
+
+  /** Collect a reference even after planning terminates; never enter the submit path. */
+  public async collectReference<T>(
+    context: Context,
+    step: Step,
+    port: MediaJobPort<T>,
+  ): Promise<number | null> {
+    if (!step.key.startsWith(referenceMediaPrefix))
+      throw new ConflictException("Reference recovery requires a reference step");
+    const knownId = step.providerJobId ?? (await this.access.paid.jobReceipt(context, step));
+    if (!knownId) return null;
+    const pending = step.providerJobId
+      ? step
+      : await this.access.runs.attachJob(context, step, knownId);
+    if (pending.state !== "WAITING_EXTERNAL") return null;
+    try {
+      const result = await this.collect(
+        context,
+        step.key.slice(6),
+        port,
+        pending,
+        "art-director:v2",
+        0,
+      );
+      return result ? null : 12000;
+    } catch (error) {
+      if (!(error instanceof TerminalMediaJobFailure)) throw error;
+      return null;
+    }
   }
 
   /** Recover an existing audio admission without opening another intent. */

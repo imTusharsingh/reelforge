@@ -35,6 +35,7 @@ export const RunSummarySchema = z.object({
   pauseReason: z.string().nullable(),
 });
 export const RunSummariesSchema = z.array(RunSummarySchema);
+export const SavedCaptionPlanDetailSchema = z.enum(["MALFORMED_PLAN", "CAPTIONS_TOO_LONG"]);
 export const RunDetailViewSchema = z.object({
   run: RunSummarySchema,
   steps: z.array(
@@ -47,6 +48,7 @@ export const RunDetailViewSchema = z.object({
       providerId: z.string().nullable(),
       input: z.unknown(),
       output: z.unknown(),
+      error: z.unknown().optional(),
     }),
   ),
   envelope: z.object({ spentMinor: z.int(), hardCapMinor: z.int() }).nullable(),

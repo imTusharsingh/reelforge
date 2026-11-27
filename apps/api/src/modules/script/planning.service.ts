@@ -5,7 +5,7 @@ import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   PlanningRequestSchema,
   PlanningScriptSchema,
-  NarratorVoiceSchema,
+  StoredNarratorVoiceSchema,
   ShotSpecSchema,
   type PlanningRequest,
   type PlanningManifest,
@@ -43,7 +43,7 @@ const resultSchema = z.object({
     runId: z.uuid(),
     briefId: z.uuid(),
     briefVersion: z.int().positive(),
-    narratorVoice: NarratorVoiceSchema,
+    narratorVoice: StoredNarratorVoiceSchema,
     prompts: z.array(planningPromptReceiptSchema).length(3),
     shots: z.array(ShotSpecSchema).min(1),
   }),

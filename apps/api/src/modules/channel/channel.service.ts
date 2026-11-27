@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { NarratorVoiceSchema } from "@reelforge/contracts";
+import { NarratorVoiceSchema, StoredNarratorVoiceSchema } from "@reelforge/contracts";
 import { Prisma } from "@reelforge/database";
 import type { Database, WorkspaceContext } from "../identity/identity.types.js";
 import { ChannelRepository } from "./channel.repository.js";
@@ -27,7 +27,11 @@ function clean(value: unknown, field: string): string | undefined {
   return value.trim();
 }
 
-function validateInput(body: unknown, partial: boolean): ChannelInput | ChannelPatch {
+function validateInput(
+  body: unknown,
+  partial: boolean,
+  historical = false,
+): ChannelInput | ChannelPatch {
   if (typeof body !== "object" || body === null || Array.isArray(body))
     throw new BadRequestException("Channel body must be an object");
   const input = body as Record<string, unknown>;
@@ -46,7 +50,9 @@ function validateInput(body: unknown, partial: boolean): ChannelInput | ChannelP
   }
   if (!partial && !result.name) throw new BadRequestException("name must be provided");
   if (input.narratorVoice !== undefined) {
-    const parsed = NarratorVoiceSchema.safeParse(input.narratorVoice);
+    const parsed = (historical ? StoredNarratorVoiceSchema : NarratorVoiceSchema).safeParse(
+      input.narratorVoice,
+    );
     if (!parsed.success) throw new BadRequestException(parsed.error.issues);
     result.narratorVoice = parsed.data;
   }
@@ -97,6 +103,7 @@ export function configurationFromRow(row: Record<string, unknown>): ChannelInput
       publishingDestinations: row.publishingDestinations,
     },
     false,
+    true,
   ) as ChannelInput;
 }
 
