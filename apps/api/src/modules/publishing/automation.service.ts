@@ -1,10 +1,12 @@
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { PublishingPackageSchema, type PublishingPackage } from "@reelforge/contracts";
 import type { PrismaClient } from "@reelforge/database";
+import { missedYouTubeSlot, youTubeSlotElapsed } from "../social-accounts/scheduled-youtube.js";
 import { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run } from "../runs/runs.types.js";
 import { reconnectRequired } from "./automation-client.js";
 import { PublishingService } from "./publishing.service.js";
+import type { PublishingDestinationView, ScheduledPostView } from "./publishing.types.js";
 import { AutomationSlots, type AutoSlot } from "./automation-slots.js";
 
 @Injectable()
@@ -90,19 +92,15 @@ export class PublishingAutomation {
       slot = await this.prepare(context, id);
       if (
         !slot.scheduledPostId ||
-        ["COMPLETE", "DRY_RUN"].includes(slot.status) ||
+        ["COMPLETE", "DRY_RUN", "MISSED"].includes(slot.status) ||
         slot.status === "NEEDS_HUMAN"
       )
         return;
       const post = await this.publishing.getScheduledPost(context, slot.scheduledPostId);
       const destination = post.destinations[0];
       if (!destination) throw new ConflictException("Publishing destination missing");
-      const attempted = destination.latestAttempt !== null;
-      let result = attempted
-        ? await this.publishing.reconcile(context, destination.id)
-        : await this.publishing.publishNow(context, destination.id);
-      if (attempted && result.destinations[0]?.status === "FAILED_RETRYABLE")
-        result = await this.publishing.retry(context, destination.id);
+      const result = await this.uploadOrReconcile(context, slot, destination);
+      if (!result) return;
       const published = result.destinations[0]?.status === "PUBLISHED";
       if (published && result.dryRun) {
         await this.recordDryRun(context, id, slot.id);
@@ -121,6 +119,35 @@ export class PublishingAutomation {
       await this.failure(context, id, slot, error);
     }
   }
+  private async uploadOrReconcile(
+    context: Context,
+    slot: AutoSlot,
+    destination: PublishingDestinationView,
+  ): Promise<ScheduledPostView | null> {
+    const attempted = destination.latestAttempt !== null;
+    if (!attempted && youTubeSlotElapsed(slot.scheduledAt)) return this.markMissed(context, slot);
+    const result = attempted
+      ? await this.publishing.reconcile(context, destination.id)
+      : await this.publishing.publishNow(context, destination.id);
+    if (attempted && result.destinations[0]?.status === "FAILED_RETRYABLE") {
+      if (youTubeSlotElapsed(slot.scheduledAt)) return this.markMissed(context, slot);
+      return this.publishing.retry(context, destination.id);
+    }
+    return result;
+  }
+
+  private async markMissed(context: Context, slot: AutoSlot): Promise<null> {
+    await this.db.v9PublishSlot.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        id: slot.id,
+        status: { notIn: ["COMPLETE", "DRY_RUN"] },
+      },
+      data: { status: "MISSED", lastError: missedYouTubeSlot },
+    });
+    return null;
+  }
+
   private async recordDryRun(context: Context, id: string, slotId: string): Promise<void> {
     await this.runs.mutate(context, id, "publish_dry_run", async (db, current, tx) => {
       if (current.state === "SCHEDULED") {
@@ -199,7 +226,7 @@ export class PublishingAutomation {
         role: actor.role,
       };
       const runs = await this.runs.scoped(context).videoRun.findMany({
-        where: { state: "SCHEDULED" },
+        where: { state: "SCHEDULED", v9Slot: { isNot: { status: "MISSED" } } },
         orderBy: { createdAt: "asc" },
         take: 100,
       });

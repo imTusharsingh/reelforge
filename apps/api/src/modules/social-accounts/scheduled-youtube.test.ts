@@ -34,6 +34,17 @@ describe("V9 YouTube adapter with fake fetch", () => {
       status: { privacyStatus: "private", publishAt, containsSyntheticMedia: true },
     });
   });
+  it("never calls insert for a missed slot", async () => {
+    const request = vi.fn<typeof fetch>();
+    const youtube = new ScheduledYouTube(request);
+    vi.setSystemTime(new Date(publishAt));
+    await expect(
+      youtube.start("fake-token", metadata, publishAt, 1, "video/mp4"),
+    ).rejects.toMatchObject({
+      detail: { code: "YOUTUBE_SLOT_MISSED" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
   it("fails closed on revoked tokens, unknown insert outcomes and unsafe sessions", async () => {
     const revoked = new ScheduledYouTube(vi.fn(async () => new Response(null, { status: 401 })));
     await expect(revoked.start("fake", metadata, publishAt, 1, "video/mp4")).rejects.toMatchObject({

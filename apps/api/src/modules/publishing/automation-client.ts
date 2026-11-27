@@ -1,7 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import type { PrismaClient } from "@reelforge/database";
-import type { AuthenticatedPlatformClient } from "@reelforge/social-providers";
+import type {
+  AuthenticatedPlatformClient,
+  YouTubeUploadProgress,
+} from "@reelforge/social-providers";
 import type { WorkspaceContext } from "../identity/identity.types.js";
+import { requireFutureYouTubeSlot } from "../social-accounts/scheduled-youtube.js";
 import type { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
 /** M13 remains responsible for encrypted sessions, offset recovery and attempt serialization. */
 export async function publishingClient(
@@ -21,6 +25,10 @@ export async function publishingClient(
   );
   return {
     ...client,
+    uploadVideoChunk: async (...args): Promise<YouTubeUploadProgress> => {
+      requireFutureYouTubeSlot(slot.scheduledAt);
+      return client.uploadVideoChunk(...args);
+    },
     startVideoUpload: async (metadata, bytes, contentType): Promise<string> => {
       const { upload } = await db.$transaction(async (tx) => {
         const runs = await tx.$queryRaw<Array<{ id: string }>>`
@@ -29,6 +37,7 @@ export async function publishingClient(
             AND id = ${slot.runId}::uuid AND state = 'SCHEDULED' AND pause_reason IS NULL
           FOR UPDATE`;
         if (!runs.length) throw new ConflictException("Run is no longer scheduled for publishing");
+        requireFutureYouTubeSlot(slot.scheduledAt);
         const claimed = await tx.v9InsertLease.updateMany({
           where: { workspaceId: context.workspaceId, slotId: slot.id, status: "RESERVED" },
           data: { status: "DISPATCHED" },

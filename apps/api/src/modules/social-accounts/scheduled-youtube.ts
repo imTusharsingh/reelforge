@@ -6,6 +6,24 @@ import {
 import type { YouTubeDestinationMetadata } from "@reelforge/contracts";
 import { z } from "zod";
 
+export const missedYouTubeSlot = "YOUTUBE_SLOT_MISSED";
+
+export function youTubeSlotElapsed(scheduledAt: Date | string): boolean {
+  const instant = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : scheduledAt.getTime();
+  return !Number.isFinite(instant) || instant <= Date.now();
+}
+
+export function requireFutureYouTubeSlot(scheduledAt: Date | string): void {
+  if (youTubeSlotElapsed(scheduledAt)) {
+    throw new SocialProviderError({
+      kind: "PERMANENT",
+      code: missedYouTubeSlot,
+      message: "The approved YouTube slot has passed. The upload will not be sent late.",
+      retryAfterSeconds: null,
+    });
+  }
+}
+
 /** Uses the existing M12 access token and resumable protocol; no OAuth app or credentials here. */
 export class ScheduledYouTube {
   public constructor(private readonly request: typeof fetch = fetch) {}
@@ -18,8 +36,7 @@ export class ScheduledYouTube {
   ): Promise<string> {
     if (!Number.isSafeInteger(bytes) || bytes <= 0 || contentType !== "video/mp4")
       throw new Error("Invalid upload media");
-    if (!Number.isFinite(Date.parse(publishAt)) || Date.parse(publishAt) <= Date.now())
-      throw new Error("Publishing slot is no longer in the future");
+    requireFutureYouTubeSlot(publishAt);
     const response = await this.send(
       "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=false",
       {

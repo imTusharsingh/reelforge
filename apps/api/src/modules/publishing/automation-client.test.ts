@@ -3,13 +3,23 @@ import type { PrismaClient } from "@reelforge/database";
 import type { SocialAccountsService } from "../social-accounts/social-accounts.service.js";
 import { publishingClient, isScheduledAutomation, reconnectRequired } from "./automation-client.js";
 import { context, id } from "./automation.fixture.js";
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 describe("V9 insert dispatch fence on fake YouTube client", () => {
   it("starts one upload only; replays fail closed and chunk/reconcile methods are preserved", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2027-03-13T00:00:00Z"));
     const startVideoUpload = vi.fn(async () => "fake-session");
+    const uploadVideoChunk = vi.fn();
     const checkVideoUpload = vi.fn();
     const social = {
-      scheduledClient: vi.fn(async () => ({ startVideoUpload, checkVideoUpload })),
+      scheduledClient: vi.fn(async () => ({
+        startVideoUpload,
+        checkVideoUpload,
+        uploadVideoChunk,
+      })),
       authenticatedClient: vi.fn(),
     };
     let claimed = false;
@@ -58,6 +68,17 @@ describe("V9 insert dispatch fence on fake YouTube client", () => {
     );
     expect(startVideoUpload).toHaveBeenCalledTimes(1);
     expect(client.checkVideoUpload).toBe(checkVideoUpload);
+    vi.setSystemTime(new Date("2027-03-14T07:00:00Z"));
+    await expect(client.startVideoUpload(metadata, 1, "video/mp4")).rejects.toMatchObject({
+      detail: { code: "YOUTUBE_SLOT_MISSED" },
+    });
+    await expect(
+      client.uploadVideoChunk("fake-session", 0, 1, Uint8Array.of(1)),
+    ).rejects.toMatchObject({
+      detail: { code: "YOUTUBE_SLOT_MISSED" },
+    });
+    expect(startVideoUpload).toHaveBeenCalledOnce();
+    expect(uploadVideoChunk).not.toHaveBeenCalled();
     expect(
       await isScheduledAutomation(db as unknown as PrismaClient, context.workspaceId, id(10)),
     ).toBe(true);

@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnauthorizedException } from "@nestjs/common";
 import { automationFixture, context } from "./automation.fixture.js";
-afterEach(() => vi.unstubAllEnvs());
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2027-03-13T00:00:00Z"));
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 describe("V9 approved-run publishing with fake M13/YouTube", () => {
   it("creates one cadence post with disclosure and never uploads twice", async () => {
     const f = automationFixture();
@@ -87,4 +94,31 @@ describe("V9 approved-run publishing with fake M13/YouTube", () => {
     expect(f.run.state).toBe("PUBLISHED");
     expect(f.slot.status).toBe("COMPLETE");
   });
+});
+
+it("marks a missed unused slot without sending a new upload", async () => {
+  const f = automationFixture();
+  vi.setSystemTime(f.slot.scheduledAt);
+  await f.service.dispatch(context, f.run.id);
+  await f.service.dispatch(context, f.run.id);
+  expect(f.publishing.publishNow).not.toHaveBeenCalled();
+  expect(f.publishing.reconcile).not.toHaveBeenCalled();
+  expect(f.slot).toMatchObject({ status: "MISSED", lastError: "YOUTUBE_SLOT_MISSED" });
+  expect(f.run.state).toBe("SCHEDULED");
+});
+
+it("only reads a previously submitted upload after its slot and never resumes an incomplete one", async () => {
+  const f = automationFixture();
+  await f.service.dispatch(context, f.run.id);
+  vi.setSystemTime(f.slot.scheduledAt);
+  const post = await f.publishing.getScheduledPost(context, f.slot.scheduledPostId!);
+  f.publishing.reconcile.mockResolvedValueOnce({
+    ...post,
+    destinations: [{ ...post.destinations[0]!, status: "FAILED_RETRYABLE" }],
+  });
+  await f.service.dispatch(context, f.run.id);
+  expect(f.publishing.reconcile).toHaveBeenCalledOnce();
+  expect(f.publishing.retry).not.toHaveBeenCalled();
+  expect(f.publishing.publishNow).toHaveBeenCalledOnce();
+  expect(f.slot).toMatchObject({ status: "MISSED", lastError: "YOUTUBE_SLOT_MISSED" });
 });
