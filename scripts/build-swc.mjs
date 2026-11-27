@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,26 +24,34 @@ if (!rootDir || !outDir || dirname(outDir) !== process.cwd() || basename(outDir)
 
 const stage = await mkdtemp(join(dirname(outDir), ".dist-swc-"));
 try {
-  // Preserve package exports, declaration accuracy, and TypeScript's build-time checks.
-  const tsc = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
-  const declarations = spawnSync(
-    process.execPath,
-    [tsc, "-p", "tsconfig.build.json", "--emitDeclarationOnly", "--outDir", stage],
-    { stdio: "inherit" },
-  );
-  if (declarations.error) throw declarations.error;
-  if (declarations.status !== 0) throw new Error("TypeScript declaration build failed");
-
-  // Wait for every write to settle before removing a failed staging directory.
-  const results = await Promise.allSettled(
-    config.fileNames.filter((file) => !file.endsWith(".d.ts")).map(emit),
-  );
+  // TypeScript checks the original sources and writes .d.ts; SWC writes JS concurrently.
+  // Wait for every writer before deleting a failed staging directory.
+  const results = await Promise.allSettled([
+    emitDeclarations(),
+    ...config.fileNames.filter((file) => !file.endsWith(".d.ts")).map(emit),
+  ]);
   const failure = results.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;
   await rm(outDir, { recursive: true, force: true });
   await rename(stage, outDir);
 } finally {
   await rm(stage, { recursive: true, force: true });
+}
+
+function emitDeclarations() {
+  const tsc = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [tsc, "-p", "tsconfig.build.json", "--emitDeclarationOnly", "--outDir", stage],
+      { stdio: "inherit" },
+    );
+    child.once("error", reject);
+    child.once("close", (status) => {
+      if (status === 0) resolve();
+      else reject(new Error("TypeScript declaration build failed"));
+    });
+  });
 }
 
 async function emit(file) {
