@@ -298,12 +298,14 @@ function publishHarness(
     fixtures.destination.publishJob.attempts = [priorAttempt];
   }
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ id: destinationId }]),
     publishJob: {
       findUnique: vi.fn().mockResolvedValue({ status: "DRAFT", retryCount: 0 }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       update: vi.fn().mockResolvedValue({}),
     },
     publishAttempt: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       count: vi.fn().mockResolvedValue(priorAttempt === null ? 0 : 1),
       create: vi.fn(async (args: { data: Record<string, unknown> }) => ({
         id: String(args.data["id"]),
@@ -312,7 +314,9 @@ function publishHarness(
     },
     publishingDestination: {
       update: vi.fn().mockResolvedValue({}),
-      findUnique: vi.fn().mockResolvedValue({ status: "UPLOADING", publishedAt: null }),
+      findUnique: vi
+        .fn()
+        .mockResolvedValue({ status: "UPLOADING", publishedAt: null, remotePostId: null }),
       findMany: vi.fn().mockResolvedValue([{ status: "PUBLISHED" }]),
     },
     scheduledPost: { update: vi.fn().mockResolvedValue({}) },

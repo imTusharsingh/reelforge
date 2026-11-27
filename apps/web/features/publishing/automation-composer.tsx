@@ -52,6 +52,11 @@ function ScopedComposer({
       {slot ? (
         <>
           <PackagedMetadata slot={slot} />
+          {slot.lastError === "YOUTUBE_SLOT_MISSED" && (
+            <Alert tone="warning" title="YouTube slot missed">
+              This slot passed. ReelForge won’t send a late upload.
+            </Alert>
+          )}
           {slot.lastError === "RECONNECT_YOUTUBE" && (
             <ReconnectNotice editable={editable} busy={busy} retry={retry} />
           )}

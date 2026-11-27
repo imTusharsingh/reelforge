@@ -89,7 +89,9 @@ function ScheduleSlot({ slot }: { slot: AutoSlotView }): JSX.Element {
           <p>
             {slot.lastError === "RECONNECT_YOUTUBE"
               ? "Reconnect YouTube to continue."
-              : "Preflight or upload reconciliation needs attention."}
+              : slot.lastError === "YOUTUBE_SLOT_MISSED"
+                ? "This slot passed. ReelForge won’t send a late upload."
+                : "Preflight or upload reconciliation needs attention."}
           </p>
         )}
       </div>

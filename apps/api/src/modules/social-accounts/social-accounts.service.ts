@@ -28,7 +28,7 @@ import {
 } from "@reelforge/social-providers";
 import type { WorkspaceContext } from "../identity/identity.types.js";
 import { WorkspaceService } from "../workspace/workspace.service.js";
-import { ScheduledYouTube } from "./scheduled-youtube.js";
+import { requireFutureYouTubeSlot, ScheduledYouTube } from "./scheduled-youtube.js";
 import { TokenVault, type EncryptedSecret } from "./token-vault.js";
 import type { OAuthCallbackQuery, StartConnectionRequest } from "./social-accounts.validation.js";
 
@@ -493,18 +493,30 @@ export class SocialAccountsService {
   ): Promise<AuthenticatedPlatformClient> {
     const client = await this.authenticatedClient(context, accountId);
     const scheduled = new ScheduledYouTube();
+    // Preserve typed provider outcomes for the internal publishing state machine.
+    const withUpload = <T>(
+      capability: "VIDEO_UPLOAD" | "RESUMABLE_UPLOAD",
+      action: (connector: YouTubeConnector, token: string) => Promise<T>,
+    ): Promise<T> => this.withYouTubeUpload(context, accountId, capability, action, false);
     return {
       ...client,
       startVideoUpload: (metadata, bytes, contentType) =>
-        this.withYouTubeUpload(context, accountId, "RESUMABLE_UPLOAD", (connector, token) => {
-          void connector;
-          return scheduled.start(token, metadata, publishAt, bytes, contentType);
+        withUpload("RESUMABLE_UPLOAD", (_, token) =>
+          scheduled.start(token, metadata, publishAt, bytes, contentType),
+        ),
+      checkVideoUpload: (sessionUri, totalBytes) =>
+        withUpload("RESUMABLE_UPLOAD", (connector, token) =>
+          connector.checkVideoUpload(token, sessionUri, totalBytes),
+        ),
+      uploadVideoChunk: (sessionUri, startByte, totalBytes, chunk) =>
+        withUpload("RESUMABLE_UPLOAD", (connector, token) => {
+          requireFutureYouTubeSlot(publishAt);
+          return connector.uploadVideoChunk(token, sessionUri, startByte, totalBytes, chunk);
         }),
       verifyUploadedVideo: (id, metadata) =>
-        this.withYouTubeUpload(context, accountId, "VIDEO_UPLOAD", (connector, token) => {
-          void connector;
-          return scheduled.verify(token, id, client.account.remoteAccountId, metadata, publishAt);
-        }),
+        withUpload("VIDEO_UPLOAD", (_, token) =>
+          scheduled.verify(token, id, client.account.remoteAccountId, metadata, publishAt),
+        ),
     };
   }
 
@@ -545,6 +557,7 @@ export class SocialAccountsService {
     accountId: string,
     capability: "VIDEO_UPLOAD" | "RESUMABLE_UPLOAD",
     operation: (connector: YouTubeConnector, accessToken: string) => Promise<T>,
+    translateProviderError = true,
   ): Promise<T> {
     const account = await this.findAccount(context.workspaceId, accountId);
     if (account.platform !== "YOUTUBE")
@@ -580,7 +593,9 @@ export class SocialAccountsService {
       });
     const credentials = await this.findToken(context.workspaceId, accountId);
     const accessToken = await this.validAccessToken(context, account, credentials);
-    return this.callProvider(() => operation(connector, accessToken));
+    return translateProviderError
+      ? this.callProvider(() => operation(connector, accessToken))
+      : operation(connector, accessToken);
   }
 
   private async validAccessToken(
