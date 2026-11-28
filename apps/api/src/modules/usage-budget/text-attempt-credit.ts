@@ -1,8 +1,7 @@
+import { auditCredit, type BudgetAccess, type CreditResult } from "./charge-credit-audit.js";
 import { randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
-import type { Prisma } from "@reelforge/database";
 import type { Context, Step, Transaction } from "../runs/runs.types.js";
-import type { BudgetRecord } from "./effective-budgets.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 import {
   appendTextEvidence,
@@ -10,23 +9,18 @@ import {
   readTextAttempt,
   type TextAttemptState,
 } from "./text-attempt-store.js";
-import type { BudgetStatusView } from "./usage-budget.types.js";
-import type { LinkedTextCreditRequest } from "./usage-budget.validation.js";
-
-type BudgetAccess = {
-  lock: (channelId: string) => Promise<BudgetRecord[]>;
-  statuses: (budgets: BudgetRecord[]) => Promise<BudgetStatusView[]>;
-};
-type CreditResult = { adjustmentId: string; correlationId: string; budgets: BudgetStatusView[] };
+import { createProviderCredit } from "./provider-charge-credit.js";
+import type { LinkedTextCreditRequest, ProviderCreditRequest } from "./usage-budget.validation.js";
 
 /** Append a credit under the original run lock, then derive its net spend before commit. */
-export async function createLinkedTextCredit(
+export async function createChargeCredit(
   tx: Transaction,
   context: Context,
-  input: LinkedTextCreditRequest,
+  input: LinkedTextCreditRequest | ProviderCreditRequest,
   now: Date,
   budgets: BudgetAccess,
 ): Promise<CreditResult> {
+  if ("providerRequestId" in input) return createProviderCredit(tx, context, input, now, budgets);
   const { workspaceId, userId } = context;
   const step = await lockTextAttempt(tx, workspaceId, input.textAttemptId);
   const { channelId } = await tx.videoRun.findUniqueOrThrow({
@@ -77,39 +71,6 @@ export async function createLinkedTextCredit(
   const after = await budgets.statuses(locked);
   await auditCredit(tx, context, input, adjustment, { now, before, after });
   return { adjustmentId: adjustment.id, correlationId: adjustment.correlationId, budgets: after };
-}
-
-async function auditCredit(
-  tx: Transaction,
-  context: Context,
-  input: LinkedTextCreditRequest,
-  adjustment: { id: string; channelId: string | null; currency: string; correlationId: string },
-  { now, before, after }: { now: Date; before: BudgetStatusView[]; after: BudgetStatusView[] },
-): Promise<void> {
-  await tx.usageAuditRecord.create({
-    data: {
-      workspaceId: context.workspaceId,
-      action: "CREDIT",
-      actorUserId: context.userId,
-      reason: input.reason,
-      before: { budgets: before } as unknown as Prisma.InputJsonValue,
-      after: {
-        adjustment: {
-          id: adjustment.id,
-          channelId: adjustment.channelId,
-          kind: "CREDIT",
-          currency: adjustment.currency,
-          amountMinor: input.amountMinor,
-          textAttemptId: input.textAttemptId,
-          operationKey: input.operationKey,
-        },
-        budgets: after,
-      } as unknown as Prisma.InputJsonValue,
-      correlationId: adjustment.correlationId,
-      adjustmentId: adjustment.id,
-      createdAt: now,
-    },
-  });
 }
 
 async function requireCreditableCharge(

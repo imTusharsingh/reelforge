@@ -35,6 +35,7 @@ export type LedgerRow = Readonly<{
   errorCode: string | null;
   estimatedCost: string | null;
   actualCost: string | null;
+  creditedMinor?: bigint;
   confirmedNonDispatch?: boolean;
   currency: string | null;
   createdAt: Date;
@@ -53,6 +54,7 @@ export type LedgerFilter = Readonly<{
   to?: Date;
   scriptId?: string;
   workflowRunId?: string;
+  providerRequestId?: string;
   videoRunId?: string;
 }>;
 
@@ -66,6 +68,7 @@ type RawLedgerRow = {
   error_code: string | null;
   estimated_cost: string | null;
   actual_cost: string | null;
+  credited_minor: bigint;
   confirmed_non_dispatch: boolean;
   currency: string | null;
   created_at: Date | string;
@@ -103,6 +106,10 @@ function ledgerConditions(filter: LedgerFilter): Prisma.Sql {
 export const confirmedNonDispatch = Prisma.sql`COALESCE(pr.response_metadata @> '{"dispatched":false,"costKnown":true}'::jsonb
   AND NOT (pr.response_metadata ? 'providerJobId'), false)`;
 
+export const providerCreditMinor = Prisma.sql`(SELECT COALESCE(SUM(c.amount_minor), 0)::bigint
+  FROM usage_adjustments c WHERE c.workspace_id = pr.workspace_id AND c.provider_request_id = pr.id
+    AND c.currency = pr.currency AND c.channel_id IS NOT DISTINCT FROM pr.channel_id)`;
+
 export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Promise<LedgerRow[]> {
   const where = ledgerConditions(filter);
   const rows = await db.$queryRaw<RawLedgerRow[]>(Prisma.sql`
@@ -116,6 +123,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
              pr.error_code,
              pr.estimated_cost::text AS estimated_cost,
              pr.actual_cost::text AS actual_cost,
+             ${providerCreditMinor} AS credited_minor,
              ${confirmedNonDispatch} AS confirmed_non_dispatch,
              pr.currency,
              pr.created_at,
@@ -157,6 +165,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
         LIMIT 1
       ) script_step ON TRUE
       WHERE pr.workspace_id = ${filter.workspaceId}::uuid
+        ${filter.providerRequestId ? Prisma.sql`AND pr.id = ${filter.providerRequestId}::uuid` : Prisma.empty}
         AND NOT EXISTS (
           SELECT 1 FROM "usage_reservations" ur
           WHERE ur.workspace_id = pr.workspace_id
@@ -176,6 +185,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
     errorCode: row.error_code,
     estimatedCost: row.estimated_cost,
     actualCost: row.actual_cost,
+    creditedMinor: row.credited_minor,
     confirmedNonDispatch: row.confirmed_non_dispatch,
     currency: row.currency === null ? null : row.currency.trim().toUpperCase(),
     createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
@@ -188,6 +198,7 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
 }
 
 const KEYWORDS: ReadonlyArray<readonly [UsageCategoryValue, readonly string[]]> = [
+  ["MUSIC", ["music"]],
   ["TTS", ["tts", "speech", "voice", "narration", "dialogue", "audio"]],
   ["IMAGE_MEDIA", ["image", "video", "media", "scene"]],
   ["RENDER", ["render", "ffmpeg", "compos"]],
@@ -225,7 +236,13 @@ export type ClassifiedCost = Readonly<{
 export function classifyCost(
   row: Pick<
     LedgerRow,
-    "status" | "errorCode" | "estimatedCost" | "actualCost" | "currency" | "confirmedNonDispatch"
+    | "creditedMinor"
+    | "status"
+    | "errorCode"
+    | "estimatedCost"
+    | "actualCost"
+    | "currency"
+    | "confirmedNonDispatch"
   >,
 ): ClassifiedCost {
   const currency = row.currency !== null && isCurrencyCode(row.currency) ? row.currency : null;
@@ -251,9 +268,12 @@ export function classifyCost(
     return { kind: "UNKNOWN", amountMinor: null, currency };
   if (row.estimatedCost === null) return { kind: "UNKNOWN", amountMinor: null, currency };
   const pending = row.status === "FAILED" && row.errorCode === "PENDING";
+  const failed = row.status === "FAILED" && !pending;
+  const gross = currency === null ? null : decimalToMinor(row.estimatedCost, currency);
+  const credited = failed ? (row.creditedMinor ?? 0n) : 0n;
   return {
     kind: row.status === "SUCCEEDED" || pending ? "ESTIMATED" : "FAILED_ESTIMATED",
-    amountMinor: currency === null ? null : decimalToMinor(row.estimatedCost, currency),
+    amountMinor: gross === null ? null : gross > credited ? gross - credited : 0n,
     currency,
   };
 }

@@ -1,3 +1,6 @@
+import { journalRejections } from "./text-journal-upgrade.js";
+import { reconcileExisting } from "./legacy-journal-reconcile.js";
+import { lockBooks } from "./text-admission-lock.js";
 import { z } from "zod";
 import type { Database, Run, Step, Transaction } from "../runs/runs.types.js";
 import {
@@ -17,9 +20,16 @@ export type LegacyTextImportOptions = {
   oldWritersDrained?: boolean;
   auditId?: string;
 };
-type Imported = {
+export type Imported = {
   attemptId: string;
-  action: LegacyImportPlan["action"] | "blocked" | "already-imported";
+  action:
+    | LegacyImportPlan["action"]
+    | "blocked"
+    | "already-imported"
+    | "requires-reconciliation"
+    | "reconciled";
+  rejections?: Array<{ sequence: number; eventKey: string; reason: string }>;
+  creditIds?: string[];
   reason?: string;
   outcome?: LegacyImportPlan["outcome"];
   before?: LegacyImportPlan["before"];
@@ -28,15 +38,17 @@ type Imported = {
 type Reservation = NonNullable<Parameters<typeof planLegacyTextImport>[0]["reservation"]>;
 type Ledger = NonNullable<Parameters<typeof planLegacyTextImport>[0]["request"]>;
 
-export async function importLegacyTextAttempts(
-  db: Database,
-  options: LegacyTextImportOptions,
-): Promise<{
+type ImportReport = {
   mode: "dry-run" | "apply";
   workspaceId: string;
   attempts: Imported[];
   unresolvedCreditIds: string[];
-}> {
+};
+
+export async function importLegacyTextAttempts(
+  db: Database,
+  options: LegacyTextImportOptions,
+): Promise<ImportReport> {
   const workspaceId = scope.parse(options.workspaceId);
   if (options.apply && process.env.PAID_TEXT_V3_ENABLED === "1")
     throw new Error("Disable new paid text dispatch before applying the legacy import.");
@@ -48,13 +60,6 @@ export async function importLegacyTextAttempts(
   const unresolvedCreditIds = await db.$transaction((tx) =>
     unresolvedLegacyCredits(tx, workspaceId, true),
   );
-  const report = {
-    mode: options.apply ? ("apply" as const) : ("dry-run" as const),
-    workspaceId,
-    attempts,
-    unresolvedCreditIds,
-  };
-  if (unresolvedCreditIds.length) return report;
   let cursor: string | undefined;
   for (;;) {
     const batch = await db.videoRunStep.findMany({
@@ -64,15 +69,38 @@ export async function importLegacyTextAttempts(
         ...(cursor && { id: { gt: cursor } }),
       },
       orderBy: { id: "asc" },
-      select: { id: true },
+      select: { id: true, idempotencyKey: true },
       take: 100,
     });
     if (!batch.length) break;
-    for (const { id } of batch)
-      attempts.push(await db.$transaction((tx) => importOne(tx, id, options)));
+    for (const { id, idempotencyKey } of batch) {
+      if (!unresolvedCreditIds.length) {
+        attempts.push(await db.$transaction((tx) => importOne(tx, id, options)));
+        continue;
+      }
+      const rows = await db.textAttemptEvidence.findMany({
+        where: { workspaceId, attemptId: id },
+        orderBy: { sequence: "asc" },
+      });
+      const { pending } = journalRejections(idempotencyKey, rows);
+      if (pending.length)
+        attempts.push({
+          attemptId: id,
+          action: "blocked",
+          reason: "unresolved workspace credits",
+          rejections: pending,
+        });
+    }
     cursor = batch.at(-1)!.id;
   }
-  return report;
+  return {
+    mode: options.apply ? "apply" : "dry-run",
+    workspaceId,
+    attempts,
+    unresolvedCreditIds: await db.$transaction((tx) =>
+      unresolvedLegacyCredits(tx, workspaceId, false),
+    ),
+  };
 }
 
 async function importOne(
@@ -84,17 +112,10 @@ async function importOne(
   const step = options.apply
     ? await lockTextAttempt(tx, workspaceId, id)
     : await tx.videoRunStep.findFirstOrThrow({ where: { workspaceId, id } });
-  const where = { workspaceId, attemptId: id };
-  const imported = await priorImport(tx, where);
-  if (imported) return imported;
-  if (await tx.textAttemptEvidence.findFirst({ where }))
-    return {
-      attemptId: id,
-      action: "blocked",
-      reason: "attempt already has evidence without projection",
-    };
   const run = await tx.videoRun.findFirstOrThrow({ where: { workspaceId, id: step.runId } });
   if (options.apply) await lockBooks(tx, run);
+  const existing = await reconcileExisting(tx, run, step, options);
+  if (existing) return existing;
   const { request, reservation, activity, credits } = await readSources(tx, step, run);
   if (!credits)
     return { attemptId: id, action: "blocked", reason: "conflicting legacy credit audit" };
@@ -131,23 +152,6 @@ async function importOne(
     before: plan.before,
     after: plan.after,
   };
-}
-
-async function priorImport(
-  tx: Transaction,
-  where: { workspaceId: string; attemptId: string },
-): Promise<Imported | undefined> {
-  const existing = await tx.textAttemptProjection.findUnique({
-    where: { workspaceId_attemptId: where },
-  });
-  if (existing) {
-    const { reservedMinor, grossMinor, netMinor } = existing;
-    return {
-      attemptId: where.attemptId,
-      action: "already-imported",
-      after: { reservedMinor, grossMinor, netMinor },
-    };
-  }
 }
 
 async function readSources(
@@ -193,13 +197,6 @@ function matchesBalances(step: Step, plan: LegacyImportPlan, events: Rows): bool
   } catch {
     return false; // Never write contradictory historical events.
   }
-}
-
-async function lockBooks(tx: Transaction, run: Run): Promise<void> {
-  await tx.$queryRaw`SELECT id FROM workspaces WHERE id = ${run.workspaceId}::uuid FOR NO KEY UPDATE`;
-  await tx.$queryRaw`
-    SELECT id FROM usage_budgets WHERE workspace_id = ${run.workspaceId}::uuid
-       AND (channel_id IS NULL OR channel_id = ${run.channelId}::uuid) ORDER BY id FOR UPDATE`;
 }
 
 type WriteSource = {

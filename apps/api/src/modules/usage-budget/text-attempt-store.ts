@@ -1,3 +1,8 @@
+import {
+  definitiveJournalRejection,
+  journalRejections,
+  type Evidence,
+} from "./text-journal-upgrade.js";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -13,6 +18,7 @@ export type TextEvidenceKind =
   | "SUCCEEDED"
   | "RECOVERED_RECEIPT"
   | "OWNER_CONFIRMED"
+  | "JOURNAL_REPAIR"
   | "QUARANTINED"
   | "CREDIT";
 
@@ -47,16 +53,10 @@ export type TextAttemptState = {
   usable: boolean;
   actualMinor: number | null;
   rejectionCode: string | null;
+  repairSequence: number;
   credits: Readonly<Record<string, number>>;
 };
 
-type Evidence = {
-  sequence: number;
-  kind: string;
-  nonce: string | null;
-  data: unknown;
-  eventKey?: string;
-};
 type Append = { kind: TextEvidenceKind; eventKey: string; nonce?: string; data: Json };
 const minor = z.int().nonnegative().max(2_147_483_647);
 const prepared = z.object({
@@ -112,6 +112,7 @@ function initial(dispatchKey: string, event: Evidence): TextAttemptState {
     usable: false,
     actualMinor: null,
     rejectionCode: null,
+    repairSequence: 0,
     credits: {},
   };
 }
@@ -205,6 +206,9 @@ function applyControl(state: TextAttemptState, event: Evidence): boolean {
 function applyObservation(state: TextAttemptState, event: Evidence): void {
   requireSender(state, event);
   switch (event.kind) {
+    case "JOURNAL_REPAIR":
+      state.repairSequence = event.sequence;
+      return;
     case "QUARANTINED":
       z.object({
         dispatchKey: z.literal(state.dispatchKey),
@@ -230,6 +234,7 @@ function applyObservation(state: TextAttemptState, event: Evidence): void {
     case "REJECTED": {
       const result = rejection.parse(event.data);
       if (
+        !definitiveJournalRejection(event) ||
         state.phase === "SUCCEEDED" ||
         (state.actualMinor ?? 0) > 0 ||
         (result.actualMinor ?? 0) > 0 ||
@@ -262,10 +267,12 @@ export function deriveTextAttempt(
 ): TextAttemptState | null {
   const first = ordered[0];
   if (!first) return null;
+  const { repaired } = journalRejections(dispatchKey, ordered);
   const state = initial(dispatchKey, first);
   for (const event of ordered.slice(1)) {
     if (event.sequence !== state.appliedSequence + 1) conflicting();
-    if (!applyControl(state, event)) applyObservation(state, event);
+    if (!repaired.has(event.sequence) && !applyControl(state, event))
+      applyObservation(state, event);
     state.appliedSequence = event.sequence;
     const pending = state.phase === "ARMED" || state.phase === "SENT";
     state.reservedMinor = pending && state.actualMinor === null ? state.estimateMinor : 0;

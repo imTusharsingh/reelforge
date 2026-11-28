@@ -59,5 +59,7 @@ export async function attachHistoricalGoogleId(t: Tenant, dispatchKey: string): 
     reference: "audit#1",
     observedAt: new Date().toISOString(),
     googleId: "historical-google-id",
+    currency: "USD",
+    actualMinor: 20,
   });
 }

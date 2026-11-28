@@ -44,7 +44,15 @@ const LinkedTextCreditSchema = z
     reason,
   })
   .strict();
-const AdjustmentSchema = z.union([StandaloneAdjustmentSchema, LinkedTextCreditSchema]);
+const ProviderCreditSchema = LinkedTextCreditSchema.omit({ textAttemptId: true }).extend({
+  providerRequestId: z.uuid(),
+});
+export type ProviderCreditRequest = z.infer<typeof ProviderCreditSchema>;
+const AdjustmentSchema = z.union([
+  StandaloneAdjustmentSchema,
+  LinkedTextCreditSchema,
+  ProviderCreditSchema,
+]);
 export type AdjustmentRequest = z.infer<typeof AdjustmentSchema>;
 export type LinkedTextCreditRequest = z.infer<typeof LinkedTextCreditSchema>;
 

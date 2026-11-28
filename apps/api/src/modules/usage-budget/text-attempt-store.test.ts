@@ -16,7 +16,11 @@ const armed = event("ARMED", { reservationId }, nonce);
 const sent = event("SENT_EVIDENCE", { dispatchKey, source: "transport" }, nonce);
 const retired = event("SENDER_RETIRED", { dispatchKey }, nonce);
 const confirmed = event("OWNER_CONFIRMED", { dispatchKey });
-const rejected = event("REJECTED", { dispatchKey, code: "HTTP_401" }, nonce);
+const rejected = event(
+  "REJECTED",
+  { dispatchKey, code: "UNAUTHENTICATED", httpStatus: 401 },
+  nonce,
+);
 
 function evaluate(...events: Event[]): ReturnType<typeof deriveTextAttempt> {
   return deriveTextAttempt(

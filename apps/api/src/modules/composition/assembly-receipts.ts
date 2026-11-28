@@ -50,13 +50,15 @@ function planningReceipt(
     return;
   const saved = remoteTextId(step, receipt.providerJobId);
   const attached = remoteTextId(step, step.providerJobId);
-  const verified = deriveTextAttempt(step.idempotencyKey, step.textEvidence)?.googleId;
+  const attempt = deriveTextAttempt(step.idempotencyKey, step.textEvidence);
+  const verified = attempt?.googleId;
   const ids = new Set([saved, attached, verified].filter((id): id is string => !!id));
   if (ids.size > 1) return;
   return {
     ...receipt,
     dispatchKey: step.idempotencyKey,
     providerJobId: verified ?? saved ?? attached,
+    ...(attempt?.actualMinor != null && { costMinor: attempt.actualMinor, costBasis: "BILLED" }),
   };
 }
 
@@ -242,8 +244,13 @@ function normalizeHistoricalText(
     );
     // Never infer the attempt merely from an identical output artifact.
     if (matching.length !== 1) return null;
-    const { providerJobId, dispatchKey } = matching[0]!;
-    resolved.push({ ...item, providerJobId, dispatchKey });
+    const { providerJobId, dispatchKey, costMinor, costBasis } = matching[0]!;
+    resolved.push({
+      ...item,
+      providerJobId,
+      dispatchKey,
+      ...(costBasis === "BILLED" && { costMinor, costBasis }),
+    });
   }
   return resolved;
 }

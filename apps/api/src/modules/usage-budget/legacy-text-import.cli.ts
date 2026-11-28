@@ -26,7 +26,9 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(report, null, 2));
     if (
       report.unresolvedCreditIds.length ||
-      report.attempts.some((row) => row.action === "blocked")
+      report.attempts.some(
+        (row) => row.action === "blocked" || row.action === "requires-reconciliation",
+      )
     )
       process.exitCode = 2;
   } finally {

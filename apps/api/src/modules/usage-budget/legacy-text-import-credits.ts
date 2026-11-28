@@ -36,8 +36,10 @@ export async function auditedLegacyCredits(
     },
     orderBy: { id: "asc" },
   });
+  const linkedIds = new Set(rows.map(({ id }) => id));
   const links: Proof[] = [];
   for (const audit of audits) {
+    if (audit.adjustmentId && linkedIds.has(audit.adjustmentId)) continue;
     const detail = proof.safeParse(audit.after).data?.adjustment;
     if (
       !detail ||
@@ -51,6 +53,7 @@ export async function auditedLegacyCredits(
       (await tx.usageAdjustment.findFirst({ where: { workspaceId, id: detail.id } }));
     if (
       !credit ||
+      credit.providerRequestId !== null ||
       credit.correlationId !== audit.correlationId ||
       credit.actorUserId !== audit.actorUserId ||
       credit.channelId !== channelId ||
@@ -78,7 +81,7 @@ export async function unresolvedLegacyCredits(
 ): Promise<string[]> {
   const candidates = await tx.$queryRaw<{ id: string; channelId: string | null }[]>`
     SELECT c.id, c.channel_id AS "channelId" FROM usage_adjustments c
-    WHERE c.workspace_id = ${workspaceId}::uuid AND c.kind = 'CREDIT' AND c.text_attempt_id IS NULL
+    WHERE c.workspace_id = ${workspaceId}::uuid AND c.kind = 'CREDIT' AND c.text_attempt_id IS NULL AND c.provider_request_id IS NULL
       AND NOT EXISTS (
         SELECT FROM usage_audit_records a
         WHERE a.workspace_id = c.workspace_id AND a.adjustment_id = c.id AND a.action = 'CREDIT'

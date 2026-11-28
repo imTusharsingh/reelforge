@@ -1,3 +1,4 @@
+import { lockBooks } from "./text-admission-lock.js";
 import { ConflictException } from "@nestjs/common";
 import { isDefinitiveProviderRejection } from "@reelforge/ai-providers";
 import { json, type Database } from "../runs/runs.types.js";
@@ -54,6 +55,8 @@ async function ingestProviderEvidence(
       dispatchKey: target.dispatchKey,
       source: "matched-provider",
     });
+    const run = await tx.videoRun.findUniqueOrThrow({ where: { id: step.runId } });
+    await lockBooks(tx, run);
     try {
       await appendTextEvidence(tx, step, {
         kind,
@@ -61,7 +64,6 @@ async function ingestProviderEvidence(
         eventKey,
         data: observation,
       });
-      return true;
     } catch (error) {
       if (!(error instanceof ConflictException)) throw error;
       await appendTextEvidence(tx, step, {
@@ -72,6 +74,15 @@ async function ingestProviderEvidence(
       });
       return false;
     }
+    if (currency !== undefined) {
+      const pending = await readTextAttempt(tx, step);
+      if (pending && pending.netMinor > (step.costMinor ?? 0))
+        await tx.videoRunStep.update({
+          where: { id: step.id },
+          data: { costMinor: pending.netMinor },
+        });
+    }
+    return true;
   });
   if (!accepted) throw new ConflictException("Contradictory provider evidence quarantined");
   await foldOperatorEvidence(db, target);

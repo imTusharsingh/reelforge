@@ -295,12 +295,15 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
         {
           ...receipt,
           dispatchKey,
+          ...(mode === "late ID" && { costMinor: 20, costBasis: "BILLED" }),
           providerJobId: mode === "late ID" ? "historical-google-id" : null,
         },
         corrected,
       ]);
       expect(rebuilt.videoChecksumSha256).toBe(historical.media.checksumSha256);
-      expect(rebuilt.totalCostMinor).toBe(receipt.costMinor + corrected.costMinor);
+      expect(rebuilt.totalCostMinor).toBe(
+        (mode === "late ID" ? 20 : receipt.costMinor) + corrected.costMinor,
+      );
     },
   );
 

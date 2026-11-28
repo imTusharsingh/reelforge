@@ -53,11 +53,14 @@ async function validateCredits(
 function reservationUpdate(
   state: TextAttemptState,
   prior: Reservation,
+  previousSequence: number,
 ): Prisma.UsageReservationUpdateManyMutationInput {
   if (booked(state) || (state.phase === "SENT" && state.actualMinor !== null))
     return {
       status: "COMMITTED",
       committedMinor: BigInt(state.netMinor),
+      releasedAt: null,
+      releaseReason: null,
       committedAt: prior.committedAt ?? new Date(),
     };
   if (terminal(state)) {
@@ -70,10 +73,17 @@ function reservationUpdate(
       releaseReason: state.rejectionCode ?? "NOT_DISPATCHED",
     };
   }
-  if (prior.status === "COMMITTED" || prior.status === "RELEASED")
+  if (
+    state.repairSequence <= previousSequence &&
+    (prior.status === "COMMITTED" || prior.status === "RELEASED")
+  )
     return conflict("A closed text reservation cannot be reopened");
   return {
     status: "RESERVED",
+    committedMinor: null,
+    committedAt: null,
+    releasedAt: null,
+    releaseReason: null,
     expiresAt: new Date("9999-12-31T23:59:59.000Z"),
   };
 }
@@ -98,6 +108,7 @@ async function postLedger(
   step: Step,
   run: Run,
   state: TextAttemptState,
+  previousSequence: number,
 ): Promise<void> {
   if (!state.reservationId) return;
   const reservation = await tx.usageReservation.findFirstOrThrow({
@@ -113,7 +124,7 @@ async function postLedger(
     conflict("Text arm does not match its usage reservation");
   await tx.usageReservation.updateMany({
     where: { workspaceId: step.workspaceId, id: reservation.id },
-    data: reservationUpdate(state, reservation),
+    data: reservationUpdate(state, reservation, previousSequence),
   });
   const actualMinor = terminal(state) ? 0 : state.actualMinor;
   const errorCode = ledgerError(state);
@@ -347,7 +358,7 @@ export async function foldTextAttempt(
   )
     conflict("Resolve unattributed workspace credits before reversing a text booking");
   await validateCredits(tx, step, run, next);
-  await postLedger(tx, step, run, next);
+  await postLedger(tx, step, run, next, previous.appliedSequence);
   await postEnvelope(tx, run, previous, next);
   await postStep(tx, step, next);
   await postEvent(tx, context, step, run, next, previous);

@@ -47,4 +47,18 @@ Any such ID blocks the workspace import and returns exit status 2. Reconcile
 the original adjustment to a scoped charge using its audit evidence, or document
 a genuinely independent budget credit before enabling reversals. The adjustments
 endpoint accepts `BUDGET_CREDIT` for independent budget adjustments. A charge
-`CREDIT` requires the original text attempt ID and a unique operation key.
+A text `CREDIT` requires the original text attempt ID and a unique operation key.
+
+For previously journaled attempts the dry-run identifies rejected event keys
+and sequences that conflict with an earlier positive bill or lack definitive
+provider status. Apply records a JOURNAL_REPAIR with the change record and the
+exact rejected observations. Replay retains the verified bill, or restores the
+outstanding estimate until the outcome is proven. The original journal remains
+available for audit. Re-run the inventory and verify the posted amounts before
+resuming paid dispatch.
+
+An exact credit audit on an existing projection appears as pending until apply
+links the adjustment and posts the revised net in one transaction. A media
+charge correction uses the same owner adjustments endpoint with kind CREDIT,
+providerRequestId, operationKey, amountMinor and reason. It reduces the
+failed estimate on that provider request in the original charge period.

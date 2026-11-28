@@ -2,19 +2,25 @@ import { PENDING_RECEIPT_CORRECTION } from "./run-pending-receipt.js";
 import { Prisma } from "@reelforge/database";
 import {
   classifyCost,
+  providerCreditMinor,
   confirmedNonDispatch,
   type LedgerReader,
   type LedgerRow,
 } from "./usage-budget.ledger.js";
 import type { PeriodBounds } from "./usage-budget.time.js";
 
-type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
+type Price = Pick<
+  LedgerRow,
+  "creditedMinor" | "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status"
+>;
 
 const pendingJob = Prisma.sql`s.error->>'code' = ${PENDING_RECEIPT_CORRECTION}
   AND s.error->>'providerId' = s.provider_id AND s.error->>'providerJobId' = s.provider_job_id`;
 
 // Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
+  WHEN s.key LIKE 'media:text:%' THEN GREATEST(s.cost_minor,
+    CASE WHEN ur.status = 'COMMITTED' THEN ur.committed_minor ELSE ur.amount_minor END)
   WHEN ${pendingJob} THEN GREATEST(
     CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
          ELSE ur.amount_minor END,
@@ -67,16 +73,16 @@ export async function budgetExposure(
        )
     )
     SELECT currency, actual_cost::text AS "actualCost", estimated_cost::text AS "estimatedCost",
-           error_code AS "errorCode", status::text, ${confirmedNonDispatch} AS "confirmedNonDispatch", NULL::text AS minor, 1::bigint AS entries
+           error_code AS "errorCode", status::text, ${confirmedNonDispatch} AS "confirmedNonDispatch", ${providerCreditMinor} AS "creditedMinor", NULL::text AS minor, 1::bigint AS entries
       FROM provider_requests pr WHERE ${period}
        AND NOT EXISTS (SELECT FROM coverage c WHERE c.correlation_id = pr.correlation_id)
     UNION ALL
-    SELECT currency, NULL, NULL, NULL, NULL, false, SUM(minor)::text, COUNT(*) FROM (
+    SELECT currency, NULL, NULL, NULL, NULL, false, NULL, SUM(minor)::text, COUNT(*) FROM (
       SELECT currency, minor FROM coverage
        WHERE minor > 0 AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}
       UNION ALL
       SELECT currency, CASE WHEN kind = 'DEBIT' THEN amount_minor ELSE -amount_minor END
-        FROM usage_adjustments WHERE ${period} AND text_attempt_id IS NULL
+        FROM usage_adjustments WHERE ${period} AND text_attempt_id IS NULL AND provider_request_id IS NULL
     ) charges GROUP BY currency`);
   let consumed = 0n;
   let unconverted = 0;

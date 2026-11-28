@@ -1,3 +1,5 @@
+import { ingestMatchedTextRejection } from "./text-attempt-receipt-recovery.js";
+import { drainedLegacyIncarnation } from "./text-attempt-ops-schema.js";
 import { legacy } from "./legacy-text-import.fixture.js";
 import { bindMedia } from "../composition/media-bindings.fixture.js";
 import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
@@ -194,94 +196,124 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
     await retryOnlyProved(t, proven, decoy);
   });
 
-  it("links audited credits without rebooking an old commitment", async () => {
-    const t = await fixture.tenant();
-    const { workspaceId, channelId } = t.run;
-    const step = await legacy(t, "booked", { committed: true });
-    await activity(t, step, "step_failed", {
-      reason: "OWNER_CONFIRMED_TERMINAL_TEXT",
-      confirmedBy: t.context.userId,
-      committedEstimateMinor: 7,
-    });
-    const correlationId = randomUUID();
-    const credit = await t.db.usageAdjustment.create({
-      data: {
-        workspaceId,
-        channelId,
-        kind: "CREDIT",
-        currency: "USD",
-        amountMinor: 3n,
-        actorUserId: t.context.userId,
-        correlationId,
-        reason: "fixture refund",
-      },
-    });
-    // Historical owner credits carried no attempt or operation key.
-    await t.db.usageAuditRecord.create({
-      data: {
-        workspaceId,
-        actorUserId: t.context.userId,
-        action: "CREDIT",
-        reason: credit.reason,
-        correlationId,
-        adjustmentId: credit.id,
-        after: {
-          adjustment: {
-            id: credit.id,
-            channelId,
-            kind: "CREDIT",
-            currency: "USD",
-            amountMinor: 3,
+  it.each([false, true])(
+    "links audited credits without rebooking an old commitment (already imported %s)",
+    async (imported) => {
+      const t = await fixture.tenant();
+      const { workspaceId, channelId } = t.run;
+      const step = await legacy(t, "booked", { committed: true });
+      await activity(t, step, "step_failed", {
+        reason: "OWNER_CONFIRMED_TERMINAL_TEXT",
+        confirmedBy: t.context.userId,
+        committedEstimateMinor: 7,
+      });
+      if (imported) expect((await apply(t)).attempts[0]?.outcome).toBe("owner-settled");
+      const correlationId = randomUUID();
+      const credit = await t.db.usageAdjustment.create({
+        data: {
+          workspaceId,
+          channelId,
+          kind: "CREDIT",
+          currency: "USD",
+          amountMinor: 3n,
+          actorUserId: t.context.userId,
+          correlationId,
+          reason: "fixture refund",
+        },
+      });
+      // Historical owner credits carried no attempt or operation key.
+      await t.db.usageAuditRecord.create({
+        data: {
+          workspaceId,
+          actorUserId: t.context.userId,
+          action: "CREDIT",
+          reason: credit.reason,
+          correlationId,
+          adjustmentId: credit.id,
+          after: {
+            adjustment: {
+              id: credit.id,
+              channelId,
+              kind: "CREDIT",
+              currency: "USD",
+              amountMinor: 3,
+            },
           },
         },
-      },
-    });
-    expect(await apply(t)).toMatchObject({ unresolvedCreditIds: [credit.id], attempts: [] });
-    expect(await readTextAttempt(t.db, step)).toBeNull();
-    await t.db.usageAuditRecord.create({
-      data: {
-        workspaceId,
-        actorUserId: t.context.userId,
-        action: "CREDIT",
-        reason: "fixture refund",
-        correlationId,
-        adjustmentId: credit.id,
-        after: {
-          adjustment: {
-            id: credit.id,
-            textAttemptId: step.id,
-            dispatchKey: step.idempotencyKey,
-            amountMinor: 3,
-            currency: "USD",
-            operationKey: "fixture-linked-credit",
+      });
+      expect(await apply(t)).toMatchObject({ unresolvedCreditIds: [credit.id], attempts: [] });
+      if (!imported) expect(await readTextAttempt(t.db, step)).toBeNull();
+      await t.db.usageAuditRecord.create({
+        data: {
+          workspaceId,
+          actorUserId: t.context.userId,
+          action: "CREDIT",
+          reason: "fixture refund",
+          correlationId,
+          adjustmentId: credit.id,
+          after: {
+            adjustment: {
+              id: credit.id,
+              textAttemptId: step.id,
+              dispatchKey: step.idempotencyKey,
+              amountMinor: 3,
+              currency: "USD",
+              operationKey: "fixture-linked-credit",
+            },
           },
         },
-      },
-    });
-    expect((await apply(t)).attempts[0]).toMatchObject({
-      outcome: "owner-settled",
-      after: { grossMinor: 7, netMinor: 4, reservedMinor: 0 },
-    });
-    await apply(t);
-    expect(
-      await t.db.usageReservation.findFirst({ where: { correlationId: step.id } }),
-    ).toMatchObject({
-      committedMinor: 4n,
-      status: "COMMITTED",
-    });
-    expect(await t.db.usageAdjustment.findUnique({ where: { id: credit.id } })).toMatchObject({
-      textAttemptId: step.id,
-      operationKey: "fixture-linked-credit",
-      createdAt: credit.createdAt,
-    });
-    expect(await readTextAttempt(t.db, step)).toMatchObject({
-      phase: "OWNER_CONFIRMED",
-      ownerConfirmed: true,
-      positiveSent: false,
-      grossMinor: 7,
-      netMinor: 4,
-    });
-  });
+      });
+      const dry = await importLegacyTextAttempts(t.db, { workspaceId });
+      expect(dry.unresolvedCreditIds).toEqual([credit.id]);
+      expect(
+        (await t.db.usageAdjustment.findUniqueOrThrow({ where: { id: credit.id } })).textAttemptId,
+      ).toBeNull();
+      const applied = await apply(t);
+      expect(applied.unresolvedCreditIds).toEqual([]);
+      expect(applied.attempts[0]).toMatchObject({
+        ...(imported ? { action: "reconciled" } : { outcome: "owner-settled" }),
+        after: { grossMinor: 7, netMinor: 4, reservedMinor: 0 },
+      });
+      await apply(t);
+      expect(
+        await t.db.usageReservation.findFirst({ where: { correlationId: step.id } }),
+      ).toMatchObject({
+        committedMinor: 4n,
+        status: "COMMITTED",
+      });
+      expect(await t.db.usageAdjustment.findUnique({ where: { id: credit.id } })).toMatchObject({
+        textAttemptId: step.id,
+        operationKey: "fixture-linked-credit",
+        createdAt: credit.createdAt,
+      });
+      expect(await readTextAttempt(t.db, step)).toMatchObject({
+        phase: "OWNER_CONFIRMED",
+        ownerConfirmed: true,
+        positiveSent: false,
+        grossMinor: 7,
+        netMinor: 4,
+      });
+      const state = await readTextAttempt(t.db, step);
+      await ingestMatchedTextRejection(t.db, {
+        target: {
+          workspaceId,
+          attemptId: step.id,
+          dispatchKey: step.idempotencyKey,
+          armNonce: state!.armNonce,
+          incarnation: drainedLegacyIncarnation,
+        },
+        actor: "fixture-operator",
+        source: "google-project-audit",
+        reference: "late-rejection",
+        observedAt: new Date().toISOString(),
+        code: "UNAUTHENTICATED",
+        httpStatus: 401,
+      });
+      expect(
+        await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: step.id } }),
+      ).toMatchObject({ committedMinor: 0n });
+    },
+  );
   it("imports a real stored response and matched late 401 without rebooking either", async () => {
     const t = await fixture.tenant();
     const stored = await legacy(t, "stored", {
