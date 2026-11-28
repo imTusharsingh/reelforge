@@ -248,7 +248,7 @@ export class RunPaidCalls {
     cost: number,
     providerJobId = step.providerJobId,
     usage?: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<number> {
     return settleFailedRequest(this.usage, tx, context, step, {
       message,
       dispatched,

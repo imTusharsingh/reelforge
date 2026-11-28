@@ -44,7 +44,7 @@ import {
   correctionPayload,
   deliveredShot,
   requireReceiptAttempt,
-  refusedShot,
+  terminalBilledShot,
   mergeShotReceipt,
   pendingShotMedia,
   readReceiptBudget,
@@ -239,7 +239,7 @@ export async function captureShotReceipt(
     async (db, run, tx) => {
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       requireReceiptAttempt(current, step);
-      if (refusedShot(current)) {
+      if (terminalBilledShot(current)) {
         return captureRefusedBill(db, tx, run, current, receipt);
       }
       const settled = current.state === "SUCCEEDED";

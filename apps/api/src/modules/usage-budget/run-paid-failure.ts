@@ -1,3 +1,4 @@
+import { carryRefusalBill } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { closeSteps } from "../runs/run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
@@ -36,14 +37,13 @@ export async function finalizeFailed(
         throw new ConflictException("Text failure requires its evidence journal");
       if (!canFinalize(current, step)) throw new ReplayedFailure(await previousFailure(db, step));
       const amount = current.costMinor ?? 0;
-      const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
-      await paid.settleFailedRequest(
+      const cost = await paid.settleFailedRequest(
         tx,
         context,
         current,
         message,
         dispatched,
-        cost,
+        dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0,
         providerJobId,
         usage,
       );
@@ -82,6 +82,9 @@ async function markStepFailed(
   await db.videoRunStep.updateMany({
     where: { id: step.id },
     data: {
+      ...(error.code === "PROVIDER_FAILED" &&
+        step.key.startsWith("shot-") &&
+        carryRefusalBill(step)),
       state: "FAILED",
       providerJobId,
       costMinor: cost,
@@ -213,6 +216,10 @@ async function settleEnvelope(db: Scoped, run: Run, amount: number, cost: number
       data: {
         reservedMinor: budget.reservedMinor - amount,
         spentMinor: budget.spentMinor + cost,
+        overageMinor: Math.max(
+          budget.overageMinor,
+          budget.spentMinor + cost + budget.reservedMinor - amount - budget.hardCapMinor,
+        ),
         revision: budget.revision + 1,
       },
     });

@@ -13,7 +13,7 @@ import {
   highestObservedReceipt,
   pendingCorrection,
 } from "./run-pending-receipt.js";
-import { correctionPayload, pricedOutput, refusedShot } from "./run-shot-receipt.js";
+import { correctionPayload, pricedOutput, terminalBilledShot } from "./run-shot-receipt.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import type { Context, Json, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
@@ -187,7 +187,7 @@ async function applyCreditPosting(
       });
     } else if (reduction !== 0n) {
       const step = await reduceCoveredCharge(tx, correlationId, reservation, reduction);
-      if (step && refusedShot(step)) {
+      if (step && terminalBilledShot(step)) {
         await writeRefusalCreditEvent(tx, step, -Number(reduction));
         const db = scopedTransaction(tx, {
           workspaceId: step.workspaceId,

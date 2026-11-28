@@ -94,14 +94,13 @@ async function recordRefusal(
   { providerJobId, retry }: { providerJobId: string | null; retry: boolean },
 ): Promise<void> {
   const amount = current.costMinor ?? 0;
-  const cost = readReceiptBudget(current.output)?.estimateMinor ?? amount;
-  await paid.settleFailedRequest(
+  const cost = await paid.settleFailedRequest(
     tx,
     context,
     current,
     "Video provider refused the shot",
     true,
-    cost,
+    readReceiptBudget(current.output)?.estimateMinor ?? amount,
     providerJobId,
   );
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: current.runId } });
@@ -110,6 +109,10 @@ async function recordRefusal(
     data: {
       reservedMinor: budget.reservedMinor - amount,
       spentMinor: budget.spentMinor + cost,
+      overageMinor: Math.max(
+        budget.overageMinor,
+        budget.spentMinor + cost + budget.reservedMinor - amount - budget.hardCapMinor,
+      ),
       revision: budget.revision + 1,
     },
   });

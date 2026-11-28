@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import { captureShotReceipt } from "../usage-budget/run-billing.js";
 import type { Step } from "../runs/runs.types.js";
-import { readArtifact, readManifest } from "./historical-text-receipt.fixture.js";
+import {
+  historicalTextFixture,
+  importHistoricalBooking,
+  readArtifact,
+  readManifest,
+} from "./historical-text-receipt.fixture.js";
 import { setupAssembly } from "./media-assembly.fixture.js";
 
 async function bookedRefusal(t: Tenant): Promise<{ step: Step; requestId: string }> {
@@ -73,6 +78,14 @@ describe.skipIf(!process.env.DATABASE_URL)(
         const setup = await setupAssembly(fixture);
         const { t, run, bindings, plan } = setup;
         const { step, requestId } = await bookedRefusal(t);
+        const text = aboveCap ? await historicalTextFixture(setup, "id-less") : null;
+        if (text) {
+          await t.db.budgetEnvelope.updateMany({
+            where: { runId: run.id },
+            data: { spentMinor: { increment: 7 } },
+          });
+          await importHistoricalBooking(t, text.dispatchKey);
+        }
         const prompts = [
           {
             role: "scriptwriter" as const,
@@ -126,12 +139,31 @@ describe.skipIf(!process.env.DATABASE_URL)(
           operationKey: "credit-after-assembly",
           reason: "fixture refund",
         });
-        await bill(aboveCap ? 801 : 25);
+        await bill(aboveCap ? 20 + 801 - original.totalCostMinor : 25);
         const artifacts = await bindings.assembly.artifacts(t.context, run);
         expect(artifacts.find((artifact) => artifact.kind === "final")).toEqual(final);
         expect(await readArtifact(setup, final)).toEqual(Buffer.from("fixture-final"));
         if (aboveCap) {
           expect(artifacts.some((artifact) => artifact.kind === "manifest")).toBe(false);
+          const textStep = await t.db.videoRunStep.findFirstOrThrow({
+            where: { runId: run.id, idempotencyKey: text!.dispatchKey },
+          });
+          vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
+          await t.usage.createAdjustment(t.context, {
+            kind: "CREDIT",
+            amountMinor: 2,
+            textAttemptId: textStep.id,
+            operationKey: "text-credit-below-cap",
+            reason: "fixture text adjustment",
+          });
+          const restored = await bindings.assembly.artifacts(t.context, run);
+          expect(restored.find((artifact) => artifact.kind === "final")).toEqual(final);
+          const manifest = await readManifest(setup, restored);
+          expect(manifest.totalCostMinor).toBe(799);
+          expect(
+            manifest.receipts.find((line) => line.dispatchKey === text!.dispatchKey)
+              ?.postedNetMinor,
+          ).toBe(5);
         } else {
           const result = await readManifest(setup, artifacts);
           expect(result).toEqual({ ...original, totalCostMinor: original.totalCostMinor + 5 });

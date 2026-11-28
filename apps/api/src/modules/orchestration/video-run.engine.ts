@@ -5,7 +5,10 @@ import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
-import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
+import {
+  pendingCorrectionJobs,
+  shouldCheckShotBoundary,
+} from "../usage-budget/run-pending-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -165,7 +168,8 @@ export class VideoRunEngine {
     }
   }
   private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
-    if (run.state === "GENERATING" && !run.pauseReason) await this.boundary.check(context, run);
+    if (await shouldCheckShotBoundary(this.runs.store.scoped(context), run, stepId))
+      await this.boundary.check(context, run);
     try {
       return await this.generation.process(context, run, stepId);
     } catch (error) {
@@ -321,17 +325,11 @@ export class VideoRunEngine {
     return { workspaceId: job.workspaceId, userId: job.userId, role: membership.role };
   }
   private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
-    const corrections = await db.videoRunStep.findMany({
-      where: { ...pendingCorrectionWhere, run: { state: { not: "FAILED" } } },
-      select: { id: true, runId: true },
-    });
-    for (const step of corrections) {
-      const run = await db.videoRun.findFirstOrThrow({
-        where: { id: step.runId },
-        select: { revision: true },
-      });
-      await this.runs.queue?.enqueue(this.runs.job(context, step.runId, step.id), run.revision);
-    }
+    for (const step of await pendingCorrectionJobs(db))
+      await this.runs.queue?.enqueue(
+        this.runs.job(context, step.runId, step.id),
+        step.run.revision,
+      );
   }
   public async recover(): Promise<void> {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.

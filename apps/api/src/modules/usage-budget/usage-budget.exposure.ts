@@ -15,7 +15,7 @@ type Price = Pick<
 >;
 
 const pendingMarker = Prisma.sql`CASE
-  WHEN s.state IN ('SKIPPED', 'FAILED') AND s.error->>'code' = 'PROVIDER_REFUSED'
+  WHEN s.state IN ('SKIPPED', 'FAILED') AND s.error->>'code' IN ('PROVIDER_REFUSED', 'PROVIDER_FAILED')
   THEN s.output->'pendingRefusalBill'
   ELSE s.error END`;
 const pendingJob = Prisma.sql`(${pendingMarker})->>'code' = ${PENDING_RECEIPT_CORRECTION}

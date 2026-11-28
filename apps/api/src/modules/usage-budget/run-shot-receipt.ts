@@ -176,11 +176,12 @@ export function correctionPayload(step: Step, receipt: VideoReceipt, refusedBill
   };
 }
 
-export function refusedShot(step: Step): boolean {
+export function terminalBilledShot(step: Step): boolean {
   return (
     step.key.startsWith("shot-") &&
     ["SKIPPED", "FAILED"].includes(step.state) &&
-    z.object({ code: z.literal("PROVIDER_REFUSED") }).safeParse(step.error).success
+    z.object({ code: z.enum(["PROVIDER_REFUSED", "PROVIDER_FAILED"]) }).safeParse(step.error)
+      .success
   );
 }
 
@@ -190,7 +191,7 @@ export function requireReceiptAttempt(current: Step, observed: Step): void {
     current.providerJobId !== observed.providerJobId ||
     current.providerId !== observed.providerId ||
     current.idempotencyKey !== observed.idempotencyKey ||
-    (!["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state) && !refusedShot(current))
+    (!["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state) && !terminalBilledShot(current))
   )
     throw new ConflictException("Provider job claim changed");
 }

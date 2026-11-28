@@ -1,3 +1,4 @@
+import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import { json, type Context, type Run, type Step, type Transaction } from "../runs/runs.types.js";
@@ -259,6 +260,16 @@ async function closeFailedStage(tx: Transaction, run: Run, code: string): Promis
   });
 }
 
+function archivedReceiptChanged(step: Step, next: TextAttemptState, previous: Projection): boolean {
+  return (
+    step.state === "SUCCEEDED" &&
+    next.phase === "SUCCEEDED" &&
+    (previous.netMinor !== next.netMinor ||
+      previous.grossMinor !== next.grossMinor ||
+      (!!next.googleId && next.googleId !== step.providerJobId))
+  );
+}
+
 async function postEvent(
   tx: Transaction,
   context: Context,
@@ -311,6 +322,7 @@ async function postEvent(
         appliedSequence: next.appliedSequence,
         reservedDelta: next.reservedMinor - previous.reservedMinor,
         netDelta: next.netMinor - previous.netMinor,
+        ...(archivedReceiptChanged(step, next, previous) && { manifestReceiptChanged: true }),
         ...(shouldHold && { reason: ownHold }),
         ...(failStage && { reason: failStage, from: run.state, to: "FAILED" }),
       },
@@ -356,6 +368,8 @@ export async function foldTextAttempt(
   await postLedger(tx, step, run, next);
   await postEnvelope(tx, run, previous, next);
   await postStep(tx, step, next);
+  if (archivedReceiptChanged(step, next, previous))
+    await invalidateAssemblyManifests(scopedTransaction(tx, context), run.id);
   await postEvent(tx, context, step, run, next, previous);
   const { appliedSequence, reservedMinor, grossMinor, netMinor } = next;
   const data = { appliedSequence, reservedMinor, grossMinor, netMinor };

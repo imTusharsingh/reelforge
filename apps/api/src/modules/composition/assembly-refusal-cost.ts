@@ -29,13 +29,17 @@ export async function manifestHasBillingChange(db: Scoped, runId: string): Promi
       runId,
       OR: [
         { type: "assembly_receipts_checked" },
+        {
+          type: "text_attempt_folded",
+          payload: { path: ["manifestReceiptChanged"], equals: true },
+        },
         { type: "provider_receipt", payload: { path: ["key"], string_starts_with: "shot-" } },
       ],
     },
     orderBy: { sequence: "desc" },
     select: { type: true },
   });
-  return latest?.type === "provider_receipt";
+  return latest !== null && latest.type !== "assembly_receipts_checked";
 }
 
 // Pre-cutover manifests had gross lines and no linked credits. A total that cannot
