@@ -1,3 +1,4 @@
+import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
@@ -65,6 +66,57 @@ describe.skipIf(!process.env.DATABASE_URL)(
         }),
       ).rejects.toThrow();
     });
+    it.each([4, 7, 23])(
+      "replays the refunded routed refusal at 7 cents and settles a %i cent bill",
+      async (cents) => {
+        const t = await fixture.tenant();
+        const { workspaceId, channelId } = t.run;
+        const job = await refusedRoutedJob(t);
+        const where = { workspaceId, correlationId: job.correlationId };
+        const posting = (): Promise<{ committedMinor: bigint | null }> =>
+          t.db.usageReservation.findFirstOrThrow({ where });
+        const consumed = async (): Promise<number | undefined> =>
+          (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
+        expect((await posting()).committedMinor).toBe(20n);
+        await t.usage.createAdjustment(t.context, {
+          kind: "CREDIT",
+          providerRequestId: job.requestId,
+          operationKey: "routed-refund",
+          amountMinor: 13,
+          reason: "invoice refund",
+        });
+        await job.replay();
+        expect((await posting()).committedMinor).toBe(7n);
+        expect(await consumed()).toBe(7);
+        await job.bill(cents);
+        await job.bill(cents);
+        expect((await posting()).committedMinor).toBe(BigInt(cents));
+        expect(await consumed()).toBe(cents);
+        expect(
+          (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+        ).toMatchObject({
+          committedMinor: cents,
+          totalMinor: cents,
+          adjustmentNetMinor: 0,
+        });
+        await t.db.usageBudget.updateMany({
+          where: { workspaceId },
+          data: { dailyLimitMinor: BigInt(cents) },
+        });
+        await expect(
+          t.usage.reserve(workspaceId, {
+            channelId,
+            category: "VIDEO_MEDIA",
+            currency: "USD",
+            idempotencyKey: "competing-after-final",
+            amountMinor: 1,
+          }),
+        ).rejects.toMatchObject({
+          code: "BUDGET_EXHAUSTED",
+          details: { consumedMinor: cents },
+        });
+      },
+    );
     it("keeps an expired unresolved dispatch charged against competing admission", async () => {
       const t = await fixture.tenant();
       const run = await generating(t);

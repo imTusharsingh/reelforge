@@ -146,7 +146,13 @@ export class ProvidersRuntime {
     port: VideoGenPort,
     providerJobId: string,
   ): Promise<void> {
-    await this.ledger.finish(workspaceId, correlation(key), port, await port.fetch(providerJobId));
+    await this.ledger.finish(
+      workspaceId,
+      correlation(key),
+      port,
+      await port.fetch(providerJobId),
+      providerJobId,
+    );
   }
   private limiter(port: VideoGenPort): ProviderLimiter {
     const id = port.capabilities().providerId;

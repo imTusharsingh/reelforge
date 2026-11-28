@@ -115,6 +115,7 @@ describe("registered provider runtime", () => {
       expect.any(String),
       ports.omni,
       artifact,
+      "job",
     );
     keys.resolve.mockResolvedValue("placeholder");
     ledger.submit.mockClear();

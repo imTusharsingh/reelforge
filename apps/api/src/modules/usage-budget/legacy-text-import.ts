@@ -1,4 +1,3 @@
-import { journalRejections } from "./text-journal-upgrade.js";
 import { reconcileExisting } from "./legacy-journal-reconcile.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 import { operatorContext } from "./text-attempt-ops.js";
@@ -30,7 +29,6 @@ export type Imported = {
     | "already-imported"
     | "requires-reconciliation"
     | "reconciled";
-  rejections?: Array<{ sequence: number; eventKey: string; reason: string }>;
   creditIds?: string[];
   reason?: string;
   outcome?: LegacyImportPlan["outcome"];
@@ -85,7 +83,7 @@ async function cutover(
   if (options.apply && !blocked)
     for (const link of media) await linkMediaCredit(tx, workspaceId, link, options.auditId!);
   let cursor: string | undefined;
-  for (;;) {
+  while (!blocked) {
     const batch = await tx.videoRunStep.findMany({
       where: {
         workspaceId,
@@ -93,28 +91,11 @@ async function cutover(
         ...(cursor && { id: { gt: cursor } }),
       },
       orderBy: { id: "asc" },
-      select: { id: true, idempotencyKey: true },
+      select: { id: true },
       take: 100,
     });
     if (!batch.length) break;
-    for (const { id, idempotencyKey } of batch) {
-      if (!blocked) {
-        attempts.push(await importOne(tx, id, options));
-        continue;
-      }
-      const rows = await tx.textAttemptEvidence.findMany({
-        where: { workspaceId, attemptId: id },
-        orderBy: { sequence: "asc" },
-      });
-      const { pending } = journalRejections(idempotencyKey, rows);
-      if (pending.length)
-        attempts.push({
-          attemptId: id,
-          action: "blocked",
-          reason: "unresolved workspace credits",
-          rejections: pending,
-        });
-    }
+    for (const { id } of batch) attempts.push(await importOne(tx, id, options));
     cursor = batch.at(-1)!.id;
   }
   // Every proven adjustment link is now visible to the ordinary reversal guard.

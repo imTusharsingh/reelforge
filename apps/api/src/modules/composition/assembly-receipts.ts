@@ -40,7 +40,7 @@ const textEvidence = {
 function planningReceipt(
   step: Step & {
     textEvidence: Parameters<typeof deriveTextAttempt>[1];
-    textProjection: { grossMinor: number } | null;
+    textProjection: { grossMinor: number; netMinor: number } | null;
   },
 ): TextReceipt | undefined {
   const receipt = readReceipt(step);
@@ -59,6 +59,7 @@ function planningReceipt(
   if (ids.size > 1) return;
   return {
     ...receipt,
+    ...(step.textProjection && { postedNetMinor: step.textProjection.netMinor }),
     dispatchKey: step.idempotencyKey,
     providerJobId: verified ?? saved ?? attached,
     ...(attempt?.actualMinor != null &&
@@ -72,7 +73,7 @@ function planningReceipt(
 export async function assemblyReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", NOT: { key: { startsWith: "shot-" } } },
-    include: { textEvidence, textProjection: { select: { grossMinor: true } } },
+    include: { textEvidence, textProjection: { select: { grossMinor: true, netMinor: true } } },
     orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
   });
   return steps.flatMap((step) => {
@@ -222,7 +223,7 @@ export function currentPrices(
 async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", key: { startsWith: "media:text:" } },
-    include: { textEvidence, textProjection: { select: { grossMinor: true } } },
+    include: { textEvidence, textProjection: { select: { grossMinor: true, netMinor: true } } },
   });
   return steps.flatMap((step) => {
     const receipt = planningReceipt(step);
@@ -251,11 +252,12 @@ function normalizeHistoricalText(
     );
     // Never infer the attempt merely from an identical output artifact.
     if (matching.length !== 1) return null;
-    const { providerJobId, dispatchKey, costMinor, costBasis } = matching[0]!;
+    const { providerJobId, dispatchKey, costMinor, costBasis, postedNetMinor } = matching[0]!;
     resolved.push({
       ...item,
       providerJobId,
       dispatchKey,
+      ...(postedNetMinor !== undefined && { postedNetMinor }),
       ...(costBasis === "BILLED" && { costMinor, costBasis }),
     });
   }
@@ -269,6 +271,34 @@ export async function publicationPrices(
 ): Promise<MediaReceipt[] | null> {
   const shots = currentPrices(rendered, await shotReceipts(db, runId));
   return shots && normalizeHistoricalText(shots, await historicalTextReceipts(db, runId));
+}
+
+// Pre-cutover manifests had gross lines and no linked credits. A total that cannot
+// be explained by those lines gives no basis for a text delta.
+function rebuiltTotal(
+  manifest: { receipts: MediaReceipt[]; totalCostMinor: number },
+  receipts: MediaReceipt[],
+): number | null {
+  const original = manifest.receipts;
+  const contribution = (receipt: MediaReceipt): number =>
+    receipt.key.startsWith("media:text:")
+      ? (receipt.postedNetMinor ?? receipt.costMinor)
+      : receipt.costMinor;
+  const archivedLines = original.reduce((sum, receipt) => sum + contribution(receipt), 0);
+  let total = manifest.totalCostMinor;
+  for (const [i, receipt] of receipts.entries()) {
+    const old = original[i]!;
+    const delta = contribution(receipt) - contribution(old);
+    if (
+      old.key.startsWith("media:text:") &&
+      old.postedNetMinor === undefined &&
+      receipt.postedNetMinor !== undefined &&
+      archivedLines !== manifest.totalCostMinor
+    )
+      return null;
+    total += delta;
+  }
+  return total;
 }
 
 async function rewriteManifest(
@@ -292,12 +322,8 @@ async function rewriteManifest(
   const priced = currentPrices(manifest.receipts, current);
   const receipts = priced && normalizeHistoricalText(priced, historical);
   if (!receipts) return null;
-  const totalCostMinor =
-    manifest.totalCostMinor +
-    receipts.reduce(
-      (delta, receipt, i) => delta + receipt.costMinor - manifest.receipts[i]!.costMinor,
-      0,
-    );
+  const totalCostMinor = rebuiltTotal(manifest, receipts);
+  if (totalCostMinor === null) return null;
   // A manifest over the delivery contract's cap stays invalidated. The ledger keeps the actual cost.
   if (!AssemblyManifestSchema.shape.totalCostMinor.safeParse(totalCostMinor).success) return null;
   if (

@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-import { journalRejections } from "./text-journal-upgrade.js";
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { isDefinitiveProviderRejection } from "@reelforge/ai-providers";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
@@ -239,29 +237,17 @@ async function importArmSpool(
     where: { workspaceId: context.workspaceId, attemptId: step.id },
     orderBy: { sequence: "asc" },
   });
-  const { repaired } = journalRejections(step.idempotencyKey, rows);
   for (const kind of probe) {
     const recorded = rows.find(
       (row) => row.nonce === nonce && row.eventKey === observationKey(nonce, kind),
     );
-    if (recorded && !repaired.has(recorded.sequence)) continue;
+    if (recorded) continue;
     const key = spoolKey(step.id, nonce, kind);
     const bytes = await access.artifacts.readTextSpool(context, key).catch((error: unknown) => {
       if (error instanceof StorageObjectNotFoundError) return null;
       throw error;
     });
     if (!bytes) continue;
-    if (recorded) {
-      // A replacement file at this key may carry different evidence. Keep its owner veto.
-      const file = observationSchema.safeParse(JSON.parse(bytes.toString("utf8")));
-      if (
-        file.success &&
-        file.data.kind === kind &&
-        isDeepStrictEqual(file.data.data, recorded.data)
-      )
-        await access.artifacts.quarantineTextSpool(context, key, bytes);
-      continue;
-    }
     try {
       const observation = observationSchema.parse(JSON.parse(bytes.toString("utf8")));
       if (observation.kind !== kind)
@@ -269,6 +255,11 @@ async function importArmSpool(
       await ingest(access, context, step, nonce, observation);
       // Leave the deterministic object intact until the journal is durably applied.
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        // An incomplete file still vetoes owner settlement. Probe the other outcome keys.
+        reportSweepFailure(step.id, error);
+        continue;
+      }
       if (!invalidObservation(error)) throw error;
       await access.artifacts.quarantineTextSpool(context, key, bytes);
       logger.warn(`Quarantined invalid ${kind} evidence for attempt ${step.id}`);

@@ -1,12 +1,37 @@
-import {
-  definitiveJournalRejection,
-  journalRejections,
-  type Evidence,
-} from "./text-journal-upgrade.js";
+import { isDefinitiveProviderRejection } from "@reelforge/ai-providers";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Json, Step, Transaction } from "../runs/runs.types.js";
+
+export type Evidence = {
+  sequence: number;
+  kind: string;
+  nonce: string | null;
+  data: unknown;
+  eventKey?: string;
+};
+const detail = z.object({
+  dispatchKey: z.string(),
+  code: z.string().optional(),
+  httpStatus: z.unknown().optional(),
+  source: z.string().optional(),
+  actualMinor: z.int().optional().nullable(),
+});
+function definitiveJournalRejection(event: Evidence): boolean {
+  const data = detail.parse(event.data);
+  if (data.httpStatus !== undefined && data.code)
+    return (
+      typeof data.httpStatus === "number" &&
+      isDefinitiveProviderRejection(data.httpStatus, data.code)
+    );
+  return (
+    !!event.nonce?.startsWith("legacy:") &&
+    !!event.eventKey?.startsWith("legacy:REJECTED:") &&
+    data.source === "matched-provider" &&
+    ["PROVIDER_UNAUTHENTICATED", "PROVIDER_PERMISSION_DENIED"].includes(data.code ?? "")
+  );
+}
 
 export type TextEvidenceKind =
   | "PREPARED"
@@ -18,7 +43,6 @@ export type TextEvidenceKind =
   | "SUCCEEDED"
   | "RECOVERED_RECEIPT"
   | "OWNER_CONFIRMED"
-  | "JOURNAL_REPAIR"
   | "QUARANTINED"
   | "CREDIT";
 
@@ -53,7 +77,6 @@ export type TextAttemptState = {
   usable: boolean;
   actualMinor: number | null;
   rejectionCode: string | null;
-  repairSequence: number;
   credits: Readonly<Record<string, number>>;
 };
 
@@ -112,7 +135,6 @@ function initial(dispatchKey: string, event: Evidence): TextAttemptState {
     usable: false,
     actualMinor: null,
     rejectionCode: null,
-    repairSequence: 0,
     credits: {},
   };
 }
@@ -206,9 +228,6 @@ function applyControl(state: TextAttemptState, event: Evidence): boolean {
 function applyObservation(state: TextAttemptState, event: Evidence): void {
   requireSender(state, event);
   switch (event.kind) {
-    case "JOURNAL_REPAIR":
-      state.repairSequence = event.sequence;
-      return;
     case "QUARANTINED":
       z.object({
         dispatchKey: z.literal(state.dispatchKey),
@@ -267,12 +286,10 @@ export function deriveTextAttempt(
 ): TextAttemptState | null {
   const first = ordered[0];
   if (!first) return null;
-  const { repaired } = journalRejections(dispatchKey, ordered);
   const state = initial(dispatchKey, first);
   for (const event of ordered.slice(1)) {
     if (event.sequence !== state.appliedSequence + 1) conflicting();
-    if (!repaired.has(event.sequence) && !applyControl(state, event))
-      applyObservation(state, event);
+    if (!applyControl(state, event)) applyObservation(state, event);
     state.appliedSequence = event.sequence;
     const pending = state.phase === "ARMED" || state.phase === "SENT";
     state.reservedMinor = pending && state.actualMinor === null ? state.estimateMinor : 0;

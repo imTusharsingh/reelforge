@@ -1,5 +1,9 @@
-import { MediaReceiptSchema, type MediaReceipt } from "@reelforge/contracts";
-import { json } from "../runs/runs.types.js";
+import {
+  AssemblyManifestSchema,
+  MediaReceiptSchema,
+  type MediaReceipt,
+} from "@reelforge/contracts";
+import { json, type Artifact } from "../runs/runs.types.js";
 import type { setupAssembly } from "./media-assembly.fixture.js";
 import { vi, expect } from "vitest";
 import type { Tenant } from "../runs/runs.fixture.js";
@@ -7,7 +11,10 @@ import { importLegacyTextAttempts } from "../usage-budget/legacy-text-import.js"
 import { ingestMatchedTextReceipt } from "../usage-budget/text-attempt-receipt-recovery.js";
 import { drainedLegacyIncarnation } from "../usage-budget/text-attempt-ops-schema.js";
 
-export async function attachHistoricalGoogleId(t: Tenant, dispatchKey: string): Promise<void> {
+export async function importHistoricalBooking(
+  t: Tenant,
+  dispatchKey: string,
+): Promise<(actualMinor?: number) => Promise<void>> {
   const { workspaceId, channelId } = t.run;
   const step = await t.db.videoRunStep.findFirstOrThrow({
     where: { workspaceId, idempotencyKey: dispatchKey },
@@ -49,22 +56,28 @@ export async function attachHistoricalGoogleId(t: Tenant, dispatchKey: string): 
   expect(report.attempts).toContainEqual(
     expect.objectContaining({ attemptId: step.id, outcome: "completed" }),
   );
-  await ingestMatchedTextReceipt(t.db, {
-    target: {
-      workspaceId,
-      attemptId: step.id,
-      dispatchKey,
-      armNonce: `legacy:${reservation.id}`,
-      incarnation: drainedLegacyIncarnation,
-    },
-    actor: "fixture-operator",
-    source: "google-project-audit",
-    reference: "audit#1",
-    observedAt: new Date().toISOString(),
-    googleId: "historical-google-id",
-    currency: "USD",
-    actualMinor: 20,
-  });
+  return (actualMinor = 20): Promise<void> =>
+    ingestMatchedTextReceipt(t.db, {
+      target: {
+        workspaceId,
+        attemptId: step.id,
+        dispatchKey,
+        armNonce: `legacy:${reservation.id}`,
+        incarnation: drainedLegacyIncarnation,
+      },
+      actor: "fixture-operator",
+      source: "google-project-audit",
+      reference: "audit#1",
+      observedAt: new Date().toISOString(),
+      googleId: "historical-google-id",
+      currency: "USD",
+      actualMinor,
+    });
+}
+
+export async function attachHistoricalGoogleId(t: Tenant, dispatchKey: string): Promise<void> {
+  const bill = await importHistoricalBooking(t, dispatchKey);
+  await bill();
 }
 
 export async function historicalTextFixture(
@@ -114,4 +127,68 @@ export async function historicalTextFixture(
   });
   if (mode === "late ID") await attachHistoricalGoogleId(t, dispatchKey);
   return { receipt, dispatchKey };
+}
+
+export async function readArtifact(
+  { t, run }: Awaited<ReturnType<typeof setupAssembly>>,
+  artifact: Artifact,
+): Promise<Buffer> {
+  return t.storage.getObject({ workspaceId: run.workspaceId, objectKey: artifact.objectKey });
+}
+
+export function readReceipt(output: unknown): MediaReceipt {
+  return MediaReceiptSchema.parse((output as { receipt: unknown }).receipt);
+}
+
+export async function repriceHistoricalShot(
+  { t, run }: Awaited<ReturnType<typeof setupAssembly>>,
+  key: string,
+): Promise<MediaReceipt> {
+  const step = await t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key } });
+  const original = readReceipt(step.output);
+  const corrected = {
+    ...original,
+    costBasis: "BILLED" as const,
+    costMinor: original.costMinor + 11,
+  };
+  await t.db.videoRunStep.create({
+    data: {
+      workspaceId: run.workspaceId,
+      runId: run.id,
+      key,
+      attempt: 2,
+      providerId: original.providerId,
+      providerJobId: "different-reshoot",
+      state: "SUCCEEDED",
+      idempotencyKey: `${run.id}:${key}:2`,
+      input: {},
+      output: json({ receipt: { ...original, providerJobId: "different-reshoot", costMinor: 99 } }),
+    },
+  });
+  await t.store.mutate(t.context, run.id, "provider_receipt", async (db) => {
+    await db.videoRunStep.updateMany({
+      where: { id: step.id },
+      data: {
+        costMinor: corrected.costMinor,
+        output: json({ ...(step.output as object), receipt: corrected }),
+      },
+    });
+    const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+    await db.budgetEnvelope.updateMany({
+      where: { id: budget.id },
+      data: { spentMinor: budget.spentMinor + corrected.costMinor - original.costMinor },
+    });
+    return { value: null, payload: { key } };
+  });
+  return corrected;
+}
+export async function readManifest(
+  setup: Awaited<ReturnType<typeof setupAssembly>>,
+  descriptors: Artifact[],
+): Promise<ReturnType<typeof AssemblyManifestSchema.parse>> {
+  const bytes = await readArtifact(
+    setup,
+    descriptors.find((a) => a.kind === "manifest")!,
+  );
+  return AssemblyManifestSchema.parse(JSON.parse(bytes.toString()));
 }

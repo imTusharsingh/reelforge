@@ -53,7 +53,6 @@ async function validateCredits(
 function reservationUpdate(
   state: TextAttemptState,
   prior: Reservation,
-  previousSequence: number,
 ): Prisma.UsageReservationUpdateManyMutationInput {
   if (booked(state) || (state.phase === "SENT" && state.actualMinor !== null))
     return {
@@ -73,10 +72,7 @@ function reservationUpdate(
       releaseReason: state.rejectionCode ?? "NOT_DISPATCHED",
     };
   }
-  if (
-    state.repairSequence <= previousSequence &&
-    (prior.status === "COMMITTED" || prior.status === "RELEASED")
-  )
+  if (prior.status === "COMMITTED" || prior.status === "RELEASED")
     return conflict("A closed text reservation cannot be reopened");
   return {
     status: "RESERVED",
@@ -108,7 +104,6 @@ async function postLedger(
   step: Step,
   run: Run,
   state: TextAttemptState,
-  previousSequence: number,
 ): Promise<void> {
   if (!state.reservationId) return;
   const reservation = await tx.usageReservation.findFirstOrThrow({
@@ -124,7 +119,7 @@ async function postLedger(
     conflict("Text arm does not match its usage reservation");
   await tx.usageReservation.updateMany({
     where: { workspaceId: step.workspaceId, id: reservation.id },
-    data: reservationUpdate(state, reservation, previousSequence),
+    data: reservationUpdate(state, reservation),
   });
   const actualMinor = terminal(state) ? 0 : state.actualMinor;
   const errorCode = ledgerError(state);
@@ -358,7 +353,7 @@ export async function foldTextAttempt(
   )
     conflict("Resolve unattributed workspace credits before reversing a text booking");
   await validateCredits(tx, step, run, next);
-  await postLedger(tx, step, run, next, previous.appliedSequence);
+  await postLedger(tx, step, run, next);
   await postEnvelope(tx, run, previous, next);
   await postStep(tx, step, next);
   await postEvent(tx, context, step, run, next, previous);

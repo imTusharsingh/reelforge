@@ -13,6 +13,62 @@ import type { Prisma } from "@reelforge/database";
 import type { Database } from "../identity/identity.types.js";
 import type { PaidCallReservation } from "../usage-budget/usage-budget.types.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { lockBooks } from "../usage-budget/text-admission-lock.js";
+import { decimalToMinor, minorToNumber } from "../usage-budget/usage-budget.money.js";
+
+type LockedJob = {
+  row: Prisma.ProviderRequestGetPayload<{
+    include: { credits: { select: { amountMinor: true } } };
+  }>;
+  metadata: Prisma.JsonObject;
+  reservation: Prisma.UsageReservationGetPayload<object> | null;
+};
+
+async function lockedJob(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  correlationId: string,
+  jobId: string,
+): Promise<LockedJob> {
+  const where = { workspaceId_correlationId: { workspaceId, correlationId } };
+  const scope = await tx.providerRequest.findUnique({
+    where,
+    select: { workspaceId: true, channelId: true },
+  });
+  if (!scope) throw new ConflictException("Provider ledger mismatch");
+  await lockBooks(tx, scope);
+  const row = await tx.providerRequest.findUniqueOrThrow({
+    where,
+    include: {
+      credits: {
+        where: { workspaceId, channelId: scope.channelId, currency: "USD", kind: "CREDIT" },
+        select: { amountMinor: true },
+      },
+    },
+  });
+  const metadata = row.responseMetadata;
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    Array.isArray(metadata) ||
+    metadata.providerJobId !== jobId
+  )
+    throw new ConflictException("Provider ledger metadata does not match the job receipt");
+  const reservation = await tx.usageReservation.findUnique({
+    where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: `m08:${correlationId}` } },
+  });
+  if (
+    (reservation?.id ?? null) !== metadata.reservationId ||
+    (reservation &&
+      (reservation.correlationId !== correlationId ||
+        reservation.channelId !== scope.channelId ||
+        reservation.currency !== row.currency ||
+        reservation.category !== "VIDEO_MEDIA" ||
+        Number(reservation.amountMinor) !== metadata.estimateMinor))
+  )
+    throw new ConflictException("Provider reservation mismatch");
+  return { row, metadata, reservation };
+}
 
 type RoutedAdmission = {
   lock: string;
@@ -49,22 +105,20 @@ export class ProviderLedger {
     jobId: string,
   ): Promise<void> {
     await this.db.$transaction(async (tx) => {
-      const marked = await tx.providerRequest.updateMany({
-        where: {
-          workspaceId,
-          correlationId,
-          errorCode: { in: ["PENDING", "REFUSED"] },
-          responseMetadata: { path: ["providerJobId"], equals: jobId },
-        },
-        data: { errorCode: "REFUSED" },
-      });
-      if (marked.count !== 1)
+      const { row, reservation } = await lockedJob(tx, workspaceId, correlationId, jobId);
+      if (row.errorCode !== "REFUSED" && row.errorCode !== "PENDING")
         throw new ConflictException("Provider refusal requires a matching job receipt");
-      const reservation = await tx.usageReservation.findFirst({
-        where: { workspaceId, correlationId },
-      });
-      if (reservation)
-        await this.budgets.commit(workspaceId, reservation.id, Number(reservation.amountMinor), tx);
+      if (row.errorCode !== "REFUSED")
+        await tx.providerRequest.update({ where: { id: row.id }, data: { errorCode: "REFUSED" } });
+      if (reservation) {
+        const credited = row.credits.reduce((sum, credit) => sum + credit.amountMinor, 0n);
+        await this.budgets.commit(
+          workspaceId,
+          reservation.id,
+          minorToNumber(reservation.amountMinor - credited),
+          tx,
+        );
+      }
     });
   }
 
@@ -227,47 +281,46 @@ export class ProviderLedger {
     correlationId: string,
     port: VideoGenPort,
     artifact: ClipArtifact,
+    jobId: string,
   ): Promise<void> {
-    const row = await this.db.providerRequest.findUnique({
-      where: { workspaceId_correlationId: { workspaceId, correlationId } },
-    });
-    if (!row || row.providerId !== port.capabilities().providerId)
-      throw new ConflictException("Provider ledger mismatch");
-    const metadata = row.responseMetadata;
-    if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))
-      throw new ConflictException("Provider ledger metadata missing");
-    const rate = port.capabilities().pricePerSecond["720p"];
-    const actual =
-      artifact.billedSeconds === null || rate === null
-        ? row.estimatedCost!.toString()
-        : ledgerUsd(secondsCost(artifact.billedSeconds, rate));
-    await this.db.providerRequest.update({
-      where: { workspaceId_correlationId: { workspaceId, correlationId } },
-      data: {
-        status: "SUCCEEDED",
-        actualCost: actual,
-        errorCode: null,
-        usage: { seconds: artifact.billedSeconds },
-        responseMetadata: {
-          ...metadata,
-          objectKey: artifact.objectKey,
-          checksumSha256: artifact.checksumSha256,
+    await this.db.$transaction(async (tx) => {
+      const { row, metadata, reservation } = await lockedJob(tx, workspaceId, correlationId, jobId);
+      if (row.providerId !== port.capabilities().providerId || row.currency !== "USD")
+        throw new ConflictException("Provider ledger mismatch");
+      const rate = port.capabilities().pricePerSecond["720p"];
+      const verified = artifact.billedSeconds !== null && rate !== null;
+      if (!verified && row.credits.length && row.actualCost === null)
+        throw new ConflictException("A refunded refusal requires a verified bill to reprice");
+      const actual =
+        artifact.billedSeconds !== null && rate !== null
+          ? ledgerUsd(secondsCost(artifact.billedSeconds, rate))
+          : (row.actualCost ?? row.estimatedCost)!.toString();
+      if (reservation) {
+        const amount = decimalToMinor(actual, reservation.currency);
+        if (reservation.status === "COMMITTED") {
+          // Verified billing supersedes the whole estimated posting, including its refund.
+          await tx.usageReservation.update({
+            where: { id: reservation.id },
+            data: { committedMinor: amount },
+          });
+        } else {
+          await this.budgets.commit(workspaceId, reservation.id, minorToNumber(amount), tx);
+        }
+      }
+      await tx.providerRequest.update({
+        where: { id: row.id },
+        data: {
+          status: "SUCCEEDED",
+          actualCost: actual,
+          errorCode: null,
+          ...(artifact.billedSeconds !== null && { usage: { seconds: artifact.billedSeconds } }),
+          responseMetadata: {
+            ...metadata,
+            objectKey: artifact.objectKey,
+            checksumSha256: artifact.checksumSha256,
+          },
         },
-      },
-    });
-    const reservation =
-      typeof metadata.reservationId === "string" && typeof metadata.estimateMinor === "number"
-        ? {
-            workspaceId,
-            reservationId: metadata.reservationId,
-            currency: "USD",
-            estimateMinor: metadata.estimateMinor,
-          }
-        : null;
-    await this.budgets.finishPaidCall(reservation, {
-      dispatched: true,
-      actualCost: Number(actual),
-      actualCurrency: "USD",
+      });
     });
   }
 }

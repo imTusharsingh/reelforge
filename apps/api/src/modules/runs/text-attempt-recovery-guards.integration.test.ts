@@ -71,6 +71,55 @@ test("quarantines a bad spool record but still folds the valid provider rejectio
   expect(post).toHaveBeenCalledOnce();
 });
 
+test("a truncated rejection retains its owner veto while recovery imports a valid sibling", async () => {
+  const { t, accounts, step } = await runtimeFixture(fixture);
+  const transport: PaidTextTransport = async (url, input, sent) => {
+    const result = await accepted()(url, input, sent);
+    vi.spyOn(t.db, "$transaction").mockRejectedValueOnce(
+      new Error("response ingestion unavailable"),
+    );
+    return result;
+  };
+  await expect(
+    accounts.dispatchTextAttempt(t.context, step, invocation(step, transport)),
+  ).rejects.toThrow();
+  const before = await snapshot(t, step);
+  const nonce = before.journal.find((row) => row.kind === "ARMED")!.nonce;
+  const key = `runs/text-evidence/${step.id}/${nonce}/REJECTED.json`;
+  const truncated = Buffer.from('{"kind":"REJECTED",');
+  await t.artifacts.writeTextSpool(t.context, key, truncated);
+  await expect(t.control.abandonTerminalText(t.context, step.runId, step.id)).rejects.toThrow();
+  await t.engine.recover();
+  await t.engine.recover();
+  const state = await snapshot(t, step);
+  expect(state.journal.map((r) => r.kind)).toEqual([
+    "PREPARED",
+    "ARMED",
+    "SENT_EVIDENCE",
+    "SUCCEEDED",
+    "SENDER_RETIRED",
+  ]);
+  expect(state.budget).toMatchObject({ spentMinor: 7, reservedMinor: 0 });
+  expect(await t.artifacts.readTextSpool(t.context, key)).toEqual(truncated);
+});
+
+test("a truncated outcome alone blocks the owner after recovery", async () => {
+  const { t, accounts, step } = await runtimeFixture(fixture);
+  await expect(
+    accounts.dispatchTextAttempt(t.context, step, invocation(step, socketReset())),
+  ).rejects.toThrow();
+  const arm = await t.db.textAttemptEvidence.findFirstOrThrow({
+    where: { attemptId: step.id, kind: "ARMED" },
+  });
+  const key = `runs/text-evidence/${step.id}/${arm.nonce}/REJECTED.json`;
+  const truncated = Buffer.from("{");
+  await t.artifacts.writeTextSpool(t.context, key, truncated);
+  await t.engine.recover();
+  await expect(t.control.abandonTerminalText(t.context, step.runId, step.id)).rejects.toThrow();
+  expect(await t.artifacts.readTextSpool(t.context, key)).toEqual(truncated);
+  expect((await snapshot(t, step)).reservations).toMatchObject([{ status: "RESERVED" }]);
+});
+
 test.each(["SUCCEEDED", "REJECTED"] as const)(
   "owner cannot confirm pending %s spool delivery",
   async (kind) => {
@@ -112,7 +161,7 @@ test.each(["SUCCEEDED", "REJECTED"] as const)(
   },
 );
 
-test.each([503, undefined, 403])(
+test.each([503, undefined, null, "401", 403])(
   "quarantines a keyed rejection with unproven status %s",
   async (httpStatus) => {
     const { t, accounts, step } = await runtimeFixture(fixture);

@@ -16,6 +16,7 @@ export const MediaReceiptSchema = z
     seconds: z.number().nonnegative(),
     providerDurationSeconds: z.number().nonnegative().optional(),
     costMinor: z.int().nonnegative(),
+    postedNetMinor: z.int().nonnegative().optional(),
     objectKey: z.string().regex(/^runs\/(?:permanent|draft\/\d+)\/[a-f0-9]{64}$/),
     checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
     mimeType: z.string().min(1),

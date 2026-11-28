@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
-import {
-  AssemblyManifestSchema,
-  MediaReceiptSchema,
-  type MediaReceipt,
-} from "@reelforge/contracts";
+import { AssemblyManifestSchema, type MediaReceipt } from "@reelforge/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runsFixture } from "../runs/runs.fixture.js";
 import { json, type Artifact } from "../runs/runs.types.js";
 import {
   attachHistoricalGoogleId,
   historicalTextFixture,
+  importHistoricalBooking,
+  readArtifact,
+  readReceipt,
+  repriceHistoricalShot,
+  readManifest,
 } from "./historical-text-receipt.fixture.js";
 import { setupAssembly } from "./media-assembly.fixture.js";
 
@@ -58,20 +59,10 @@ async function startAssemblyStage({
   });
 }
 
-async function readArtifact(
-  { t, run }: Awaited<ReturnType<typeof setupAssembly>>,
-  artifact: Artifact,
-): Promise<Buffer> {
-  return t.storage.getObject({ workspaceId: run.workspaceId, objectKey: artifact.objectKey });
-}
-
-function readReceipt(output: unknown): MediaReceipt {
-  return MediaReceiptSchema.parse((output as { receipt: unknown }).receipt);
-}
-
 async function seedHistoricalManifest(
   setup: Awaited<ReturnType<typeof setupAssembly>>,
   receipts: MediaReceipt[],
+  extraPosted = 0,
 ): Promise<{ source: Artifact; media: Artifact; bytes: Buffer }> {
   const { t, run } = setup;
   const media = await t.artifacts.put(
@@ -97,7 +88,7 @@ async function seedHistoricalManifest(
         receipts,
         words: renderedFixture.words,
         promptVersions: [promptReceipt()],
-        totalCostMinor: receipts.reduce((total, receipt) => total + receipt.costMinor, 0),
+        totalCostMinor: receipts.reduce((total, receipt) => total + receipt.costMinor, extraPosted),
         videoChecksumSha256: media.checksumSha256,
       }),
     ),
@@ -115,49 +106,6 @@ async function seedHistoricalManifest(
     },
   });
   return { source, media, bytes };
-}
-
-async function repriceHistoricalShot(
-  { t, run }: Awaited<ReturnType<typeof setupAssembly>>,
-  key: string,
-): Promise<MediaReceipt> {
-  const step = await t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key } });
-  const original = readReceipt(step.output);
-  const corrected = {
-    ...original,
-    costBasis: "BILLED" as const,
-    costMinor: original.costMinor + 11,
-  };
-  await t.db.videoRunStep.create({
-    data: {
-      workspaceId: run.workspaceId,
-      runId: run.id,
-      key,
-      attempt: 2,
-      providerId: original.providerId,
-      providerJobId: "different-reshoot",
-      state: "SUCCEEDED",
-      idempotencyKey: `${run.id}:${key}:2`,
-      input: {},
-      output: json({ receipt: { ...original, providerJobId: "different-reshoot", costMinor: 99 } }),
-    },
-  });
-  await t.store.mutate(t.context, run.id, "provider_receipt", async (db) => {
-    await db.videoRunStep.updateMany({
-      where: { id: step.id },
-      data: {
-        costMinor: corrected.costMinor,
-        output: json({ ...(step.output as object), receipt: corrected }),
-      },
-    });
-    const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-    await db.budgetEnvelope.updateMany({
-      where: { id: budget.id },
-      data: { spentMinor: budget.spentMinor + corrected.costMinor - original.costMinor },
-    });
-    return { value: null, payload: { key } };
-  });
-  return corrected;
 }
 
 describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", () => {
@@ -238,20 +186,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
       return renderedFixture;
     });
     const published = await bindings.assembly.execute(t.context, run, t.brief);
-    const manifest = async (
-      descriptors: Artifact[],
-    ): Promise<ReturnType<typeof AssemblyManifestSchema.parse>> =>
-      AssemblyManifestSchema.parse(
-        JSON.parse(
-          (
-            await readArtifact(
-              setup,
-              descriptors.find((a) => a.kind === "manifest")!,
-            )
-          ).toString(),
-        ),
-      );
-    const first = await manifest(published);
+    const first = await readManifest(setup, published);
     const text = {
       dispatchKey,
       costMinor: 20,
@@ -262,28 +197,80 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
     expect(first.totalCostMinor).toBe(beforeTextBill + 13);
     const key = `shot-${plan.manifest.shots[0]!.ordinal}`;
     await repriceHistoricalShot(setup, key);
-    const rebuilt = await manifest(await bindings.assembly.artifacts(t.context, run));
+    const rebuilt = await readManifest(setup, await bindings.assembly.artifacts(t.context, run));
     expect(rebuilt.receipts.find((r) => r.dispatchKey === dispatchKey)).toMatchObject(text);
     expect(rebuilt.totalCostMinor).toBe(first.totalCostMinor + 11);
   });
 
-  it.each(["id-less", "late ID", "ambiguous"] as const)(
+  it("rebuilds a credited text line at its gross bill and adjusts the published total by its net posting", async () => {
+    const setup = await setupAssembly(fixture);
+    const { t, run, bindings, plan } = setup;
+    await startAssemblyStage(setup);
+    const { dispatchKey } = await historicalTextFixture(setup, "id-less");
+    await t.db.budgetEnvelope.updateMany({
+      where: { runId: run.id },
+      data: { spentMinor: { increment: 7 } },
+    });
+    const bill = await importHistoricalBooking(t, dispatchKey);
+    const step = await t.db.videoRunStep.findFirstOrThrow({
+      where: { runId: run.id, idempotencyKey: dispatchKey },
+    });
+    vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
+    await t.usage.createAdjustment(t.context, {
+      kind: "CREDIT",
+      textAttemptId: step.id,
+      operationKey: "verified-refund",
+      reason: "invoice refund",
+      amountMinor: 5,
+    });
+    vi.spyOn(bindings.renderer, "render").mockResolvedValue(renderedFixture);
+    const published = await readManifest(
+      setup,
+      await bindings.assembly.execute(t.context, run, t.brief),
+    );
+    expect(published.receipts.find((r) => r.dispatchKey === dispatchKey)).toMatchObject({
+      costMinor: 7,
+      postedNetMinor: 2,
+    });
+    await bill(2);
+    await repriceHistoricalShot(setup, `shot-${plan.manifest.shots[0]!.ordinal}`);
+    const rebuilt = await readManifest(setup, await bindings.assembly.artifacts(t.context, run));
+    expect(rebuilt.receipts.find((r) => r.dispatchKey === dispatchKey)).toMatchObject({
+      providerJobId: "historical-google-id",
+      costBasis: "BILLED",
+      costMinor: 2,
+      postedNetMinor: 0,
+    });
+    expect(rebuilt.totalCostMinor).toBe(published.totalCostMinor + 11 - 2);
+    expect(
+      (await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } })).spentMinor,
+    ).toBe(rebuilt.totalCostMinor);
+  });
+
+  it.each(["id-less", "late ID", "ambiguous", "inconsistent total"] as const)(
     "reprices only the rendered shot while resolving historical text: %s",
     async (mode) => {
       const setup = await setupAssembly(fixture);
       const { t, run, bindings, plan } = setup;
-      const { receipt, dispatchKey } = await historicalTextFixture(setup, mode);
+      const { receipt, dispatchKey } = await historicalTextFixture(
+        setup,
+        mode === "inconsistent total" ? "late ID" : mode,
+      );
       const key = `shot-${plan.manifest.shots[0]!.ordinal}`;
       const original = readReceipt(
         (await t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key } })).output,
       );
-      const historical = await seedHistoricalManifest(setup, [receipt, original]);
+      const historical = await seedHistoricalManifest(
+        setup,
+        [receipt, original],
+        mode === "inconsistent total" ? 13 : 0,
+      );
       const corrected = await repriceHistoricalShot(setup, key);
 
       const descriptors = await bindings.assembly.artifacts(t.context, run);
       expect(await readArtifact(setup, historical.source)).toEqual(historical.bytes);
       expect(descriptors.find((item) => item.kind === "final")).toEqual(historical.media);
-      if (mode === "ambiguous") {
+      if (mode === "ambiguous" || mode === "inconsistent total") {
         expect(descriptors).toEqual([historical.media]);
         expect(
           await t.db.videoRunStep.findFirstOrThrow({
@@ -301,7 +288,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
         {
           ...receipt,
           dispatchKey,
-          ...(mode === "late ID" && { costMinor: 20, costBasis: "BILLED" }),
+          ...(mode === "late ID" && { costMinor: 20, postedNetMinor: 20, costBasis: "BILLED" }),
           providerJobId: mode === "late ID" ? "historical-google-id" : null,
         },
         corrected,

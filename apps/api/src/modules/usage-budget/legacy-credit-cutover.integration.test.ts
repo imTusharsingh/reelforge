@@ -1,3 +1,4 @@
+import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
@@ -48,74 +49,123 @@ async function historicalCredit(
 describe.skipIf(!process.env.DATABASE_URL)("workspace credit cutover", () => {
   const fixture = runsFixture();
   afterEach(() => vi.unstubAllEnvs());
-  it("links both proven refunds before folding either pending 401", async () => {
-    const t = await fixture.tenant();
-    const { workspaceId } = t.run;
-    vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
-    const options = { workspaceId, apply: true, oldWritersDrained: true, auditId: "two-bookings" };
-    const steps = [];
-    for (const key of ["first", "second"]) {
-      const step = await legacy(t, key, { committed: true });
-      await t.store.mutate(t.context, t.run.id, "step_failed", async () => ({
-        value: null,
-        stepId: step.id,
-        payload: {
-          reason: "OWNER_CONFIRMED_TERMINAL_TEXT",
-          confirmedBy: t.context.userId,
-          committedEstimateMinor: 7,
-        },
-      }));
-      steps.push(step);
-    }
-    expect(
-      (await importLegacyTextAttempts(t.db, options)).attempts.map((row) => row.outcome),
-    ).toEqual(["owner-settled", "owner-settled"]);
-    for (const step of steps) {
-      const dispatchKey = step.idempotencyKey;
-      await historicalCredit(t, { textAttemptId: step.id, dispatchKey });
-      const state = await readTextAttempt(t.db, step);
-      await expect(
-        ingestMatchedTextRejection(t.db, {
-          target: {
-            workspaceId,
-            attemptId: step.id,
-            dispatchKey,
-            armNonce: state!.armNonce,
-            incarnation: drainedLegacyIncarnation,
+  it.each([true, false])(
+    "folds both pending 401s when the first booking also has a refund: %s",
+    async (both) => {
+      const t = await fixture.tenant();
+      const { workspaceId } = t.run;
+      vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+      const options = {
+        workspaceId,
+        apply: true,
+        oldWritersDrained: true,
+        auditId: "two-bookings",
+      };
+      const steps = [];
+      for (const key of ["first", "second"]) {
+        const step = await legacy(t, key, { committed: true });
+        await t.store.mutate(t.context, t.run.id, "step_failed", async () => ({
+          value: null,
+          stepId: step.id,
+          payload: {
+            reason: "OWNER_CONFIRMED_TERMINAL_TEXT",
+            confirmedBy: t.context.userId,
+            committedEstimateMinor: 7,
           },
-          actor: "operator",
-          source: "google-project-audit",
-          reference: `401-${step.id}`,
-          observedAt: new Date().toISOString(),
-          httpStatus: 401,
-          code: "UNAUTHENTICATED",
-        }),
-      ).rejects.toThrow("unattributed");
-    }
-    const applied = await importLegacyTextAttempts(t.db, options);
-    expect(applied.unresolvedCreditIds).toEqual([]);
-    expect(applied.attempts.map((row) => [row.action, row.after?.netMinor])).toEqual([
-      ["reconciled", 0],
-      ["reconciled", 0],
-    ]);
-    await importLegacyTextAttempts(t.db, options);
-    for (const step of steps) {
+        }));
+        steps.push(step);
+      }
       expect(
-        await t.db.usageReservation.findFirstOrThrow({
-          where: { workspaceId, correlationId: step.id },
-        }),
-      ).toMatchObject({ status: "COMMITTED", committedMinor: 0n });
+        (await importLegacyTextAttempts(t.db, options)).attempts.map((row) => row.outcome),
+      ).toEqual(["owner-settled", "owner-settled"]);
+      for (const step of steps) {
+        const dispatchKey = step.idempotencyKey;
+        if (both || step === steps[1])
+          await historicalCredit(t, { textAttemptId: step.id, dispatchKey });
+      }
+      for (const step of steps) {
+        const dispatchKey = step.idempotencyKey;
+        const state = await readTextAttempt(t.db, step);
+        await expect(
+          ingestMatchedTextRejection(t.db, {
+            target: {
+              workspaceId,
+              attemptId: step.id,
+              dispatchKey,
+              armNonce: state!.armNonce,
+              incarnation: drainedLegacyIncarnation,
+            },
+            actor: "operator",
+            source: "google-project-audit",
+            reference: `401-${step.id}`,
+            observedAt: new Date().toISOString(),
+            httpStatus: 401,
+            code: "UNAUTHENTICATED",
+          }),
+        ).rejects.toThrow("unattributed");
+      }
+      const applied = await importLegacyTextAttempts(t.db, options);
+      expect(applied.unresolvedCreditIds).toEqual([]);
+      expect(applied.attempts.map((row) => [row.action, row.after?.netMinor])).toEqual([
+        ["reconciled", 0],
+        ["reconciled", 0],
+      ]);
+      await importLegacyTextAttempts(t.db, options);
+      for (const step of steps) {
+        expect(
+          await t.db.usageReservation.findFirstOrThrow({
+            where: { workspaceId, correlationId: step.id },
+          }),
+        ).toMatchObject({ status: "COMMITTED", committedMinor: 0n });
+        expect(
+          await t.db.usageAdjustment.count({ where: { workspaceId, textAttemptId: step.id } }),
+        ).toBe(both || step === steps[1] ? 1 : 0);
+        expect(
+          await t.db.textAttemptEvidence.count({
+            where: { workspaceId, attemptId: step.id, kind: "CREDIT" },
+          }),
+        ).toBe(both || step === steps[1] ? 1 : 0);
+      }
+      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(0);
+    },
+  );
+  it.each(["before", "after"])(
+    "keeps the verified bill arriving %s historical media credit cutover",
+    async (order) => {
+      const t = await fixture.tenant();
+      const { workspaceId, channelId } = t.run;
+      const job = await refusedRoutedJob(t);
+      const id = await historicalCredit(t, { providerRequestId: job.requestId });
+      vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+      const options = {
+        workspaceId,
+        apply: true,
+        oldWritersDrained: true,
+        auditId: "verified-bill",
+      };
+      if (order === "before") await job.bill(4);
+      expect((await importLegacyTextAttempts(t.db, options)).unresolvedCreditIds).toEqual([]);
+      if (order === "after") await job.bill(4);
+      expect((await importLegacyTextAttempts(t.db, options)).mediaCreditLinks).toEqual([]);
+      expect(await t.db.usageAdjustment.findMany({ where: { workspaceId } })).toMatchObject([
+        { id, providerRequestId: job.requestId, amountMinor: 3n },
+      ]);
+      const where = { workspaceId, correlationId: job.correlationId };
+      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+        committedMinor: 4n,
+      });
+      expect((await t.db.providerRequest.findFirstOrThrow({ where })).actualCost?.toString()).toBe(
+        "0.04",
+      );
+      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(4);
       expect(
-        await t.db.usageAdjustment.count({ where: { workspaceId, textAttemptId: step.id } }),
-      ).toBe(1);
-      expect(
-        await t.db.textAttemptEvidence.count({
-          where: { workspaceId, attemptId: step.id, kind: "CREDIT" },
-        }),
-      ).toBe(1);
-    }
-    expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(0);
-  });
+        (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+      ).toMatchObject({
+        totalMinor: 4,
+        adjustmentNetMinor: 0,
+      });
+    },
+  );
   it("attributes the historical media refund in place and preserves exposure on replay", async () => {
     const t = await fixture.tenant();
     const { workspaceId, channelId } = t.run;

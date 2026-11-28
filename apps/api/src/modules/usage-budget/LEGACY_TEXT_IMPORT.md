@@ -46,16 +46,15 @@ The report lists unresolved standalone credit IDs in `unresolvedCreditIds`.
 Any such ID blocks the workspace import and returns exit status 2. Reconcile
 the original adjustment to a scoped charge using its audit evidence, or document
 a genuinely independent budget credit before enabling reversals. The adjustments
-endpoint accepts `BUDGET_CREDIT` for independent budget adjustments. A charge
-A text `CREDIT` requires the original text attempt ID and a unique operation key.
+endpoint accepts `BUDGET_CREDIT` for independent budget adjustments. A text `CREDIT` requires the original text attempt ID and a unique operation key.
 
-For previously journaled attempts the dry-run identifies rejected event keys
-and sequences that conflict with an earlier positive bill or lack definitive
-provider status. Apply records a JOURNAL_REPAIR with the change record and the
-exact rejected observations. Replay retains the verified bill, or restores the
-outstanding estimate until the outcome is proven. The original journal remains
-available for audit. Re-run the inventory and verify the posted amounts before
-resuming paid dispatch.
+The deployment baseline is `origin/main`. It stored standalone adjustments and
+mutable text steps, reservations, provider requests and run events. The paid
+text journal and provider-request credit link first appear in this unmerged PR.
+Earlier PR revisions never wrote deployed data. That rules out historical
+journal repairs, replacement files at repaired keys, and previously linked
+OUTAGE refunds. Ambiguous media dispatches retain their liability. A malformed
+live spool file stays pending while recovery probes the other evidence keys.
 
 An exact credit audit on an existing projection appears as pending until apply
 links the adjustment and posts the revised net in one transaction. A media
@@ -68,4 +67,7 @@ proven refunds before folding pending reversals. For a historical media refund,
 the supplemental CREDIT audit must identify the original adjustment, provider
 request, channel, currency, amount and operation key, and match the original
 actor and correlation. Review `mediaCreditLinks` in dry-run. Apply records the
-cutover audit ID and links the original adjustment in place.
+cutover audit ID and links the original adjustment in place. A verified final
+media bill supersedes the refunded estimate in either arrival order. Each
+imported text projection must agree with the current journal sequence and
+posting before the cutover can report it as settled.

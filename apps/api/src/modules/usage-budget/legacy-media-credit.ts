@@ -43,6 +43,7 @@ export async function linkMediaCredit(
     { workspaceId, providerRequestId: link.providerRequestId, now: new Date() },
     row.channelId,
     row.amountMinor,
+    true,
   );
   if (currency !== row.currency)
     throw new ConflictException("Credit currency does not match media charge");

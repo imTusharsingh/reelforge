@@ -78,21 +78,12 @@ export async function postMediaCredit(
   filter: { workspaceId: string; providerRequestId: string; now: Date },
   channelId: string | null,
   amountMinor: bigint,
+  historical = false,
 ): Promise<string> {
   await tx.$queryRaw`SELECT id FROM provider_requests WHERE workspace_id = ${filter.workspaceId}::uuid AND id = ${filter.providerRequestId}::uuid FOR UPDATE`;
   const [row] = await readLedgerRows(tx, filter);
-  const cost = row && classifyCost(row);
-  if (
-    !row ||
-    row.channelId !== channelId ||
-    !["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(categorize(row)) ||
-    !terminalMediaFailure(row.errorCode) ||
-    cost?.kind !== "FAILED_ESTIMATED" ||
-    !cost.currency ||
-    cost.amountMinor === null ||
-    amountMinor > cost.amountMinor
-  )
-    throw new ConflictException("Credit requires a remaining failed-at-estimate media charge");
+  if (!row || row.channelId !== channelId)
+    throw new ConflictException("Media charge scope changed");
   const [reservation, other] = await tx.usageReservation.findMany({
     where: {
       workspaceId: filter.workspaceId,
@@ -102,7 +93,21 @@ export async function postMediaCredit(
     take: 2,
   });
   if (other) throw new ConflictException("Ambiguous media reservation");
-  if (reservation?.status === "RESERVED" && reservation.expiresAt > filter.now)
+  const cost = classifyCost(row);
+  const finalBill = historical && cost?.kind === "ACTUAL";
+  if (
+    (!(
+      reservation?.idempotencyKey === `m08:${row.correlationId}` &&
+      reservation.category === "VIDEO_MEDIA"
+    ) &&
+      !["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(categorize(row))) ||
+    (!finalBill && (!terminalMediaFailure(row.errorCode) || cost?.kind !== "FAILED_ESTIMATED")) ||
+    !cost?.currency ||
+    cost.amountMinor === null ||
+    (!finalBill && amountMinor > cost.amountMinor)
+  )
+    throw new ConflictException("Credit requires a remaining failed-at-estimate media charge");
+  if (reservation?.status === "RESERVED")
     throw new ConflictException("Media reservation is still open");
   if (reservation?.status === "COMMITTED") {
     if (
@@ -110,10 +115,11 @@ export async function postMediaCredit(
       reservation.currency !== cost.currency ||
       reservation.channelId !== channelId ||
       reservation.committedMinor === null ||
-      reservation.committedMinor < amountMinor
+      (!finalBill && reservation.committedMinor < amountMinor)
     )
       throw new ConflictException("Credit exceeds the remaining committed media charge");
-    await reduceCoveredCharge(tx, row.correlationId, reservation, amountMinor);
+    const reduction = finalBill ? reservation.committedMinor - cost.amountMinor : amountMinor;
+    if (reduction !== 0n) await reduceCoveredCharge(tx, row.correlationId, reservation, reduction);
   }
   return cost.currency;
 }
@@ -154,7 +160,10 @@ async function reduceCoveredCharge(
         where: { id: envelope.id },
         data: {
           spentMinor,
-          overageMinor: Math.min(spentMinor, envelope.overageMinor),
+          overageMinor: Math.max(
+            Math.min(spentMinor, envelope.overageMinor),
+            spentMinor + envelope.reservedMinor - envelope.hardCapMinor,
+          ),
           revision: { increment: 1 },
         },
       });
