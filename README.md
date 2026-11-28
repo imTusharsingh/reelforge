@@ -111,6 +111,8 @@ Run these steps from the repository root.
 
 The media pipeline enforces a 30–45 second target. Example primary-route estimates for 30 and 45 seconds are $3.05 and $4.13 respectively, with base budgets around $3.62 and $4.93 including receipt headroom. Shot count, routing and reshoots change the total. New Briefs start at 45 seconds with a $5 target and $5.50 hard cap. Workspace and Brief daily/monthly limits both apply.
 
+Set `PAID_TEXT_V3_ENABLED=1` on the API and worker to enable journaled paid text dispatch for VideoRun planning and critique. The default is off. With the flag unset or set to `0`, dispatch is refused before contacting the provider and the attempt closes at zero cost.
+
 Scheduled discovery is opt-in. Set `DISCOVERY_ENABLED=true` and configure a positive `DISCOVERY_TEXT_ESTIMATE_USD` in major USD per grounded text request. Discovery can use YouTube search and paid Gemini text independently of a Short, under workspace budgets.
 
 ## YouTube publishing

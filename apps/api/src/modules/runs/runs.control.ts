@@ -10,7 +10,7 @@ import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admissi
 import { releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
 import { createReshoot, replayedReshoot } from "./run-reshoot.js";
 import { RunsService } from "./runs.service.js";
 import { RunsBoundary } from "./runs.boundary.js";
@@ -29,6 +29,16 @@ import {
 } from "../usage-budget/run-admission-state.js";
 import { closeReleasedMedia } from "../usage-budget/run-paid-admission.js";
 import { openCritics } from "../usage-budget/critic-admission.js";
+
+const resumableStoppedStages = [
+  "PLANNING",
+  "SCRIPTING",
+  "SHOT_PLANNING",
+  "GENERATING",
+  "ASSEMBLING",
+  "CRITIC",
+  "AWAITING_APPROVAL",
+];
 
 @Injectable()
 export class RunsControl {
@@ -232,6 +242,12 @@ export class RunsControl {
       if (current.revision !== run.revision) throw new ConflictException("Run changed");
       if (current.pauseReason === textCancellationRequested)
         throw new ConflictException("Cancellation is still pending");
+      if (
+        (current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+          current.pauseReason === "OPERATOR_ABANDONED") &&
+        context.role !== "OWNER"
+      )
+        throw new ForbiddenException("Workspace owner required to resume reconciliation");
       await assertAssemblyResumable(db, current);
       const hold = await activeSubmissionHold(db, tx, current);
       if (hold) {
@@ -245,16 +261,7 @@ export class RunsControl {
       }
       await this.assertGenerationResumable(db, current);
       const clearedStop =
-        current.pauseReason === "EMERGENCY_STOP" &&
-        [
-          "PLANNING",
-          "SCRIPTING",
-          "SHOT_PLANNING",
-          "GENERATING",
-          "ASSEMBLING",
-          "CRITIC",
-          "AWAITING_APPROVAL",
-        ].includes(current.state);
+        current.pauseReason === "EMERGENCY_STOP" && resumableStoppedStages.includes(current.state);
       const abandoned = current.pauseReason === "OPERATOR_ABANDONED";
       const resolved =
         current.pauseReason?.startsWith("RECONCILE_REQUIRED") &&

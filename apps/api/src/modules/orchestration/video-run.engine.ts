@@ -81,6 +81,8 @@ export class VideoRunEngine {
     const context = await this.context(job);
     const run = await this.runs.store.get(context, job.runId);
     if (job.stage && job.stage !== run.state) return null;
+    if (context.userId === RECOVERY_PRINCIPAL && run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
+      return null;
     return runWithContext(
       createContext({
         workspaceId: run.workspaceId,
@@ -365,11 +367,9 @@ export class VideoRunEngine {
       });
       for (const run of runs) {
         z.uuid().parse(run.id);
+        if (run.pauseReason?.startsWith("RECONCILE_REQUIRED")) continue;
         if (
-          run.state === "CANCELED" ||
-          run.state === "FAILED" ||
-          run.state === "PAUSED_BUDGET" ||
-          run.state === "NEEDS_HUMAN" ||
+          ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
           run.pauseReason
         ) {
           await this.enqueueAdmitted(context, db, run);

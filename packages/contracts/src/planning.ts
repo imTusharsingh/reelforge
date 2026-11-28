@@ -14,7 +14,8 @@ export const PlanningFormatSchema = z.enum([
   "quick-how-to",
   "news-recap",
 ]);
-export const PlanningScriptSchema = z
+export const PLANNING_HOOK_MAX_WORDS = 10;
+export const StoredPlanningScriptSchema = z
   .object({
     hook: HookSchema,
     beats: z.array(text).min(3).max(5),
@@ -24,6 +25,16 @@ export const PlanningScriptSchema = z
     wordCount: z.int().positive(),
   })
   .strict();
+export const PlanningScriptSchema = StoredPlanningScriptSchema.extend({
+  hook: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (hook) => words(hook) <= PLANNING_HOOK_MAX_WORDS,
+      `Hook must contain at most ${PLANNING_HOOK_MAX_WORDS} words`,
+    ),
+});
 export type PlanningScript = z.infer<typeof PlanningScriptSchema>;
 export const PlanningRequestSchema = z
   .object({
@@ -46,7 +57,7 @@ export type ArtPlan = z.infer<typeof ArtPlanSchema>;
 export type ReferencePin = z.infer<typeof ReferencePinSchema>;
 export type PlanningPromptReceipt = Readonly<{
   role: "scriptwriter" | "director" | "art-director";
-  version: 2;
+  version: 2 | 3;
   templateVersionId: string;
   promptSnapshotId: string;
   configSnapshotId: string;
@@ -71,7 +82,6 @@ export function validatePlanningScript(value: unknown, request: PlanningRequest)
   const transcript = planningTranscript(script);
   const count = words(transcript);
   if (script.wordCount !== count) throw new Error("Incorrect script word count");
-  if (words(script.hook) / (3.5 * pace) > 3) throw new Error("Hook exceeds three seconds");
   if (
     !scriptWordBudget({
       hook: script.hook,

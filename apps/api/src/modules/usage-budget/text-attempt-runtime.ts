@@ -1,3 +1,4 @@
+import { InvalidCompletedScript, isScriptRepair } from "../script/script-repair.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
@@ -5,6 +6,7 @@ import { InvalidCompletedText, ProviderFailure } from "@reelforge/ai-providers";
 import { z } from "zod";
 import { json, type Context, type Run, type Step } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
+import { BudgetExhaustedError, BudgetUnresolvableError } from "./usage-budget.types.js";
 import { assertCriticRevision } from "./critic-admission.js";
 import { envelopeRoom } from "./run-envelope.js";
 import { appendTextEvidence, lockTextAttempt, readTextAttempt } from "./text-attempt-store.js";
@@ -42,17 +44,18 @@ export async function dispatchPaidText<T>(
   step: Step,
   invoke: PaidTextInvocation<T>,
 ): Promise<PaidTextResult<T>> {
-  if (!paidTextEnabled()) throw new ServiceUnavailableException("Paid text dispatch is disabled");
   const nonce = randomUUID();
   let armedStage: Run["state"];
   try {
+    if (!paidTextEnabled()) throw new ServiceUnavailableException("Paid text dispatch is disabled");
     const run = await access.runs.store.get(context, step.runId);
     const proof = await access.paid.prepareReservation(run);
     await access.boundary.check(context, run);
     armedStage = await authorizeTextArm(access, context, step, nonce, proof);
   } catch (error) {
     // Treat every unacknowledged arm as a lost permission, even if its transaction committed.
-    await surrenderTextArm(access, context, step, nonce, true);
+    const reason = preDispatchRefusal(error, step);
+    await surrenderTextArm(access, context, step, nonce, true, reason);
     throw error;
   }
   try {
@@ -67,6 +70,24 @@ export async function dispatchPaidText<T>(
     throw error;
   }
   return observeInvocation(access, context, step, nonce, invoke);
+}
+
+function preDispatchRefusal(error: unknown, step: Step): string | undefined {
+  if (error instanceof BudgetExhaustedError || error instanceof BudgetUnresolvableError)
+    return error.code;
+  if (error instanceof ServiceUnavailableException) {
+    if (
+      error.message === "Paid text dispatch is disabled" ||
+      error.message === "Budget policy unavailable"
+    )
+      return error.message;
+  }
+  if (
+    error instanceof ConflictException &&
+    ["BUDGET_CAP", "Paid text envelope cannot cover the attempt"].includes(error.message)
+  )
+    return "BUDGET_CAP";
+  if (isScriptRepair(step)) return "Script repair admission refused before dispatch";
 }
 
 async function authorizeTextArm(
@@ -135,10 +156,16 @@ async function surrenderTextArm(
   step: Step,
   nonce: string,
   closeUnarmed: boolean,
+  reason?: string,
 ): Promise<void> {
   const observation: TextObservation = {
     kind: "NOT_DISPATCHED",
-    data: { dispatchKey: step.idempotencyKey, source: "sender", senderNonce: nonce },
+    data: {
+      dispatchKey: step.idempotencyKey,
+      source: "sender",
+      senderNonce: nonce,
+      ...(reason && { reason }),
+    },
   };
   // If the arm transaction rolled back, recovery cannot discover its invocation nonce.
   // Only an unarmed preparation probes this second location.
@@ -178,6 +205,10 @@ async function observeInvocation<T>(
     );
   } catch (error) {
     failure = error;
+  }
+  if (!handoff && failure instanceof ProviderFailure && !failure.dispatched && !failure.http) {
+    await surrenderTextArm(access, context, step, nonce, false, failure.message);
+    throw failure;
   }
   if (result && result.dispatchKey !== step.idempotencyKey)
     throw new ConflictException("Text response dispatch key does not match its attempt");
@@ -229,6 +260,9 @@ function failureObservation(step: Step, failure: unknown): TextObservation | nul
       data: json({
         dispatchKey,
         usable: false,
+        ...(failure instanceof InvalidCompletedScript && {
+          validationError: failure.validationError,
+        }),
         googleId: failure.providerJobId,
         usage: failure.usage,
       }),

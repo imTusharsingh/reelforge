@@ -1,3 +1,8 @@
+import {
+  failedScriptValidation,
+  isScriptRepair,
+  scriptwriterKey,
+} from "../script/script-repair.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -160,7 +165,7 @@ async function postStep(tx: Transaction, step: Step, state: TextAttemptState): P
     await tx.videoRunStep.updateMany({
       where,
       data:
-        step.state === "SUCCEEDED"
+        step.state === "SUCCEEDED" || failedScriptValidation(step)
           ? { costMinor: state.netMinor, ...(state.googleId && { providerJobId: state.googleId }) }
           : {
               state: "WAITING_EXTERNAL",
@@ -185,7 +190,9 @@ async function postStep(tx: Transaction, step: Step, state: TextAttemptState): P
         ...(state.phase === "NOT_DISPATCHED" && { output: { closedBy: "NOT_DISPATCHED" } }),
         costMinor: state.netMinor,
         providerJobId: state.googleId,
-        error: { code },
+        error: state.validationError
+          ? { code: "SCRIPT_VALIDATION", message: state.validationError }
+          : { code },
         finishedAt: step.finishedAt ?? new Date(),
       },
     });
@@ -235,6 +242,9 @@ function activeStageFailure(run: Run, step: Step, next: TextAttemptState): strin
     ? run.state === "CRITIC"
     : ["PLANNING", "SCRIPTING", "SHOT_PLANNING"].includes(run.state);
   if (!ownsStage) return null;
+  if (next.phase === "NOT_DISPATCHED") return next.refusalReason;
+  if (next.validationError && step.key === scriptwriterKey)
+    return isScriptRepair(step) ? "SCRIPT_VALIDATION" : null;
   if (
     next.phase === "REJECTED" ||
     next.phase === "OWNER_CONFIRMED" ||
@@ -244,7 +254,12 @@ function activeStageFailure(run: Run, step: Step, next: TextAttemptState): strin
   return null;
 }
 
-async function closeFailedStage(tx: Transaction, run: Run, code: string): Promise<void> {
+async function closeFailedStage(
+  tx: Transaction,
+  run: Run,
+  code: string,
+  message: string,
+): Promise<void> {
   await tx.videoRunStep.updateMany({
     where: {
       workspaceId: run.workspaceId,
@@ -255,7 +270,7 @@ async function closeFailedStage(tx: Transaction, run: Run, code: string): Promis
     data: {
       state: "FAILED",
       finishedAt: new Date(),
-      error: { code: code, message: code },
+      error: { code, message },
     },
   });
 }
@@ -294,22 +309,20 @@ async function postEvent(
     next.senderRetired &&
     !run.pauseReason &&
     !["FAILED", "CANCELED"].includes(run.state);
-  const clearsHold = !unresolved && run.pauseReason === ownHold;
+  const settledOwnHold = !unresolved && run.pauseReason === ownHold;
   const stageFailure = activeStageFailure(run, step, next);
-  const canChangeReason = !run.pauseReason || clearsHold;
+  const canChangeReason = !run.pauseReason || settledOwnHold;
   const db = scopedTransaction(tx, context);
   const otherHold =
-    clearsHold || (stageFailure && canChangeReason)
-      ? await remainingSubmissionHold(db, tx, run)
-      : null;
+    stageFailure && canChangeReason ? await remainingSubmissionHold(db, tx, run) : null;
   const failStage = canChangeReason && !otherHold ? stageFailure : null;
-  if (failStage) await closeFailedStage(tx, run, failStage);
+  if (failStage) await closeFailedStage(tx, run, failStage, next.validationError ?? failStage);
   await tx.videoRun.updateMany({
     where: { workspaceId: run.workspaceId, id: run.id },
     data: {
       revision: { increment: 1 },
       ...(shouldHold && { pauseReason: ownHold }),
-      ...(clearsHold && { pauseReason: otherHold }),
+
       ...(failStage && {
         state: "FAILED",
         pauseReason: failStage,

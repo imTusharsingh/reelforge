@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PlanningFormatSchema,
+  PlanningScriptSchema,
   planningTranscript,
   validatePlanningScript,
   words,
 } from "@reelforge/contracts";
+import { planningPrompts } from "../config/planning-prompts.js";
 import { ScriptwriterService, DirectorService } from "./planning-agents.js";
 import { context, planningFixture, scriptFixture, shotsFixture } from "./planning.fixture.js";
 import { screenPlanningContent, validatePlanningAccess } from "./planning-guardrails.js";
@@ -51,10 +53,19 @@ describe("V4 structured planning", () => {
       validatePlanningScript({ ...scriptFixture(), ...patch }, planningFixture()),
     ).toThrow();
   });
-  it("enforces hook time, duration budget, and Brief language", () => {
+  it.each([10, 11])("applies the prompted word limit to a %i-word hook", (length) => {
+    const request = planningFixture();
+    const script = { ...scriptFixture(), hook: Array<string>(length).fill("leaf").join(" ") };
+    script.wordCount = words(planningTranscript(script));
+    expect(planningPrompts.scriptwriter.sections.instructions).toContain("at most 10 words");
+    expect(PlanningScriptSchema.safeParse(script).success).toBe(length === 10);
+    if (length === 10) expect(validatePlanningScript(script, request)).toEqual(script);
+    else expect(() => validatePlanningScript(script, request)).toThrow("at most 10 words");
+  });
+  it("enforces duration budget and Brief language", () => {
     const request = planningFixture();
     request.brief.narratorVoice!.pace = 0.1;
-    expect(() => validatePlanningScript(scriptFixture(), request)).toThrow("three seconds");
+    expect(() => validatePlanningScript(scriptFixture(), request)).toThrow("duration budget");
     request.brief.narratorVoice!.pace = 1;
     request.brief.targetDurationSeconds = 3;
     expect(() => validatePlanningScript(scriptFixture(), request)).toThrow("duration budget");
