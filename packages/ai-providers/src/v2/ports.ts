@@ -33,7 +33,8 @@ export type VideoOptions = Readonly<{
   lastFrame?: MediaInput;
   extension?: Readonly<{ providerJobId: string; previousSeconds: number }>;
 }>;
-export type RecordBilledSeconds = (seconds: number) => Promise<void>;
+export type FailedJobStatus = Extract<JobStatus, "refused" | "failed">;
+export type RecordBilledSeconds = (seconds: number, failure?: FailedJobStatus) => Promise<void>;
 /** Handles only media delivery after the provider status and billing have been processed. */
 export type MediaDeliveryFailure = (cause: unknown) => never;
 export interface VideoGenPort {

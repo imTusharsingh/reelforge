@@ -85,6 +85,36 @@ describe("Gemini media fake-fetch contracts", () => {
       await expect(submit()).rejects.toMatchObject({ kind: "OUTAGE", dispatched: true });
     },
   );
+  it.each([
+    [{ status: "refused" }, "refused", "REFUSAL"],
+    [{ status: "failed", error: { code: "safety" } }, "refused", "REFUSAL"],
+    [{ status: "cancelled" }, "failed", "INVALID"],
+  ])(
+    "records explicit terminal billing before returning or throwing: %j",
+    async (response, state, kind) => {
+      const { client, fetcher, store } = fixture();
+      const billing = vi
+        .fn<(seconds: number, failure?: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      const billed = { ...response, usage: { billed_seconds: 3.3 } };
+      fetcher
+        .mockResolvedValueOnce(json({ status: "in_progress", usage: { billed_seconds: 1 } }))
+        .mockResolvedValueOnce(json(response))
+        .mockResolvedValueOnce(json(billed))
+        .mockResolvedValueOnce(json(billed));
+      await expect(client.poll("job", billing)).resolves.toBe("running");
+      await expect(client.poll("job", billing)).resolves.toBe(state);
+      expect(billing).not.toHaveBeenCalled();
+      await expect(client.poll("job", billing)).resolves.toBe(state);
+      expect(billing).toHaveBeenCalledExactlyOnceWith(3.3, state);
+      await expect(client.fetch("job", "video", undefined, billing)).rejects.toMatchObject({
+        kind,
+      });
+      expect(billing).toHaveBeenCalledTimes(2);
+      expect(billing).toHaveBeenLastCalledWith(3.3, state);
+      expect(store.save).not.toHaveBeenCalled();
+    },
+  );
   it("downloads URI delivery without leaking credentials to storage origins", async () => {
     const { client, fetcher } = fixture();
     fetcher

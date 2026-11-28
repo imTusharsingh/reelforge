@@ -5,6 +5,7 @@ import {
   secondsCost,
   ProviderFailure,
   type ClipArtifact,
+  type FailedJobStatus,
   type VideoGenPort,
   type Money,
 } from "@reelforge/ai-providers";
@@ -116,7 +117,7 @@ export class ProviderLedger {
         throw new ConflictException("Provider refusal requires a matching job receipt");
       if (row.errorCode !== "REFUSED")
         await tx.providerRequest.update({ where: { id: row.id }, data: { errorCode: "REFUSED" } });
-      if (reservation) {
+      if (reservation && routedBilledSeconds(row.usage) === null) {
         const credited = row.credits.reduce((sum, credit) => sum + credit.amountMinor, 0n);
         await this.budgets.commit(
           workspaceId,
@@ -288,6 +289,7 @@ export class ProviderLedger {
     port: VideoGenPort,
     artifact: Pick<ClipArtifact, "billedSeconds"> & Partial<ClipArtifact>,
     jobId: string,
+    failure?: FailedJobStatus,
   ): Promise<void> {
     await this.db.$transaction(async (tx) => {
       const { row, metadata, reservation } = await lockedJob(tx, workspaceId, correlationId, jobId);
@@ -320,9 +322,9 @@ export class ProviderLedger {
       await tx.providerRequest.update({
         where: { id: row.id },
         data: {
-          status: "SUCCEEDED",
+          status: failure ? "FAILED" : "SUCCEEDED",
           actualCost: actual,
-          errorCode: null,
+          errorCode: failure === "refused" ? "REFUSED" : failure ? "PROVIDER_JOB_FAILED" : null,
           ...(verified && !keepEarlier && { usage: { seconds: artifact.billedSeconds } }),
           responseMetadata: {
             ...metadata,

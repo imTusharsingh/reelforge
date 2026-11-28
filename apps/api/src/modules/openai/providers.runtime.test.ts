@@ -1,8 +1,9 @@
-import { runsFixture } from "../runs/runs.fixture.js";
+import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import type { ProviderKeys } from "./provider-keys.js";
 import type { ProviderVideoHealth } from "./provider-video-health.js";
+import { ProviderArtifacts } from "./provider-artifacts.js";
 import { ProviderLedger } from "./provider-ledger.js";
 import { ProvidersRuntime } from "./providers.runtime.js";
 import { shot, artifact } from "./provider.fixture.js";
@@ -129,35 +130,123 @@ describe("registered provider runtime", () => {
   });
 });
 
+function fixtureRuntime(t: Tenant, state: VideoRoutingState): ProvidersRuntime {
+  vi.stubEnv("GEMINI_VIDEO_MODEL", "omni-fixture");
+  for (const name of ["IMAGE", "TEXT", "TTS", "MUSIC"])
+    vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());
+  vi.stubEnv("XAI_VIDEO_MODEL", "xai-fixture");
+  const keys = {
+    resolve: async (_context: unknown, vendor: string): Promise<string> =>
+      vendor === "gemini" ? "AIza" + "aB1".repeat(12) : "xai-" + "bC2".repeat(12),
+  };
+  return new ProvidersRuntime(
+    keys as unknown as ProviderKeys,
+    new ProviderLedger(t.db, t.usage),
+    {
+      state: async () => state,
+      record: async () => undefined,
+    } as unknown as ProviderVideoHealth,
+    t.storage,
+  );
+}
+
 describe.skipIf(!process.env.DATABASE_URL)("durable video router admission", () => {
   const fixture = runsFixture();
+  it("retains the 23-cent bill in the real routed ledger after a failed download and a lower replay", async () => {
+    const t = await fixture.tenant();
+    const { workspaceId, channelId } = t.run;
+    const runtime = fixtureRuntime(t, new Map());
+    const refs = { resolve: async (): Promise<[]> => [] };
+    const mediaUrl = "https://storage.googleapis.com/fixture/clip.mp4";
+    const completion = (seconds: number): Response =>
+      Response.json({
+        id: "routed-job",
+        status: "completed",
+        usage: { billed_seconds: seconds },
+        steps: [
+          {
+            type: "model_output",
+            content: [{ type: "video", mime_type: "video/mp4", uri: mediaUrl }],
+          },
+        ],
+      });
+    const consumed = async (): Promise<number | undefined> =>
+      (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ id: "routed-job", status: "queued" }))
+      .mockResolvedValueOnce(completion(3.3))
+      .mockImplementationOnce(async (url) => {
+        expect(String(url)).toBe(mediaUrl);
+        expect(await consumed()).toBe(23);
+        return new Response("{}", { status: 503 });
+      })
+      .mockResolvedValueOnce(completion(0.5))
+      .mockResolvedValueOnce(new Response("fixture MP4 bytes"))
+      .mockRejectedValue(new Error("unexpected offline request"));
+    const save = vi.spyOn(ProviderArtifacts.prototype, "save").mockResolvedValue(artifact);
+    const router = await runtime.router(
+      t.context,
+      channelId,
+      refs,
+      async (spec) => spec,
+      async () => undefined,
+    );
+    const job = await router.submit({ ...shot, workspaceId }, "reconcile-bill", ["gemini"]);
+    const { omni } = await runtime.ports(t.context, refs);
+    const where = { workspaceId, providerId: "gemini" };
+    await expect(
+      runtime.reconcile(workspaceId, job.idemKey, omni, job.providerJobId),
+    ).rejects.toMatchObject({ kind: "OUTAGE", http: { status: 503 } });
+    const booked = await t.db.providerRequest.findFirstOrThrow({ where });
+    expect(booked.actualCost?.toString()).toBe("0.229364");
+    expect(booked).toMatchObject({
+      usage: { seconds: 3.3 },
+      responseMetadata: { providerJobId: "routed-job" },
+    });
+    expect(booked.responseMetadata).not.toHaveProperty("objectKey");
+    expect(await consumed()).toBe(23);
+    expect(save).not.toHaveBeenCalled();
+    await runtime.reconcile(workspaceId, job.idemKey, omni, job.providerJobId);
+    expect(await t.db.providerRequest.findMany({ where })).toMatchObject([
+      {
+        id: booked.id,
+        actualCost: booked.actualCost,
+        usage: { seconds: 3.3 },
+        responseMetadata: { providerJobId: "routed-job", objectKey: artifact.objectKey },
+      },
+    ]);
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({
+        where: { workspaceId, correlationId: booked.correlationId },
+      }),
+    ).toMatchObject({ status: "COMMITTED", committedMinor: 23n });
+    expect(await consumed()).toBe(23);
+    expect(
+      (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+    ).toMatchObject({
+      totalMinor: 23,
+    });
+    expect(
+      fetcher.mock.calls.map(([url, options]) => [new URL(String(url)).pathname, options?.method]),
+    ).toEqual([
+      ["/v1beta/interactions", "POST"],
+      ["/v1beta/interactions/routed-job", "GET"],
+      ["/fixture/clip.mp4", "GET"],
+      ["/v1beta/interactions/routed-job", "GET"],
+      ["/fixture/clip.mp4", "GET"],
+    ]);
+    expect(save).toHaveBeenCalledOnce();
+  });
   it("blocks same-key replay before xAI authorization with an open circuit and after restart", async () => {
     const t = await fixture.tenant();
-    vi.stubEnv("GEMINI_VIDEO_MODEL", "omni-fixture");
-    for (const name of ["IMAGE", "TEXT", "TTS", "MUSIC"])
-      vi.stubEnv(`GEMINI_${name}_MODEL`, name.toLowerCase());
-    vi.stubEnv("XAI_VIDEO_MODEL", "xai-fixture");
-    const keys = {
-      resolve: async (_context: unknown, vendor: string): Promise<string> =>
-        vendor === "gemini" ? "AIza" + "aB1".repeat(12) : "xai-" + "bC2".repeat(12),
-    };
-    const runtime = (state: VideoRoutingState): ProvidersRuntime =>
-      new ProvidersRuntime(
-        keys as unknown as ProviderKeys,
-        new ProviderLedger(t.db, t.usage),
-        {
-          state: async () => state,
-          record: async () => undefined,
-        } as unknown as ProviderVideoHealth,
-        t.storage,
-      );
     const fetcher = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("{}", { status: 503 }));
     const spec = { ...shot, workspaceId: t.context.workspaceId };
     const allow = vi.fn().mockResolvedValue(undefined);
     const build = (state: VideoRoutingState): ReturnType<ProvidersRuntime["router"]> =>
-      runtime(state).router(
+      fixtureRuntime(t, state).router(
         t.context,
         t.run.channelId,
         { resolve: async () => [] },

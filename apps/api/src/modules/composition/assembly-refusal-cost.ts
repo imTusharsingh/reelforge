@@ -14,7 +14,6 @@ function terminalShots(db: Scoped, runId: string): Promise<Step[]> {
         runId,
         key: { startsWith: "shot-" },
         state: { in: ["SKIPPED", "FAILED"] },
-        providerJobId: { not: null },
         costMinor: { not: null },
       },
     })
@@ -113,6 +112,23 @@ export async function legacyAssemblySequences(
   return new Map(rows.map((row, i) => [row.id, created[i]!.sequence]));
 }
 
+const billingEvents = [
+  {
+    type: "text_attempt_folded",
+    payload: { path: ["manifestReceiptChanged"], equals: true },
+  },
+  { type: "provider_receipt", payload: { path: ["key"], string_starts_with: "shot-" } },
+];
+
+export async function manifestBillingSequence(db: Scoped, runId: string): Promise<number> {
+  const latest = await db.runEvent.findFirst({
+    where: { runId, OR: billingEvents },
+    orderBy: { sequence: "desc" },
+    select: { sequence: true },
+  });
+  return latest?.sequence ?? 0;
+}
+
 export async function manifestRefreshMode(
   db: Scoped,
   runId: string,
@@ -123,12 +139,8 @@ export async function manifestRefreshMode(
     where: {
       runId,
       OR: [
+        ...billingEvents,
         { type: { in: ["assembly_receipts_checked", "assembly_receipts_retry"] } },
-        {
-          type: "text_attempt_folded",
-          payload: { path: ["manifestReceiptChanged"], equals: true },
-        },
-        { type: "provider_receipt", payload: { path: ["key"], string_starts_with: "shot-" } },
       ],
     },
     orderBy: { sequence: "desc" },

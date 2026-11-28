@@ -1,4 +1,4 @@
-import { refreshAssemblyManifests } from "../composition/assembly-receipts.js";
+import { refreshAssemblyManifests } from "../composition/assembly-manifest-refresh.js";
 import {
   deliveryChunkHashes,
   maxDeliveryBytes,

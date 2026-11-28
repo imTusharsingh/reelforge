@@ -2,7 +2,7 @@ import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
 import { json, type Context, type Run, type Step, type Transaction } from "../runs/runs.types.js";
-import { readTextAttempt, type TextAttemptState } from "./text-attempt-store.js";
+import { deriveTextAttempt, type Evidence, type TextAttemptState } from "./text-attempt-store.js";
 import { PLANNING_MANIFEST_KEY, remainingSubmissionHold } from "../runs/run-outcomes.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
 import { unresolvedLegacyCredits } from "./legacy-text-import-credits.js";
@@ -260,13 +260,21 @@ async function closeFailedStage(tx: Transaction, run: Run, code: string): Promis
   });
 }
 
-function archivedReceiptChanged(step: Step, next: TextAttemptState, previous: Projection): boolean {
+function archivedReceiptChanged(
+  step: Step,
+  next: TextAttemptState,
+  previous: Projection,
+  journal: readonly Evidence[],
+): boolean {
   return (
     step.state === "SUCCEEDED" &&
     next.phase === "SUCCEEDED" &&
     (previous.netMinor !== next.netMinor ||
       previous.grossMinor !== next.grossMinor ||
-      (!!next.googleId && next.googleId !== step.providerJobId))
+      (!!next.googleId && next.googleId !== step.providerJobId) ||
+      (next.actualMinor !== null &&
+        deriveTextAttempt(step.idempotencyKey, journal.slice(0, previous.appliedSequence))
+          ?.actualMinor == null))
   );
 }
 
@@ -277,6 +285,7 @@ async function postEvent(
   run: Run,
   next: TextAttemptState,
   previous: Projection,
+  receiptChanged: boolean,
 ): Promise<void> {
   const ownHold = `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`;
   const unresolved = next.phase === "ARMED" || next.phase === "SENT";
@@ -322,7 +331,7 @@ async function postEvent(
         appliedSequence: next.appliedSequence,
         reservedDelta: next.reservedMinor - previous.reservedMinor,
         netDelta: next.netMinor - previous.netMinor,
-        ...(archivedReceiptChanged(step, next, previous) && { manifestReceiptChanged: true }),
+        ...(receiptChanged && { manifestReceiptChanged: true }),
         ...(shouldHold && { reason: ownHold }),
         ...(failStage && { reason: failStage, from: run.state, to: "FAILED" }),
       },
@@ -338,8 +347,9 @@ export async function foldTextAttempt(
 ): Promise<TextAttemptState> {
   const step = await tx.videoRunStep.findFirstOrThrow({
     where: { workspaceId: context.workspaceId, id: stepId, key: { startsWith: "media:text:" } },
+    include: { textEvidence: { orderBy: { sequence: "asc" } } },
   });
-  const next = await readTextAttempt(tx, step);
+  const next = deriveTextAttempt(step.idempotencyKey, step.textEvidence);
   if (!next) return conflict("Text attempt has no durable evidence");
   const where = { workspaceId: context.workspaceId, attemptId: stepId };
   const previous =
@@ -368,9 +378,9 @@ export async function foldTextAttempt(
   await postLedger(tx, step, run, next);
   await postEnvelope(tx, run, previous, next);
   await postStep(tx, step, next);
-  if (archivedReceiptChanged(step, next, previous))
-    await invalidateAssemblyManifests(scopedTransaction(tx, context), run.id);
-  await postEvent(tx, context, step, run, next, previous);
+  const receiptChanged = archivedReceiptChanged(step, next, previous, step.textEvidence);
+  if (receiptChanged) await invalidateAssemblyManifests(scopedTransaction(tx, context), run.id);
+  await postEvent(tx, context, step, run, next, previous, receiptChanged);
   const { appliedSequence, reservedMinor, grossMinor, netMinor } = next;
   const data = { appliedSequence, reservedMinor, grossMinor, netMinor };
   await tx.textAttemptProjection.upsert({

@@ -13,7 +13,8 @@ import {
   highestObservedReceipt,
   pendingCorrection,
 } from "./run-pending-receipt.js";
-import { correctionPayload, pricedOutput, terminalBilledShot } from "./run-shot-receipt.js";
+import { correctionPayload, terminalBilledShot } from "./run-shot-receipt.js";
+import { mainVideoEstimate } from "./legacy-main-video-estimate.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import type { Context, Json, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
@@ -110,24 +111,20 @@ export async function postMediaCredit(
   });
   if (other) throw new ConflictException("Ambiguous media reservation");
   const oldEstimate =
-    historical && reservation?.status === "COMMITTED"
+    historical && (!reservation || reservation.status === "COMMITTED")
       ? await mainVideoEstimate(tx, row, reservation)
       : null;
   const pricing = oldEstimate
     ? { ...row, actualCost: null, estimatedCost: oldEstimate.gross }
     : row;
   const cost = classifyCost(pricing);
-  const finalBill = historical && cost?.kind === "ACTUAL";
+  const finalBill = historical && cost.kind === "ACTUAL";
   if (
-    (!(
-      reservation?.idempotencyKey === `m08:${row.correlationId}` &&
-      reservation.category === "VIDEO_MEDIA"
-    ) &&
-      !["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(categorize(row))) ||
+    (!oldEstimate && !creditableMedia(row, reservation)) ||
     (!finalBill &&
       !oldEstimate &&
-      (!terminalMediaFailure(row.errorCode) || cost?.kind !== "FAILED_ESTIMATED")) ||
-    !cost?.currency ||
+      (!terminalMediaFailure(row.errorCode) || cost.kind !== "FAILED_ESTIMATED")) ||
+    !cost.currency ||
     cost.amountMinor === null ||
     (!finalBill && amountMinor > cost.amountMinor)
   )
@@ -148,6 +145,17 @@ export async function postMediaCredit(
       },
     });
   return cost.currency;
+}
+
+function creditableMedia(
+  row: Awaited<ReturnType<typeof readLedgerRows>>[number],
+  reservation: Prisma.UsageReservationGetPayload<object> | undefined,
+): boolean {
+  return (
+    (reservation?.idempotencyKey === `m08:${row.correlationId}` &&
+      reservation.category === "VIDEO_MEDIA") ||
+    ["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(categorize(row))
+  );
 }
 
 async function applyCreditPosting(
@@ -198,76 +206,6 @@ async function applyCreditPosting(
       }
     }
   }
-}
-
-async function mainVideoEstimate(
-  tx: Transaction,
-  row: { id: string; correlationId: string; status: string; errorCode: string | null },
-  reservation: Prisma.UsageReservationGetPayload<object>,
-): Promise<{
-  gross: string;
-  minor: number;
-  metadata: ReturnType<typeof legacyObject>;
-  shot: boolean;
-} | null> {
-  if (
-    row.status !== "SUCCEEDED" ||
-    row.errorCode !== null ||
-    reservation.category !== "VIDEO_MEDIA" ||
-    reservation.currency !== "USD"
-  )
-    return null;
-  const request = await tx.providerRequest.findUniqueOrThrow({ where: { id: row.id } });
-  if (request.channelId !== reservation.channelId || request.currency !== reservation.currency)
-    return null;
-  const metadata = legacyObject(request.responseMetadata);
-  const step = await tx.videoRunStep.findFirst({
-    where: { workspaceId: reservation.workspaceId, id: row.correlationId },
-  });
-  const shot = !!step && mainShotEstimate(step, reservation.idempotencyKey, request.providerId);
-  const routed =
-    !step &&
-    reservation.idempotencyKey === `m08:${row.correlationId}` &&
-    legacyObject(request.usage).seconds === null &&
-    metadata.reservationId === reservation.id &&
-    metadata.estimateMinor === Number(reservation.amountMinor) &&
-    typeof metadata.providerJobId === "string";
-  if (!shot && !routed) return null;
-  const booked =
-    request.actualCost ??
-    (typeof metadata.legacyEstimateMinor === "number"
-      ? routed
-        ? request.estimatedCost
-        : new Prisma.Decimal(metadata.legacyEstimateMinor).div(100)
-      : null);
-  if (
-    !booked ||
-    (shot && !booked.mul(100).equals(step.costMinor!)) ||
-    (routed && !request.estimatedCost?.equals(booked))
-  )
-    return null;
-  const minor = Math.round(booked.mul(100).toNumber());
-  if (
-    !Number.isSafeInteger(minor) ||
-    minor < 0 ||
-    (request.actualCost === null && metadata.legacyEstimateMinor !== minor)
-  )
-    return null;
-  return { gross: booked.toString(), minor, metadata, shot };
-}
-
-function mainShotEstimate(step: Step, key: string, providerId: string): boolean {
-  const saved = pricedOutput.safeParse(step.output).data?.receipt;
-  return (
-    step.key.startsWith("shot-") &&
-    step.state === "SUCCEEDED" &&
-    step.providerId === providerId &&
-    !!step.providerJobId &&
-    saved?.providerJobId === step.providerJobId &&
-    saved.costBasis === "RESERVATION" &&
-    saved.costMinor === step.costMinor &&
-    key === `m08:${step.idempotencyKey}`
-  );
 }
 
 export async function captureRefusedBill(

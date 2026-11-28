@@ -1,11 +1,4 @@
-import {
-  assemblyOutput,
-  rebuildArchivedManifests,
-  replaceManifest,
-  readManifestSource,
-  writeManifestSource,
-} from "./assembly-archive.js";
-import { manifestRefreshMode, rebuiltTotal, refusalBillDeltas } from "./assembly-refusal-cost.js";
+import { assemblyOutput, replaceManifest } from "./assembly-archive.js";
 import { deriveTextAttempt } from "../usage-budget/text-attempt-store.js";
 import { remoteTextId } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
@@ -19,14 +12,10 @@ import {
   ArtifactSchema,
   json,
   type Artifact,
-  type Context,
   type Json,
   type Scoped,
   type Step,
 } from "../runs/runs.types.js";
-import type { RunsStore } from "../runs/runs.store.js";
-import type { RunsArtifacts } from "../runs/runs.artifacts.js";
-import type { StoragePort } from "../asset/storage/storage.port.js";
 
 type TextReceipt = MediaReceipt & { dispatchKey: string };
 type ReceiptStep = Pick<Step, "key" | "output" | "providerId" | "providerJobId" | "idempotencyKey">;
@@ -137,7 +126,11 @@ export async function selectedShotReceipts(
 
 // The billing transaction withdraws every published copy. Object storage is never a
 // prerequisite for recording a liability, and a crash leaves a durable rebuild request.
-export async function invalidateAssemblyManifests(db: Scoped, runId: string): Promise<void> {
+export async function invalidateAssemblyManifests(
+  db: Scoped,
+  runId: string,
+  billingSequence?: number,
+): Promise<void> {
   const steps = await db.videoRunStep.findMany({
     where: {
       runId,
@@ -153,6 +146,8 @@ export async function invalidateAssemblyManifests(db: Scoped, runId: string): Pr
     const parsed = assemblyOutput.safeParse(step.output);
     if (
       !parsed.success ||
+      (billingSequence !== undefined &&
+        (parsed.data.manifestBillingRevision ?? 0) >= billingSequence) ||
       !parsed.data.storageArtifacts.some((a) => a.kind === "final") ||
       !parsed.data.storageArtifacts.some((a) => a.kind === "manifest")
     )
@@ -200,7 +195,7 @@ export function currentPrices(
   return priced;
 }
 
-async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
+export async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", key: { startsWith: "media:text:" } },
     include: { textEvidence, textProjection: { select: { grossMinor: true, netMinor: true } } },
@@ -211,7 +206,7 @@ async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextRe
   });
 }
 
-function normalizeHistoricalText(
+export function normalizeHistoricalText(
   receipts: MediaReceipt[],
   historical: TextReceipt[],
 ): MediaReceipt[] | null {
@@ -251,55 +246,6 @@ export async function publicationPrices(
 ): Promise<MediaReceipt[] | null> {
   const shots = currentPrices(rendered, await shotReceipts(db, runId));
   return shots && normalizeHistoricalText(shots, await historicalTextReceipts(db, runId));
-}
-
-async function rewriteManifest(
-  context: Context,
-  runId: string,
-  source: Artifact,
-  current: MediaReceipt[],
-  historical: TextReceipt[],
-  refusedDelta: number,
-  storage: StoragePort,
-  artifacts: RunsArtifacts,
-): Promise<Artifact | null> {
-  const manifest = await readManifestSource(storage, context, source, runId);
-  const priced = currentPrices(manifest.receipts, current);
-  const receipts = priced && normalizeHistoricalText(priced, historical);
-  if (!receipts) return null;
-  const receiptTotal = rebuiltTotal(manifest, receipts);
-  if (receiptTotal === null) return null;
-  const totalCostMinor = receiptTotal + refusedDelta;
-  // A manifest over the delivery contract's cap stays invalidated. The ledger keeps the actual cost.
-  if (!AssemblyManifestSchema.shape.totalCostMinor.safeParse(totalCostMinor).success) return null;
-  if (
-    JSON.stringify(receipts) === JSON.stringify(manifest.receipts) &&
-    totalCostMinor === manifest.totalCostMinor
-  )
-    return source;
-  return writeManifestSource(artifacts, context, { ...manifest, receipts, totalCostMinor });
-}
-
-export async function refreshAssemblyManifests(
-  store: RunsStore,
-  artifacts: RunsArtifacts,
-  storage: StoragePort,
-  context: Context,
-  runId: string,
-): Promise<void> {
-  if (!(await manifestRefreshMode(store.scoped(context), runId))) return;
-  await store.mutate(context, runId, "assembly_receipts_checked", async (db, run) => {
-    if ((await manifestRefreshMode(db, runId)) === "billing")
-      await invalidateAssemblyManifests(db, runId);
-    const [prices, historical, deltas] = await Promise.all([
-      shotReceipts(db, runId),
-      historicalTextReceipts(db, runId),
-      refusalBillDeltas(db, runId),
-    ]);
-    return rebuildArchivedManifests(db, run, deltas, (source, delta) =>
-      rewriteManifest(context, runId, source, prices, historical, delta, storage, artifacts),
-    );
-  });
 }
 
 export async function assemblyStageOutput(

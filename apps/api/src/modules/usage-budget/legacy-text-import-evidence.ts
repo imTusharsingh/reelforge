@@ -1,6 +1,7 @@
 import type { Prisma } from "@reelforge/database";
 import type { Event, Step } from "../runs/runs.types.js";
 import { extractLegacyObservations } from "./legacy-text-import-observations.js";
+import { ADMISSION_ORDERING } from "./run-admission-state.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 
 export const legacyPrepared = "VIDEO_RUN_TEXT_PREPARED";
@@ -149,11 +150,25 @@ function releasedBeforePost(source: LegacyTextSource, events: Event[]): Event | 
 function drainedPreparation(source: LegacyTextSource, events: Event[]): boolean {
   const { step, request, reservation } = source;
   const metadata = legacyObject(request!.responseMetadata);
-  return (
+  const advisoryPreparation =
     request!.errorCode === legacyPrepared &&
-    request!.status === "FAILED" &&
     metadata.textDispatchProtocol === legacyProtocol &&
-    metadata.dispatched !== true &&
+    metadata.dispatched !== true;
+  // Main commits the PENDING ledger/reservation together before the distinct provider_dispatch
+  // transaction can grant permission to send. A drained old writer cannot obtain it later.
+  const committedPreflight =
+    request!.errorCode === "PENDING" &&
+    metadata.admissionOrdering === ADMISSION_ORDERING &&
+    metadata.dispatched === false &&
+    metadata.costKnown === false &&
+    reservation!.category === "VIDEO_MEDIA" &&
+    step.providerId === "gemini" &&
+    step.costMinor === Number(reservation!.amountMinor) &&
+    request!.estimatedCost?.mul(100).eq(reservation!.amountMinor.toString()) === true &&
+    events.some(({ type }) => type === "media_reserved" || type === "dispatch_reserved");
+  return (
+    (advisoryPreparation || committedPreflight) &&
+    request!.status === "FAILED" &&
     request!.actualCost === null &&
     request!.usage === null &&
     ["RESERVED", "EXPIRED"].includes(reservation!.status) &&
@@ -161,7 +176,7 @@ function drainedPreparation(source: LegacyTextSource, events: Event[]): boolean 
     step.state === "RUNNING" &&
     !step.providerJobId &&
     !metadata.providerJobId &&
-    !events.some((event) =>
+    !source.activity.some((event) =>
       [
         "text_dispatch_started",
         "provider_dispatch",

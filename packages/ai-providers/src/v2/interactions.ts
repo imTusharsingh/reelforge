@@ -45,10 +45,7 @@ export class Interactions {
   public async poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
     const response = await this.get(id);
     const status = this.status(response);
-    if (status === "succeeded" && recordBilling) {
-      const seconds = this.billedSeconds(response);
-      if (seconds !== null) await recordBilling(seconds);
-    }
+    await this.recordTerminalBilling(response, status, recordBilling);
     return status;
   }
 
@@ -61,10 +58,9 @@ export class Interactions {
   ): Promise<ClipArtifact> {
     const response = await this.get(id);
     const status = this.status(response);
+    const billedSeconds = await this.recordTerminalBilling(response, status, recordBilling);
     if (status === "refused") throw new ProviderFailure("REFUSAL", true);
     if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
-    const billedSeconds = this.billedSeconds(response);
-    if (billedSeconds !== null) await recordBilling?.(billedSeconds);
     const artifact = await this.download(response, kind, trimSeconds).catch(onMediaFailure);
     return { ...artifact, billedSeconds };
   }
@@ -84,9 +80,19 @@ export class Interactions {
         : this.decode(requiredString(content.data));
     return this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
   }
-  private billedSeconds(response: Json): number | null {
-    const seconds = response.usage === undefined ? null : record(response.usage).billed_seconds;
-    return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+  private async recordTerminalBilling(
+    response: Json,
+    status: JobStatus,
+    recordBilling?: RecordBilledSeconds,
+  ): Promise<number | null> {
+    if (status === "running" || status === "queued") return null;
+    const usage = response.usage;
+    if (!usage || typeof usage !== "object" || !("billed_seconds" in usage)) return null;
+    const seconds = usage.billed_seconds;
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return null;
+    if (status === "succeeded") await recordBilling?.(seconds);
+    else await recordBilling?.(seconds, status);
+    return seconds;
   }
 
   public async get(id: string): Promise<Json> {

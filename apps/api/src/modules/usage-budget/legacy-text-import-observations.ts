@@ -215,7 +215,7 @@ function recoveredReceipts(
   return result;
 }
 
-export function mainBudgetDenial(
+export function mainAccountlessRelease(
   step: Step,
   activity: { type: string; payload: unknown }[],
 ): boolean {
@@ -226,12 +226,16 @@ export function mainBudgetDenial(
     step.providerId === "gemini" &&
     step.costMinor !== null &&
     step.costMinor >= 0 &&
-    legacyObject(step.output).closedBy === "BUDGET_DENIED_NOT_DISPATCHED" &&
+    ["BUDGET_DENIED_NOT_DISPATCHED", "NOT_DISPATCHED"].includes(
+      String(legacyObject(step.output).closedBy),
+    ) &&
     activity.some(({ type, payload }) => {
       const release = legacyObject(payload);
       return (
         type === "dispatch_released" &&
         release.reason === "NOT_DISPATCHED" &&
+        (release.dispatchKey === undefined || release.dispatchKey === step.idempotencyKey) &&
+        (release.idempotencyKey === undefined || release.idempotencyKey === step.idempotencyKey) &&
         release.amountMinor === step.costMinor
       );
     }) &&

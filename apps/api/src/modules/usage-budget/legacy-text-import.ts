@@ -1,4 +1,4 @@
-import { mainBudgetDenial, preserveMainEstimate } from "./legacy-text-import-observations.js";
+import { mainAccountlessRelease, preserveMainEstimate } from "./legacy-text-import-observations.js";
 import { reconcileExisting } from "./legacy-journal-reconcile.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 import { operatorContext } from "./text-attempt-ops.js";
@@ -132,7 +132,7 @@ async function importOne(
     !request &&
     !reservation &&
     !credits.rows.length &&
-    mainBudgetDenial(step, activity) &&
+    mainAccountlessRelease(step, activity) &&
     !(await tx.usageReservation.findFirst({ where: { workspaceId, correlationId: id } }))
   )
     return { attemptId: id, action: "already-imported", outcome: "non-dispatched" };

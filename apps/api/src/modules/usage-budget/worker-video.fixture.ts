@@ -7,7 +7,10 @@ import type { Run, RunJob, Step } from "../runs/runs.types.js";
 import type { VideoGenPort as WorkerVideoPort } from "../orchestration/video-run.handlers.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
 
-export async function workerVideo(t: Tenant): Promise<{
+export async function workerVideo(
+  t: Tenant,
+  primary?: (port: VideoGenPort) => VideoGenPort,
+): Promise<{
   run: Run;
   step: Step;
   job: RunJob;
@@ -24,6 +27,9 @@ export async function workerVideo(t: Tenant): Promise<{
     },
     [],
   );
+  if (primary) native.omni = primary(native.omni);
+  else
+    vi.spyOn(native.omni, "poll").mockResolvedValueOnce("running").mockResolvedValue("succeeded");
   const bindings = bindMedia(t, native);
   t.generation.resolvePorts = async (): Promise<{
     primary: WorkerVideoPort;
@@ -32,7 +38,6 @@ export async function workerVideo(t: Tenant): Promise<{
     primary: new RoutedMediaVideo(native.omni, bindings.jobs, t.context, run),
     fallback: new RoutedMediaVideo(native.grok, bindings.jobs, t.context, run),
   });
-  vi.spyOn(native.omni, "poll").mockResolvedValueOnce("running").mockResolvedValue("succeeded");
   const step = await t.db.videoRunStep.findFirstOrThrow({
     where: { runId: run.id, key: "shot-0" },
   });

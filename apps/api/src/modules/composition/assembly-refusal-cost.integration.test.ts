@@ -192,7 +192,7 @@ describe.skipIf(!process.env.DATABASE_URL)(
 describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct renders", () => {
   const fixture = runsFixture();
   afterEach(() => vi.unstubAllEnvs());
-  it.each(["healthy", "legacy", "missing", "corrupt", "temporary"] as const)(
+  it.each(["healthy", "legacy", "missing", "corrupt", "temporary", "slow"] as const)(
     "isolates older renders and archive storage failures: %s",
     async (condition) => {
       vi.stubEnv("GEMINI_TTS_MODEL", "fixture-TTS");
@@ -268,10 +268,17 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
           body: Buffer.from("corrupt"),
           contentType: "application/json",
         });
+      const slowStarted = Promise.withResolvers<void>();
+      const releaseSlow = Promise.withResolvers<void>();
+      let holdOld = condition === "slow";
       const get = t.storage.getObject.bind(t.storage);
       const flaky = vi.spyOn(t.storage, "getObject").mockImplementation(async (input) => {
         if (condition === "temporary" && input.objectKey === oldKey.objectKey)
           throw new Error("temporary storage failure");
+        if (holdOld && input.objectKey === oldKey.objectKey) {
+          slowStarted.resolve();
+          await releaseSlow.promise;
+        }
         return get(input);
       });
       for (const [attempt, costMinor] of [
@@ -287,11 +294,46 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
           providerDurationSeconds: null,
           media: null,
         });
-      await expect(t.runs.detail(t.context, run.id)).resolves.toBeDefined();
+      const detail = t.runs.detail(t.context, run.id);
+      if (condition === "slow") {
+        try {
+          await slowStarted.promise;
+          const live = (): Promise<Step> =>
+            t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key: "local:assembly" } });
+          // The sibling publishes while the archived object is still blocked.
+          await expect
+            .poll(
+              async () =>
+                t.artifacts.descriptors((await live()).output).find((a) => a.kind === "manifest")
+                  ?.objectKey,
+            )
+            .toBeTypeOf("string");
+          // A newer bill can acquire the run lock, and supersedes the in-flight rewrite.
+          await captureShotReceipt(t.store, bindings.access.paid, t.context, shared, {
+            costMinor: 24,
+            costBasis: "BILLED",
+            modelId: "fixture",
+            promptVersion: "fixture",
+            seconds: 8,
+            providerDurationSeconds: null,
+            media: null,
+          });
+        } finally {
+          holdOld = false;
+          releaseSlow.resolve();
+        }
+      }
+      await expect(detail).resolves.toBeDefined();
+      if (condition === "slow") {
+        const older = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: snapshot.id } });
+        expect(t.artifacts.descriptors(older.output).some((a) => a.kind === "manifest")).toBe(
+          false,
+        );
+      }
       const active = await bindings.assembly.artifacts(t.context, run);
       expect(await readManifest(setup, active)).toEqual({
         ...beforeBill,
-        totalCostMinor: beforeBill.totalCostMinor + 8,
+        totalCostMinor: beforeBill.totalCostMinor + (condition === "slow" ? 9 : 8),
       });
       expect(active.find((item) => item.kind === "final")).toEqual(
         second.find((item) => item.kind === "final"),
@@ -301,10 +343,10 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
       flaky.mockRestore();
       if (condition === "temporary") await t.runs.detail(t.context, run.id);
       const stored = (await archive()).output;
-      if (condition === "healthy" || condition === "legacy" || condition === "temporary") {
+      if (condition !== "missing" && condition !== "corrupt") {
         expect(await readManifest(setup, t.artifacts.descriptors(stored))).toEqual({
           ...original,
-          totalCostMinor: original.totalCostMinor + 3,
+          totalCostMinor: original.totalCostMinor + (condition === "slow" ? 4 : 3),
         });
       } else {
         expect(stored).toMatchObject({ manifestArchiveInvalid: true });

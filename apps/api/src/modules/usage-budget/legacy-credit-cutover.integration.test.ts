@@ -4,50 +4,13 @@ import { captureShotReceipt } from "./run-billing.js";
 import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
+import { runsFixture } from "../runs/runs.fixture.js";
+import { historicalCredit } from "./legacy-credit-cutover.fixture.js";
 import { legacy } from "./legacy-text-import.fixture.js";
 import { importLegacyTextAttempts } from "./legacy-text-import.js";
 import { drainedLegacyIncarnation } from "./text-attempt-ops-schema.js";
 import { ingestMatchedTextRejection } from "./text-attempt-receipt-recovery.js";
 import { readTextAttempt } from "./text-attempt-store.js";
-
-async function historicalCredit(
-  t: Tenant,
-  target: { textAttemptId: string; dispatchKey: string } | { providerRequestId: string },
-): Promise<string> {
-  const { workspaceId, channelId } = t.run;
-  const base = {
-    workspaceId,
-    channelId,
-    actorUserId: t.context.userId,
-    correlationId: randomUUID(),
-    reason: "matched refund",
-  };
-  const row = await t.db.usageAdjustment.create({
-    data: { ...base, kind: "CREDIT", currency: "USD", amountMinor: 3n },
-  });
-  await t.db.usageAuditRecord.create({
-    data: {
-      workspaceId,
-      actorUserId: base.actorUserId,
-      correlationId: base.correlationId,
-      reason: base.reason,
-      action: "CREDIT",
-      adjustmentId: row.id,
-      after: {
-        adjustment: {
-          id: row.id,
-          channelId,
-          operationKey: `refund:${row.id}`,
-          amountMinor: 3,
-          currency: "USD",
-          ...target,
-        },
-      },
-    },
-  });
-  return row.id;
-}
 
 describe.skipIf(!process.env.DATABASE_URL)("workspace credit cutover", () => {
   const fixture = runsFixture();
@@ -169,61 +132,64 @@ describe.skipIf(!process.env.DATABASE_URL)("workspace credit cutover", () => {
       });
     },
   );
-  it("recognizes main's proven budget denial with no accounting rows without seeding a retry", async () => {
-    const t = await fixture.tenant();
-    const { workspaceId, id: runId } = t.run;
-    vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
-    const denied = await t.db.videoRunStep.create({
-      data: {
-        workspaceId,
-        runId,
-        state: "CANCELLED",
-        key: "media:text:budget-denied",
-        idempotencyKey: `${runId}:budget-denied`,
-        input: { modelId: "gemini-text" },
-        providerId: "gemini",
-        costMinor: 7,
-        finishedAt: new Date(),
-        output: { closedBy: "BUDGET_DENIED_NOT_DISPATCHED" },
-      },
-    });
-    for (const [type, payload] of [
-      ["media_intent", { key: denied.key, costMinor: 7 }],
-      ["dispatch_released", { amountMinor: 7, reason: "NOT_DISPATCHED" }],
-    ] as const) {
-      await t.store.mutate(t.context, runId, type, async () => ({
-        value: null,
-        stepId: denied.id,
-        payload,
-      }));
-    }
-    const apply = (): ReturnType<typeof importLegacyTextAttempts> =>
-      importLegacyTextAttempts(t.db, {
-        workspaceId,
-        apply: true,
-        oldWritersDrained: true,
-        auditId: "main-denial",
-      });
-    for (const report of [
-      await importLegacyTextAttempts(t.db, { workspaceId }),
-      await apply(),
-      await apply(),
-    ]) {
-      expect(report.attempts).toEqual([
-        {
-          attemptId: denied.id,
-          action: "already-imported",
-          outcome: "non-dispatched",
+  it.each(["BUDGET_DENIED_NOT_DISPATCHED", "NOT_DISPATCHED"])(
+    "recognizes main's %s release with no accounting rows, without seeding a retry",
+    async (closedBy) => {
+      const t = await fixture.tenant();
+      const { workspaceId, id: runId } = t.run;
+      vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+      const denied = await t.db.videoRunStep.create({
+        data: {
+          workspaceId,
+          runId,
+          state: "CANCELLED",
+          key: "media:text:budget-denied",
+          idempotencyKey: `${runId}:budget-denied`,
+          input: { modelId: "gemini-text" },
+          providerId: "gemini",
+          costMinor: 7,
+          finishedAt: new Date(),
+          output: { closedBy },
         },
+      });
+      for (const [type, payload] of [
+        ["media_intent", { key: denied.key, costMinor: 7 }],
+        ["dispatch_released", { amountMinor: 7, reason: "NOT_DISPATCHED" }],
+      ] as const) {
+        await t.store.mutate(t.context, runId, type, async () => ({
+          value: null,
+          stepId: denied.id,
+          payload,
+        }));
+      }
+      const apply = (): ReturnType<typeof importLegacyTextAttempts> =>
+        importLegacyTextAttempts(t.db, {
+          workspaceId,
+          apply: true,
+          oldWritersDrained: true,
+          auditId: "main-denial",
+        });
+      for (const report of [
+        await importLegacyTextAttempts(t.db, { workspaceId }),
+        await apply(),
+        await apply(),
+      ]) {
+        expect(report.attempts).toEqual([
+          {
+            attemptId: denied.id,
+            action: "already-imported",
+            outcome: "non-dispatched",
+          },
+        ]);
+      }
+      expect(await t.db.videoRunStep.findMany({ where: { runId, key: denied.key } })).toEqual([
+        denied,
       ]);
-    }
-    expect(await t.db.videoRunStep.findMany({ where: { runId, key: denied.key } })).toEqual([
-      denied,
-    ]);
-    expect(await t.db.providerRequest.count({ where: { workspaceId } })).toBe(0);
-    expect(await t.db.usageReservation.count({ where: { workspaceId } })).toBe(0);
-    expect(await t.db.textAttemptEvidence.count({ where: { workspaceId } })).toBe(0);
-  });
+      expect(await t.db.providerRequest.count({ where: { workspaceId } })).toBe(0);
+      expect(await t.db.usageReservation.count({ where: { workspaceId } })).toBe(0);
+      expect(await t.db.textAttemptEvidence.count({ where: { workspaceId } })).toBe(0);
+    },
+  );
   it("links two refunds on an ordinary worker estimate, then accepts independent billing", async () => {
     const t = await fixture.tenant();
     const { run, step, job, native } = await workerVideo(t);

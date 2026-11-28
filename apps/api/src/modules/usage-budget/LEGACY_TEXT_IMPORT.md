@@ -75,9 +75,15 @@ posting before the cutover can report it as settled.
 Main text completions booked the configured estimate even where the request
 said `costKnown`; only independently verified billing can replace that charge.
 A main routed video row with no billed seconds can likewise contain an estimate
-in `actualCost`; for an ordinary shot, the matching saved `RESERVATION` receipt
-proves the same distinction. Proven linked refunds reduce the commitment
-without changing the archived gross shot receipt or run envelope. Verified
-billing replaces the estimated commitment. A matching
-main budget-denied cancellation and release can have a nonzero released estimate
-but no ledger rows; this is a zero-spend no-op, not a new dispatch authorization.
+in `actualCost`, including a completed unreserved job with main's artifact and
+explicit null reservation fields. For an ordinary shot, the matching saved
+`RESERVATION` receipt proves the same distinction. Proven linked refunds reduce
+the estimated exposure without changing the archived gross shot receipt or run
+envelope. Verified billing supersedes that estimate.
+
+A matching main preflight cancellation and release can have a nonzero released
+estimate but neither accounting row; this is a zero-spend no-op. For a drained
+main worker, a scoped reservation and matching `PENDING` preflight record with
+no dispatch evidence prove it stopped before the POST. Neither path authorizes
+another dispatch. No backfill is provided for provisional manifest receipt flags
+written only by earlier revisions of this PR.

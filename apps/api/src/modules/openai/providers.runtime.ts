@@ -148,7 +148,18 @@ export class ProvidersRuntime {
   ): Promise<void> {
     const record = (artifact: Parameters<ProviderLedger["finish"]>[3]): Promise<void> =>
       this.ledger.finish(workspaceId, correlation(key), port, artifact, providerJobId);
-    const artifact = await port.fetch(providerJobId, (billedSeconds) => record({ billedSeconds }));
+    const artifact = await port.fetch(providerJobId, (billedSeconds, failure) =>
+      failure
+        ? this.ledger.finish(
+            workspaceId,
+            correlation(key),
+            port,
+            { billedSeconds },
+            providerJobId,
+            failure,
+          )
+        : record({ billedSeconds }),
+    );
     await record(artifact);
   }
   private limiter(port: VideoGenPort): ProviderLimiter {
