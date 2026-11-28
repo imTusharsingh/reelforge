@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { runtimeFixture } from "../runs/text-attempt-runtime.fixture.js";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import type { Step } from "../runs/runs.types.js";
 import { appendTextEvidence, lockTextAttempt } from "./text-attempt-store.js";
@@ -21,6 +22,7 @@ async function newAttempt(t: Tenant): Promise<Step> {
 
 describe.skipIf(!process.env.DATABASE_URL)("append-only text accounting", () => {
   const fixture = runsFixture();
+  afterEach(() => vi.unstubAllEnvs());
 
   it("serializes exact evidence replay under the run and attempt locks", async () => {
     const t = await fixture.tenant();
@@ -146,16 +148,31 @@ describe.skipIf(!process.env.DATABASE_URL)("append-only text accounting", () => 
           kind: "REJECTED",
           eventKey: "response",
           nonce,
-          data: { dispatchKey, code: "HTTP_401" },
+          data: { dispatchKey, code: "UNAUTHENTICATED", httpStatus: 401 },
         });
       });
       const apply = async (fail: boolean): Promise<void> =>
         t.db.$transaction(async (tx) => {
           await lockTextAttempt(tx, t.context.workspaceId, attempt.id);
           await foldTextAttempt(tx, t.context, attempt.id);
-          if (fail) throw new Error("settlement transaction aborted");
+          if (fail) {
+            expect(
+              await tx.usageReservation.findUniqueOrThrow({ where: { id: reservationId } }),
+            ).toMatchObject({ status: "RELEASED" });
+            throw new Error("settlement transaction aborted");
+          }
         });
       await expect(apply(true)).rejects.toThrow("settlement transaction aborted");
+      if (failsRun) {
+        // Force the CI interleaving: a different worker sweeps after the journal commit
+        // and rollback, before this worker reads back the reservation.
+        const { t: peer } = await runtimeFixture(fixture);
+        const recover = vi.spyOn(peer.planning, "recoverText");
+        await peer.engine.recover();
+        expect(recover.mock.calls.map(([context]) => context.workspaceId)).toEqual([
+          peer.context.workspaceId,
+        ]);
+      }
       expect(
         await t.db.usageReservation.findUnique({ where: { id: reservationId } }),
       ).toMatchObject({
@@ -189,7 +206,7 @@ describe.skipIf(!process.env.DATABASE_URL)("append-only text accounting", () => 
         }),
       ).toMatchObject({
         state: failsRun ? "FAILED" : status,
-        pauseReason: failsRun ? "HTTP_401" : pauseReason,
+        pauseReason: failsRun ? "UNAUTHENTICATED" : pauseReason,
       });
       expect(
         await t.db.videoRunStep.findFirst({ where: { ...scope, id: stage.id } }),

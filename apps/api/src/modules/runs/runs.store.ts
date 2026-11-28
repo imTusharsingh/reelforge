@@ -7,6 +7,9 @@ import type { Context, Database, Event, Json, Run, Scoped, Transaction } from ".
 @Injectable()
 export class RunsStore {
   public constructor(@Inject("DATABASE") public readonly db: Database) {}
+  public listRecoveryWorkspaces(): Promise<{ id: string }[]> {
+    return this.db.workspace.findMany({ where: { archivedAt: null }, select: { id: true } });
+  }
   public scoped(context: Context, tx?: Transaction): Scoped {
     return tx ? scopedTransaction(tx, context) : foundationWorkspaceGuard(this.db, context);
   }

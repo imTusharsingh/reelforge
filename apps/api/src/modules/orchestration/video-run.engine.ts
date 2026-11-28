@@ -335,7 +335,7 @@ export class VideoRunEngine {
   }
   public async recover(): Promise<void> {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.
-    const workspaces = await this.runs.store.db.workspace.findMany({ where: { archivedAt: null } });
+    const workspaces = await this.runs.store.listRecoveryWorkspaces();
     for (const workspace of workspaces) {
       const context: Context = {
         workspaceId: workspace.id,
