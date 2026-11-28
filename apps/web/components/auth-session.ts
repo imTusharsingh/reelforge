@@ -54,12 +54,16 @@ export class AuthSession {
         this.generation === expected &&
         (isAlreadyInvalidSession(error) || (error instanceof ApiError && error.status === 403))
       ) {
+        const fresh =
+          this.state.booting && !window.localStorage.getItem("reelforge.activeWorkspace");
         this.clear();
         this.update({
           sessionError:
             error instanceof ApiError && error.status === 403
               ? "Your workspace access was denied."
-              : sessionFailureMessage(error),
+              : fresh
+                ? ""
+                : sessionFailureMessage(error),
         });
         return null;
       }
@@ -74,7 +78,8 @@ export class AuthSession {
       const selected = items.find(
         (item) => item.id === window.localStorage.getItem("reelforge.activeWorkspace"),
       );
-      this.update(selected ? { selected, view: "studio" } : { view: "onboarding" });
+      const only = selected ?? (items.length === 1 ? items[0] : undefined);
+      this.update(only ? { selected: only, view: "studio" } : { view: "onboarding" });
     } catch (error) {
       if (expected !== this.generation) return;
       this.update({
@@ -89,8 +94,11 @@ export class AuthSession {
     this.update({ sessionError: "" });
     const expected = ++this.generation;
     try {
-      if ((await this.refresh(expected)) !== null && expected === this.generation)
-        this.update({ view: "onboarding" });
+      const items = await this.refresh(expected);
+      if (items && expected === this.generation) {
+        if (items.length === 1) this.update({ selected: items[0]!, view: "studio" });
+        else this.update({ view: "onboarding" });
+      }
     } catch (error) {
       if (expected === this.generation)
         this.update({
@@ -111,8 +119,11 @@ export class AuthSession {
     const expected = this.generation;
     this.update({ sessionError: "", booting: true });
     try {
-      if ((await this.refresh(expected)) !== null && expected === this.generation)
-        this.update({ view: "onboarding" });
+      const items = await this.refresh(expected);
+      if (items && expected === this.generation) {
+        if (items.length === 1) this.update({ selected: items[0]!, view: "studio" });
+        else this.update({ view: "onboarding" });
+      }
     } catch (error) {
       if (expected === this.generation)
         this.update({

@@ -1,8 +1,14 @@
-import { finalizeInvalidText } from "../usage-budget/run-paid-failure.js";
+import { prepareMediaIntent } from "./media-intent.js";
+import {
+  dispatchPaidText,
+  type PaidTextInvocation,
+  type PaidTextResult,
+} from "../usage-budget/text-attempt-runtime.js";
+import { readTextAttempt } from "../usage-budget/text-attempt-store.js";
+import { textCancellationRequested } from "../usage-budget/text-attempt-cancel.js";
 import { settledMediaSpend } from "../usage-budget/run-media-spend.js";
 import type { Prisma } from "@reelforge/database";
 type BudgetEnvelope = Prisma.BudgetEnvelopeGetPayload<object>;
-import { InvalidCompletedText, ProviderFailure } from "@reelforge/ai-providers";
 import { canRollback, readAdmission } from "../usage-budget/run-admission-state.js";
 import { clearResolvedSubmissionHold, failSettledGeneration } from "../runs/run-outcomes.js";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
@@ -31,6 +37,7 @@ export class MediaAccounts {
     input: unknown,
     cost: number,
     modelId: string,
+    journal = false,
   ): Promise<Step> {
     await this.access.boundary.check(context, run);
     const result = await this.access.runs.store.mutate(
@@ -50,7 +57,7 @@ export class MediaAccounts {
             value: previous,
             payload: { replay: true },
           };
-        if (previous) await this.verifyRetry(tx, context, previous);
+        if (previous) await this.verifyRetry(tx, context, previous, journal);
         await assertCriticRevision(db, tx, current, { key, input: { spec: input } });
         const { budget, warning } = await this.checkRoom(db, current, cost);
         const attempt = (previous?.attempt ?? 0) + 1;
@@ -61,18 +68,14 @@ export class MediaAccounts {
             key,
             attempt,
             state: "RUNNING",
-            costMinor: cost,
+            costMinor: journal ? null : cost,
             providerId: "gemini",
             idempotencyKey: `${run.id}:${key}:${attempt}`,
             input: json({ spec: input, modelId }),
             startedAt: new Date(),
           },
         });
-        if (budget)
-          await db.budgetEnvelope.updateMany({
-            where: { id: budget.id, revision: budget.revision },
-            data: { reservedMinor: budget.reservedMinor + cost, revision: budget.revision + 1 },
-          });
+        await prepareMediaIntent(tx, db, current, step, modelId, journal, budget, cost);
         return { value: step, payload: { key, costMinor: cost, ...warning }, stepId: step.id };
       },
     );
@@ -81,12 +84,27 @@ export class MediaAccounts {
 
     return result.value;
   }
-  private async verifyRetry(tx: Transaction, context: Context, previous: Step): Promise<void> {
-    const admission = await readAdmission(tx, context, previous);
-    if (!canRollback(admission) && admission.evidence !== "released-nondispatch")
+  private async verifyRetry(
+    tx: Transaction,
+    context: Context,
+    previous: Step,
+    journal: boolean,
+  ): Promise<void> {
+    const safe = journal
+      ? (await readTextAttempt(tx, previous))?.phase === "NOT_DISPATCHED"
+      : await this.asyncMediaRetry(tx, context, previous);
+    if (!safe)
       throw new ConflictException(
         `RECONCILE_REQUIRED: conflicting closed attempt (${previous.id})`,
       );
+  }
+  private async asyncMediaRetry(
+    tx: Transaction,
+    context: Context,
+    previous: Step,
+  ): Promise<boolean> {
+    const admission = await readAdmission(tx, context, previous);
+    return canRollback(admission) || admission.evidence === "released-nondispatch";
   }
   private async checkRoom(
     db: Scoped,
@@ -112,7 +130,8 @@ export class MediaAccounts {
       current.state !== run.state ||
       current.pauseReason === "EMERGENCY_STOP" ||
       current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-      current.pauseReason === "OPERATOR_ABANDONED"
+      current.pauseReason === "OPERATOR_ABANDONED" ||
+      current.pauseReason === textCancellationRequested
     )
       throw new ConflictException("Run is not accepting media dispatch");
   }
@@ -134,29 +153,12 @@ export class MediaAccounts {
   ): Promise<T> {
     return this.access.paid.dispatch(context, step, call, assertLocked);
   }
-  public async dispatchText<T extends { providerJobId: string }>(
+  public dispatchTextAttempt<T>(
     context: Context,
     step: Step,
-    call: () => Promise<T>,
-  ): Promise<T> {
-    const result = await this.dispatch(context, step, call).catch(async (error: unknown) => {
-      if (error instanceof InvalidCompletedText) {
-        const event = await finalizeInvalidText(
-          this.access.runs.store,
-          this.access.paid,
-          context,
-          step,
-          error,
-        );
-        await this.access.runs.events?.publish(event);
-      } else if (error instanceof ProviderFailure && !error.dispatched) {
-        const event = await this.access.paid.finalizeRejected(context, step, error);
-        await this.access.runs.events?.publish(event);
-      }
-      throw error;
-    });
-    await this.access.runs.attachJob(context, step, result.providerJobId, json(result));
-    return result;
+    invoke: PaidTextInvocation<T>,
+  ): Promise<PaidTextResult<T>> {
+    return dispatchPaidText(this.access, context, step, invoke);
   }
   public async reserve(context: Context, run: Run, step: Step, modelId: string): Promise<void> {
     const proof = await this.access.paid.prepareReservation(run);
@@ -204,6 +206,12 @@ export class MediaAccounts {
     budgetDenied = false,
   ): Promise<boolean> {
     if (step.state !== "RUNNING" || step.providerJobId) return false;
+    if (
+      await this.access.runs.store.db.textAttemptEvidence.count({
+        where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "PREPARED" },
+      })
+    )
+      return false;
     await this.access.paid.rollbackAdmission(context, step, budgetDenied);
     const current = await this.access.runs.store.scoped(context).videoRunStep.findFirstOrThrow({
       where: { id: step.id },
@@ -217,6 +225,12 @@ export class MediaAccounts {
   }
 
   public async reconcilePending(context: Context, step: Step): Promise<never> {
+    if (
+      await this.access.runs.store.db.textAttemptEvidence.count({
+        where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "PREPARED" },
+      })
+    )
+      throw new ConflictException(`RECONCILE_REQUIRED: text evidence pending (${step.id})`);
     const ledger = await readAdmission(this.access.runs.store.db, context, step);
     if (canRollback(ledger)) {
       await this.access.paid.rollbackAdmission(context, step);
@@ -290,6 +304,13 @@ export class MediaAccounts {
       async (db, run, tx) => {
         const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
         if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
+        if (current.state === "FAILED") throw new ConflictException("Media attempt already failed");
+        const tracked = await tx.textAttemptProjection.findUnique({
+          where: {
+            workspaceId_attemptId: { workspaceId: context.workspaceId, attemptId: step.id },
+          },
+        });
+        if (tracked) return this.promoteJournalResult(db, step, output, tracked.netMinor);
         await this.access.paid.commitJob(tx, context, current, current.costMinor ?? 0);
         const budget = await db.budgetEnvelope.findFirst({ where: { runId: step.runId } });
         if (budget)
@@ -330,6 +351,23 @@ export class MediaAccounts {
       },
     );
     await this.access.runs.events?.publish(result.event);
+  }
+  private async promoteJournalResult(
+    db: Scoped,
+    step: Step,
+    output: unknown,
+    netMinor: number,
+  ): Promise<{ value: null; payload: { costMinor: number }; stepId: string }> {
+    const changed = await db.videoRunStep.updateMany({
+      where: { id: step.id, state: "WAITING_EXTERNAL" },
+      data: {
+        state: "SUCCEEDED",
+        finishedAt: new Date(),
+        output: json({ result: output, budgetAccounted: true }),
+      },
+    });
+    if (!changed.count) throw new ConflictException("Text receipt has not settled yet");
+    return { value: null, payload: { costMinor: netMinor }, stepId: step.id };
   }
   public async sync(context: Context, run: Run): Promise<void> {
     const result = await this.access.runs.store.mutate(

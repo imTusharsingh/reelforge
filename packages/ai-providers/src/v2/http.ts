@@ -1,4 +1,7 @@
 import { providerKeyIssue } from "./config.js";
+import { createPaidTextTransport, type PaidTextTransport } from "./paid-text-transport.js";
+
+export type { PaidTextRequest, PaidTextTransport } from "./paid-text-transport.js";
 
 export type Json = Record<string, unknown>;
 export type FailureKind =
@@ -20,6 +23,10 @@ const rejectionCodes = new Map<number, ReadonlySet<string>>([
   [403, new Set(["permission_denied", "PERMISSION_DENIED"])],
   [404, new Set(["not_found", "NOT_FOUND"])],
 ]);
+export function isDefinitiveProviderRejection(status: number, code: string): boolean {
+  return rejectionCodes.get(status)?.has(code) ?? false;
+}
+
 const diagnosticCodes = new Set([
   ...Array.from(rejectionCodes.values()).flatMap((codes) => [...codes]),
   "resource_exhausted",
@@ -67,8 +74,17 @@ export class ProviderFailure extends Error {
 
 /** A terminal content decision returned by the submission endpoint itself. */
 export class SubmissionRefused extends ProviderFailure {
-  public constructor(public readonly providerJobId: string | null) {
+  public constructor(
+    public readonly providerJobId: string | null,
+    public readonly billedSeconds: number | null = null,
+  ) {
     super("REFUSAL", true);
+  }
+}
+
+export class TerminalMediaJob extends ProviderFailure {
+  public constructor(public readonly status: "refused" | "failed") {
+    super(status === "refused" ? "REFUSAL" : "INVALID", true);
   }
 }
 
@@ -152,14 +168,31 @@ export class ProviderHttp {
   public constructor(
     private readonly key: string,
     private readonly vendor: "gemini" | "xai",
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher?: typeof fetch,
     private readonly timeoutMs = 30000,
+    private readonly paidTransport: PaidTextTransport | undefined = fetcher === undefined
+      ? createPaidTextTransport()
+      : undefined,
   ) {}
   public assertKey(): void {
     const issue = providerKeyIssue(this.vendor, this.key);
     if (issue) throw new ProviderFailure(issue, false);
   }
-  public json(path: string, body?: Json, idemKey?: string): Promise<Json> {
+  public paidJson(
+    path: string,
+    body: Json,
+    idemKey: string,
+    onBodySent: () => Promise<void>,
+  ): Promise<Json> {
+    if (!this.paidTransport) throw new ProviderFailure("NOT_CONFIGURED", false);
+    return this.json(path, body, idemKey, onBodySent);
+  }
+  public json(
+    path: string,
+    body?: Json,
+    idemKey?: string,
+    onBodySent?: () => Promise<void>,
+  ): Promise<Json> {
     return this.request(
       path,
       async (response) => {
@@ -171,6 +204,7 @@ export class ProviderHttp {
       },
       body,
       idemKey,
+      onBodySent,
     );
   }
   public bytes(uri: string): Promise<Uint8Array> {
@@ -185,6 +219,7 @@ export class ProviderHttp {
     consume: (response: Response) => Promise<T>,
     body?: Json,
     idemKey?: string,
+    onBodySent?: () => Promise<void>,
   ): Promise<T> {
     this.assertKey();
     const base =
@@ -209,13 +244,8 @@ export class ProviderHttp {
       if (this.vendor === "gemini") headers["Api-Revision"] = "2026-05-20";
       if (body) headers["Content-Type"] = "application/json";
       if (idemKey) headers["Idempotency-Key"] = idemKey;
-      const response = await this.fetcher(url.toString(), {
-        method: body ? "POST" : "GET",
-        headers,
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: controller.signal,
-        redirect: "error",
-      });
+      const serialized = body ? JSON.stringify(body) : undefined;
+      const response = await this.send(url, headers, controller.signal, serialized, onBodySent);
       if (!response.ok) return await this.reject(response, authenticated);
       return await consume(response);
     } catch (error) {
@@ -225,10 +255,30 @@ export class ProviderHttp {
       clearTimeout(timer);
     }
   }
+  private send(
+    url: URL,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+    body: string | undefined,
+    onBodySent?: () => Promise<void>,
+  ): Promise<Response> {
+    const address = url.toString();
+    if (onBodySent && body !== undefined) {
+      if (!this.paidTransport) throw new ProviderFailure("NOT_CONFIGURED", false);
+      return this.paidTransport(address, { headers, signal, body }, onBodySent);
+    }
+    return (this.fetcher ?? fetch)(address, {
+      method: body === undefined ? "GET" : "POST",
+      headers,
+      ...(body === undefined ? {} : { body }),
+      signal,
+      redirect: "error",
+    });
+  }
   private async reject(response: Response, authenticated: boolean): Promise<never> {
     const codes = errorCodes(await readErrorPrefix(response.body));
     const status = response.status;
-    const confirmed = codes.find((code) => rejectionCodes.get(status)?.has(code));
+    const confirmed = codes.find((code) => isDefinitiveProviderRejection(status, code));
     const code = confirmed ?? codes[0];
     const detail = { status, ...(code ? { code } : {}) };
     if (response.status === 429) {

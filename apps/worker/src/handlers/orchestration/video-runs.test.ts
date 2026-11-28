@@ -25,7 +25,10 @@ describe("VideoRun worker lifecycle", () => {
       recover: vi.fn().mockResolvedValue(undefined),
     };
     const app = { get: vi.fn().mockReturnValue(runtime) };
+    const ready = vi.spyOn(console, "info").mockImplementation(() => {});
     const consumer = await createVideoRunsConsumer(app as never, "redis://unused");
+    expect(ready).toHaveBeenCalledWith("[video-run-worker] ready", { queue: "v3", concurrency: 4 });
+    ready.mockRestore();
     const process = mock.constructor.mock.calls.at(-1)![1] as (
       job: object,
       token: string,

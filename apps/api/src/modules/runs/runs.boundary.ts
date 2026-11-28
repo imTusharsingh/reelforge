@@ -9,6 +9,13 @@ export class RunsBoundary {
     @Inject(EMERGENCY_STOP_PORT) private readonly stop: EmergencyStopPort,
     private readonly runs: RunsService,
   ) {}
+  public async assertNotStopped(context: Context, run: Run): Promise<void> {
+    const decision = await this.stop.check({
+      workspaceId: context.workspaceId,
+      channelId: run.channelId,
+    });
+    if (decision.stopped) throw new ConflictException("Run stopped before paid text authorization");
+  }
   public async check(context: Context, run: Run): Promise<void> {
     const decision = await this.stop.check({
       workspaceId: context.workspaceId,
@@ -20,7 +27,8 @@ export class RunsBoundary {
       run.id,
       "emergency_stop",
       async (db, current) => {
-        const entered = current.pauseReason !== "EMERGENCY_STOP";
+        const entered =
+          current.pauseReason !== "EMERGENCY_STOP" && current.pauseReason !== "CANCEL_REQUESTED";
         if (entered)
           await db.videoRun.updateMany({
             where: { id: run.id },

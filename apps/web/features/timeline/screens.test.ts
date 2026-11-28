@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunScreen } from "./run-screen";
 import { RunList } from "./run-list";
 import { AutonomyPanel } from "./autonomy-panel";
-import { detail, FakeEventSource, runId, workspaceId } from "./timeline.fixture";
+import { detail, FakeEventSource, levelTwoPlanning, runId, workspaceId } from "./timeline.fixture";
 vi.mock("../../components/studio-workspace-context", () => ({
   useActiveWorkspace: (): { id: string; role: string } => ({ id: workspaceId, role: "OWNER" }),
 }));
@@ -49,11 +49,38 @@ describe("V8 mounted experience with fake HTTP", () => {
     fakeFetch();
     await act(async () => root.render(createElement(RunScreen, { id: runId })));
     expect(host.textContent).toContain("$5.79 used of $8.00 cap");
-    expect(host.querySelectorAll(".rf-timeline li")).toHaveLength(14);
+    expect(host.querySelectorAll(".rf-timeline li")).toHaveLength(10);
+    expect(host.querySelector("details[open] summary")?.textContent).toBe("Step attempts");
+    expect(host.querySelector(".rf-timeline")?.textContent).toContain("✓ Critic");
     expect(host.textContent).toContain("Storyboard");
     expect(host.textContent).toContain("8/10");
     expect(host.textContent).toContain("Try full auto");
     expect(host.textContent).toContain("Ready to publish");
+  });
+  it("checks off the L2 Planning transition without a Planning step, and clears rewound stages", async () => {
+    const data = levelTwoPlanning();
+    fakeFetch(data);
+    await act(async () => root.render(createElement(RunScreen, { id: runId })));
+    const timeline = (): string => host.querySelector(".rf-timeline")?.textContent ?? "";
+    const current = (): string | null | undefined =>
+      host.querySelector(".rf-timeline [aria-current=step]")?.textContent;
+    expect(current()).toBe("Planning");
+
+    data.run.state = "SCRIPTING";
+    data.completedStages = ["PLANNING"];
+    await act(async () => FakeEventSource.instances[0]!.emit("transition", 2));
+    expect(current()).toBe("Scripting");
+    expect(timeline()).toContain("✓ Planning");
+    expect(timeline()).not.toContain("✓ Scripting");
+
+    // A redo returns to Generating. An old succeeded assembly cannot light up the new pass.
+    data.run.state = "GENERATING";
+    data.completedStages = ["PLANNING", "SCRIPTING", "SHOT_PLANNING"];
+    data.steps = [{ ...detail().steps[0]!, key: "ASSEMBLING" }];
+    await act(async () => FakeEventSource.instances[0]!.emit("reshoot_replayed", 8));
+    expect(current()).toBe("Generating");
+    expect(timeline()).toContain("✓ Shot planning");
+    expect(timeline()).not.toContain("✓ Assembling");
   });
   it.each([
     { reason: "PUBLISH_DRY_RUN", timeline: "Publish simulated (dry run)", header: "Dry run" },
@@ -189,6 +216,55 @@ describe("V8 mounted experience with fake HTTP", () => {
     await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
     expect(redo()?.disabled).toBe(true);
   });
+  it.each(["SCRIPTING", "FAILED"] as const)(
+    "requires owner confirmation to settle text in %s",
+    async (state) => {
+      const data = detail(),
+        id = crypto.randomUUID();
+      const failed = state === "FAILED";
+      data.run.state = state;
+      data.run.pauseReason = failed
+        ? "UNAUTHENTICATED"
+        : `RECONCILE_REQUIRED: provider submission outcome unknown (${id})`;
+      data.steps = [
+        {
+          id,
+          key: "media:text:scriptwriter",
+          attempt: 1,
+          state: failed ? "FAILED" : "RUNNING",
+          costMinor: 17,
+          providerId: "gemini",
+          input: {},
+          output: null,
+          awaitingReconciliation: !failed,
+          confirmTerminalText: true,
+        },
+      ];
+      data.envelope = null;
+      data.pinnedHardCapMinor = 400;
+      data.remainingBudgetMinor = 383;
+      const fetcher = fakeFetch(data);
+      const confirm = vi.fn().mockReturnValue(false);
+      vi.stubGlobal("confirm", confirm);
+      await act(async () => root.render(createElement(RunScreen, { id: runId })));
+      if (!failed) expect(host.textContent).toContain("$0.17 is reserved");
+      expect(host.textContent).toContain("$3.83 remaining");
+      expect(host.textContent).toContain("Pinned cap $4.00");
+      if (!failed) expect(host.textContent).toContain("Awaiting reconciliation");
+      expect(host.textContent).not.toContain(id);
+      const settle = Array.from(host.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes(failed ? "Settle terminal" : "Confirm terminal"),
+      )!;
+      await act(async () => settle.click());
+      expect(fetcher.mock.calls.some(([url]) => url.includes("/abandon"))).toBe(false);
+      confirm.mockReturnValue(true);
+      await act(async () => settle.click());
+      expect(fetcher).toHaveBeenCalledWith(
+        expect.stringContaining("/abandon?"),
+        expect.objectContaining({ body: JSON.stringify({ confirmedTerminalText: true }) }),
+      );
+    },
+  );
   it("offers resume at final review after an emergency stop", async () => {
     const data = detail();
     data.run.pauseReason = "EMERGENCY_STOP";

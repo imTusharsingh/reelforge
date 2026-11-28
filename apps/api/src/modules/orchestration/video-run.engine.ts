@@ -1,10 +1,14 @@
+import { SessionLockBusy } from "../runs/session-lock.js";
 import { isRenderStage, terminalRenderFailure } from "../runs/run-render-stage.js";
 import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
 import { acceptedAudio } from "../runs/run-audio.js";
-import { pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
+import {
+  pendingCorrectionJobs,
+  shouldCheckShotBoundary,
+} from "../usage-budget/run-pending-receipt.js";
 import { RunsArtifacts } from "../runs/runs.artifacts.js";
 import { ProviderFailure } from "@reelforge/ai-providers";
 import { ConflictException, HttpException, Injectable } from "@nestjs/common";
@@ -76,6 +80,7 @@ export class VideoRunEngine {
     const job = RunJobSchema.parse(payload);
     const context = await this.context(job);
     const run = await this.runs.store.get(context, job.runId);
+    if (job.stage && job.stage !== run.state) return null;
     return runWithContext(
       createContext({
         workspaceId: run.workspaceId,
@@ -109,9 +114,10 @@ export class VideoRunEngine {
             }
             if (job.assembly && run.state !== "ASSEMBLING") return null;
             if (
-              run.pauseReason === "EMERGENCY_STOP" ||
-              run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-              run.pauseReason === "OPERATOR_ABANDONED"
+              ["EMERGENCY_STOP", "OPERATOR_ABANDONED", "CANCEL_REQUESTED"].includes(
+                run.pauseReason ?? "",
+              ) ||
+              run.pauseReason?.startsWith("RECONCILE_REQUIRED")
             )
               return null;
             await this.boundary.check(context, run);
@@ -130,6 +136,7 @@ export class VideoRunEngine {
     run: Run,
     error: unknown,
   ): Promise<number | null> {
+    if (error instanceof SessionLockBusy) return 12000;
     if (error instanceof AssemblyInterrupted) return error.delay;
     const rejected = isRenderStage(run.state) && savedCaptionRejection(error);
     if (rejected) return pauseRejectedAssembly(this.runs, context, run, rejected);
@@ -150,19 +157,19 @@ export class VideoRunEngine {
     current: Run,
     reason: string,
   ): Promise<void> {
-    if (current.state === run.state && current.pauseReason !== "EMERGENCY_STOP") {
-      const hold = await activeSubmissionHold(db, tx, {
-        ...current,
-        pauseReason: current.pauseReason?.startsWith("RECONCILE_REQUIRED")
-          ? current.pauseReason
-          : reason,
-      });
+    const halted = ["EMERGENCY_STOP", "CANCEL_REQUESTED"].includes(current.pauseReason ?? "");
+    if (current.state === run.state && !halted) {
+      const pauseReason = current.pauseReason?.startsWith("RECONCILE_REQUIRED")
+        ? current.pauseReason
+        : reason;
+      const hold = await activeSubmissionHold(db, tx, { ...current, pauseReason });
       if (hold && current.pauseReason !== hold && !(await terminalRenderFailure(db, current)))
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
     }
   }
   private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
-    if (run.state === "GENERATING" && !run.pauseReason) await this.boundary.check(context, run);
+    if (await shouldCheckShotBoundary(this.runs.store.scoped(context), run, stepId))
+      await this.boundary.check(context, run);
     try {
       return await this.generation.process(context, run, stepId);
     } catch (error) {
@@ -197,6 +204,7 @@ export class VideoRunEngine {
         if (stepId) {
           const result = await recordShotFailure(
             db,
+            tx,
             current,
             stepId,
             error,
@@ -318,27 +326,22 @@ export class VideoRunEngine {
     return { workspaceId: job.workspaceId, userId: job.userId, role: membership.role };
   }
   private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
-    const corrections = await db.videoRunStep.findMany({
-      where: { ...pendingCorrectionWhere, run: { state: { not: "FAILED" } } },
-      select: { id: true, runId: true },
-    });
-    for (const step of corrections) {
-      const run = await db.videoRun.findFirstOrThrow({
-        where: { id: step.runId },
-        select: { revision: true },
-      });
-      await this.runs.queue?.enqueue(this.runs.job(context, step.runId, step.id), run.revision);
-    }
+    for (const step of await pendingCorrectionJobs(db))
+      await this.runs.queue?.enqueue(
+        this.runs.job(context, step.runId, step.id),
+        step.run.revision,
+      );
   }
   public async recover(): Promise<void> {
     // Enumerate tenant roots only. Every run/step/event/envelope access uses the ADR-003 guard.
-    const workspaces = await this.runs.store.db.workspace.findMany({ where: { archivedAt: null } });
+    const workspaces = await this.runs.store.listRecoveryWorkspaces();
     for (const workspace of workspaces) {
       const context: Context = {
         workspaceId: workspace.id,
         userId: RECOVERY_PRINCIPAL,
         role: "OWNER",
       };
+      await this.planning.recoverText(context);
       await this.artifacts.sweep(context);
       const db = this.runs.store.scoped(context);
       await this.enqueuePendingCorrections(context, db);

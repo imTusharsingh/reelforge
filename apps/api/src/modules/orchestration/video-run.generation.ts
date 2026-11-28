@@ -1,5 +1,12 @@
-import { claimPendingShot, shotPort } from "./video-run.claim.js";
-import { refusalRewrite, settleVideoRefusal } from "./video-run.refusal.js";
+import { hasVideoDelivery, terminalVideo } from "../usage-budget/run-video-terminal.js";
+import {
+  observeSubmissionRefusal,
+  settleObservedTerminal,
+  videoBilling,
+} from "./video-run.terminal.js";
+import { terminalBilledShot } from "../usage-budget/run-shot-receipt.js";
+import { claimShot, ShotClaimCanceled, shotPort } from "./video-run.claim.js";
+import { refusalRewrite } from "./video-run.refusal.js";
 import {
   isReceiptCorrection,
   pendingCorrection,
@@ -10,7 +17,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "../usage-budget/run-admission-state.js";
-import { ProviderFailure, SubmissionRefused } from "@reelforge/ai-providers";
+import { ProviderFailure, SubmissionRefused, TerminalMediaJob } from "@reelforge/ai-providers";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import { withSpan, metrics } from "@reelforge/observability";
@@ -25,7 +32,6 @@ import { recordShotArtifact, captureShotReceipt } from "../usage-budget/run-bill
 import { reconcileBilling, resumeAfterCorrection } from "./video-run.billing-recovery.js";
 import { awaitingBilling, pendingShotMedia } from "../usage-budget/run-shot-receipt.js";
 import { billingHold } from "../runs/run-outcomes.js";
-import { priceShot } from "../usage-budget/run-envelope.js";
 import { waitForShotContinuity } from "./video-run.continuity.js";
 import { RunFallback } from "./video-run.fallback.js";
 import {
@@ -34,11 +40,8 @@ import {
   UnconfiguredVideoPort,
   type MediaPortResolver,
   type VideoGenPort,
-  type ShotBilling,
   type VideoReceipt,
 } from "./video-run.handlers.js";
-
-class ShotClaimCanceled extends Error {}
 
 @Injectable()
 export class RunGeneration {
@@ -60,6 +63,10 @@ export class RunGeneration {
     if (SETTLED_SHOTS.some((state) => state === found.state)) {
       const pending = pendingCorrection(found);
       if (pending) await this.capture(context, found, pending);
+      return null;
+    }
+    if (terminalVideo(found) && !hasVideoDelivery(found)) {
+      await settleObservedTerminal(this.runs, this.paid, context, found);
       return null;
     }
     let step = found;
@@ -97,12 +104,26 @@ export class RunGeneration {
       if (!step.providerJobId)
         return run.pauseReason?.startsWith("RECONCILE_REQUIRED") ? null : 12000;
     }
-    if (pendingShotMedia(step)) {
-      await this.complete(context, step, ports);
+    return this.collect(context, step, ports);
+  }
+
+  private async collect(
+    context: Context,
+    step: Step,
+    ports: { primary: VideoGenPort; fallback: VideoGenPort },
+  ): Promise<number | null> {
+    try {
+      if (pendingShotMedia(step)) {
+        await this.complete(context, step, ports);
+        return null;
+      }
+      if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
+      return await this.poll(context, step, ports);
+    } catch (error) {
+      if (!(error instanceof TerminalMediaJob)) throw error;
+      await settleObservedTerminal(this.runs, this.paid, context, step, error.status);
       return null;
     }
-    if (shotPort(step, ports).collectionPricing) savedVideoPricing(step.output);
-    return this.poll(context, step, ports);
   }
 
   private async waitAtBoundary(
@@ -146,7 +167,11 @@ export class RunGeneration {
   ): Promise<number | null> {
     const status = await withSpan(
       "run.provider.poll",
-      () => shotPort(step, ports).poll(step.providerJobId!, this.billing(context, step)),
+      () =>
+        shotPort(step, ports).poll(
+          step.providerJobId!,
+          videoBilling(this.runs, context, step, (receipt) => this.capture(context, step, receipt)),
+        ),
       "CLIENT",
     );
     if (status === "queued" || status === "running") return 12000;
@@ -154,11 +179,7 @@ export class RunGeneration {
       metrics
         .counter("run_provider_results", "Provider outcomes")
         .inc({ provider: step.providerId ?? "unconfigured", status });
-      if (status === "refused") await settleVideoRefusal(this.runs, this.paid, context, step);
-      else {
-        const event = await this.paid.finalizeJobFailure(context, step, "PROVIDER_FAILED");
-        await this.runs.events?.publish(event);
-      }
+      await settleObservedTerminal(this.runs, this.paid, context, step, status);
       return null;
     }
     await this.complete(context, step, ports);
@@ -173,7 +194,15 @@ export class RunGeneration {
     if (step.state === "RUNNING" || step.state === "WAITING_EXTERNAL")
       return this.recoverJob(context, run, step, ports);
     const shot = ShotSpecSchema.parse(step.input);
-    const { step: claimed, provider: selected } = await this.claim(context, run, step, shot, ports);
+    const { step: claimed, provider: selected } = await claimShot(
+      this.runs,
+      this.paid,
+      context,
+      run,
+      step,
+      shot,
+      ports,
+    );
     try {
       await this.boundary.check(context, await this.runs.store.get(context, run.id));
     } catch (error) {
@@ -203,7 +232,7 @@ export class RunGeneration {
       )
         throw error;
       if (error instanceof SubmissionRefused)
-        await settleVideoRefusal(this.runs, this.paid, context, claimed, error.providerJobId);
+        await observeSubmissionRefusal(this.runs, this.paid, context, claimed, error);
       else {
         const event = await this.paid.finalizeRejected(context, claimed, error);
         await this.runs.events?.publish(event);
@@ -252,62 +281,6 @@ export class RunGeneration {
     return this.runs.attachJob(context, step, recovered.providerJobId);
   }
 
-  private async claim(
-    context: Context,
-    run: Run,
-    step: Step,
-    shot: ReturnType<typeof ShotSpecSchema.parse>,
-    ports: { primary: VideoGenPort; fallback: VideoGenPort },
-  ): Promise<{ step: Step; provider: VideoGenPort }> {
-    const proof = await this.paid.prepareReservation(run);
-    const claim = await this.runs.store.mutate(
-      context,
-      run.id,
-      "dispatch_reserved",
-      async (db, current, tx) => {
-        if (current.state === "CANCELED") throw new ShotClaimCanceled();
-        if (
-          current.state !== "GENERATING" ||
-          current.pauseReason === "EMERGENCY_STOP" ||
-          current.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-          current.pauseReason === "OPERATOR_ABANDONED"
-        )
-          throw new ConflictException("Run is not generating");
-        const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
-        const rewrite = refusalRewrite(step);
-        const route = rewrite
-          ? shotPort({ ...step, providerId: rewrite.providerId }, ports) === ports.fallback
-            ? "FALLBACK"
-            : "PRIMARY"
-          : budget.route;
-        const { provider, amount, estimate } = priceShot(
-          current,
-          { ...budget, route },
-          ports,
-          shot,
-        );
-        await claimPendingShot(db, step, provider, shot, amount, estimate);
-        await db.budgetEnvelope.updateMany({
-          where: { id: budget.id, revision: budget.revision },
-          data: { reservedMinor: budget.reservedMinor + amount, revision: budget.revision + 1 },
-        });
-        const updated = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-        await this.paid.reserve(context, current, updated, amount, tx, proof);
-        if (provider.modelId)
-          await tx.providerRequest.updateMany({
-            where: { workspaceId: context.workspaceId, correlationId: step.id },
-            data: { capabilityId: provider.modelId },
-          });
-        return {
-          value: { step: updated, provider },
-          payload: { amountMinor: amount },
-          stepId: step.id,
-        };
-      },
-    );
-    await this.runs.events?.publish(claim.event);
-    return claim.value;
-  }
   private recordSuccess(cost: number, step: Step, started: number): void {
     metrics
       .counter("run_provider_results", "Provider outcomes")
@@ -325,7 +298,8 @@ export class RunGeneration {
       try {
         await persistPendingCorrection(this.runs.store, context, step, receipt);
         const saved = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
-        if (correctionPending) await resumeAfterCorrection(this.runs, context, step.runId);
+        if (correctionPending && !terminalBilledShot(saved))
+          await resumeAfterCorrection(this.runs, context, step.runId);
         return saved;
       } catch (cause) {
         throw new ShotBillingFailure(cause, {
@@ -336,15 +310,6 @@ export class RunGeneration {
       }
     })();
   }
-  private billing(context: Context, step: Step): ShotBilling {
-    return {
-      savedOutput: step.output,
-      shot: ShotSpecSchema.parse(step.input),
-      record: async (receipt): Promise<void> => {
-        await this.capture(context, step, receipt);
-      },
-    };
-  }
   private async complete(
     context: Context,
     step: Step,
@@ -353,10 +318,20 @@ export class RunGeneration {
     const started = step.startedAt?.getTime() ?? Date.now();
     const port = shotPort(step, ports);
     const recovering = !!pendingShotMedia(step);
-    const billing = this.billing(context, step);
+    const billing = videoBilling(this.runs, context, step, (receipt) =>
+      this.capture(context, step, receipt),
+    );
+    if (terminalVideo(step) && !hasVideoDelivery(step)) {
+      await settleObservedTerminal(this.runs, this.paid, context, step);
+      return;
+    }
     if (!pendingShotMedia(step)?.pendingMedia && port.collectReceipt) {
       const receipt = await port.collectReceipt(step.providerJobId!, billing.shot, billing);
       step = await this.capture(context, step, receipt);
+      if (terminalVideo(step) && !hasVideoDelivery(step)) {
+        await settleObservedTerminal(this.runs, this.paid, context, step);
+        return;
+      }
       if (step.state === "SUCCEEDED" || (awaitingBilling(step) && !pendingShotMedia(step))) return;
     }
     const body = await withSpan(

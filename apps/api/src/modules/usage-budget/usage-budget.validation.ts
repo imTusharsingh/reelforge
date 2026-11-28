@@ -26,16 +26,35 @@ const UpsertBudgetSchema = z
   );
 export type UpsertBudgetRequest = z.infer<typeof UpsertBudgetSchema>;
 
-const AdjustmentSchema = z
+const StandaloneAdjustmentSchema = z
   .object({
     channelId: z.uuid().nullable().optional(),
-    kind: z.enum(["CREDIT", "DEBIT"]),
+    kind: z.enum(["BUDGET_CREDIT", "DEBIT"]),
     currency,
     amountMinor: minor.positive(),
     reason,
   })
   .strict();
+const LinkedTextCreditSchema = z
+  .object({
+    kind: z.literal("CREDIT"),
+    textAttemptId: z.uuid(),
+    operationKey: z.string().trim().min(1).max(200),
+    amountMinor: minor.positive().max(2_147_483_647),
+    reason,
+  })
+  .strict();
+const ProviderCreditSchema = LinkedTextCreditSchema.omit({ textAttemptId: true }).extend({
+  providerRequestId: z.uuid(),
+});
+export type ProviderCreditRequest = z.infer<typeof ProviderCreditSchema>;
+const AdjustmentSchema = z.union([
+  StandaloneAdjustmentSchema,
+  LinkedTextCreditSchema,
+  ProviderCreditSchema,
+]);
 export type AdjustmentRequest = z.infer<typeof AdjustmentSchema>;
+export type LinkedTextCreditRequest = z.infer<typeof LinkedTextCreditSchema>;
 
 const ReserveSchema = z
   .object({

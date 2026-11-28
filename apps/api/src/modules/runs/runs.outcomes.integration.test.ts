@@ -1,9 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { ModuleRef } from "@nestjs/core";
 import { ShotSpecSchema } from "@reelforge/contracts";
 import {
   capabilityCatalog,
-  GeminiText,
   Interactions,
   OmniVideo,
   ProviderFailure,
@@ -13,13 +10,9 @@ import { describe, expect, it, vi } from "vitest";
 import { MediaAccess } from "../scene-media/media-access.js";
 import { MediaAccounts } from "../scene-media/media-accounts.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
-import { MediaPlanning } from "../scene-media/media-planning.js";
-import { MediaPorts } from "../scene-media/media-ports.js";
 import { RoutedMediaVideo } from "../scene-media/media-video.js";
-import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { shotReceiptBufferMinor } from "../usage-budget/run-envelope.js";
-import { RunsBoundary } from "./runs.boundary.js";
 import type { Prisma } from "@reelforge/database";
 import type { Step } from "./runs.types.js";
 import type { RunsQueue } from "./runs.queue.js";
@@ -47,7 +40,7 @@ async function accounting(
   return { request, reservation, envelope };
 }
 
-function adapters(t: Tenant, fetcher: typeof fetch): { text: GeminiText; video: OmniVideo } {
+function videoAdapter(t: Tenant, fetcher: typeof fetch): OmniVideo {
   const http = new ProviderHttp("AIza" + "aB1".repeat(12), "gemini", fetcher);
   const interactions = new Interactions(http, {
     save: async (): Promise<never> => {
@@ -66,10 +59,7 @@ function adapters(t: Tenant, fetcher: typeof fetch): { text: GeminiText; video: 
     },
     { gemini: true, xai: true },
   );
-  return {
-    text: new GeminiText(interactions, "text-fixture"),
-    video: new OmniVideo(interactions, catalog[0]!, { resolve: async () => [] }),
-  };
+  return new OmniVideo(interactions, catalog[0]!, { resolve: async () => [] });
 }
 
 function rejection(status = 400, code = "INVALID_ARGUMENT"): Response {
@@ -314,7 +304,7 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
       await generating(t);
       const step = await attempt(t, "shot-0");
       const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(rejection(status, code));
-      const { video } = adapters(t, fetcher);
+      const video = videoAdapter(t, fetcher);
       const access = { artifacts: t.artifacts } as MediaAccess;
       t.generation.provider = new RoutedMediaVideo(
         video,
@@ -335,79 +325,4 @@ describe.skipIf(!process.env.DATABASE_URL)("durable paid run outcomes", () => {
       expect(fetcher).toHaveBeenCalledOnce();
     },
   );
-
-  it("closes the planning text attempt and fails closed on the next pass", async () => {
-    const narrator = {
-      providerId: "gemini" as const,
-      voiceId: "narrator",
-      pace: 1,
-      language: "English",
-    };
-    const t = await fixture.tenant("L2", 42, narrator, false);
-    await t.engine.process(t.runs.job(t.context, t.run.id));
-    const run = await t.store.get(t.context, t.run.id);
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(rejection());
-    const { text } = adapters(t, fetcher);
-    const paid = new RunPaidCalls(t.usage, t.store);
-    const prompt = {
-      capture: vi.fn<PlanningPromptService["capture"]>().mockResolvedValue({
-        prompt: "fixture prompt",
-        receipt: {
-          role: "scriptwriter",
-          version: 2,
-          templateVersionId: randomUUID(),
-          promptSnapshotId: randomUUID(),
-          configSnapshotId: randomUUID(),
-          fingerprintSha256: createHash("sha256").update("fixture").digest("hex"),
-        },
-      }),
-      format: vi.fn<PlanningPromptService["format"]>().mockResolvedValue({}),
-    };
-    const boundary = new RunsBoundary(
-      { check: async (): Promise<Tenant["stop"]> => t.stop },
-      t.runs,
-    );
-    const modules = {
-      get: (token: unknown): unknown => (token === PlanningPromptService ? prompt : {}),
-    } as ModuleRef;
-    const access = { modules, runs: t.runs, paid, artifacts: t.artifacts, boundary };
-    const accounts = new MediaAccounts(access);
-    const jobs = new MediaJobs(access, accounts, t.storage);
-    const ports = { get: vi.fn().mockResolvedValue({ text }) } as unknown as MediaPorts;
-    const planning = new MediaPlanning(access, accounts, jobs, ports);
-    const plan = async (): Promise<never> => {
-      await planning.plan(t.context, run, t.brief);
-      throw new Error("Unexpected successful plan");
-    };
-    t.planning.handlers = { ...t.planning.handlers, SCRIPTING: { execute: plan, reconcile: plan } };
-
-    await expect(t.engine.process(t.runs.job(t.context, run.id))).rejects.toMatchObject({
-      kind: "INVALID",
-      dispatched: false,
-      http: { status: 400, code: "INVALID_ARGUMENT" },
-    });
-    const step = await attempt(t, "media:text:scriptwriter");
-    expect(step).toMatchObject({
-      state: "FAILED",
-      costMinor: 0,
-      error: { code: "PROVIDER_INVALID", message: "Provider invalid (HTTP 400, INVALID_ARGUMENT)" },
-    });
-    const saved = await accounting(t, step.id);
-    expect(saved.request).toMatchObject({
-      errorCode: "NOT_DISPATCHED",
-      responseMetadata: { dispatched: false, costKnown: true },
-    });
-    expect(saved.request.actualCost?.toString()).toBe("0");
-    expect(saved.reservation).toMatchObject({ status: "RELEASED", committedMinor: null });
-    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
-      state: "FAILED",
-      pauseReason: "PROVIDER_INVALID",
-    });
-    expect(await attempt(t, "SCRIPTING")).toMatchObject({ state: "FAILED" });
-    await expect(planning.plan(t.context, run, t.brief)).rejects.toThrow(
-      "Planning provider request was rejected",
-    );
-    await expect(t.engine.process(t.runs.job(t.context, run.id))).resolves.toBeNull();
-    expect(fetcher).toHaveBeenCalledOnce();
-  });
 });

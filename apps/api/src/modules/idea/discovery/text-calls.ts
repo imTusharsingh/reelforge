@@ -10,6 +10,13 @@ import { UsageBudgetService } from "../../usage-budget/usage-budget.service.js";
 import { createPendingPaidLedger, finishPaidLedger } from "../../usage-budget/paid-call.js";
 import { stableKey } from "./quota.js";
 
+export function discoveryEstimate(): number {
+  const estimate = Number(process.env.DISCOVERY_TEXT_ESTIMATE_USD);
+  if (!Number.isFinite(estimate) || estimate <= 0)
+    throw new Error("DISCOVERY_TEXT_ESTIMATE_USD must be configured");
+  return estimate;
+}
+
 @Injectable()
 export class DiscoveryTextCalls {
   public constructor(
@@ -80,9 +87,7 @@ export class DiscoveryTextCalls {
   }> {
     const correlationId = stableKey(key);
     // Explicit operator estimate: never invent billing data or prices.
-    const estimate = Number(process.env.DISCOVERY_TEXT_ESTIMATE_USD);
-    if (!Number.isFinite(estimate) || estimate <= 0)
-      throw new Error("DISCOVERY_TEXT_ESTIMATE_USD must be configured");
+    const estimate = discoveryEstimate();
     const capability: CapabilityMetadata = {
       providerId: "gemini",
       capabilityId: process.env.GEMINI_TEXT_MODEL ?? "",

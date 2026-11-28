@@ -41,6 +41,13 @@ export function detail(): RunDetailView {
     ],
   };
 }
+export function levelTwoPlanning(): RunDetailView {
+  const fixture = detail();
+  fixture.run = { ...fixture.run, state: "PLANNING" };
+  fixture.steps = [];
+  fixture.completedStages = [];
+  return fixture;
+}
 export class FakeEventSource {
   public static instances: FakeEventSource[] = [];
   public readonly listeners = new Map<string, EventListener>();

@@ -1,6 +1,7 @@
-import type { InvalidCompletedText } from "@reelforge/ai-providers";
+import { lockVideoJob } from "./video-job-evidence.js";
+import { hasVideoDelivery } from "./run-video-terminal.js";
+import { carryRefusalBill } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
-import { failRunIfSettled as settleRunFailure } from "../runs/run-outcomes.js";
 import { closeSteps } from "../runs/run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { ConflictException } from "@nestjs/common";
@@ -14,6 +15,12 @@ import {
   clearResolvedSubmissionHold,
 } from "../runs/run-outcomes.js";
 
+class ReplayedFailure extends Error {
+  constructor(readonly event: Event) {
+    super();
+  }
+}
+
 export async function finalizeFailed(
   store: RunsStore,
   paid: RunPaidCalls,
@@ -25,51 +32,92 @@ export async function finalizeFailed(
   providerJobId: string | null = step.providerJobId,
   usage?: Record<string, unknown>,
 ): Promise<Event> {
-  const result = await store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({
-      where: { id: step.id, runId: run.id },
-    });
-    if (current.state === "FAILED")
-      return { value: null, payload: { replay: true }, stepId: step.id };
-    if (
-      current.state !== (step.providerJobId ? "WAITING_EXTERNAL" : "RUNNING") ||
-      current.providerJobId !== step.providerJobId ||
-      current.idempotencyKey !== step.idempotencyKey
-    )
-      throw new ConflictException("Dispatch claim changed");
-    const amount = current.costMinor ?? 0;
-    const cost = dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0;
-    await paid.settleFailedRequest(
-      tx,
-      context,
-      current,
-      message,
-      dispatched,
-      cost,
-      providerJobId,
-      usage,
-    );
-    await db.videoRunStep.updateMany({
-      where: { id: step.id },
-      data: {
-        state: "FAILED",
+  return failureEvent(
+    store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
+      const current = step.key.startsWith("shot-")
+        ? await lockVideoJob(tx, db, run, step.id)
+        : await currentStep(db, run, step);
+      if (current.key.startsWith("media:text:"))
+        throw new ConflictException("Text failure requires its evidence journal");
+      if (current.key.startsWith("shot-") && hasVideoDelivery(current))
+        return { value: null, eventType: "step_failure_ignored", payload: { replay: true } };
+      if (!canFinalize(current, step)) throw new ReplayedFailure(await previousFailure(db, step));
+      const amount = current.costMinor ?? 0;
+      const cost = await paid.settleFailedRequest(
+        tx,
+        context,
+        current,
+        message,
+        dispatched,
+        dispatched ? (readReceiptBudget(current.output)?.estimateMinor ?? amount) : 0,
         providerJobId,
-        costMinor: cost,
-        finishedAt: new Date(),
-        error: { code: reason, message },
-      },
-    });
-    await settleEnvelope(db, run, amount, cost);
-    await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
-    return {
-      value: null,
-      payload: { reason, message, releasedMinor: amount },
-      stepId: step.id,
-    };
-  });
-  return result.event;
+        usage,
+      );
+      await markStepFailed(db, current, providerJobId, cost, { code: reason, message });
+      await settleEnvelope(db, run, amount, cost);
+      await failRunIfSettled(context, db, tx, run, current, { code: reason, message });
+      return {
+        value: null,
+        payload: {
+          reason,
+          message,
+          releasedMinor: amount,
+        },
+        stepId: step.id,
+      };
+    }),
+  );
 }
 
+async function failureEvent(result: Promise<{ event: Event }>): Promise<Event> {
+  try {
+    return (await result).event;
+  } catch (error) {
+    if (error instanceof ReplayedFailure) return error.event;
+    throw error;
+  }
+}
+
+async function markStepFailed(
+  db: Scoped,
+  step: Step,
+  providerJobId: string | null,
+  cost: number,
+  error: { code: string; message: string },
+): Promise<void> {
+  await db.videoRunStep.updateMany({
+    where: { id: step.id },
+    data: {
+      ...(error.code === "PROVIDER_FAILED" &&
+        step.key.startsWith("shot-") &&
+        carryRefusalBill(step)),
+      state: "FAILED",
+      providerJobId,
+      costMinor: cost,
+      finishedAt: new Date(),
+      error,
+    },
+  });
+}
+
+async function previousFailure(db: Scoped, step: Step): Promise<Event> {
+  return db.runEvent.findFirstOrThrow({
+    where: { runId: step.runId, stepId: step.id, type: "step_failed" },
+    orderBy: { sequence: "asc" },
+  });
+}
+
+function canFinalize(current: Step, step: Step): boolean {
+  if (current.state === "FAILED") return false;
+  const waiting = step.providerJobId !== null;
+  if (
+    current.state !== (waiting ? "WAITING_EXTERNAL" : "RUNNING") ||
+    current.providerJobId !== step.providerJobId ||
+    current.idempotencyKey !== step.idempotencyKey
+  )
+    throw new ConflictException("Dispatch claim changed");
+  return true;
+}
 async function failRunIfSettled(
   context: Context,
   db: Scoped,
@@ -78,7 +126,6 @@ async function failRunIfSettled(
   step: Step,
   error: { code: string; message: string },
 ): Promise<void> {
-  if (step.key.startsWith("media:text:critic:")) return settleRunFailure(db, tx, run, step, error);
   const pauseReason = await clearResolvedSubmissionHold(db, tx, run, step.id);
   if (
     run.state === "CANCELED" ||
@@ -109,7 +156,7 @@ async function failRunIfSettled(
   }
   if (step.key.startsWith("shot-") || frame) {
     await failSettledGeneration(db, { ...run, pauseReason });
-  } else if (step.key.startsWith("media:text:") || step.key.startsWith("media:reference:")) {
+  } else if (step.key.startsWith("media:reference:")) {
     await db.videoRunStep.updateMany({
       where: {
         runId: run.id,
@@ -175,27 +222,15 @@ async function settleEnvelope(db: Scoped, run: Run, amount: number, cost: number
       data: {
         reservedMinor: budget.reservedMinor - amount,
         spentMinor: budget.spentMinor + cost,
+        overageMinor: Math.max(
+          budget.overageMinor,
+          budget.spentMinor + cost + budget.reservedMinor - amount - budget.hardCapMinor,
+        ),
         revision: budget.revision + 1,
       },
     });
 }
 
-export function finalizeInvalidText(
-  store: RunsStore,
-  paid: RunPaidCalls,
-  context: Context,
-  step: Step,
-  receipt: InvalidCompletedText,
-): Promise<Event> {
-  return finalizeFailed(
-    store,
-    paid,
-    context,
-    step,
-    "PROVIDER_INVALID_OUTPUT",
-    "Provider completed the text call but returned invalid output",
-    true,
-    receipt.providerJobId,
-    receipt.usage,
-  );
+function currentStep(db: Scoped, run: Run, step: Step): Promise<Step> {
+  return db.videoRunStep.findFirstOrThrow({ where: { id: step.id, runId: run.id } });
 }

@@ -4,6 +4,7 @@ import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 export const USAGE_CATEGORIES = [
   "LLM",
   "TTS",
+  "MUSIC",
   "IMAGE_MEDIA",
   "VIDEO_MEDIA",
   "RENDER",
@@ -12,6 +13,14 @@ export const USAGE_CATEGORIES = [
   "UNCATEGORIZED",
 ] as const;
 export type UsageCategoryValue = (typeof USAGE_CATEGORIES)[number];
+
+export function runStepCategory(key: string): UsageCategoryValue {
+  if (key.startsWith("media:text:")) return "LLM";
+  if (key === "media:narration") return "TTS";
+  if (key === "media:music") return "MUSIC";
+  if (key.startsWith("media:reference:") || key.startsWith("media:keyframe:")) return "IMAGE_MEDIA";
+  return key.startsWith("shot-") ? "VIDEO_MEDIA" : "UNCATEGORIZED";
+}
 
 /**
  * Categories with no M08 ledger source today: render is local FFmpeg, and publish/analytics API
@@ -80,6 +89,10 @@ export type BudgetPeriodStatus = Readonly<{
 }>;
 
 export type BudgetStatusView = Readonly<{
+  effectiveBriefCaps?: ({ channelId: string; name: string } & (
+    | { dailyLimitMinor: number; monthlyLimitMinor: number }
+    | { incompatibleCurrencies: string[] }
+  ))[];
   budgetId: string;
   scope: "WORKSPACE" | "CHANNEL";
   channelId: string | null;

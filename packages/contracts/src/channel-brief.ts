@@ -50,6 +50,15 @@ export const OnboardingInputSchema = z
   })
   .strict();
 export type OnboardingInput = z.infer<typeof OnboardingInputSchema>;
+// One daily 45-second Short at the primary-route base estimate, plus headroom.
+export const defaultBudgetPolicy = {
+  currency: "USD",
+  targetMinor: 500,
+  hardCapMinor: 550,
+  dailyLimitMinor: 550,
+  monthlyLimitMinor: 16500,
+} as const;
+
 export function defaultBrief(input: OnboardingInput): BriefInput {
   const data = OnboardingInputSchema.parse(input);
   return BriefInputSchema.parse({
@@ -94,13 +103,7 @@ export function defaultBrief(input: OnboardingInput): BriefInput {
       fps: 24,
       videoCodec: "h264",
     },
-    budgetPolicy: {
-      currency: "USD",
-      targetMinor: 600,
-      hardCapMinor: 800,
-      dailyLimitMinor: 2000,
-      monthlyLimitMinor: 18000,
-    },
+    budgetPolicy: defaultBudgetPolicy,
     references: [],
     referenceDefaults: null,
     constraints: {},

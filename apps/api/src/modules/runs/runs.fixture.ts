@@ -26,7 +26,21 @@ import { RunFallback } from "../orchestration/video-run.fallback.js";
 import { RunPlanning } from "../orchestration/video-run.planning.js";
 import { RunOutputs } from "../orchestration/video-run.outputs.js";
 import { VideoRunEngine } from "../orchestration/video-run.engine.js";
-import type { Context, Run } from "./runs.types.js";
+import type { Context, Database, Run } from "./runs.types.js";
+
+// Each fixture worker owns one storage root and queue, even when suites share PostgreSQL.
+class FixtureRunsStore extends RunsStore {
+  public constructor(
+    db: Database,
+    private readonly workspaceId: string,
+  ) {
+    super(db);
+  }
+  public override async listRecoveryWorkspaces(): Promise<{ id: string }[]> {
+    const active = await super.listRecoveryWorkspaces();
+    return active.filter(({ id }) => id === this.workspaceId);
+  }
+}
 
 export function runsFixture(maxConnections?: number): {
   tenant: (
@@ -122,7 +136,7 @@ export function runsFixture(maxConnections?: number): {
       const context: Context = { workspaceId, userId, role: "OWNER" };
       const root = await mkdtemp(join(tmpdir(), "v3-storage-"));
       roots.push(root);
-      const store = new RunsStore(db),
+      const store = new FixtureRunsStore(db, workspaceId),
         storage = new LocalFilesystemStorageAdapter(root);
       const artifacts = new RunsArtifacts(storage, store),
         runs = new RunsService(store, artifacts);

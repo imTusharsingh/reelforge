@@ -66,7 +66,7 @@ describe.skipIf(!process.env.DATABASE_URL)("paid critic after durable render pau
   const fixture = runsFixture();
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each(["intent", "reservation", "dispatch"] as const)(
+  it.each(["intent", "authorization"] as const)(
     "blocks a stale critic worker at the %s boundary without a charge",
     async (cut) => {
       const t = await fixture.tenant();
@@ -82,15 +82,9 @@ describe.skipIf(!process.env.DATABASE_URL)("paid critic after durable render pau
           await pause();
           return begin(...args);
         });
-      } else if (cut === "reservation") {
-        const reserve = accounts.reserve.bind(accounts);
-        vi.spyOn(accounts, "reserve").mockImplementationOnce(async (...args) => {
-          await pause();
-          return reserve(...args);
-        });
       } else {
-        const dispatch = accounts.dispatchText.bind(accounts);
-        vi.spyOn(accounts, "dispatchText").mockImplementationOnce(async (...args) => {
+        const dispatch = accounts.dispatchTextAttempt.bind(accounts);
+        vi.spyOn(accounts, "dispatchTextAttempt").mockImplementationOnce(async (...args) => {
           await pause();
           return dispatch(...args);
         });
@@ -106,11 +100,11 @@ describe.skipIf(!process.env.DATABASE_URL)("paid critic after durable render pau
         await t.db.videoRunStep.findMany({ where: { runId: run.id, key: "media:text:critic:1" } }),
       ).toMatchObject(cut === "intent" ? [] : [{ state: "CANCELLED" }]);
       expect(
-        await t.db.runEvent.count({ where: { runId: run.id, type: "provider_dispatch" } }),
+        await t.db.runEvent.count({ where: { runId: run.id, type: "text_attempt_armed" } }),
       ).toBe(0);
       expect(
         await t.db.usageReservation.findMany({ where: { workspaceId: run.workspaceId } }),
-      ).toMatchObject(cut === "dispatch" ? [{ status: "RELEASED", committedMinor: null }] : []);
+      ).toEqual([]);
       expect(
         await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
       ).toMatchObject({

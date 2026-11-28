@@ -1,6 +1,6 @@
 import type { ShotSpec } from "@reelforge/contracts";
 import { ProviderFailure } from "./http.js";
-import type { JobStatus, Money, VideoGenPort } from "./ports.js";
+import type { FailedJobStatus, JobStatus, Money, VideoGenPort } from "./ports.js";
 
 export type Route = Readonly<{ port: VideoGenPort; tier: number }>;
 export type RoutedJob = Readonly<{
@@ -20,6 +20,12 @@ export interface RouterDispatch {
     fallback: boolean,
     replaces?: string,
   ): Promise<{ providerJobId: string }>;
+  recordBilling?(
+    job: RoutedJob,
+    port: VideoGenPort,
+    seconds: number,
+    failure?: FailedJobStatus,
+  ): Promise<void>;
   confirmRefusal?(job: RoutedJob): Promise<void>;
   assertReplaySafe?(spec: ShotSpec, logicalKey: string): Promise<void>;
   /** V3 re-estimates its envelope before a fallback is allowed to spend. */
@@ -88,10 +94,11 @@ export class VideoRouter {
     job: RoutedJob,
   ): Promise<{ status: JobStatus | "NEEDS_HUMAN"; job: RoutedJob }> {
     const port = this.port(job.providerId);
-    const status = await port.poll(job.providerJobId);
+    const record = this.dispatch.recordBilling?.bind(this.dispatch, job, port);
+    const status = await port.poll(job.providerJobId, record);
     if (status !== "refused") return { status, job };
-    if (!this.rewrite || job.rewrites >= 1) return { status: "NEEDS_HUMAN", job };
     await this.dispatch.confirmRefusal?.(job);
+    if (!this.rewrite || job.rewrites >= 1) return { status: "NEEDS_HUMAN", job };
     const revised = await this.rewrite(job.spec);
     const logicalKey = job.idemKey.slice(0, -`:${job.providerId}`.length);
     const next = await this.attempt(port, revised, `${job.idemKey}:rewrite`, 1, logicalKey);

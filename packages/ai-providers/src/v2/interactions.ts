@@ -1,6 +1,7 @@
 import {
   ProviderFailure,
   SubmissionRefused,
+  TerminalMediaJob,
   ProviderHttp,
   record,
   requiredString,
@@ -21,8 +22,11 @@ export class Interactions {
     private readonly store: ArtifactStore,
   ) {}
 
-  public result(body: Json, key: string): Promise<Json> {
-    return this.http.json("interactions", { ...body, background: false, store: false }, key);
+  public result(body: Json, key: string, onBodySent?: () => Promise<void>): Promise<Json> {
+    const request = { ...body, background: false, store: false };
+    return onBodySent
+      ? this.http.paidJson("interactions", request, key, onBodySent)
+      : this.http.json("interactions", request, key);
   }
 
   public async submit(body: Json, idemKey: string): Promise<{ providerJobId: string }> {
@@ -35,6 +39,7 @@ export class Interactions {
     if (this.status(response) === "refused")
       throw new SubmissionRefused(
         typeof response.id === "string" && response.id.trim() ? response.id : null,
+        this.billedSeconds(response),
       );
     return { providerJobId: requiredString(response.id) };
   }
@@ -42,10 +47,7 @@ export class Interactions {
   public async poll(id: string, recordBilling?: RecordBilledSeconds): Promise<JobStatus> {
     const response = await this.get(id);
     const status = this.status(response);
-    if (status === "succeeded" && recordBilling) {
-      const seconds = this.billedSeconds(response);
-      if (seconds !== null) await recordBilling(seconds);
-    }
+    await this.recordTerminalBilling(response, status, recordBilling);
     return status;
   }
 
@@ -58,10 +60,9 @@ export class Interactions {
   ): Promise<ClipArtifact> {
     const response = await this.get(id);
     const status = this.status(response);
-    if (status === "refused") throw new ProviderFailure("REFUSAL", true);
+    const billedSeconds = await this.recordTerminalBilling(response, status, recordBilling);
+    if (status === "refused" || status === "failed") throw new TerminalMediaJob(status);
     if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
-    const billedSeconds = this.billedSeconds(response);
-    if (billedSeconds !== null) await recordBilling?.(billedSeconds);
     const artifact = await this.download(response, kind, trimSeconds).catch(onMediaFailure);
     return { ...artifact, billedSeconds };
   }
@@ -81,8 +82,23 @@ export class Interactions {
         : this.decode(requiredString(content.data));
     return this.store.save(bytes, requiredString(content.mime_type), trimSeconds);
   }
+  private async recordTerminalBilling(
+    response: Json,
+    status: JobStatus,
+    recordBilling?: RecordBilledSeconds,
+  ): Promise<number | null> {
+    if (status === "running" || status === "queued") return null;
+    const seconds = this.billedSeconds(response);
+    if (seconds === null) return null;
+    if (status === "succeeded") await recordBilling?.(seconds);
+    else await recordBilling?.(seconds, status);
+    return seconds;
+  }
+
   private billedSeconds(response: Json): number | null {
-    const seconds = response.usage === undefined ? null : record(response.usage).billed_seconds;
+    const usage = response.usage;
+    if (!usage || typeof usage !== "object" || !("billed_seconds" in usage)) return null;
+    const seconds = usage.billed_seconds;
     return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
   }
 

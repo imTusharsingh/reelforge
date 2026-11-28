@@ -17,6 +17,7 @@ export async function createVideoRunsConsumer(
   redisUrl: string,
 ): Promise<VideoRunsConsumer> {
   const runtime = app.get<VideoRunsRuntime>("VIDEO_RUN_RUNTIME");
+  const concurrency = 4;
   const worker = new Worker<unknown>(
     runtime.queueName,
     async (job, token) => {
@@ -26,7 +27,7 @@ export async function createVideoRunsConsumer(
         throw new DelayedError();
       }
     },
-    { connection: parseRedisConnection(redisUrl), concurrency: 4 },
+    { connection: parseRedisConnection(redisUrl), concurrency },
   );
   worker.on("error", (error) => console.error("[video-run-worker] queue error", error));
   worker.on("failed", (_job, error) =>
@@ -34,5 +35,6 @@ export async function createVideoRunsConsumer(
   );
   await worker.waitUntilReady();
   await runtime.recover();
+  console.info("[video-run-worker] ready", { queue: runtime.queueName, concurrency });
   return { recover: () => runtime.recover(), close: () => worker.close() };
 }

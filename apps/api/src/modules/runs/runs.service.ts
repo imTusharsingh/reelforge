@@ -1,3 +1,6 @@
+import { canOwnerConfirmText } from "../usage-budget/text-attempt-owner.js";
+import { completedStages } from "./completed-stages.js";
+import { claimedRunCost, pinnedBudget } from "../usage-budget/run-envelope.js";
 import { canAdvancePastRender } from "./run-render-stage.js";
 import { MAX_SHOT_RESHOOTS, shotReshoots } from "./shot-reshoots.js";
 import { currentContext, formatTraceparent, parseTraceparent } from "@reelforge/observability";
@@ -28,7 +31,7 @@ export class RunsService {
   public events: RunsEvents | null = null;
   public constructor(
     public readonly store: RunsStore,
-    private readonly artifacts: RunsArtifacts,
+    public readonly artifacts: RunsArtifacts,
   ) {}
   public editor(context: Context): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
@@ -109,6 +112,8 @@ export class RunsService {
       step.runId,
       "provider_submitted",
       async (db, currentRun, tx) => {
+        if (step.key.startsWith("media:text:"))
+          throw new ConflictException("Text receipts must be ingested into the evidence journal");
         const changed = await db.videoRunStep.updateMany({
           where: {
             id: step.id,
@@ -142,7 +147,8 @@ export class RunsService {
       run.state === "CANCELED" ||
       run.pauseReason === "EMERGENCY_STOP" ||
       run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-      run.pauseReason === "OPERATOR_ABANDONED"
+      run.pauseReason === "OPERATOR_ABANDONED" ||
+      run.pauseReason === "CANCEL_REQUESTED"
     )
       return;
     const job = this.job(context, run.id);
@@ -157,6 +163,13 @@ export class RunsService {
       parseTraceparent(snapshot.traceparent)
     )
       job.traceparent = snapshot.traceparent;
+    if (
+      run.state === "PLANNING" ||
+      run.state === "SCRIPTING" ||
+      run.state === "SHOT_PLANNING" ||
+      run.state === "CRITIC"
+    )
+      job.stage = run.state;
     await this.queue?.enqueue(job, run.revision);
   }
   public async move(
@@ -212,18 +225,23 @@ export class RunsService {
     await this.artifacts.refreshManifests(context, id);
     const run = await this.store.get(context, id),
       db = this.store.scoped(context);
-    const [steps, envelope, requests] = await Promise.all([
+    const [steps, envelope, requests, completed] = await Promise.all([
       db.videoRunStep.findMany({
         where: { runId: id },
         orderBy: [{ key: "asc" }, { attempt: "asc" }],
       }),
       db.budgetEnvelope.findFirst({ where: { runId: id } }),
       shotReshoots(db, id),
+      completedStages(db, id, run.revision),
     ]);
+    const cap = pinnedBudget(run).hardCapMinor;
     return {
       run,
-      steps,
+      steps: await this.stepViews(context, run, steps),
       envelope,
+      pinnedHardCapMinor: cap,
+      remainingBudgetMinor: Math.max(0, cap - claimedRunCost(steps)),
+      completedStages: completed,
       remainingReshoots: Object.fromEntries(
         [...new Set(steps.map((step) => step.key))]
           .filter((key) => key.startsWith("shot-"))
@@ -244,6 +262,29 @@ export class RunsService {
     };
   }
 
+  private async stepViews(
+    context: Context,
+    run: Run,
+    steps: Step[],
+  ): Promise<(Step & { confirmTerminalText: boolean; awaitingReconciliation: boolean })[]> {
+    return Promise.all(
+      steps.map(async (step) => {
+        const held =
+          !!run.pauseReason?.startsWith("RECONCILE_REQUIRED") && step.state === "RUNNING";
+        const named = !!run.pauseReason?.includes(step.id);
+        const candidate =
+          step.key.startsWith("media:text:") &&
+          ((held && named) || (run.state === "FAILED" && step.state === "FAILED"));
+        return {
+          ...step,
+          confirmTerminalText:
+            candidate && (await canOwnerConfirmText(this.store.db, step, context, this.artifacts)),
+          awaitingReconciliation:
+            held && (named || step.key === run.state || step.key === "planning:manifest:v1"),
+        };
+      }),
+    );
+  }
   public job(context: Context, runId: string, stepId?: string): RunJob {
     const active = currentContext();
     return {

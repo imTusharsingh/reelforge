@@ -1,9 +1,10 @@
+import { mergeVideoEvidence, sameVideoClip, winsVideoPrice } from "./video-job-evidence.js";
 import { ConflictException } from "@nestjs/common";
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
-import { ArtifactSchema, json, type Json, type Step } from "../runs/runs.types.js";
-import { isBillingHold } from "./run-admission-state.js";
+import { ArtifactSchema, json, type Json, type Scoped, type Step } from "../runs/runs.types.js";
+import { isBillingHold, type Admission } from "./run-admission-state.js";
 
 const ReceiptBudgetSchema = z.object({
   admittedMinor: z.number().int().nonnegative(),
@@ -34,7 +35,7 @@ export function awaitingBilling(step: Step): boolean {
   return isBillingHold(step.error);
 }
 
-const pendingOutput = z.object({
+export const pendingOutput = z.object({
   pendingMedia: z
     .object({
       objectKey: z.string(),
@@ -70,17 +71,6 @@ export function pendingShotMedia(step: Step): z.infer<typeof pendingOutput> | nu
   return saved;
 }
 
-type StoredPrice = z.infer<typeof pricedOutput.shape.receipt>;
-
-/** Unmarked historical prices can include provider reports. Preserve them on ambiguous replays. */
-function replacesPrice(previous: StoredPrice | undefined, price: VideoReceipt): boolean {
-  if (!previous) return true;
-  return (
-    price.costBasis === "BILLED" &&
-    (previous.costBasis === "RESERVATION" || price.costMinor > previous.costMinor)
-  );
-}
-
 const deliveredOutput = z
   .object({
     receipt: pricedOutput.shape.receipt.extend({ providerId: z.string() }).passthrough(),
@@ -112,7 +102,7 @@ export function mergeShotReceipt(
   const { media, ...price } = receipt;
   const final = deliveredShot(step);
   if (final) {
-    if (!replacesPrice(final.receipt, receipt)) return null;
+    if (!winsVideoPrice(final.receipt, receipt)) return null;
     return {
       priceChanged: true,
       previousCost: final.receipt.costMinor,
@@ -130,17 +120,25 @@ export function mergeShotReceipt(
       }),
     };
   }
-  const priceChanged = replacesPrice(pending?.receipt, receipt);
-  if (!priceChanged && !media) return null;
-  const pendingMedia = media ?? pending?.pendingMedia ?? null;
+  const priceChanged = winsVideoPrice(pending?.receipt, receipt);
+  if (!priceChanged && (!media || sameVideoClip(media, pending?.pendingMedia ?? null))) return null;
+  const old = pending
+    ? {
+        ...pending.receipt,
+        costBasis: pending.receipt.costBasis ?? ("BILLED" as const),
+        media: pending.pendingMedia,
+      }
+    : null;
+  const merged = mergeVideoEvidence({ receipt: old }, { receipt }).receipt!;
   const output = pendingOutput.parse({
-    pendingMedia,
+    pendingMedia: merged.media,
     receipt: {
-      ...(priceChanged ? price : pending?.receipt),
+      ...merged,
+      media: undefined,
       key: step.key,
       providerId: step.providerId,
       providerJobId: step.providerJobId,
-      providerDurationSeconds: pendingMedia?.durationSeconds ?? null,
+      providerDurationSeconds: merged.providerDurationSeconds,
     },
   });
   return {
@@ -152,17 +150,18 @@ export function mergeShotReceipt(
 }
 
 export function admissionFields(step: Step): Record<string, unknown> {
-  const { receiptBudget, videoPricing, refusalRewrite } = z
+  const { receiptBudget, videoPricing, refusalRewrite, terminalVideo } = z
     .record(z.string(), z.unknown())
     .parse(step.output ?? {});
   return {
     ...(receiptBudget !== undefined && { receiptBudget }),
     ...(videoPricing !== undefined && { videoPricing }),
     ...(refusalRewrite !== undefined && { refusalRewrite }),
+    ...(terminalVideo !== undefined && { terminalVideo }),
   };
 }
 
-export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
+export function correctionPayload(step: Step, receipt: VideoReceipt, refusedBilling = false): Json {
   return {
     key: step.key,
     providerId: step.providerId,
@@ -172,7 +171,17 @@ export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
     previousCostMinor: step.costMinor,
     costMinor: receipt.costMinor,
     adjustmentMinor: receipt.costMinor - step.costMinor!,
+    ...(refusedBilling && { refusedBilling: true }),
   };
+}
+
+export function terminalBilledShot(step: Step): boolean {
+  return (
+    step.key.startsWith("shot-") &&
+    ["SKIPPED", "FAILED"].includes(step.state) &&
+    z.object({ code: z.enum(["PROVIDER_REFUSED", "PROVIDER_FAILED"]) }).safeParse(step.error)
+      .success
+  );
 }
 
 export function requireReceiptAttempt(current: Step, observed: Step): void {
@@ -180,7 +189,8 @@ export function requireReceiptAttempt(current: Step, observed: Step): void {
     !observed.providerJobId ||
     current.providerJobId !== observed.providerJobId ||
     current.providerId !== observed.providerId ||
-    !["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state)
+    current.idempotencyKey !== observed.idempotencyKey ||
+    (!["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state) && !terminalBilledShot(current))
   )
     throw new ConflictException("Provider job claim changed");
 }
@@ -191,6 +201,52 @@ export function recordedShotPrice(step: Step, receipt: VideoReceipt): boolean {
     saved.success &&
     saved.data.receipt.providerJobId === step.providerJobId &&
     saved.data.receipt.costMinor === step.costMinor &&
-    !replacesPrice(saved.data.receipt, receipt)
+    !winsVideoPrice(saved.data.receipt, receipt)
+  );
+}
+
+/** The caller holds the run lock for the ledger, step and envelope writes. */
+export async function adjustEnvelope(
+  db: Scoped,
+  runId: string,
+  delta: { spentMinor: number; reservedMinor: number; overageMinor: number },
+): Promise<void> {
+  const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId } });
+  const spentMinor = budget.spentMinor + delta.spentMinor;
+  const reservedMinor = budget.reservedMinor + delta.reservedMinor;
+  // Preserve shot overruns and cover any shortfall after siblings reuse released funds.
+  // Admission still compares gross spent + reserved against the cap.
+  const overageMinor = Math.max(
+    budget.overageMinor + delta.overageMinor,
+    spentMinor + reservedMinor - budget.hardCapMinor,
+  );
+  const updated = await db.budgetEnvelope.updateMany({
+    where: { id: budget.id, revision: budget.revision },
+    data: {
+      reservedMinor,
+      spentMinor,
+      overageMinor,
+      revision: budget.revision + 1,
+    },
+  });
+  if (updated.count !== 1) throw new ConflictException("Billing envelope changed");
+}
+
+export function importedShotEstimate(
+  { request, reservation }: Admission,
+  previous: number | undefined,
+): boolean {
+  const estimate = z
+    .object({ legacyEstimateMinor: z.number().int() })
+    .safeParse(request?.responseMetadata).data;
+  return (
+    !!request &&
+    request.status === "SUCCEEDED" &&
+    request.errorCode === null &&
+    request.actualCost === null &&
+    previous !== undefined &&
+    estimate?.legacyEstimateMinor === previous &&
+    reservation?.committedMinor != null &&
+    reservation.committedMinor <= BigInt(previous)
   );
 }

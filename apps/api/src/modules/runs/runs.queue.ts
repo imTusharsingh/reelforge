@@ -40,7 +40,7 @@ export class RunsQueue {
       ? `${data.runId}-recover-${data.stepId}`
       : data.assembly
         ? `${data.runId}-assembly`
-        : `${data.runId}-${revision}`;
+        : `${data.runId}-${data.stage ?? revision}`;
     await this.removeFinished(jobId);
     await this.queue.add("step", data, { jobId, delay, attempts: 1, removeOnComplete: true });
   }

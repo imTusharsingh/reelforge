@@ -5,9 +5,82 @@ import type { MessageEvent } from "@nestjs/common";
 import type { Context, Event } from "./runs.types.js";
 import type { RunsStore } from "./runs.store.js";
 
+const subscribeRetryMs = 2_000;
+
 /** Postgres is the replay log. Redis is a wake-up signal, never the ordering authority. */
 export class RunsEvents {
   private readonly publisher: Redis;
+  private subscriber?: Redis;
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  private readonly subscribed = new Set<string>();
+  private readonly subscribing = new Map<string, symbol>();
+  private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
+
+  private clearRetry(channel: string): void {
+    clearTimeout(this.retries.get(channel));
+    this.retries.delete(channel);
+  }
+
+  private subscribe(channel: string): void {
+    if (
+      !this.subscriber ||
+      !this.listeners.has(channel) ||
+      this.subscribed.has(channel) ||
+      this.subscribing.has(channel)
+    )
+      return;
+    this.clearRetry(channel);
+    const token = Symbol(channel);
+    this.subscribing.set(channel, token);
+    void this.subscriber.subscribe(channel).then(
+      () => {
+        if (this.subscribing.get(channel) !== token) return;
+        this.subscribing.delete(channel);
+        this.subscribed.add(channel);
+        for (const wake of this.listeners.get(channel) ?? []) wake();
+      },
+      () => {
+        if (this.subscribing.get(channel) !== token) return;
+        this.subscribing.delete(channel);
+        this.retries.set(
+          channel,
+          setTimeout(() => this.subscribe(channel), subscribeRetryMs),
+        );
+      },
+    );
+  }
+
+  private watch(channel: string, drain: () => void): () => void {
+    if (!this.subscriber) {
+      this.subscriber = this.publisher.duplicate();
+      this.subscriber.on("error", () => undefined);
+      this.subscriber.on("ready", () => {
+        for (const name of this.listeners.keys()) this.subscribe(name);
+      });
+      this.subscriber.on("message", (name: string) => {
+        for (const wake of this.listeners.get(name) ?? []) wake();
+      });
+    }
+    let listeners = this.listeners.get(channel);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(channel, listeners);
+    }
+    listeners.add(drain);
+    this.subscribe(channel);
+    drain();
+    return () => {
+      listeners.delete(drain);
+      if (!listeners.size) {
+        this.listeners.delete(channel);
+        this.clearRetry(channel);
+        this.subscribing.delete(channel);
+        this.subscribed.delete(channel);
+        void this.subscriber?.unsubscribe(channel).catch(() => undefined);
+      }
+    };
+  }
   public constructor(
     private readonly store: RunsStore,
     redisUrl: string,
@@ -23,16 +96,21 @@ export class RunsEvents {
   }
   public stream(context: Context, runId: string, after: number): Observable<MessageEvent> {
     return new Observable((subscriber) => {
-      const redis = this.publisher.duplicate();
+      let pending = false;
       let cursor = after,
         draining = false,
         closed = false;
       const drain = async (): Promise<void> => {
-        if (closed || draining) return;
+        if (closed) return;
+        if (draining) {
+          pending = true;
+          return;
+        }
         draining = true;
         try {
           let batch: Event[];
           do {
+            pending = false;
             batch = await this.store.events(context, runId, cursor);
             for (const event of batch) {
               if (closed) return;
@@ -43,25 +121,21 @@ export class RunsEvents {
               });
               cursor = event.sequence;
             }
-          } while (batch.length === 500);
+          } while (!closed && (pending || batch.length === 500));
         } catch (error) {
           subscriber.error(error);
         } finally {
           draining = false;
         }
       };
-      redis.on("error", () => undefined);
-      redis.on("message", () => {
-        void drain();
-      });
-      void redis.subscribe(`runs:${context.workspaceId}:${runId}`).then(drain).catch(drain);
-      const timer = setInterval(() => {
-        void drain();
-      }, 1000);
+      const unwatch = this.watch(`runs:${context.workspaceId}:${runId}`, () => void drain());
+      const heartbeat = setInterval(() => subscriber.next({ comment: "keepalive" }), 15000);
+      const fallback = setInterval(() => void drain(), 30000);
       return (): void => {
         closed = true;
-        clearInterval(timer);
-        redis.disconnect();
+        clearInterval(heartbeat);
+        clearInterval(fallback);
+        unwatch();
       };
     });
   }
@@ -80,6 +154,12 @@ export class RunsEvents {
     });
   }
   public async close(): Promise<void> {
+    for (const retry of this.retries.values()) clearTimeout(retry);
+    this.listeners.clear();
+    this.retries.clear();
+    this.subscribing.clear();
+    this.subscribed.clear();
+    this.subscriber?.disconnect();
     this.publisher.disconnect();
   }
 }

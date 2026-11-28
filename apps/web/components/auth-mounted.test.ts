@@ -86,7 +86,8 @@ describe("authentication and Channel Brief setup", () => {
     const login = vi.spyOn(api, "login").mockResolvedValue({ userId: "user" });
     const register = vi.spyOn(api, "register").mockResolvedValue({ userId: "user" });
     const done = vi.fn().mockResolvedValue(undefined);
-    await mount(createElement(AuthForm, { onAuthenticated: done }));
+    await mount(createElement(AuthForm, { onAuthenticated: done, notice: "Sign-in notice" }));
+    expect(container.textContent).toContain("Sign-in notice");
     await submit();
     expect(container.textContent).toContain("email");
     await fill("email", "creator@example.com");
@@ -97,6 +98,7 @@ describe("authentication and Channel Brief setup", () => {
     await submit();
     expect(login).toHaveBeenCalledOnce();
     await click("Create an account");
+    expect(container.textContent).not.toContain("Sign-in notice");
     await fill("display-name", "Creator");
     await submit();
     expect(register).toHaveBeenCalledOnce();
@@ -179,6 +181,8 @@ describe("authentication and Channel Brief setup", () => {
     expect(container.textContent).toContain("offline");
     list.mockResolvedValue([{ id: "workspace", name: "Science", role: "OWNER" }]);
     await click("Retry workspace load");
+    expect(container.textContent).toContain("Studio");
+    await click("Switch workspace");
     await click("Set up a new channel");
     expect([...container.querySelectorAll("form input,form select")].map((el) => el.id)).toEqual([
       "setup-niche",

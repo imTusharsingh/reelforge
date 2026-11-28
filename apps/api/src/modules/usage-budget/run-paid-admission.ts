@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { clearResolvedSubmissionHold, submissionHold } from "../runs/run-outcomes.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
+import { runStepCategory } from "./usage-budget.types.js";
 import type { UsageBudgetService } from "./usage-budget.service.js";
 
 export class SubmissionOutcomeUnknown extends ConflictException {}
@@ -66,7 +67,7 @@ export async function rollbackAdmission(
   if (result.value) throw new SubmissionOutcomeUnknown(result.value);
 }
 
-async function releaseAdmission(
+export async function releaseAdmission(
   db: Scoped,
   tx: Transaction,
   usage: Pick<UsageBudgetService, "release">,
@@ -81,17 +82,14 @@ async function releaseAdmission(
   const rewrite = refusalRewrite(step);
   if (reservationId) await releaseReservation(tx, usage, context, reservationId);
   await tx.providerRequest.updateMany({
-    where: { ...where, errorCode: "PENDING" },
+    where: {
+      ...where,
+      errorCode: "PENDING",
+    },
     data: {
       errorCode: shot ? "ADMISSION_ROLLED_BACK" : "NOT_DISPATCHED",
       actualCost: 0,
-      responseMetadata: {
-        admissionOrdering: ADMISSION_ORDERING,
-        dispatched: false,
-        costKnown: true,
-        stepId: step.id,
-        idempotencyKey: step.idempotencyKey,
-      },
+      responseMetadata: releaseProof(step),
     },
   });
   await db.videoRunStep.updateMany({
@@ -143,7 +141,7 @@ async function holdAmbiguousAdmission(
         ...where,
         channelId: run.channelId,
         providerId: step.providerId ?? "unconfigured",
-        capabilityId: "video",
+        capabilityId: runStepCategory(step.key).toLowerCase(),
         status: "FAILED",
         errorCode: OUTCOME_UNKNOWN,
         ...unknownPrice(admission, step),
@@ -236,7 +234,7 @@ export async function recordReservation(
 ): Promise<void> {
   const request = {
     providerId: step.providerId ?? "v3-stub",
-    capabilityId: "video",
+    capabilityId: runStepCategory(step.key).toLowerCase(),
     status: "FAILED" as const,
     estimatedCost: amount / 100,
     actualCost: null,
@@ -259,4 +257,14 @@ export async function recordReservation(
   await db.providerRequest.create({
     data: { ...where, channelId: run.channelId, createdAt, ...request },
   });
+}
+
+function releaseProof(step: Step): Prisma.InputJsonObject {
+  return {
+    admissionOrdering: ADMISSION_ORDERING,
+    dispatched: false,
+    costKnown: true,
+    stepId: step.id,
+    idempotencyKey: step.idempotencyKey,
+  };
 }

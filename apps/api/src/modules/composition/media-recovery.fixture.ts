@@ -124,7 +124,12 @@ export async function seedPlayableShotReceipts(
     });
     const changed = await db.videoRunStep.updateMany({
       where: { runId: t.run.id, key, state: "PENDING" },
-      data: { state: "SUCCEEDED", output: json({ receipt, storageArtifacts: [artifact] }) },
+      data: {
+        state: "SUCCEEDED",
+        providerId: receipt.providerId,
+        providerJobId: receipt.providerJobId,
+        output: json({ receipt, storageArtifacts: [artifact] }),
+      },
     });
     if (changed.count !== 1) throw new Error(`Expected one pending fixture step for ${key}`);
   }

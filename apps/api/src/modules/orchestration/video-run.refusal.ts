@@ -1,3 +1,6 @@
+import { lockVideoJob } from "../usage-budget/video-job-evidence.js";
+import { hasVideoDelivery, terminalVideo } from "../usage-budget/run-video-terminal.js";
+import { carryRefusalBill } from "../usage-budget/run-pending-receipt.js";
 import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
@@ -31,8 +34,8 @@ export async function settleVideoRefusal(
     step.runId,
     "shot_refused",
     async (db, run, tx) => {
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      if (SETTLED_SHOTS.some((state) => state === current.state))
+      const current = await lockVideoJob(tx, db, run, step.id);
+      if (SETTLED_SHOTS.some((state) => state === current.state) || hasVideoDelivery(current))
         return { value: null, payload: { replay: true } };
       if (
         !current.providerId ||
@@ -44,7 +47,13 @@ export async function settleVideoRefusal(
       const rewritten = !!refusalRewrite(current);
       const active = await acceptsRewrite(db, run);
       const retry = active && !rewritten;
-      const evidence = { providerJobId: submissionJobId ?? current.providerJobId, retry };
+      const recorded = terminalVideo(current);
+      if (recorded && recorded.status !== "refused")
+        return { value: null, payload: { replay: true } };
+      const evidence = {
+        providerJobId: recorded?.providerJobId ?? submissionJobId ?? current.providerJobId,
+        retry,
+      };
       await recordRefusal(db, tx, paid, context, current, evidence);
       const pauseReason = await clearResolvedSubmissionHold(db, tx, run, current.id);
       if (retry) {
@@ -55,18 +64,7 @@ export async function settleVideoRefusal(
           stepId: current.id,
         };
       }
-      if (!active) await failSettledGeneration(db, { ...run, pauseReason });
-      else
-        await db.videoRun.updateMany({
-          where: { id: run.id },
-          data: {
-            state: "NEEDS_HUMAN",
-            pauseReason: pauseReason?.startsWith("RECONCILE_REQUIRED")
-              ? pauseReason
-              : "PROVIDER_REFUSED",
-            ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
-          },
-        });
+      await closeRefusedRun(db, { ...run, pauseReason }, active);
       return {
         value: null,
         payload: { reason: "PROVIDER_REFUSED", rewriteCount: Number(rewritten) },
@@ -77,6 +75,21 @@ export async function settleVideoRefusal(
   await runs.events?.publish(result.event);
   if (result.value)
     await runs.queue?.enqueue(runs.job(context, step.runId, result.value), result.event.sequence);
+}
+
+async function closeRefusedRun(db: Scoped, run: Run, active: boolean): Promise<void> {
+  if (!active) await failSettledGeneration(db, run);
+  else
+    await db.videoRun.updateMany({
+      where: { id: run.id },
+      data: {
+        state: "NEEDS_HUMAN",
+        pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+          ? run.pauseReason
+          : "PROVIDER_REFUSED",
+        ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+      },
+    });
 }
 
 async function acceptsRewrite(db: Scoped, run: Run): Promise<boolean> {
@@ -93,14 +106,13 @@ async function recordRefusal(
   { providerJobId, retry }: { providerJobId: string | null; retry: boolean },
 ): Promise<void> {
   const amount = current.costMinor ?? 0;
-  const cost = readReceiptBudget(current.output)?.estimateMinor ?? amount;
-  await paid.settleFailedRequest(
+  const cost = await paid.settleFailedRequest(
     tx,
     context,
     current,
     "Video provider refused the shot",
     true,
-    cost,
+    readReceiptBudget(current.output)?.estimateMinor ?? amount,
     providerJobId,
   );
   const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: current.runId } });
@@ -109,12 +121,17 @@ async function recordRefusal(
     data: {
       reservedMinor: budget.reservedMinor - amount,
       spentMinor: budget.spentMinor + cost,
+      overageMinor: Math.max(
+        budget.overageMinor,
+        budget.spentMinor + cost + budget.reservedMinor - amount - budget.hardCapMinor,
+      ),
       revision: budget.revision + 1,
     },
   });
   await db.videoRunStep.updateMany({
     where: { id: current.id },
     data: {
+      ...carryRefusalBill(current),
       state: retry ? "SKIPPED" : "FAILED",
       costMinor: cost,
       providerJobId,

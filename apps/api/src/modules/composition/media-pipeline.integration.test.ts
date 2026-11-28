@@ -37,6 +37,7 @@ import { MediaBindings } from "../scene-media/media-pipeline.module.js";
 import { MediaAssembly } from "./media-assembly.js";
 import { MediaRenderer } from "./media-render.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
+import { fixturePaidText } from "./media-bindings.fixture.js";
 import { pipelineProviders } from "./media-fixture.fixture.js";
 
 describe.skipIf(
@@ -90,7 +91,7 @@ describe.skipIf(
     });
     t.brief = brief;
     t.run = await t.runs.create(t.context, brief.id, randomUUID());
-    const native = await pipelineProviders(t, shotCount);
+    const native = fixturePaidText(await pipelineProviders(t, shotCount));
     const paid = new RunPaidCalls(new UsageBudgetService(t.db, () => new Date()), t.store);
     const mapping = new Map<unknown, unknown>([
       [RunsService, t.runs],
@@ -214,8 +215,9 @@ describe.skipIf(
     const charges = await t.db.videoRunStep.findMany({
       where: { ...where, key: { startsWith: "media:" } },
     });
-    expect(charges).toHaveLength(4);
-    for (const step of charges) expect(step.output).toMatchObject({ budgetAccounted: true });
+    expect(charges.map(({ output }) => output)).toMatchObject(
+      Array(4).fill({ budgetAccounted: true }),
+    );
     // A historical sync could already have added the unmarked text calls a second time.
     await t.db.budgetEnvelope.updateMany({ where, data: { spentMinor: 106 } });
     const shots = await t.db.videoRunStep.findMany({

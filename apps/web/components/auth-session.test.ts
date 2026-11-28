@@ -10,7 +10,7 @@ afterEach(() => {
 describe("onboarding session generation fences", () => {
   it("loads an authorized saved workspace, notifies subscribers and supports switching", async () => {
     vi.spyOn(api, "listWorkspaces").mockResolvedValue([workspace]);
-    localStorage.setItem("reelforge.activeWorkspace", workspace.id);
+    // A first visit with exactly one authorized workspace selects it directly.
     const session = new AuthSession(),
       listener = vi.fn();
     const off = session.subscribe(listener);
@@ -45,7 +45,7 @@ describe("onboarding session generation fences", () => {
     await session.load();
     expect(session.snapshot().view).toBe("auth");
     expect(session.snapshot().booting).toBe(false);
-    expect(session.snapshot().sessionError.length).toBeGreaterThan(0);
+    expect(Boolean(session.snapshot().sessionError)).toBe(status === 403);
   });
   it("retains useful failure messages without treating outages as logout", async () => {
     const list = vi.spyOn(api, "listWorkspaces").mockRejectedValue(new ApiError(503, "offline"));

@@ -1,4 +1,5 @@
 import {
+  EffectiveCapsViewSchema,
   RunDetailViewSchema,
   type RunDetailView,
   RunSummariesSchema,
@@ -63,6 +64,10 @@ function timelineDetail(value: unknown): TimelineDetail {
 }
 
 export const runClient = {
+  caps: async (workspaceId: string): Promise<ReturnType<typeof EffectiveCapsViewSchema.parse>> =>
+    EffectiveCapsViewSchema.parse(
+      await runRequest(`workspaces/${workspaceId}/usage/budgets`, workspaceId),
+    ),
   list: async (workspaceId: string): Promise<ReturnType<typeof RunSummariesSchema.parse>> =>
     RunSummariesSchema.parse(await runRequest("run-experience", workspaceId)),
   detail: async (workspaceId: string, id: string): Promise<TimelineDetail> =>
@@ -97,6 +102,7 @@ const eventTypes = [
   "autonomy_selected",
   "autonomy_fallback",
   "reshoot_requested",
+  "reshoot_replayed",
   "emergency_stop",
   "dispatch_reserved",
   "dispatch_released",
@@ -110,6 +116,8 @@ const eventTypes = [
   "media_completed",
   "media_intent",
   "provider_submitted",
+  "text_evidence_recorded",
+  "text_rejection_reconciled",
   "budget_estimated",
   "fallback",
   "reedit_requested",

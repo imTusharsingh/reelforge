@@ -67,6 +67,7 @@ const REVIEWED_UNSCOPED_ROUTES: readonly string[] = [
   "POST /runs/:id/reshoot/:ordinal",
   "POST /runs/:id/resume",
   "POST /runs/:id/steps/:stepId/abandon",
+  "POST /runs/:id/steps/:stepId/text-evidence",
   "GET /workspaces",
   "PATCH /auth/me",
   "POST /auth/email-change/confirm",

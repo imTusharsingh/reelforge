@@ -34,10 +34,10 @@ flowchart LR
 
 ## Prerequisites
 
-- **Node.js 24.22.2** and **pnpm 12.16.1**, pinned in [.node-version](.node-version) and [package.json](package.json).
-- **PostgreSQL 18.6** and **Redis 8.2.3**, the versions used in CI and the end-to-end runner. Redis is needed to dispatch and process VideoRuns. Docker is optional for running the local services and required by the end-to-end runner.
+- **Node.js >=24.22 and <25** (reference version 24.22.2) and **pnpm 12.16.1**, pinned in [.node-version](.node-version) and [package.json](package.json).
+- **PostgreSQL 17.12+** and **Redis 8.0.2+**. CI uses PostgreSQL 18.6 and Redis 8.2.3. Configure the database role or server timezone as UTC for API and worker sessions. Check `SHOW TimeZone` on both connection URLs. Channel publishing timezones are independent. Redis is needed to dispatch and process VideoRuns. Docker is optional for running the local services and required by the end-to-end runner.
 - **FFmpeg and FFprobe** with a build that includes the `libx264` and `aac` encoders and the `subtitles` filter (libass). Install fonts that cover your caption languages.
-- **Python 3** with **aeneas 1.7.3.0** and **eSpeak** with voice data on `PATH` for local forced alignment. Set `ALIGNMENT_PYTHON_PATH` to the interpreter that has aeneas installed if it differs from `python3`. The repository does not pin Python or FFmpeg versions. The API and worker check the local media tools at startup. [Media runtime details](apps/api/src/modules/scene-media/MEDIA_PIPELINE.md)
+- **Python 3** with **aeneas 1.7.3.0** and **eSpeak** with voice data on `PATH` for local forced alignment. Set `ALIGNMENT_PYTHON_PATH` to the interpreter that has aeneas installed if it differs from `python3`. For a tested installation use a Python 3.10 venv, NumPy 1.26.4, setuptools 59.8.0 and the no-build-isolation recipe in the media runtime guide. The API and worker check the local media tools at startup. [Media runtime details](apps/api/src/modules/scene-media/MEDIA_PIPELINE.md)
 
 ## Quick start
 
@@ -106,6 +106,12 @@ Run these steps from the repository root.
    | Web    | `pnpm --filter @reelforge/web dev`      | `http://localhost:3000`        |
 
    Open the studio, create a channel, and set up its brief. Configure generation credentials through the environment or **Settings → Provider keys**. Workspace-managed keys require `PROVIDER_KEY_ENCRYPTION_KEY`, a 32-byte key encoded as base64url. Keep the model IDs from the template configured for the provider runtime.
+
+## Generation costs and discovery
+
+The media pipeline enforces a 30–45 second target. Example primary-route estimates for 30 and 45 seconds are $3.05 and $4.13 respectively, with base budgets around $3.62 and $4.93 including receipt headroom. Shot count, routing and reshoots change the total. New Briefs start at 45 seconds with a $5 target and $5.50 hard cap. Workspace and Brief daily/monthly limits both apply.
+
+Scheduled discovery is opt-in. Set `DISCOVERY_ENABLED=true` and configure a positive `DISCOVERY_TEXT_ESTIMATE_USD` in major USD per grounded text request. Discovery can use YouTube search and paid Gemini text independently of a Short, under workspace budgets.
 
 ## YouTube publishing
 

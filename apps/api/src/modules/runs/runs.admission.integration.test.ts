@@ -332,7 +332,9 @@ describe.skipIf(!process.env.DATABASE_URL)("shot admission recovery", () => {
           return work(db, current, tx);
         }),
       );
-      const cancel = (): Promise<void> => t.control.cancel(t.context, run.id);
+      const cancel = async (): Promise<void> => {
+        await t.control.cancel(t.context, run.id);
+      };
       const rollback = (): Promise<void> => paid.rollbackAdmission(t.context, step);
       const leader = first === "cancel" ? cancel() : rollback();
       let contender: Promise<void> | undefined;

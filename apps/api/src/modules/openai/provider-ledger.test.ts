@@ -21,23 +21,45 @@ function setup(): {
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
+      findUniqueOrThrow: ReturnType<typeof vi.fn>;
     };
   };
-  budgets: { reservePaidCall: ReturnType<typeof vi.fn>; finishPaidCall: ReturnType<typeof vi.fn> };
+  budgets: {
+    commit: ReturnType<typeof vi.fn>;
+    reservePaidCall: ReturnType<typeof vi.fn>;
+    finishPaidCall: ReturnType<typeof vi.fn>;
+  };
   port: VideoGenPort;
 } {
   const db = {
+    $transaction: (work: (tx: unknown) => Promise<unknown>): Promise<unknown> => work(db),
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    usageReservation: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: "reservation",
+        amountMinor: 56n,
+        correlationId: shot.id,
+        currency: "USD",
+        channelId: null,
+        category: "VIDEO_MEDIA",
+        status: "RESERVED",
+      }),
+    },
     providerRequest: {
       create: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
-      findUnique: vi.fn().mockResolvedValue({
+      findUnique: vi.fn().mockResolvedValue({ workspaceId: shot.workspaceId, channelId: null }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({
+        credits: [],
+        currency: "USD",
         providerId: "gemini",
         estimatedCost: new Prisma.Decimal(ledgerUsd(clipEstimate)),
-        responseMetadata: { reservationId: "reservation", estimateMinor: 56 },
+        responseMetadata: { providerJobId: "job", reservationId: "reservation", estimateMinor: 56 },
       }),
     },
   };
   const budgets = {
+    commit: vi.fn(),
     reservePaidCall: vi.fn().mockResolvedValue({
       workspaceId: shot.workspaceId,
       reservationId: "reservation",
@@ -78,16 +100,19 @@ describe("M18 to M08 exact cost path", () => {
       vi.mocked(port.submit).mock.invocationCallOrder[0]!,
     );
     expect(port.submit).toHaveBeenCalledWith(shot, `m08:${shot.id}`);
-    await ledger.finish(shot.workspaceId, shot.id, port, { ...artifact, billedSeconds: 7.5 });
+    await ledger.finish(
+      shot.workspaceId,
+      shot.id,
+      port,
+      { ...artifact, billedSeconds: 7.5 },
+      "job",
+    );
     expect(db.providerRequest.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ actualCost: "0.521280", status: "SUCCEEDED" }),
       }),
     );
-    expect(budgets.finishPaidCall).toHaveBeenLastCalledWith(
-      expect.objectContaining({ reservationId: "reservation" }),
-      { dispatched: true, actualCost: 0.52128, actualCurrency: "USD" },
-    );
+    expect(budgets.commit).toHaveBeenLastCalledWith(shot.workspaceId, "reservation", 53, db);
   });
   it("charges uncertain failures at estimate and releases only provably unsent calls", async () => {
     for (const dispatched of [true, false]) {
@@ -120,21 +145,26 @@ describe("M18 to M08 exact cost path", () => {
       dispatched: false,
       actualCost: null,
     });
-    await ledger.finish(shot.workspaceId, shot.id, port, {
-      ...artifact,
-      billedSeconds: null,
-    } as ClipArtifact);
-    expect(budgets.finishPaidCall).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.objectContaining({ actualCost: 0.556032 }),
+    await ledger.finish(
+      shot.workspaceId,
+      shot.id,
+      port,
+      {
+        ...artifact,
+        billedSeconds: null,
+      } as ClipArtifact,
+      "job",
     );
-    db.providerRequest.findUnique.mockResolvedValue(null);
-    await expect(ledger.finish("other", shot.id, port, artifact)).rejects.toThrow("mismatch");
-    db.providerRequest.findUnique.mockResolvedValue({
+    expect(budgets.commit).toHaveBeenLastCalledWith(shot.workspaceId, "reservation", 56, db);
+    db.providerRequest.findUnique.mockResolvedValueOnce(null);
+    await expect(ledger.finish("other", shot.id, port, artifact, "job")).rejects.toThrow(
+      "mismatch",
+    );
+    db.providerRequest.findUniqueOrThrow.mockResolvedValue({
       providerId: "gemini",
       responseMetadata: null,
     });
-    await expect(ledger.finish(shot.workspaceId, shot.id, port, artifact)).rejects.toThrow(
+    await expect(ledger.finish(shot.workspaceId, shot.id, port, artifact, "job")).rejects.toThrow(
       "metadata",
     );
   });

@@ -15,6 +15,7 @@ import { json } from "../runs/runs.types.js";
 import type { StepHandler } from "../orchestration/video-run.handlers.js";
 import { MediaAccess } from "./media-access.js";
 import { MediaAccounts } from "./media-accounts.js";
+import { recoverTextEvidence } from "../usage-budget/text-attempt-delivery.js";
 import { MediaJobs } from "./media-jobs.js";
 import { MediaPorts } from "./media-ports.js";
 import { MediaFrames } from "./media-frames.js";
@@ -50,6 +51,8 @@ export class MediaBindings {
         step,
         (await this.ports.get(context, "collection")).image,
       );
+    planning.recoverTextJournal = (context): Promise<void> =>
+      recoverTextEvidence(this.access, context);
     planning.collectAdmittedAudio = (context, run): Promise<number | null> =>
       this.assembly.collectAdmittedAudio(context, run);
     planning.handlers = {

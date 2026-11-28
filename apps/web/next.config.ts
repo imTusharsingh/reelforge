@@ -10,6 +10,8 @@ export default function nextConfig(phase: string): NextConfig {
   if (!["http:", "https:"].includes(url.protocol) || url.href !== url.origin + "/")
     throw new Error("REELFORGE_API_ORIGIN must be an HTTP(S) origin");
   return {
+    agentRules: false,
+    devIndicators: false,
     turbopack: {
       root: resolve(__dirname, "../.."),
       resolveAlias: {

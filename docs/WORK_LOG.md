@@ -1275,3 +1275,7 @@ migration ADRs.
   applied all migrations successfully.
 - Full-suite CI evidence, the authorized YouTube publish, the seven-day L2 soak,
   and production launch gates remain open.
+
+## 2026-11-27 — Issue #169 live-smoke fixes
+
+Sync Gemini completions use the original dispatch reference when the response omits an ID. An owner can confirm a terminal text attempt, book its reserved estimate and end the run. The patch also updates run recovery and streaming, usage categories and caps, Brief editing, onboarding and local setup. Verification and file inventory are recorded in the [M00 status report](../work-packages/M00-repository-governance-and-shared-contracts/STATUS.md#2026-11-27--issue-169).

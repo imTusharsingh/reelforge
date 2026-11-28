@@ -58,10 +58,11 @@ test("sign-up, queued run, approval, schedule and accessible settings", async ({
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
   expect(runCalls).toBe(1);
   await page.goto(`/channels/${channelId}`);
+  await page.getByRole("link", { name: "Open Channel Brief" }).click();
   await expect(page.getByRole("heading", { name: "Channel Brief", exact: true })).toBeVisible();
   await expect(page.locator('option[value="L3"]')).toBeDisabled();
   await accessible(page);
-  await page.getByLabel("topic", { exact: true }).fill("Space exploration");
+  await page.getByLabel("Topic", { exact: true }).fill("Space exploration");
   await page.getByRole("button", { name: "Save new version" }).click();
   await expect(page.getByText("Saved immutable Brief version 2.")).toBeVisible();
   await reviewAndSchedule(page, { workspaceId, channelId, runId }, accessible);
@@ -69,6 +70,10 @@ test("sign-up, queued run, approval, schedule and accessible settings", async ({
 });
 
 async function settings(page: Page): Promise<void> {
+  await page.goto("/account");
+  await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
+  await page.goto("/channels");
+  await expect(page.getByRole("heading", { name: "Channels", exact: true })).toBeVisible();
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Provider keys" })).toBeVisible();
   await accessible(page);

@@ -1,3 +1,4 @@
+import { terminalVideo, terminalVideoWhere } from "../usage-budget/run-video-terminal.js";
 import { terminalRenderFailure } from "./run-render-stage.js";
 import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { releaseSteps } from "./run-close-steps.js";
@@ -36,8 +37,7 @@ export function submissionHold(stepId: string): string {
 }
 
 function recoverableJob(step: Step): boolean {
-  if (!step.providerJobId) return false;
-  if (!step.key.startsWith("media:text:")) return true;
+  if (!step.key.startsWith("media:text:")) return !!step.providerJobId;
   const result = attachedTextResult(step);
   return (
     !!result &&
@@ -111,8 +111,9 @@ export async function remainingSubmissionHold(
     (run.pauseReason === "EMERGENCY_STOP" && (await stoppedLegacyBillingHold(db, run.id, steps)))
   )
     return legacyBillingHold;
-  const other = admissions.find(({ step, ...admission }) =>
-    step.providerJobId ? !recoverableJob(step) : !canRollback(admission),
+  const other = admissions.find(
+    ({ step, ...admission }) =>
+      !recoverableJob(step) && (!!step.providerJobId || !canRollback(admission)),
   );
   return other ? submissionHold(other.step.id) : null;
 }
@@ -153,7 +154,11 @@ export async function activeSubmissionHold(
 }
 
 export async function mayRecordSubmissionHold(db: Scoped, run: Run): Promise<boolean> {
-  return run.pauseReason !== "EMERGENCY_STOP" && !(await terminalRenderFailure(db, run));
+  return (
+    run.pauseReason !== "EMERGENCY_STOP" &&
+    run.pauseReason !== "CANCEL_REQUESTED" &&
+    !(await terminalRenderFailure(db, run))
+  );
 }
 
 export async function recordShotBillingHold(db: Scoped, run: Run, stepId: string): Promise<void> {
@@ -171,7 +176,7 @@ export async function clearResolvedSubmissionHold(
   stepId: string,
 ): Promise<string | null> {
   const reason = run.pauseReason;
-  if (reason === "EMERGENCY_STOP") return reason;
+  if (reason === "EMERGENCY_STOP" || reason === "CANCEL_REQUESTED") return reason;
   const terminal = await terminalRenderFailure(db, run);
   const durable = terminal ? null : await remainingSubmissionHold(db, tx, run);
   const pauseReason =
@@ -281,7 +286,11 @@ export async function collectibleFailedSteps(
       OR: [
         {
           key: { startsWith: "shot-" },
-          OR: [{ state: { in: ["RUNNING", "WAITING_EXTERNAL"] } }, pendingCorrectionWhere],
+          OR: [
+            { state: { in: ["RUNNING", "WAITING_EXTERNAL"] } },
+            pendingCorrectionWhere,
+            terminalVideoWhere,
+          ],
         },
         {
           key: { startsWith: referenceMediaPrefix },
@@ -292,8 +301,10 @@ export async function collectibleFailedSteps(
   });
   const claims = await readAdmissions(db, tx, run.workspaceId, steps);
   return claims
-    .filter(({ step, ...claim }) =>
-      step.state === "RUNNING" ? !!jobIdFromAdmission(claim) : !!step.providerJobId,
+    .filter(
+      ({ step, ...claim }) =>
+        !!terminalVideo(step) ||
+        (step.state === "RUNNING" ? !!jobIdFromAdmission(claim) : !!step.providerJobId),
     )
     .map(({ step }) => step);
 }

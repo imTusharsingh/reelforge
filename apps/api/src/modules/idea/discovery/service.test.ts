@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DiscoveryService, discoverySlot } from "./service.js";
+import { DiscoveryScout } from "./scout.js";
 import { initialLearning } from "./scoring.js";
 import { briefFixture, candidateFixture, context, channelId, now } from "./discovery.fixture.js";
 
-function fixture(): {
+function fixture(scoutOverride?: DiscoveryScout): {
   service: DiscoveryService;
   store: Record<string, ReturnType<typeof vi.fn>>;
   scout: { discover: ReturnType<typeof vi.fn> };
   db: {
+    usageBudget: { findMany: ReturnType<typeof vi.fn> };
     channel: { findMany: ReturnType<typeof vi.fn> };
     workspaceMembership: { findFirst: ReturnType<typeof vi.fn> };
   };
 } {
+  vi.stubEnv("DISCOVERY_ENABLED", "true");
+  vi.stubEnv("DISCOVERY_TEXT_ESTIMATE_USD", "0.17");
   const brief = briefFixture();
   const store = {
     brief: vi.fn().mockResolvedValue(brief),
@@ -22,6 +26,7 @@ function fixture(): {
     failure: vi.fn().mockResolvedValue(undefined),
   };
   const scout = {
+    textPort: vi.fn().mockResolvedValue({}),
     discover: vi
       .fn()
       .mockResolvedValue([candidateFixture(), candidateFixture("What makes stars shine")]),
@@ -31,13 +36,19 @@ function fixture(): {
     sources: vi.fn().mockReturnValue([]),
   };
   const db = {
+    usageBudget: { findMany: vi.fn().mockResolvedValue([{ currency: "USD" }]) },
     channel: {
       findMany: vi.fn().mockResolvedValue([{ id: channelId, workspaceId: context.workspaceId }]),
     },
     workspaceMembership: { findFirst: vi.fn().mockResolvedValue(context) },
   };
   return {
-    service: new DiscoveryService(db as never, store as never, scout as never, analytics as never),
+    service: new DiscoveryService(
+      db as never,
+      store as never,
+      scoutOverride ?? (scout as never),
+      analytics as never,
+    ),
     store,
     scout,
     db,
@@ -82,6 +93,49 @@ describe("V10 autonomous scheduled discovery", () => {
     const calls = scout.discover.mock.calls.length;
     await service.scheduledTick(now);
     expect(scout.discover).toHaveBeenCalledTimes(calls);
+  });
+  it("skips disabled schedules and leaves unconfigured days and quota available", async () => {
+    const { service, db, store, scout } = fixture();
+    vi.stubEnv("DISCOVERY_ENABLED", "false");
+    await service.scheduledTick(now);
+    expect(db.channel.findMany).not.toHaveBeenCalled();
+    vi.stubEnv("DISCOVERY_ENABLED", "true");
+    vi.stubEnv("DISCOVERY_TEXT_ESTIMATE_USD", "");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await service.scheduledTick(now);
+    expect(log).toHaveBeenCalled();
+    await expect(service.tick(context, channelId)).rejects.toThrow("DISCOVERY_TEXT_ESTIMATE_USD");
+    expect(store.claim).not.toHaveBeenCalled();
+    expect(scout.discover).not.toHaveBeenCalled();
+  });
+  it("does not claim the day, call YouTube or reserve grounding until the budget admits USD", async () => {
+    const ports = vi.fn().mockResolvedValue({ text: {}, assertKey: vi.fn() });
+    const sources = vi.fn().mockResolvedValue([]);
+    const reserve = vi.fn().mockResolvedValue(true);
+    const complete = vi.fn().mockResolvedValue([candidateFixture()]);
+    const scout = new DiscoveryScout(
+      { ports } as never,
+      { reserve } as never,
+      { sources } as never,
+      { complete } as never,
+    );
+    const { service, db, store } = fixture(scout);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    db.usageBudget.findMany.mockResolvedValueOnce([{ currency: "USD" }, { currency: "EUR" }]);
+    await service.scheduledTick(now);
+    expect(db.usageBudget.findMany).toHaveBeenCalledWith({
+      where: { workspaceId: context.workspaceId, scopeKey: { in: ["WORKSPACE", channelId] } },
+      select: { currency: true },
+    });
+    for (const blocked of [store.claim, store.failure, ports, sources, reserve, complete]) {
+      expect(blocked).not.toHaveBeenCalled();
+    }
+    await service.scheduledTick(now);
+    expect(store.claim).toHaveBeenCalledExactlyOnceWith(context, channelId, "2026-11-16", now);
+    expect(sources).toHaveBeenCalledOnce();
+    expect(reserve).toHaveBeenCalledExactlyOnceWith(context.workspaceId, "grounding", now);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(store.finish).toHaveBeenCalledOnce();
   });
   it("uses the Brief timezone at day boundaries", () => {
     expect(discoverySlot(new Date("2026-11-16T20:00:00Z"), "Asia/Kolkata")).toBe("2026-11-17");

@@ -32,6 +32,11 @@ describe("V3 budget estimates", () => {
       reshootReserveMinor: 0,
     });
   });
+  it("prices a 30-second plan split across seven uneven millisecond intervals", () => {
+    expect(runEstimate(Array.from({ length: 7 }, () => ({ durationSeconds: 30 / 7 })))).toEqual(
+      runEstimate(Array.from({ length: 7 }, () => ({ durationSeconds: 4.286 }))),
+    );
+  });
   it("drops fallback reserve when necessary and rejects unaffordable remaining work", () => {
     const envelope = { spentMinor: 0, reservedMinor: 0, reshootReserveMinor: 157 };
     expect(fallbackEstimate(envelope, shots.slice(0, 5), 110)).toEqual({

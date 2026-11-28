@@ -105,7 +105,7 @@ function AuthFormView(state: AuthFormState & { notice?: ReactNode }): JSX.Elemen
                 ? "Sign in to continue to your studio."
                 : "Create an account and start with a workspace."}
             </p>
-            {notice}
+            {mode === "signin" && notice}
             {error && (
               <Alert tone="danger" title="Unable to continue">
                 {error}

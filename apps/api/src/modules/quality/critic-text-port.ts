@@ -71,7 +71,7 @@ export function criticTextPort(deps: CriticDependencies): TextPort {
     async complete<T>(
       spec: TextSpec<T>,
     ): Promise<{ output: T; providerJobId: string; usage: Record<string, unknown> }> {
-      const { access, accounts, ports, context, run, attempt } = deps;
+      const { access, accounts, context, run, attempt } = deps;
       if (!Number.isSafeInteger(attempt) || attempt < 1)
         throw new ConflictException("Invalid critic attempt");
       const key = `media:text:critic:${attempt}`;
@@ -85,7 +85,11 @@ export function criticTextPort(deps: CriticDependencies): TextPort {
       if (previous) verifyInput(previous.input, fingerprint);
       if (previous?.state === "SUCCEEDED") {
         const saved = savedResult.parse(previous.output).result;
-        return { ...saved, output: spec.parse(saved.output) };
+        return {
+          ...saved,
+          providerJobId: saved.providerJobId ?? "",
+          output: spec.parse(saved.output),
+        };
       }
       if (previous?.state === "FAILED")
         throw new ConflictException("Critic provider request was rejected");
@@ -98,28 +102,40 @@ export function criticTextPort(deps: CriticDependencies): TextPort {
         if (!saved) return accounts.reconcilePending(context, previous);
         const result = { ...saved, output: spec.parse(saved.output) };
         await accounts.complete(context, previous, result);
-        return result;
+        return { ...result, providerJobId: result.providerJobId ?? "" };
       }
-      const modelId = process.env.GEMINI_TEXT_MODEL?.trim();
-      if (!modelId) throw new ConflictException("Critic text model is not configured");
-      const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
-      if (!budget) throw new ConflictException("Critic budget envelope is unavailable");
-      const native = await ports.get(context);
-      const cost = criticReservationCents();
-      const step = await accounts.begin(
-        context,
-        run,
-        key,
-        { fingerprint, assemblyRevision: attempt },
-        cost,
-        modelId,
-      );
-      await accounts.prepare(context, run, step, modelId);
-      const result = await accounts.dispatchText(context, step, () =>
-        native.text.complete(spec, step.idempotencyKey),
-      );
-      await accounts.complete(context, step, result);
-      return result;
+      return submitCritic(deps, key, fingerprint, spec);
     },
   };
+}
+
+async function submitCritic<T>(
+  { access, accounts, ports, context, run, attempt }: CriticDependencies,
+  key: string,
+  fingerprint: string,
+  spec: TextSpec<T>,
+): Promise<{ output: T; providerJobId: string; usage: Record<string, unknown> }> {
+  const db = access.runs.store.scoped(context);
+  const modelId = process.env.GEMINI_TEXT_MODEL?.trim();
+  if (!modelId) throw new ConflictException("Critic text model is not configured");
+  const budget = await db.budgetEnvelope.findFirst({ where: { runId: run.id } });
+  if (!budget) throw new ConflictException("Critic budget envelope is unavailable");
+  const native = await ports.get(context);
+  const cost = criticReservationCents();
+  const step = await accounts.begin(
+    context,
+    run,
+    key,
+    { fingerprint, assemblyRevision: attempt },
+    cost,
+    modelId,
+    true,
+  );
+  const paid = native.text.completePaid?.bind(native.text);
+  if (!paid) throw new ConflictException("Paid text transport is unavailable");
+  const result = await accounts.dispatchTextAttempt(context, step, (sent) =>
+    paid(spec, step.idempotencyKey, sent),
+  );
+  await accounts.complete(context, step, result);
+  return { ...result, providerJobId: result.providerJobId ?? "" };
 }

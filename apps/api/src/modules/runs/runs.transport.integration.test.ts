@@ -10,6 +10,7 @@ import { firstValueFrom, take, toArray, timeout } from "rxjs";
 import { DelayedError, Queue, Worker } from "bullmq";
 import { parseRedisConnection } from "./redis-connection.js";
 import { runsFixture, generating } from "./runs.fixture.js";
+import { SessionLockBusy } from "./session-lock.js";
 import { RunsEvents } from "./runs.events.js";
 import { RunsQueue, RUN_QUEUE } from "./runs.queue.js";
 import type { RunJob } from "./runs.types.js";
@@ -118,7 +119,7 @@ describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
     try {
       await t.db.workspaceMembership.deleteMany({ where: { workspaceId: t.context.workspaceId } });
       await t.engine.recover();
-      const queued = await inspect.getJob(`${t.run.id}-${t.run.revision}`);
+      const queued = await inspect.getJob(`${t.run.id}-PLANNING`);
       expect(queued?.data.userId).toBe(RECOVERY_PRINCIPAL);
       const parent = createContext();
       expect(runWithContext(parent, () => t.runs.job(t.context, t.run.id)).traceparent).toBe(
@@ -137,9 +138,10 @@ describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
       };
       await t.engine.process({ ...queued?.data, traceparent: formatTraceparent(parent) });
       expect((await t.store.get(t.context, t.run.id)).state).toBe("SCRIPTING");
-      await t.engine.process(
-        queued?.data ? { ...queued.data, traceparent: formatTraceparent(parent) } : undefined,
-      );
+      await t.engine.process(queued?.data);
+      expect(observed).toBeUndefined();
+      const scripting = await inspect.getJob(`${t.run.id}-SCRIPTING`);
+      await t.engine.process({ ...scripting?.data, traceparent: formatTraceparent(parent) });
       expect(observed).toBe(parent.traceId);
     } finally {
       await inspect.obliterate({ force: true });
@@ -147,9 +149,43 @@ describe.skipIf(!enabled)("V3 Redis/Postgres durability and streaming", () => {
       await inspect.close();
     }
   });
+  it("delays a job that loses the planning lock without failing the stage", async () => {
+    const t = await fixture.tenant();
+    const job = t.runs.job(t.context, t.run.id);
+    await t.engine.process(job);
+    vi.spyOn(t.planning, "stage").mockRejectedValueOnce(
+      new SessionLockBusy("Planning is already in progress"),
+    );
+    expect(await t.engine.process({ ...job, stage: "SCRIPTING" })).toBe(12000);
+    expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+      state: "SCRIPTING",
+      pauseReason: null,
+    });
+  });
   it("supports closing an unused event transport", async () => {
     const t = await fixture.tenant();
     const events = new RunsEvents(t.store, process.env.REDIS_URL!);
     await events.close();
+  });
+
+  it("deduplicates recovery across revisions within a planning stage", async () => {
+    const t = await fixture.tenant();
+    const queueName = `smoke-${t.run.id}`;
+    const queue = new RunsQueue(process.env.REDIS_URL!, queueName);
+    const inspect = new Queue(queueName, {
+      connection: parseRedisConnection(process.env.REDIS_URL!),
+    });
+    t.runs.queue = queue;
+    try {
+      await t.runs.enqueue(t.context, t.run);
+      await t.runs.enqueue(t.context, { ...t.run, revision: t.run.revision + 3 });
+      expect(await inspect.getWaitingCount()).toBe(1);
+      await t.runs.enqueue(t.context, { ...t.run, state: "SCRIPTING" });
+      expect(await inspect.getWaitingCount()).toBe(2);
+    } finally {
+      await inspect.obliterate({ force: true });
+      await queue.close();
+      await inspect.close();
+    }
   });
 });

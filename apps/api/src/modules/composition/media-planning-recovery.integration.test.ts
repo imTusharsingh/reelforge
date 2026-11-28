@@ -267,7 +267,7 @@ describe.skipIf(
     await expect(assembly.execute(t.context, current, t.brief)).rejects.toThrow();
     expect(render).toHaveBeenCalledTimes(2);
   }, 180000);
-  it.each(["fresh", "legacy"] as const)(
+  it.each(["fresh", "saved"] as const)(
     "closes SCRIPTING for a %s invalid paid script",
     async (kind) => {
       const t = await fixture.tenant("L2", 30, narrator, false);
@@ -277,7 +277,7 @@ describe.skipIf(
       const submit = vi.spyOn(native.text, "complete");
       const job = t.runs.job(t.context, t.run.id);
       await t.engine.process(job);
-      if (kind === "legacy") {
+      if (kind === "saved") {
         const run = await t.store.get(t.context, t.run.id);
         const step = await accounts.begin(
           t.context,
@@ -286,16 +286,17 @@ describe.skipIf(
           {},
           17,
           "fixture-TEXT",
+          true,
         );
-        await accounts.prepare(t.context, run, step, "fixture-TEXT");
-        const result = await accounts.dispatchText(t.context, step, () =>
-          native.text.complete(
+        const result = await accounts.dispatchTextAttempt(t.context, step, (sent) =>
+          native.text.completePaid!(
             {
               prompt: "write",
               jsonSchema: {},
               parse: (value) => value,
             },
             step.idempotencyKey,
+            sent,
           ),
         );
         await accounts.complete(t.context, step, result);
@@ -313,7 +314,7 @@ describe.skipIf(
       const writer = steps.find((step) => step.key === "media:text:scriptwriter")!;
       expect(writer.providerJobId).toBe("fixture-text-1");
       expect(writer.output).toMatchObject(
-        kind === "legacy" ? { result: { output: invalid } } : { output: invalid },
+        kind === "saved" ? { result: { output: invalid } } : { output: invalid },
       );
       expect(await t.store.get(t.context, t.run.id)).toMatchObject({
         state: "FAILED",

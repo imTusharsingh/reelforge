@@ -1,7 +1,13 @@
+import {
+  closeTextAdmissionForCancel,
+  completeCancellationLocked,
+  textCancellationRequested,
+} from "../usage-budget/text-attempt-cancel.js";
+import { confirmTextAttempt } from "../usage-budget/text-attempt-owner.js";
 import { terminalRenderFailure } from "./run-render-stage.js";
 import { rearmDeniedKeyframes } from "./run-keyframe-budget-recovery.js";
 import { SAVED_CAPTION_PLAN_UNUSABLE } from "../usage-budget/run-caption-admission.js";
-import { closeSteps, releaseSteps } from "./run-close-steps.js";
+import { releaseSteps } from "./run-close-steps.js";
 import { refusalRewrite } from "../orchestration/video-run.refusal.js";
 import { writeDecisionLocked } from "../autonomy/run-decision.js";
 import { ConflictException, Injectable } from "@nestjs/common";
@@ -14,9 +20,7 @@ import {
   mayRecordSubmissionHold,
   generationFailure,
   remainingSubmissionHold,
-  SETTLED_SHOTS,
   submissionHold,
-  storedSubmissionHold,
 } from "./run-outcomes.js";
 import {
   canRollback,
@@ -116,29 +120,26 @@ export class RunsControl {
         "CRITIC_SUPERSEDED",
       );
   }
-  public async cancel(context: Context, id: string): Promise<void> {
+  public async cancel(context: Context, id: string): Promise<boolean> {
     this.runs.editor(context);
     const result = await this.runs.store.mutate(context, id, "transition", async (db, run, tx) => {
       if (["PUBLISHED", "LEARNING", "FAILED", "CANCELED"].includes(run.state))
         throw new ConflictException("Run is terminal");
-      const steps = await db.videoRunStep.findMany({
-        where: {
-          runId: id,
-          state: { notIn: [...SETTLED_SHOTS] },
-          providerJobId: null,
-        },
-      });
-      const hold = await closeSteps(context, db, tx, run, steps, "RUN_CANCELED");
-      await db.videoRun.updateMany({
-        where: { id },
-        data: {
-          state: "CANCELED",
-          pauseReason: hold ?? (await storedSubmissionHold(db, id, run.pauseReason)),
-        },
-      });
-      return { value: null, payload: { from: run.state, to: "CANCELED" } };
+      if (await closeTextAdmissionForCancel(context, db, tx, run)) {
+        await db.videoRun.updateMany({
+          where: { id },
+          data: { pauseReason: textCancellationRequested },
+        });
+        return { value: true, eventType: "cancel_requested", payload: { pending: true } };
+      }
+      await completeCancellationLocked(context, db, tx, run);
+      return { value: false, payload: { from: run.state, to: "CANCELED" } };
     });
     await this.runs.events?.publish(result.event);
+    return result.value;
+  }
+  public abandonTerminalText(context: Context, id: string, stepId: string): Promise<void> {
+    return confirmTextAttempt(this.runs, context, id, stepId);
   }
   public async abandon(context: Context, id: string, stepId: string): Promise<void> {
     this.runs.editor(context);
@@ -157,6 +158,10 @@ export class RunsControl {
           },
         });
         if (!step) throw new ConflictException("Step has no unknown submission to abandon");
+        if (step.key.startsWith("media:text:"))
+          throw new ConflictException(
+            "Reconcile the provider submission through text evidence before abandoning",
+          );
         const admission = await readAdmission(tx, context, step);
         if (admission.evidence === "released-nondispatch") {
           await closeReleasedMedia(db, run, step);
@@ -178,20 +183,7 @@ export class RunsControl {
         )
           throw new ConflictException("Run is not awaiting reconciliation");
         await releaseSteps(context.workspaceId, db, tx, id, [step], "OPERATOR_ABANDONED");
-        if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
-          const rewrite = refusalRewrite(step);
-          await db.videoRunStep.create({
-            data: {
-              workspaceId: context.workspaceId,
-              runId: id,
-              key: step.key,
-              attempt: step.attempt + 1,
-              idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
-              input: json(step.input),
-              ...(rewrite && { output: { refusalRewrite: rewrite } }),
-            },
-          });
-        }
+        await this.recreateAbandonedShot(context, db, run, step);
         await this.updateAbandonHold(db, tx, run);
         return { value: null, payload: { key: step.key }, stepId };
       },
@@ -200,8 +192,30 @@ export class RunsControl {
     if (result.value)
       throw new ConflictException("Reconcile the provider submission before abandoning");
   }
+  private async recreateAbandonedShot(
+    context: Context,
+    db: Scoped,
+    run: Run,
+    step: import("./runs.types.js").Step,
+  ): Promise<void> {
+    if (run.state !== "CANCELED" && step.key.startsWith("shot-")) {
+      const rewrite = refusalRewrite(step);
+      await db.videoRunStep.create({
+        data: {
+          workspaceId: context.workspaceId,
+          runId: run.id,
+          key: step.key,
+          attempt: step.attempt + 1,
+          idempotencyKey: `${step.idempotencyKey}:retry:${step.attempt + 1}`,
+          input: json(step.input),
+          ...(rewrite && { output: { refusalRewrite: rewrite } }),
+        },
+      });
+    }
+  }
   private async updateAbandonHold(db: Scoped, tx: Transaction, run: Run): Promise<void> {
-    if (run.pauseReason === "EMERGENCY_STOP") return;
+    if (run.pauseReason === "EMERGENCY_STOP" || run.pauseReason === textCancellationRequested)
+      return;
     const terminal = await terminalRenderFailure(db, run);
     const hold = terminal?.code ?? (await remainingSubmissionHold(db, tx, run));
     await db.videoRun.updateMany({
@@ -216,6 +230,8 @@ export class RunsControl {
     await this.boundary.check(context, run);
     const result = await this.runs.store.mutate(context, id, "resumed", async (db, current, tx) => {
       if (current.revision !== run.revision) throw new ConflictException("Run changed");
+      if (current.pauseReason === textCancellationRequested)
+        throw new ConflictException("Cancellation is still pending");
       await assertAssemblyResumable(db, current);
       const hold = await activeSubmissionHold(db, tx, current);
       if (hold) {
@@ -292,14 +308,19 @@ export class RunsControl {
         if (!source) throw new ConflictException("Reshoot source changed");
         const replacement = await replayedReshoot(db, current, ordinal, source, shots);
         if (replacement) {
-          if (current.state === "CRITIC" && replacement.state === "PENDING") {
+          const rewound = current.state === "CRITIC" && replacement.state === "PENDING";
+          if (rewound) {
             await this.fenceCritics(context, db, tx, current);
             await db.videoRun.updateMany({ where: { id }, data: { state: "GENERATING" } });
           }
           return {
             value: replacement.id,
             eventType: "reshoot_replayed",
-            payload: { ordinal, attempt: replacement.attempt },
+            payload: {
+              ordinal,
+              attempt: replacement.attempt,
+              ...(rewound && { from: "CRITIC", to: "GENERATING" }),
+            },
           };
         }
         if (current.state !== "CRITIC" || source.id !== latest.id || source.state !== "SUCCEEDED")

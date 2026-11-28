@@ -1,5 +1,7 @@
+import type { PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
+import { textReceiptReference } from "../usage-budget/text-evidence.js";
 import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
 import {
@@ -171,13 +173,14 @@ export class MediaPlanning {
     }
     if (previous?.state === "FAILED") throw new Error("Planning provider request was rejected");
     const cost = textCallCents();
-    const modelId = process.env.GEMINI_TEXT_MODEL ?? "";
+    const modelId = process.env.GEMINI_TEXT_MODEL?.trim() ?? "";
     const pending =
       previous &&
       !this.accounts.abandoned(previous) &&
       !(await this.accounts.recoverUndispatched(context, previous))
         ? previous
         : null;
+    if (!pending && !modelId) throw new ConflictException("Planning text model is not configured");
     const step =
       pending ??
       (await this.accounts.begin(
@@ -187,17 +190,19 @@ export class MediaPlanning {
         { prompt: input.prompt, promptVersion: input.promptVersion },
         cost,
         modelId,
+        true,
       ));
-    const result = await this.textResult(context, run, step, input, modelId, !!pending);
+    const result = await this.textResult(context, step, input, !!pending);
     await this.validateAcceptedPlan(context, run, step, input, result.output);
-    const admitted = textIntent.parse(step.input);
+    const settled = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+    const admitted = textIntent.parse(settled.input);
     const { artifact, receipt } = await this.textReceipt(
       context,
       key,
       admitted.spec.promptVersion,
       result,
       admitted.modelId,
-      step.costMinor!,
+      settled,
     );
     await this.accounts.complete(context, step, {
       ...result,
@@ -210,34 +215,43 @@ export class MediaPlanning {
   }
   private async textResult(
     context: Context,
-    run: Run,
     step: Step,
     input: Parameters<TextPort["generate"]>[0],
-    modelId: string,
     replay: boolean,
-  ): Promise<{ output: unknown; providerJobId: string; usage: Record<string, unknown> }> {
+  ): Promise<PaidTextResult> {
     if (replay) {
       const saved = z
         .object({
           output: input.schema,
-          providerJobId: z.string().min(1),
+          providerJobId: z.string().nullable(),
+          dispatchKey: z.string().optional(),
           usage: z.record(z.string(), z.unknown()),
         })
         .safeParse(step.output);
-      if (!saved.success || !step.providerJobId || saved.data.providerJobId !== step.providerJobId)
+      if (
+        !saved.success ||
+        (saved.data.dispatchKey && saved.data.dispatchKey !== step.idempotencyKey)
+      )
         throw new Error(`RECONCILE_REQUIRED: text submission outcome unknown (${step.id})`);
-      return saved.data;
+      return {
+        ...saved.data,
+        dispatchKey: step.idempotencyKey,
+        providerJobId:
+          saved.data.providerJobId === step.idempotencyKey ? null : saved.data.providerJobId,
+      };
     }
     const native = await this.ports.get(context);
-    await this.accounts.prepare(context, run, step, modelId);
-    return this.accounts.dispatchText(context, step, () =>
-      native.text.complete(
+    const transport = native.text.completePaid?.bind(native.text);
+    if (!transport) throw new Error("Paid text transport is unavailable");
+    return this.accounts.dispatchTextAttempt(context, step, (sent) =>
+      transport(
         {
           prompt: input.prompt,
           jsonSchema: z.toJSONSchema(input.schema),
           parse: (value): unknown => input.schema.parse(value),
         },
         step.idempotencyKey,
+        sent,
       ),
     );
   }
@@ -253,19 +267,7 @@ export class MediaPlanning {
       input.validateOutput?.(output);
       this.validatePlan(run, input.promptVersion.role, output);
     } catch (error) {
-      if (step.state === "SUCCEEDED") {
-        await this.rejectSavedOutput(context, step);
-        throw error;
-      }
-      const accepted = await this.access.runs.store
-        .scoped(context)
-        .videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      const event = await this.access.paid.finalizeJobFailure(
-        context,
-        accepted,
-        "PROVIDER_INVALID",
-      );
-      await this.access.runs.events?.publish(event);
+      await this.rejectSavedOutput(context, step);
       throw error;
     }
   }
@@ -285,7 +287,7 @@ export class MediaPlanning {
           where: {
             runId: run.id,
             OR: [
-              { id: step.id, state: "SUCCEEDED" },
+              { id: step.id, state: { in: ["SUCCEEDED", "WAITING_EXTERNAL"] } },
               { key: { in: ["SCRIPTING", PLANNING_MANIFEST_KEY] }, state: "RUNNING" },
             ],
           },
@@ -316,9 +318,9 @@ export class MediaPlanning {
     context: Context,
     key: string,
     promptVersion: z.infer<typeof planningPromptReceiptSchema>,
-    result: { output: unknown; providerJobId: string },
+    result: { output: unknown; providerJobId: string | null },
     modelId: string,
-    cost: number,
+    step: Step,
   ): Promise<{
     artifact: import("../runs/runs.types.js").Artifact;
     receipt: import("@reelforge/contracts").MediaReceipt;
@@ -332,11 +334,11 @@ export class MediaPlanning {
     const receipt = {
       key,
       providerId: "gemini",
-      providerJobId: result.providerJobId,
+      ...textReceiptReference(step, result.providerJobId),
       modelId,
       promptVersion: JSON.stringify(promptVersion),
       seconds: 0,
-      costMinor: cost,
+      costMinor: step.costMinor ?? 0,
       objectKey: artifact.objectKey,
       checksumSha256: artifact.checksumSha256,
       mimeType: "application/json",

@@ -1,0 +1,89 @@
+# Paid text upgrade
+
+Deploy the additive migration with `PAID_TEXT_V3_ENABLED` disabled. Pause paid-text
+admissions, recovery, owner confirmation and relevant credits. Drain or terminate
+all old writers (including workers, API processes and operator jobs). Do not
+restart any old writer after the import or enable the new runtime before review.
+
+Before enabling, configure an explicit, persistent `STORAGE_LOCAL_ROOT` shared
+by paid sender and recovery processes. The local adapter's OS-temp fallback is
+not suitable for paid evidence recovery. In a disposable environment, make one
+fake provider return a definitive response while journal ingestion is unavailable,
+stop that sender, and verify that a separate recovery process can read the same
+spool, settle once, and make no repeat POST.
+
+With the API built and `DATABASE_URL` supplied explicitly by the operator, run:
+
+```sh
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID \
+  --apply --old-writers-drained --audit-id CHANGE_RECORD
+node apps/api/dist/modules/usage-budget/legacy-text-import.cli.js --workspace WORKSPACE_UUID
+```
+
+The default is dry-run. It shows per-attempt before/after reserved, gross
+committed and net amounts without exposing payloads. The apply acknowledgement
+must cover every process that could still send or change accounting; an expired
+lease or closed database connection is not proof of drain. The applied import
+records the audit ID and exact historical source keys in each run.
+
+A matching legacy send event or verified Google receipt is positive send
+evidence. A bare marker remains held without owner eligibility. A provably
+unarmed preparation closes at zero. A pre-POST release requires the exact
+attempt, dispatch/reservation key, canceled step and matching zero-cost
+NOT_DISPATCHED ledger plus its own release event. A release on another step
+cannot authorize retry. An owner-reported interaction ID is not Google evidence.
+Only exact adjustment-audit links or existing scoped adjustment FKs become
+linked credits; a correlation ID alone is insufficient.
+
+Apply is idempotent. Existing posted charges are seeded and not booked again;
+already-stored but not yet posted completions remain for the normal evidence
+fold. Review every blocked row (exit 2) and all changes to reserved funds,
+commitments, credits and net exposure before enabling a new sender. The importer
+makes no provider calls.
+
+The report lists unresolved standalone credit IDs in `unresolvedCreditIds`.
+Any such ID blocks the workspace import and returns exit status 2. Reconcile
+the original adjustment to a scoped charge using its audit evidence, or document
+a genuinely independent budget credit before enabling reversals. The adjustments
+endpoint accepts `BUDGET_CREDIT` for independent budget adjustments. A text `CREDIT` requires the original text attempt ID and a unique operation key.
+
+The deployment baseline is `origin/main`. It stored standalone adjustments and
+mutable text steps, reservations, provider requests and run events. The paid
+text journal and provider-request credit link first appear in this unmerged PR.
+Earlier PR revisions never wrote deployed data. That rules out historical
+journal repairs, replacement files at repaired keys, and previously linked
+OUTAGE refunds. Ambiguous media dispatches retain their liability. A malformed
+live spool file stays pending while recovery probes the other evidence keys.
+
+An exact credit audit on an existing projection appears as pending until apply
+links the adjustment and posts the revised net in one transaction. A media
+charge correction uses the same owner adjustments endpoint with kind CREDIT,
+providerRequestId, operationKey, amountMinor and reason. It reduces the
+failed estimate on that provider request in the original charge period.
+
+Apply locks the workspace and its runs for one transaction. It attributes
+proven refunds before folding pending reversals. For a historical media refund,
+the supplemental CREDIT audit must identify the original adjustment, provider
+request, channel, currency, amount and operation key, and match the original
+actor and correlation. Review `mediaCreditLinks` in dry-run. Apply records the
+cutover audit ID and links the original adjustment in place. A verified final
+media bill supersedes the refunded estimate in either arrival order. Each
+imported text projection must agree with the current journal sequence and
+posting before the cutover can report it as settled.
+
+Main text completions booked the configured estimate even where the request
+said `costKnown`; only independently verified billing can replace that charge.
+A main routed video row with no billed seconds can likewise contain an estimate
+in `actualCost`, including a completed unreserved job with main's artifact and
+explicit null reservation fields. For an ordinary shot, the matching saved
+`RESERVATION` receipt proves the same distinction. Proven linked refunds reduce
+the estimated exposure without changing the archived gross shot receipt or run
+envelope. Verified billing supersedes that estimate.
+
+A matching main preflight cancellation and release can have a nonzero released
+estimate but neither accounting row; this is a zero-spend no-op. For a drained
+main worker, a scoped reservation and matching `PENDING` preflight record with
+no dispatch evidence prove it stopped before the POST. Neither path authorizes
+another dispatch. No backfill is provided for provisional manifest receipt flags
+written only by earlier revisions of this PR.

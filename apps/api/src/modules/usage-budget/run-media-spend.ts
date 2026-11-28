@@ -25,11 +25,28 @@ export async function settledMediaSpend(
   const steps = await db.videoRunStep.findMany({
     where: {
       runId,
-      state: { in: ["SUCCEEDED", "FAILED", "SKIPPED"] },
-      OR: prefixes.map((startsWith) => ({ key: { startsWith } })),
+      AND: [
+        { OR: prefixes.map((startsWith) => ({ key: { startsWith } })) },
+        {
+          OR: [
+            { state: { in: ["SUCCEEDED", "FAILED", "SKIPPED"] } },
+            { textProjection: { isNot: null } },
+          ],
+        },
+      ],
     },
-    select: { id: true, key: true, output: true, costMinor: true, state: true },
+    select: {
+      id: true,
+      key: true,
+      output: true,
+      costMinor: true,
+      state: true,
+      textProjection: { select: { netMinor: true } },
+    },
   });
   await markAccounted(db, steps);
-  return steps.reduce((total, step) => total + (step.costMinor ?? 0), 0);
+  return steps.reduce(
+    (total, step) => total + (step.textProjection?.netMinor ?? step.costMinor ?? 0),
+    0,
+  );
 }

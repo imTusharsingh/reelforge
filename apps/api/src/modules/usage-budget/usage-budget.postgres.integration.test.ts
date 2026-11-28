@@ -3,6 +3,7 @@ import { WorkspaceRepository } from "../workspace/workspace.repository.js";
 import { randomUUID } from "node:crypto";
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { createDatabaseClient, Prisma } from "@reelforge/database";
+import { defaultBrief } from "@reelforge/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { UsageBudgetService } from "./usage-budget.service.js";
 import { BudgetExhaustedError } from "./usage-budget.types.js";
@@ -121,6 +122,71 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
       reason: "BUDGET_POLICY_UNAVAILABLE",
     });
     expect(await db.usageReservation.count({ where: { workspaceId: t.workspaceId } })).toBe(0);
+  });
+
+  it("reports incompatible budget currencies instead of combining raw caps in either spend view", async () => {
+    if (!db) throw new Error("Expected disposable database");
+    const t = await tenant();
+    const usage = service();
+    const brief = {
+      ...defaultBrief({
+        niche: "Science",
+        audience: "Adults",
+        language: "English",
+        voiceId: "Kore",
+        cadence: { shortsPerDay: 1, localTime: "18:00", timezone: "UTC" },
+      }),
+      workspaceId: t.workspaceId,
+      channelId: t.channelId,
+      id: randomUUID(),
+      schemaVersion: "1.0",
+      version: 1,
+    };
+    await db.channelBrief.create({
+      data: {
+        id: brief.id,
+        workspaceId: t.workspaceId,
+        channelId: t.channelId,
+        version: 1,
+        document: brief,
+      },
+    });
+    await usage.upsertBudget(t.owner, {
+      currency: "USD",
+      dailyLimitMinor: 1000,
+      monthlyLimitMinor: 2000,
+      reason: "workspace fixture",
+    });
+    await usage.upsertBudget(t.owner, {
+      channelId: t.channelId,
+      currency: "EUR",
+      dailyLimitMinor: 30,
+      monthlyLimitMinor: 60,
+      reason: "channel fixture",
+    });
+    const expected = [
+      { channelId: t.channelId, name: "m18-channel", incompatibleCurrencies: ["EUR"] },
+    ];
+    const rows = await usage.listBudgets(t.owner);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.effectiveBriefCaps).toEqual(expected);
+    const { budgets } = await usage.usageSummary(t.owner, { channelId: t.channelId });
+    expect(budgets).toHaveLength(2);
+    for (const row of budgets) expect(row.effectiveBriefCaps).toEqual(expected);
+    expect(rows.find((row) => row.scope === "CHANNEL")).toMatchObject({
+      currency: "EUR",
+      dailyLimitMinor: 30,
+      monthlyLimitMinor: 60,
+    });
+    await expect(
+      usage.reserve(t.workspaceId, {
+        idempotencyKey: "blocked-eur-channel",
+        channelId: t.channelId,
+        category: "LLM",
+        currency: "USD",
+        amountMinor: 1,
+      }),
+    ).rejects.toMatchObject({ code: "BUDGET_CURRENCY_MISMATCH" });
   });
 
   it("lets exactly one of two concurrent reservations at the limit win", async () => {
@@ -379,7 +445,7 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     });
     await usage.createAdjustment(t.owner, {
       channelId: t.channelId,
-      kind: "CREDIT",
+      kind: "BUDGET_CREDIT",
       currency: "USD",
       amountMinor: 200,
       reason: "goodwill credit",

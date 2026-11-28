@@ -1,4 +1,5 @@
-import { AUDIO_KEYS, failedAudio } from "../runs/run-audio.js";
+import { settleFailedRequest } from "./run-paid-rejection.js";
+import { markDispatching } from "./run-paid-dispatch.js";
 import { finalizeFailed } from "./run-paid-failure.js";
 import {
   canConfirmRejection,
@@ -8,7 +9,7 @@ import {
   jobIdFromAdmission,
   readAdmission,
 } from "./run-admission-state.js";
-import { assertCriticAdmissionOpen, assertCriticRevision } from "./critic-admission.js";
+import { assertCriticAdmissionOpen } from "./critic-admission.js";
 import { pinnedBudget, assertPaidRunLimits } from "./run-envelope.js";
 import {
   SubmissionOutcomeUnknown,
@@ -16,14 +17,13 @@ import {
   recordReservation,
 } from "./run-paid-admission.js";
 import {
-  InvalidCompletedText,
   ProviderFailure,
   SubmissionRefused,
   providerFailureMessage,
 } from "@reelforge/ai-providers";
 import { ConflictException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { UsageBudgetService } from "./usage-budget.service.js";
-import type { PaidCallReservation } from "./usage-budget.types.js";
+import { runStepCategory, type PaidCallReservation } from "./usage-budget.types.js";
 import { RunsStore } from "../runs/runs.store.js";
 import {
   assertPinnedVideoRunLanguage,
@@ -31,7 +31,6 @@ import {
 } from "../composition/video-run-language.js";
 import type { MediaReadiness } from "../composition/media-runtime.js";
 import {
-  json,
   type Context,
   type Event,
   type Run,
@@ -44,7 +43,7 @@ import { submissionHold, remainingSubmissionHold } from "../runs/run-outcomes.js
 
 export { SubmissionOutcomeUnknown } from "./run-paid-admission.js";
 
-export class DispatchAdmissionError extends ConflictException {}
+export { DispatchAdmissionError } from "./run-paid-dispatch.js";
 
 async function assertReserveAdmission(
   db: Scoped,
@@ -57,7 +56,10 @@ async function assertReserveAdmission(
   assertCriticAdmissionOpen(run, step.key);
   await assertPaidRunLimits(db, run, amount, step.id);
   const admission = await readAdmission(transaction, context, step);
-  if (admission.evidence !== "never-dispatched" && admission.evidence !== "rolled-back")
+  if (
+    !["never-dispatched", "rolled-back", "text-prepared"].includes(admission.evidence) ||
+    (admission.evidence === "text-prepared" && (admission.request || admission.reservation))
+  )
     throw new ConflictException(submissionHold(step.id));
   return admission;
 }
@@ -90,7 +92,7 @@ export class RunPaidCalls {
         channelId: run.channelId,
         idempotencyKey: `m08:${step.idempotencyKey}`,
         correlationId: step.id,
-        category: "VIDEO_MEDIA",
+        category: runStepCategory(step.key),
         currency: "USD",
         amountMinor: amount,
         ttlMs: 86400000,
@@ -146,16 +148,16 @@ export class RunPaidCalls {
     call: () => Promise<T>,
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
-    await this.markDispatching(context, step, assertLocked).catch(async (error: unknown) => {
+    if (step.key.startsWith("media:text:"))
+      throw new ConflictException("Text transport must use its evidence journal");
+    await markDispatching(this.store, context, step, assertLocked).catch(async (error: unknown) => {
       await this.rollbackAdmission(context, step);
       throw error;
     });
-    // The durable dispatch marker protects the claims before invoking the provider.
     try {
       return await call();
     } catch (error) {
       if (
-        error instanceof InvalidCompletedText ||
         error instanceof SubmissionRefused ||
         (error instanceof ProviderFailure && !error.dispatched)
       )
@@ -163,50 +165,6 @@ export class RunPaidCalls {
       return this.holdUnknown(context, step, error);
     }
   }
-  private async markDispatching(
-    context: Context,
-    step: Step,
-    assertLocked?: () => Promise<void>,
-  ): Promise<void> {
-    const prepared = await preparePinnedVideoRunLanguage(
-      async () => (await this.store.get(context, step.runId)).inputSnapshot,
-    );
-    await this.store.mutate(context, step.runId, "provider_dispatch", async (db, run, tx) => {
-      assertPinnedVideoRunLanguage(run.inputSnapshot, prepared);
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      if (
-        ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
-        ["OPERATOR_ABANDONED", "EMERGENCY_STOP"].some((reason) => run.pauseReason === reason) ||
-        current.state !== "RUNNING" ||
-        current.idempotencyKey !== step.idempotencyKey ||
-        run.pauseReason?.startsWith("RECONCILE_REQUIRED")
-      )
-        throw new DispatchAdmissionError("Paid dispatch is closed");
-      if (AUDIO_KEYS.includes(current.key) && (await failedAudio(db, run.id)))
-        throw new DispatchAdmissionError("Required audio input failed");
-      await assertCriticRevision(db, tx, run, current);
-      await assertPaidRunLimits(db, run, current.costMinor ?? 0, current.id);
-      const { reservation, evidence } = await readAdmission(tx, context, current);
-      if (reservation?.status !== "RESERVED" || reservation.expiresAt.getTime() <= Date.now())
-        throw new DispatchAdmissionError("Paid dispatch reservation is inactive");
-      if (evidence !== "pending") throw new ConflictException(submissionHold(step.id));
-      const marked = await tx.providerRequest.updateMany({
-        where: { workspaceId: context.workspaceId, correlationId: step.id, errorCode: "PENDING" },
-        data: {
-          errorCode: DISPATCHING,
-          responseMetadata: { dispatched: true, costKnown: false },
-        },
-      });
-      if (!marked.count) throw new ConflictException("Paid dispatch requires reconciliation");
-      try {
-        await assertLocked?.();
-      } catch (cause) {
-        throw new DispatchAdmissionError("Reference ownership lost before dispatch", { cause });
-      }
-      return { value: null, payload: { idempotencyKey: step.idempotencyKey }, stepId: step.id };
-    });
-  }
-
   public async jobReceipt(context: Context, step: Step): Promise<string | null> {
     return jobIdFromAdmission(await readAdmission(this.store.db, context, step));
   }
@@ -290,41 +248,16 @@ export class RunPaidCalls {
     cost: number,
     providerJobId = step.providerJobId,
     usage?: Record<string, unknown>,
-  ): Promise<void> {
-    if (!dispatched && !canConfirmRejection(await readAdmission(tx, context, step)))
-      throw new ConflictException("Paid dispatch outcome changed");
-    const code =
-      usage !== undefined
-        ? "PROVIDER_INVALID_OUTPUT"
-        : dispatched
-          ? "PROVIDER_JOB_FAILED"
-          : "NOT_DISPATCHED";
-    const updated = await tx.providerRequest.updateMany({
-      where: {
-        workspaceId: context.workspaceId,
-        correlationId: step.id,
-        errorCode: dispatched ? { in: [DISPATCHING, OUTCOME_UNKNOWN] } : DISPATCHING,
-      },
-      data: {
-        status: "FAILED",
-        actualCost: dispatched ? null : 0,
-        ...(usage !== undefined ? { usage: json(usage) } : {}),
-        responseMetadata: {
-          dispatched,
-          costKnown: !dispatched,
-          ...(providerJobId ? { providerJobId } : {}),
-        },
-        errorCode: code,
-        errorMessage: message,
-      },
+  ): Promise<number> {
+    return settleFailedRequest(this.usage, tx, context, step, {
+      message,
+      dispatched,
+      cost,
+      providerJobId,
+      ...(usage !== undefined && { usage }),
     });
-    if (updated.count !== 1) throw new ConflictException("Paid dispatch outcome changed");
-    const reservation = await tx.usageReservation.findFirstOrThrow({
-      where: { workspaceId: context.workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
-    });
-    if (dispatched) await this.usage.commit(context.workspaceId, reservation.id, cost, tx);
-    else await this.usage.release(context.workspaceId, reservation.id, code, tx);
   }
+
   public async commitJob(
     tx: Transaction,
     context: Context,

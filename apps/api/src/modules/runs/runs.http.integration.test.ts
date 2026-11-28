@@ -4,6 +4,7 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
+import { assertOwnerReportedTextEvidence } from "./runs.http-text-evidence.fixture.js";
 import { RunsModule } from "./runs.module.js";
 import { RunsService } from "./runs.service.js";
 import { RunsController } from "./runs.controller.js";
@@ -107,6 +108,10 @@ describe.skipIf(!process.env.DATABASE_URL)("V3 run HTTP boundary", () => {
       .get(`/api/v1/runs/nope?workspaceId=${t.context.workspaceId}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
+  });
+  it("records owner-recovered text evidence without marking it verified", async () => {
+    const receiptTenant = await fixture.tenant("L2", 30);
+    await assertOwnerReportedTextEvidence(app, receiptTenant, other.context.userId, token);
   });
   it("validates SSE cursors and supports read and control controller boundaries", async () => {
     const controller = app.get(RunsController);

@@ -1,8 +1,7 @@
-import {
-  correctionHold,
-  pendingCorrection,
-  highestObservedReceipt,
-} from "./run-pending-receipt.js";
+import { lockVideoJob, mergeVideoEvidence } from "./video-job-evidence.js";
+import { hasVideoDelivery, terminalVideo } from "./run-video-terminal.js";
+import { correctionHold, pendingCorrection } from "./run-pending-receipt.js";
+import { captureRefusedBill } from "./provider-charge-credit.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -36,11 +35,14 @@ import {
 import type { RunPaidCalls } from "./run-paid.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
+  adjustEnvelope,
   admissionFields,
+  importedShotEstimate,
   awaitingBilling,
   correctionPayload,
   deliveredShot,
   requireReceiptAttempt,
+  terminalBilledShot,
   mergeShotReceipt,
   pendingShotMedia,
   readReceiptBudget,
@@ -162,33 +164,6 @@ async function savePricedRequest(
   return true;
 }
 
-/** The caller holds the run lock for the ledger, step and envelope writes. */
-async function adjustEnvelope(
-  db: Scoped,
-  runId: string,
-  delta: { spentMinor: number; reservedMinor: number; overageMinor: number },
-): Promise<void> {
-  const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId } });
-  const spentMinor = budget.spentMinor + delta.spentMinor;
-  const reservedMinor = budget.reservedMinor + delta.reservedMinor;
-  // Preserve shot overruns and cover any shortfall after siblings reuse released funds.
-  // Admission still compares gross spent + reserved against the cap.
-  const overageMinor = Math.max(
-    budget.overageMinor + delta.overageMinor,
-    spentMinor + reservedMinor - budget.hardCapMinor,
-  );
-  const updated = await db.budgetEnvelope.updateMany({
-    where: { id: budget.id, revision: budget.revision },
-    data: {
-      reservedMinor,
-      spentMinor,
-      overageMinor,
-      revision: budget.revision + 1,
-    },
-  });
-  if (updated.count !== 1) throw new ConflictException("Billing envelope changed");
-}
-
 /** Correct the original commitment in its accounting period without completing the clip again. */
 async function correctSettledReceipt(
   db: Scoped,
@@ -204,12 +179,13 @@ async function correctSettledReceipt(
   const reservation = receiptReservation(run, step, claim);
   const { request } = claim;
   const reserved = request?.estimatedCost?.mul(100).toNumber();
+  const importedEstimate = importedShotEstimate(claim, previous);
   if (
     previous === undefined ||
     previous !== step.costMinor ||
     reservation.status !== "COMMITTED" ||
     !request ||
-    !matchesCommit(claim, BigInt(previous)) ||
+    (!importedEstimate && !matchesCommit(claim, BigInt(previous))) ||
     reserved === undefined ||
     !Number.isSafeInteger(reserved) ||
     reserved < 0
@@ -217,14 +193,14 @@ async function correctSettledReceipt(
     throw new ConflictException("Stored receipt differs from settled payment");
   const budget = readReceiptBudget(step.output);
   const admitted = budget?.admittedMinor ?? reserved;
-  if (previous === cost) return budget;
+  if (previous === cost && !importedEstimate) return budget;
   await paid.usage.coverShotReceipt(
     tx,
     run.workspaceId,
     run.channelId,
     reservation,
     cost,
-    BigInt(previous),
+    importedEstimate ? reservation.committedMinor! : BigInt(previous),
   );
   const updated = await tx.providerRequest.updateMany({
     where: {
@@ -232,7 +208,7 @@ async function correctSettledReceipt(
       workspaceId: run.workspaceId,
       status: "SUCCEEDED",
       errorCode: null,
-      actualCost: new Prisma.Decimal(previous).div(100),
+      actualCost: importedEstimate ? null : new Prisma.Decimal(previous).div(100),
     },
     data: { actualCost: new Prisma.Decimal(cost).div(100) },
   });
@@ -259,11 +235,12 @@ export async function captureShotReceipt(
     step.runId,
     "provider_receipt",
     async (db, run, tx) => {
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      const current = await lockVideoJob(tx, db, run, step.id);
       requireReceiptAttempt(current, step);
+      if (terminalBilledShot(current)) return captureRefusedBill(db, tx, run, current, receipt);
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
-      const price = highestObservedReceipt(pending, receipt);
+      const price = mergeVideoEvidence({ receipt: pending }, { receipt }).receipt!;
       const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
@@ -307,7 +284,7 @@ export async function reconcilePricedReceipt(
   step: Step,
 ): Promise<void> {
   await store.mutate(context, step.runId, "billing_reconciled", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+    const current = await lockVideoJob(tx, db, run, step.id);
     if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
     const claim = await readAdmission(tx, context, current);
     const cost = deliveredShot(current)?.receipt.costMinor;
@@ -366,8 +343,10 @@ export async function recordShotArtifact(
   artifact: Artifact,
 ): Promise<{ value: number | null; event: import("../runs/runs.types.js").Event }> {
   return store.mutate(context, step.runId, "step_completed", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+    const current = await lockVideoJob(tx, db, run, step.id);
     if (SETTLED_SHOTS.some((state) => state === current.state))
+      return { value: null, payload: { replay: true } };
+    if (terminalVideo(current) && !hasVideoDelivery(current))
       return { value: null, payload: { replay: true } };
     const correction = pendingCorrection(current);
     if (correction) throw new ConflictException(correctionHold(step.id));

@@ -11,7 +11,7 @@ export function IdentityFields({ value, onChange, offerL3 }: Props): JSX.Element
         <Field
           key={key}
           id={`brief-${key}`}
-          label={key}
+          label={key[0]!.toUpperCase() + key.slice(1)}
           required
           value={value[key]}
           onChange={(e) => onChange({ ...value, [key]: e.target.value })}
@@ -21,36 +21,37 @@ export function IdentityFields({ value, onChange, offerL3 }: Props): JSX.Element
         <Field
           key={key}
           id={`language-${key}`}
-          label={`${key} language`}
+          label={`${key[0]!.toUpperCase() + key.slice(1)} language`}
           required
           value={value.languages[key]}
           onChange={(e) =>
             onChange({
               ...value,
               languages: { ...value.languages, [key]: e.target.value },
-              ...(key === "narration" ? { narrationLanguage: e.target.value } : {}),
+              ...(key === "narration"
+                ? {
+                    narrationLanguage: e.target.value,
+                    narratorVoice: value.narratorVoice
+                      ? { ...value.narratorVoice, language: e.target.value }
+                      : null,
+                  }
+                : {}),
             })
           }
         />
       ))}
-      <SelectField
-        id="brief-autonomy"
-        label="Autonomy"
-        value={value.requestedAutonomy}
-        onChange={(e) =>
-          onChange({
-            ...value,
-            requestedAutonomy: e.target.value as BriefInput["requestedAutonomy"],
-          })
-        }
-      >
-        <option value="L1">L1 — approve each stage</option>
-        <option value="L2">L2 — approve before publish</option>
-        <option value="L3" disabled={!offerL3}>
-          L3 — full auto{offerL3 ? "" : " (locked until 10 approved Shorts)"}
-        </option>
-      </SelectField>
-      <p>Hard safety and budget gates always apply.</p>
+      <Field
+        id="target-duration"
+        label="Target video length (seconds)"
+        type="number"
+        min={30}
+        max={45}
+        required
+        hint="Choose a target between 30 and 45 seconds."
+        value={value.targetDurationSeconds}
+        onChange={(e) => onChange({ ...value, targetDurationSeconds: Number(e.target.value) })}
+      />
+      <AutonomyField {...{ value, onChange, offerL3 }} />
     </fieldset>
   );
 }
@@ -89,25 +90,10 @@ export function ScheduleBudget({ value, onChange }: Omit<Props, "offerL3">): JSX
           onChange({ ...value, cadence: { ...value.cadence, timezone: e.target.value } })
         }
       />
-      {(["targetMinor", "hardCapMinor", "dailyLimitMinor", "monthlyLimitMinor"] as const).map(
-        (key) => (
-          <Field
-            key={key}
-            id={`budget-${key}`}
-            label={`${{ targetMinor: "Target per Short", hardCapMinor: "Hard cap per Short", dailyLimitMinor: "Daily cap", monthlyLimitMinor: "Monthly cap" }[key]} (USD cents)`}
-            type="number"
-            min={0}
-            step={1}
-            value={value.budgetPolicy[key]}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                budgetPolicy: { ...value.budgetPolicy, [key]: Number(e.target.value) },
-              })
-            }
-          />
-        ),
-      )}
+      <BudgetFields
+        policy={value.budgetPolicy}
+        onChange={(budgetPolicy) => onChange({ ...value, budgetPolicy })}
+      />
     </fieldset>
   );
 }
@@ -124,22 +110,19 @@ export function StyleFields({ value, onChange }: Omit<Props, "offerL3">): JSX.El
         }
       />
       {(["palette", "bannedVisuals"] as const).map((key) => (
-        <TextAreaField
+        <LinesField
           key={key}
           id={key}
           label={
             key === "palette" ? "Palette (one color per line)" : "Banned visuals (one per line)"
           }
-          value={value.styleBible[key].join("\n")}
-          onChange={(e) =>
+          lines={value.styleBible[key]}
+          onLines={(lines) =>
             onChange({
               ...value,
               styleBible: {
                 ...value.styleBible,
-                [key]: e.target.value
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean),
+                [key]: lines,
               },
             })
           }
@@ -165,7 +148,8 @@ export function JsonField({
   return (
     <TextAreaField
       id={`json-${label.replaceAll(" ", "-")}`}
-      label={label}
+      label={label.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase())}
+      hint="Advanced configuration in JSON. Preserve existing field names when editing."
       rows={5}
       value={raw}
       error={error}
@@ -192,7 +176,7 @@ function GuardrailFields({ value, onChange }: Omit<Props, "offerL3">): JSX.Eleme
     <>
       {" "}
       {(["bannedTopics", "topicsToAvoid"] as const).map((key) => (
-        <TextAreaField
+        <LinesField
           key={key}
           id={key}
           label={
@@ -200,16 +184,13 @@ function GuardrailFields({ value, onChange }: Omit<Props, "offerL3">): JSX.Eleme
               ? "Banned topics (one per line)"
               : "Topics to avoid (one per line)"
           }
-          value={value.guardrails[key].join("\n")}
-          onChange={(e) =>
+          lines={value.guardrails[key]}
+          onLines={(lines) =>
             onChange({
               ...value,
               guardrails: {
                 ...value.guardrails,
-                [key]: e.target.value
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean),
+                [key]: lines,
               },
             })
           }
@@ -236,6 +217,91 @@ function GuardrailFields({ value, onChange }: Omit<Props, "offerL3">): JSX.Eleme
         Real people and brands are blocked. AI personas cannot give health, legal, finance or
         political advice. AI disclosure is always on.
       </p>
+    </>
+  );
+}
+
+function LinesField({
+  id,
+  label,
+  lines,
+  onLines,
+}: {
+  id: string;
+  label: string;
+  lines: string[];
+  onLines: (lines: string[]) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState(lines.join("\n"));
+  return (
+    <TextAreaField
+      id={id}
+      label={label}
+      value={draft}
+      onChange={(event) => {
+        const raw = event.target.value;
+        setDraft(raw);
+        onLines(
+          raw
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean),
+        );
+      }}
+    />
+  );
+}
+
+export function BudgetFields({
+  policy,
+  onChange,
+}: {
+  policy: BriefInput["budgetPolicy"];
+  onChange: (value: BriefInput["budgetPolicy"]) => void;
+}): JSX.Element {
+  return (
+    <>
+      {" "}
+      {(["targetMinor", "hardCapMinor", "dailyLimitMinor", "monthlyLimitMinor"] as const).map(
+        (key) => (
+          <Field
+            key={key}
+            id={`budget-${key}`}
+            label={`${{ targetMinor: "Target per Short", hardCapMinor: "Hard cap per Short", dailyLimitMinor: "Daily cap", monthlyLimitMinor: "Monthly cap" }[key]} (USD cents)`}
+            type="number"
+            min={0}
+            step={1}
+            value={policy[key]}
+            onChange={(e) => onChange({ ...policy, [key]: Number(e.target.value) })}
+          />
+        ),
+      )}
+    </>
+  );
+}
+
+function AutonomyField({ value, onChange, offerL3 }: Props): JSX.Element {
+  return (
+    <>
+      {" "}
+      <SelectField
+        id="brief-autonomy"
+        label="Autonomy"
+        value={value.requestedAutonomy}
+        onChange={(e) =>
+          onChange({
+            ...value,
+            requestedAutonomy: e.target.value as BriefInput["requestedAutonomy"],
+          })
+        }
+      >
+        <option value="L1">L1 — approve each stage</option>
+        <option value="L2">L2 — approve before publish</option>
+        <option value="L3" disabled={!offerL3}>
+          L3 — full auto{offerL3 ? "" : " (locked until 10 approved Shorts)"}
+        </option>
+      </SelectField>
+      <p>Hard safety and budget gates always apply.</p>
     </>
   );
 }

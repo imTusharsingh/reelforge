@@ -2,24 +2,43 @@ import { PENDING_RECEIPT_CORRECTION } from "./run-pending-receipt.js";
 import { Prisma } from "@reelforge/database";
 import {
   classifyCost,
+  providerCreditMinor,
   confirmedNonDispatch,
   type LedgerReader,
   type LedgerRow,
 } from "./usage-budget.ledger.js";
 import type { PeriodBounds } from "./usage-budget.time.js";
 
-type Price = Pick<LedgerRow, "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status">;
+type Price = Pick<
+  LedgerRow,
+  "creditedMinor" | "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status"
+>;
 
-const pendingJob = Prisma.sql`s.error->>'code' = ${PENDING_RECEIPT_CORRECTION}
-  AND s.error->>'providerId' = s.provider_id AND s.error->>'providerJobId' = s.provider_job_id`;
+const pendingMarker = Prisma.sql`CASE
+  WHEN s.state IN ('SKIPPED', 'FAILED') AND s.error->>'code' IN ('PROVIDER_REFUSED', 'PROVIDER_FAILED')
+  THEN s.output->'pendingRefusalBill'
+  ELSE s.error END`;
+const pendingJob = Prisma.sql`(${pendingMarker})->>'code' = ${PENDING_RECEIPT_CORRECTION}
+  AND (${pendingMarker})->>'providerId' = s.provider_id
+  AND (${pendingMarker})->>'providerJobId' = s.provider_job_id`;
+
+const terminalBill = Prisma.sql`CASE
+  WHEN s.key LIKE 'shot-%' AND s.state IN ('RUNNING', 'WAITING_EXTERNAL')
+    AND s.output->'terminalVideo'->>'status' IN ('refused', 'failed')
+    AND (s.state = 'RUNNING' OR s.output->'terminalVideo'->>'providerJobId' = s.provider_job_id)
+    AND jsonb_typeof(s.output->'terminalVideo'->'billedMinor') = 'number'
+  THEN (s.output->'terminalVideo'->>'billedMinor')::bigint END`;
 
 // Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
+  WHEN s.key LIKE 'media:text:%' THEN GREATEST(s.cost_minor,
+    CASE WHEN ur.status = 'COMMITTED' THEN ur.committed_minor ELSE ur.amount_minor END)
   WHEN ${pendingJob} THEN GREATEST(
     CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
          ELSE ur.amount_minor END,
-    (s.error->>'costMinor')::bigint,
-    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0),
+    ((${pendingMarker})->>'costMinor')::bigint,
+    CASE WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL')
+      THEN COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0) ELSE 0 END,
     CASE WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL') THEN
       COALESCE(ur.committed_minor, 0) +
       COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0)
@@ -30,7 +49,9 @@ const coveredMinor = Prisma.sql`CASE
          ELSE ur.amount_minor END,
     COALESCE(ur.committed_minor, 0) +
       COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0),
-    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0)
+    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0) -
+      CASE WHEN ur.status = 'COMMITTED' AND s.output->'receipt'->>'costBasis' = 'RESERVATION'
+        THEN GREATEST(s.cost_minor - ur.committed_minor, 0) ELSE 0 END
   )
   WHEN ur.status <> 'COMMITTED' THEN ur.amount_minor
   WHEN s.state = 'SUCCEEDED' THEN GREATEST(
@@ -53,30 +74,30 @@ export async function budgetExposure(
     AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}`;
   const rows = await db.$queryRaw<(Price & { minor: string | null; entries: bigint })[]>(Prisma.sql`
     WITH coverage AS (
-      SELECT ur.correlation_id, ur.currency, ur.created_at, ur.channel_id, ${coveredMinor} AS minor
+      SELECT ur.correlation_id, ur.currency, ur.created_at, ur.channel_id, GREATEST(${coveredMinor}, ${terminalBill}) AS minor
         FROM usage_reservations ur
         LEFT JOIN video_run_steps s ON s.workspace_id = ur.workspace_id AND s.id = ur.correlation_id
           AND ur.idempotency_key = 'm08:' || s.idempotency_key
        WHERE ur.workspace_id = ${budget.workspaceId}::uuid AND (
          ur.status = 'COMMITTED' OR (ur.status = 'RESERVED' AND ur.expires_at > ${now})
          OR (ur.status IN ('RESERVED', 'EXPIRED') AND s.state IN ('RUNNING','WAITING_EXTERNAL')
-             AND ((s.state = 'WAITING_EXTERNAL' AND (s.output ? 'receiptBudget' OR (${pendingJob}))) OR NOT EXISTS (
+             AND ((${terminalBill}) IS NOT NULL OR (s.state = 'WAITING_EXTERNAL' AND (s.output ? 'receiptBudget' OR (${pendingJob}))) OR NOT EXISTS (
                SELECT FROM provider_requests pr WHERE pr.workspace_id = ur.workspace_id
                  AND pr.correlation_id = ur.correlation_id
              )))
        )
     )
     SELECT currency, actual_cost::text AS "actualCost", estimated_cost::text AS "estimatedCost",
-           error_code AS "errorCode", status::text, ${confirmedNonDispatch} AS "confirmedNonDispatch", NULL::text AS minor, 1::bigint AS entries
+           error_code AS "errorCode", status::text, ${confirmedNonDispatch} AS "confirmedNonDispatch", ${providerCreditMinor} AS "creditedMinor", NULL::text AS minor, 1::bigint AS entries
       FROM provider_requests pr WHERE ${period}
        AND NOT EXISTS (SELECT FROM coverage c WHERE c.correlation_id = pr.correlation_id)
     UNION ALL
-    SELECT currency, NULL, NULL, NULL, NULL, false, SUM(minor)::text, COUNT(*) FROM (
+    SELECT currency, NULL, NULL, NULL, NULL, false, NULL, SUM(minor)::text, COUNT(*) FROM (
       SELECT currency, minor FROM coverage
        WHERE minor > 0 AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}
       UNION ALL
       SELECT currency, CASE WHEN kind = 'DEBIT' THEN amount_minor ELSE -amount_minor END
-        FROM usage_adjustments WHERE ${period}
+        FROM usage_adjustments WHERE ${period} AND text_attempt_id IS NULL AND provider_request_id IS NULL
     ) charges GROUP BY currency`);
   let consumed = 0n;
   let unconverted = 0;

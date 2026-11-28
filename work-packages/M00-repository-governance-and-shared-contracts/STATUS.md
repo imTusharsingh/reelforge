@@ -159,3 +159,48 @@ State: IMPLEMENTED_PENDING_REVIEW; this does not change prior integration histor
 ## 2026-11-16 — Issue #112 official review follow-up
 
 IMPLEMENTED_PENDING_REVIEW. Addressed #111 B1–B8 and paid-script retry note against issue #112 (all source comments); #110 corrected first at ef34d69. One draft migration edited in place, exact seven agent prompt roles and all downstream contract fields provided. Updated deprecation ownership and default genre fallback; split planning assemblies to respect size limits. Evidence/changed files: ../../docs/WAVE0_FOUNDATIONS_STATUS.md. Next: official Minu re-review; integrate #110 before #111, squash only after approval. No merge or approval claimed.
+
+## 2026-11-27 — Issue #169
+
+Owner-assigned live-smoke repairs on `fix/live-smoke-169` against `6d7a5c4`. The additive usage-category migration also corrects historical reservations for identified run attempts. Next.js retains its screen-reader route announcer. The working tree is for operator review.
+
+Changed files by directory
+
+- `.` — `.env.example`, `.gitignore`, `README.md`, `package.json`
+- `apps/api/src` — `app.module.ts`
+- `apps/api/src/modules/channel` — `brief.integration.test.ts`, `brief.service.ts`
+- `apps/api/src/modules/idea/discovery` — `scout.test.ts`, `scout.ts`, `service.test.ts`, `service.ts`, `text-calls.ts`
+- `apps/api/src/modules/identity` — `csrf.http.integration.test.ts`
+- `apps/api/src/modules/openai` — `provider-ledger.ts`
+- `apps/api/src/modules/orchestration` — `video-run.engine.ts`
+- `apps/api/src/modules/runs` — `audit-recovery.integration.test.ts`, `runs.control.ts`, `runs.controller.ts`, `runs.events.test.ts`, `runs.events.ts`, `runs.fixture.ts`, `runs.queue.ts`, `runs.service.ts`, `runs.transport.integration.test.ts`, `runs.types.ts`, `session-lock.ts`
+- `apps/api/src/modules/scene-media` — `MEDIA_PIPELINE.md`, `media-prices.ts`
+- `apps/api/src/modules/usage-budget` — `effective-budgets.ts`, `run-admission-state.ts`, `run-envelope.test.ts`, `run-envelope.ts`, `run-paid-admission.ts`, `run-paid-failure.ts`, `run-paid.ts`, `run-step-category.test.ts`, `usage-budget.ledger.ts`, `usage-budget.service.ts`, `usage-budget.types.ts`
+- `apps/web` — `next-env.d.ts (removed)`, `next.config.ts`, `tsconfig.json`
+- `apps/web/app` — `globals.css`
+- `apps/web/app/account` — `page.tsx`
+- `apps/web/app/channels` — `page.tsx`
+- `apps/web/app/channels/[channelId]` — `page.tsx`
+- `apps/web/app/channels/[channelId]/brief` — `page.tsx`
+- `apps/web/app/runs/usage` — `page.tsx`
+- `apps/web/components` — `auth-form.tsx`, `auth-mounted.test.ts`, `auth-session.test.ts`, `auth-session.ts`
+- `apps/web/components/ui` — `page-heading.tsx`
+- `apps/web/features/approvals` — `approval-panel.tsx`
+- `apps/web/features/brief` — `channel-overview.tsx`, `editor.tsx`, `fields.tsx`, `onboarding-fields.tsx`, `onboarding.tsx`, `production-fields.tsx`, `screens.test.ts`, `studio-settings.tsx`, `wizard-location.ts`
+- `apps/web/features/brief/verification` — `browser.spec.ts`
+- `apps/web/features/timeline` — `client.ts`, `new-short.test.ts`, `new-short.tsx`, `progress-stream.tsx`, `run-list.tsx`, `run-screen.tsx`, `screens.test.ts`, `view-model.ts`
+- `apps/web/lib` — `brief-bundling.test.ts`
+- `apps/worker/src/handlers/orchestration` — `video-runs.test.ts`, `video-runs.ts`
+- `docs` — `WORK_LOG.md`
+- `packages/ai-providers/src/v2` — `adapters.test.ts`, `text.ts`
+- `packages/contracts/src` — `channel-brief.test.ts`, `channel-brief.ts`, `run-experience.ts`
+- `packages/database/prisma` — `schema.prisma`
+- `packages/database/prisma/migrations/20261127020000_music_usage_category` — `migration.sql`
+- `work-packages/M00-repository-governance-and-shared-contracts` — `STATUS.md`
+
+Verification on Node 24.22.1 and pnpm 12.16.1, with UTC PostgreSQL and Redis DB 1
+
+- `pnpm db:migrate:deploy` applied `20261127020000_music_usage_category` to the disposable database. `MIGRATION_BASE_REF=origin/main pnpm db:check-migrations` exited 0 with 43 ordered migrations.
+- `pnpm vitest run <changed test files>` exited 0 with 105 tests in 17 files. The first run for the updated `auth-mounted.test.ts` also exited 0 with 5 tests. The browser spec was edited but Playwright was outside the requested verification scope.
+- `pnpm --filter @reelforge/<package> typecheck` exited 0 for database, api, contracts, ai-providers and worker. Web exited 1 at the pnpm level with two TypeScript diagnostics. Corrected the auth form's out-of-scope variable and the test's React props type.
+- Changed-file `pnpm exec oxfmt --check` exited 0. Changed-file `pnpm exec oxlint --deny-warnings` exited 1 with two function length and two return type diagnostics. Extracted the run budget component, named the editor scope and annotated the two callbacks. The first lint and format checks on the updated mounted auth test also exited 0. Subsequent edits were formatted.

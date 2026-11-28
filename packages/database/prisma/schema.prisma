@@ -1494,6 +1494,7 @@ model ProviderRequest {
   latencyMs        Int?                        @map("latency_ms")
   responseMetadata Json?                       @map("response_metadata")
   dispatchedPrompt String?                     @map("dispatched_prompt")
+  credits          UsageAdjustment[]
   reservations     ProviderBudgetReservation[]
   sceneOutputs     SceneGenerationOutput[]
   errorCode        String?                     @map("error_code")
@@ -2356,6 +2357,7 @@ model ChannelReport {
 // currency. Provider spend is NOT recorded here: usage views read the M08 provider_requests
 // ledger. Adjustments and audit records are append-only (enforced by database triggers).
 enum UsageCategory {
+  MUSIC
   LLM
   TTS
   IMAGE_MEDIA
@@ -2444,10 +2446,19 @@ model UsageAdjustment {
   reason        String
   actorUserId   String              @map("actor_user_id") @db.Uuid
   correlationId String              @map("correlation_id") @db.Uuid
+  providerRequestId String?           @map("provider_request_id") @db.Uuid
+  textAttemptId String?             @map("text_attempt_id") @db.Uuid
+  operationKey  String?             @map("operation_key")
   createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  providerRequest ProviderRequest? @relation(fields: [workspaceId, providerRequestId], references: [workspaceId, id], onDelete: Cascade)
+  textAttempt VideoRunStep? @relation(fields: [workspaceId, textAttemptId], references: [workspaceId, id], onDelete: Cascade)
+
   @@unique([workspaceId, id])
+  @@unique([workspaceId, operationKey])
+  @@index([workspaceId, providerRequestId])
+  @@index([workspaceId, textAttemptId])
   @@index([workspaceId, createdAt])
   @@map("usage_adjustments")
 }
@@ -2679,34 +2690,69 @@ model VideoRun {
 }
 
 model VideoRunStep {
-  costMinor      Int?              @map("cost_minor")
-  artifacts      Json              @default("[]")
-  schemaVersion  String            @default("1.0") @map("schema_version")
-  id             String            @id @default(uuid()) @db.Uuid
-  workspaceId    String            @map("workspace_id") @db.Uuid
-  runId          String            @map("run_id") @db.Uuid
+  costMinor      Int?                   @map("cost_minor")
+  artifacts      Json                   @default("[]")
+  schemaVersion  String                 @default("1.0") @map("schema_version")
+  id             String                 @id @default(uuid()) @db.Uuid
+  workspaceId    String                 @map("workspace_id") @db.Uuid
+  runId          String                 @map("run_id") @db.Uuid
   key            String
-  attempt        Int               @default(1)
-  state          VideoRunStepState @default(PENDING)
-  idempotencyKey String            @map("idempotency_key")
-  providerId     String?           @map("provider_id")
-  providerJobId  String?           @map("provider_job_id")
+  attempt        Int                    @default(1)
+  state          VideoRunStepState      @default(PENDING)
+  idempotencyKey String                 @map("idempotency_key")
+  providerId     String?                @map("provider_id")
+  providerJobId  String?                @map("provider_job_id")
   input          Json
   output         Json?
   error          Json?
-  startedAt      DateTime?         @map("started_at") @db.Timestamptz(6)
-  finishedAt     DateTime?         @map("finished_at") @db.Timestamptz(6)
-  run            VideoRun          @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
+  startedAt      DateTime?              @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime?              @map("finished_at") @db.Timestamptz(6)
+  run            VideoRun               @relation(fields: [workspaceId, runId], references: [workspaceId, id], onDelete: Cascade)
   events         RunEvent[]
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  textEvidence   TextAttemptEvidence[]
+  textProjection TextAttemptProjection?
+  textCredits    UsageAdjustment[]
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace      Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, runId, key, attempt])
   @@unique([workspaceId, idempotencyKey])
   @@unique([workspaceId, runId, id])
   @@unique([workspaceId, id])
   @@map("video_run_steps")
+}
+
+model TextAttemptEvidence {
+  id          String       @id @default(uuid()) @db.Uuid
+  workspaceId String       @map("workspace_id") @db.Uuid
+  attemptId   String       @map("attempt_id") @db.Uuid
+  sequence    Int
+  eventKey    String       @map("event_key")
+  kind        String
+  nonce       String?
+  data        Json
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  attempt     VideoRunStep @relation(fields: [workspaceId, attemptId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([attemptId, sequence])
+  @@unique([attemptId, eventKey])
+  @@index([workspaceId, attemptId])
+  @@map("text_attempt_evidence")
+}
+
+model TextAttemptProjection {
+  workspaceId     String       @map("workspace_id") @db.Uuid
+  attemptId       String       @map("attempt_id") @db.Uuid
+  appliedSequence Int          @map("applied_sequence")
+  reservedMinor   Int          @map("reserved_minor")
+  grossMinor      Int          @map("gross_minor")
+  netMinor        Int          @map("net_minor")
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  attempt         VideoRunStep @relation(fields: [workspaceId, attemptId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@id([workspaceId, attemptId])
+  @@map("text_attempt_projections")
 }
 
 model ShotSpec {

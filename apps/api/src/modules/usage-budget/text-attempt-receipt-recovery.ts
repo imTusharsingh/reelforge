@@ -1,0 +1,124 @@
+import { lockBooks } from "./text-admission-lock.js";
+import { ConflictException } from "@nestjs/common";
+import { isDefinitiveProviderRejection } from "@reelforge/ai-providers";
+import { json, type Database } from "../runs/runs.types.js";
+import { appendTextEvidence, readTextAttempt } from "./text-attempt-store.js";
+import {
+  matchedTextReceipt,
+  matchedTextRejection,
+  type TextAttemptOpsTarget,
+} from "./text-attempt-ops-schema.js";
+import {
+  foldOperatorEvidence,
+  lockOperatorTarget,
+  operatorEventKey,
+  validateAuditTime,
+} from "./text-attempt-ops.js";
+
+type ProviderAudit = {
+  target: TextAttemptOpsTarget;
+  source: string;
+  reference: string;
+  actor: string;
+  observedAt: string;
+};
+
+function auditData({ target, source, reference, actor, observedAt }: ProviderAudit): {
+  source: string;
+  reference: string;
+  actor: string;
+  observedAt: string;
+  incarnation: string;
+} {
+  return { source, reference, actor, observedAt, incarnation: target.incarnation };
+}
+
+async function ingestProviderEvidence(
+  db: Database,
+  proof: ProviderAudit,
+  kind: "RECOVERED_RECEIPT" | "REJECTED",
+  data: Record<string, unknown>,
+  currency?: string,
+): Promise<void> {
+  const { target, source, reference, observedAt } = proof;
+  const accepted = await db.$transaction(async (tx) => {
+    const { step, armedAt } = await lockOperatorTarget(tx, target);
+    validateAuditTime(observedAt, armedAt);
+    const state = await readTextAttempt(tx, step);
+    if (!state?.senderRetired)
+      throw new ConflictException("Verify sender retirement before importing provider evidence");
+    if (currency !== undefined && currency !== state.currency)
+      throw new ConflictException("Verified amount must be stated in the armed attempt currency");
+    const eventKey = operatorEventKey("provider", source, reference);
+    const observation = json({
+      ...data,
+      dispatchKey: target.dispatchKey,
+      source: "matched-provider",
+    });
+    const run = await tx.videoRun.findUniqueOrThrow({ where: { id: step.runId } });
+    await lockBooks(tx, run);
+    try {
+      await appendTextEvidence(tx, step, {
+        kind,
+        nonce: target.armNonce,
+        eventKey,
+        data: observation,
+      });
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      await appendTextEvidence(tx, step, {
+        kind: "QUARANTINED",
+        nonce: target.armNonce,
+        eventKey: operatorEventKey("conflict", kind, JSON.stringify([eventKey, observation])),
+        data: json({ kind, eventKey, observation, dispatchKey: target.dispatchKey }),
+      });
+      return false;
+    }
+    if (currency !== undefined) {
+      const pending = await readTextAttempt(tx, step);
+      if (pending && pending.netMinor > (step.costMinor ?? 0))
+        await tx.videoRunStep.update({
+          where: { id: step.id },
+          data: { costMinor: pending.netMinor },
+        });
+    }
+    return true;
+  });
+  if (!accepted) throw new ConflictException("Contradictory provider evidence quarantined");
+  await foldOperatorEvidence(db, target);
+}
+
+/** A verified provider receipt proves send, not a usable generated result. Never calls Google. */
+export async function ingestMatchedTextReceipt(db: Database, input: unknown): Promise<void> {
+  const proof = matchedTextReceipt.parse(input);
+  const { target, googleId, usage, actualMinor, currency } = proof;
+  if (googleId === target.dispatchKey)
+    throw new ConflictException("Google ID and dispatch key must be distinct");
+  if ((actualMinor !== undefined) !== (currency !== undefined))
+    throw new ConflictException("Verified amount and currency must be provided together");
+  await ingestProviderEvidence(
+    db,
+    proof,
+    "RECOVERED_RECEIPT",
+    {
+      googleId,
+      ...(usage !== undefined && { usage }),
+      ...(actualMinor !== undefined && { actualMinor }),
+      audit: { ...auditData(proof), currency: currency ?? null },
+    },
+    currency,
+  );
+}
+
+/** Only accept the same authenticated deterministic status/code pairs as the live transport. */
+export async function ingestMatchedTextRejection(db: Database, input: unknown): Promise<void> {
+  const proof = matchedTextRejection.parse(input);
+  const { code, httpStatus } = proof;
+  if (!isDefinitiveProviderRejection(httpStatus, code))
+    throw new ConflictException("Provider status and code do not prove deterministic rejection");
+  await ingestProviderEvidence(db, proof, "REJECTED", {
+    code,
+    httpStatus,
+    audit: auditData(proof),
+  });
+}

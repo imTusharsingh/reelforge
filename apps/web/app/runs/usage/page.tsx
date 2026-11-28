@@ -9,6 +9,7 @@ import { PageHeading } from "../../../components/ui/page-heading";
 import { AuthWorkspace } from "../../../components/auth-workspace";
 import { useActiveWorkspace } from "../../../components/studio-workspace-context";
 import { runClient } from "../../../features/timeline/client";
+import { dollars } from "../../../features/timeline/view-model";
 import { RunCost } from "../../../features/timeline/run-cost";
 
 export default function UsagePage(): JSX.Element {
@@ -25,6 +26,8 @@ function ActiveUsage(): JSX.Element {
 }
 
 function WorkspaceUsage({ workspaceId }: { workspaceId: string }): JSX.Element {
+  const capsLoad = useCallback(() => runClient.caps(workspaceId), [workspaceId]);
+  const caps = useResource(capsLoad);
   const load = useCallback(() => runClient.list(workspaceId), [workspaceId]);
   const { data: runs, error, loading, retry } = useResource(load);
   return (
@@ -42,6 +45,19 @@ function WorkspaceUsage({ workspaceId }: { workspaceId: string }): JSX.Element {
           </div>
         </Alert>
       )}
+      {caps.error && (
+        <p role="status">
+          Channel caps could not be loaded. <Button onClick={caps.retry}>Retry limits</Button>
+        </p>
+      )}
+      {caps.data?.map((cap) => (
+        <p key={cap.channelId}>
+          {cap.name} ·{" "}
+          {"incompatibleCurrencies" in cap
+            ? `Paid runs require USD budgets. Incompatible currency: ${cap.incompatibleCurrencies.join(", ")}`
+            : `Effective daily cap ${dollars(cap.dailyLimitMinor)} · Monthly cap ${dollars(cap.monthlyLimitMinor)}`}
+        </p>
+      ))}
       {!runs && !error && <Skeleton label="Loading run usage…" />}
       {runs?.length === 0 && (
         <EmptyState title="No usage to show">

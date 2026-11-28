@@ -1,3 +1,4 @@
+import { lockVideoJob } from "../usage-budget/video-job-evidence.js";
 import { recordedShotPrice } from "../usage-budget/run-shot-receipt.js";
 import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import {
@@ -7,7 +8,7 @@ import {
 } from "../usage-budget/run-pending-receipt.js";
 import { SETTLED_SHOTS, activeSubmissionHold } from "../runs/run-outcomes.js";
 import { transitionLocked } from "../runs/runs.store.js";
-import type { Context, Run, Scoped, Step } from "../runs/runs.types.js";
+import type { Context, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import { reconcilePricedReceipt } from "../usage-budget/run-billing.js";
 import type { RunPaidCalls } from "../usage-budget/run-paid.js";
 import { ShotBillingFailure, ShotMediaFailure } from "./video-run.handlers.js";
@@ -75,6 +76,7 @@ function redundantFailure(step: Step, error: unknown): boolean {
 
 export async function recordShotFailure(
   db: Scoped,
+  tx: Transaction,
   run: Run,
   stepId: string,
   error: unknown,
@@ -82,7 +84,7 @@ export async function recordShotFailure(
   reason: string,
 ): Promise<Awaited<ReturnType<typeof deferCorrection>> | undefined> {
   const media = error instanceof ShotMediaFailure ? error : undefined;
-  const attempt = await db.videoRunStep.findFirst({
+  const found = await db.videoRunStep.findFirst({
     where: {
       id: stepId,
       runId: run.id,
@@ -90,6 +92,7 @@ export async function recordShotFailure(
       ...(media && { providerId: media.providerId, providerJobId: media.providerJobId }),
     },
   });
+  const attempt = found && (await lockVideoJob(tx, db, run, found.id));
   if (attempt && redundantFailure(attempt, error))
     return {
       value: null,

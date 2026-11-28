@@ -8,18 +8,28 @@ export const MediaReceiptSchema = z
   .object({
     key: z.string().min(1),
     providerId: z.string().min(1),
-    providerJobId: z.string().min(1),
+    providerJobId: z.string().min(1).nullable(),
+    dispatchKey: z.string().min(1).optional(),
     costBasis: z.enum(["RESERVATION", "BILLED"]).default("RESERVATION"),
     modelId: z.string().min(1),
     promptVersion: z.string().min(1),
     seconds: z.number().nonnegative(),
     providerDurationSeconds: z.number().nonnegative().optional(),
     costMinor: z.int().nonnegative(),
+    postedNetMinor: z.int().nonnegative().optional(),
     objectKey: z.string().regex(/^runs\/(?:permanent|draft\/\d+)\/[a-f0-9]{64}$/),
     checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
     mimeType: z.string().min(1),
   })
-  .strict();
+  .strict()
+  .refine(
+    (receipt) =>
+      receipt.providerJobId !== null ||
+      (receipt.key.startsWith("media:text:") &&
+        receipt.mimeType === "application/json" &&
+        !!receipt.dispatchKey),
+    "Missing provider job ID or synchronous text dispatch reference",
+  );
 export type MediaReceipt = z.infer<typeof MediaReceiptSchema>;
 export const AssemblyManifestSchema = z
   .object({

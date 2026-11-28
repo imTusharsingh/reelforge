@@ -7,7 +7,7 @@ export function PageHeading({
   actions,
   hero = false,
 }: {
-  label: string;
+  label?: string;
   title: string;
   children?: ReactNode;
   actions?: ReactNode;
@@ -16,7 +16,7 @@ export function PageHeading({
   return (
     <header className={hero ? "rf-page-heading rf-page-heading--hero" : "rf-page-heading"}>
       <div className="rf-heading-copy">
-        <p className="rf-eyebrow">{label}</p>
+        {label && <p className="rf-eyebrow">{label}</p>}
         <h1>{title}</h1>
         {children && <p>{children}</p>}
       </div>

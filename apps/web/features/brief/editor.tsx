@@ -6,10 +6,7 @@ import {
   defaultBrief,
   type BriefInput,
 } from "../../../../packages/contracts/src/channel-brief";
-import {
-  NarratorVoiceSchema,
-  narratorPaceMessage,
-} from "../../../../packages/contracts/src/narrator-voice";
+import { ProductionFields } from "./production-fields";
 import { Alert, Button, Panel, StateMessage } from "../../components/ui/primitives";
 import { useActiveWorkspace } from "../../components/studio-workspace-context";
 import { draftEdited, registerDraft } from "../../components/studio-navigation";
@@ -59,18 +56,14 @@ type EditorState = {
   message: string;
   error: string;
   busy: boolean;
+  discard: () => void;
+  formVersion: number;
   submit: (event: FormEvent) => Promise<void>;
 };
-function useEditorState({
-  workspaceId,
-  channelId,
-  editable,
-}: {
-  workspaceId: string;
-  channelId: string;
-  editable: boolean;
-}): EditorState {
-  const { value, edit, accept } = useBriefDraft(channelId);
+type EditorScope = { workspaceId: string; channelId: string; editable: boolean };
+function useEditorState({ workspaceId, channelId, editable }: EditorScope): EditorState {
+  const { value, edit, accept, reset } = useBriefDraft(channelId);
+  const [formVersion, setFormVersion] = useState(0);
   const [version, setVersion] = useState(0);
   const [offerL3, setOfferL3] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -105,6 +98,13 @@ function useEditorState({
     editable,
     value,
     setValue: edit,
+    formVersion,
+    discard: (): void => {
+      reset();
+      setFormVersion((v) => v + 1);
+      setMessage("");
+      setError("");
+    },
     version,
     offerL3,
     loaded,
@@ -117,6 +117,7 @@ function useEditorState({
 function useBriefDraft(channelId: string): {
   value: BriefInput;
   edit: (value: BriefInput) => void;
+  reset: () => void;
   accept: (value: BriefInput) => void;
 } {
   const [value, setValue] = useState<BriefInput>(seed);
@@ -136,7 +137,7 @@ function useBriefDraft(channelId: string): {
     if (!dirty) return;
     return registerDraft(`brief:${channelId}`, () => accept(saved.current));
   }, [accept, channelId, dirty]);
-  return { value, edit, accept };
+  return { value, edit, accept, reset: () => accept(saved.current) };
 }
 function EditorView({
   editable,
@@ -149,6 +150,8 @@ function EditorView({
   error,
   busy,
   submit,
+  discard,
+  formVersion,
 }: ReturnType<typeof useEditorState>): JSX.Element {
   return (
     <Panel>
@@ -163,13 +166,16 @@ function EditorView({
       {!loaded && !error ? (
         <StateMessage kind="loading" description="Loading Brief…" />
       ) : loaded ? (
-        <form onSubmit={submit} className="rf-form">
+        <form key={formVersion} onSubmit={submit} className="rf-form">
           <fieldset disabled={!editable || busy}>
             <legend>{editable ? "Edit your Brief" : "Read-only Brief"}</legend>
             <IdentityFields value={value} onChange={setValue} offerL3={offerL3} />
             <ScheduleBudget value={value} onChange={setValue} />
             <StyleFields value={value} onChange={setValue} />
             <DetailedFields value={value} onChange={setValue} />
+            <Button tone="secondary" onClick={discard}>
+              Discard changes
+            </Button>
             <Button type="submit" loading={busy}>
               Save new version
             </Button>
@@ -186,53 +192,42 @@ function DetailedFields({
   value: BriefInput;
   onChange: (value: BriefInput) => void;
 }): JSX.Element {
-  const fields = [
-    "narratorVoice",
-    "onCameraVoice",
-    "formatMix",
-    "tuningBounds",
-    "renderProfile",
-    "references",
-    "referenceDefaults",
-  ] as const;
+  const fields = ["onCameraVoice", "tuningBounds", "references", "referenceDefaults"] as const;
   return (
     <>
       <h2>Voice, formats and references</h2>
-      <p>
-        Reference pins use an asset ID and immutable version. No recurring characters is the
-        default. Null tuning bounds keep learning recommendations only. {narratorPaceMessage}
-      </p>
-      {fields.map((key) => (
+      <ProductionFields value={value} onChange={onChange} />
+      <details>
+        <summary>Advanced reference and tuning settings</summary>
+        <p>
+          Reference pins use an asset ID and immutable version. No recurring characters is the
+          default. Null tuning bounds keep learning recommendations only.
+        </p>
+        {fields.map((key) => (
+          <JsonField
+            key={key}
+            label={key}
+            value={value[key]}
+            onChange={(next) => onChange({ ...value, [key]: next } as BriefInput)}
+          />
+        ))}
         <JsonField
-          key={key}
-          label={key}
-          value={value[key]}
-          validate={key === "narratorVoice" ? validateVoicePace : undefined}
-          onChange={(next) => onChange({ ...value, [key]: next } as BriefInput)}
+          label="recurringCharacters"
+          value={value.styleBible.recurringCharacters}
+          onChange={(next) =>
+            onChange({
+              ...value,
+              styleBible: {
+                ...value.styleBible,
+                recurringCharacters: next as BriefInput["styleBible"]["recurringCharacters"],
+              },
+            })
+          }
         />
-      ))}
-      <JsonField
-        label="recurringCharacters"
-        value={value.styleBible.recurringCharacters}
-        onChange={(next) =>
-          onChange({
-            ...value,
-            styleBible: {
-              ...value.styleBible,
-              recurringCharacters: next as BriefInput["styleBible"]["recurringCharacters"],
-            },
-          })
-        }
-      />
-      <Advanced value={value} onChange={onChange} />
+        <Advanced value={value} onChange={onChange} />
+      </details>
     </>
   );
-}
-
-function validateVoicePace(value: unknown): string {
-  if (value === null) return "";
-  const parsed = NarratorVoiceSchema.safeParse(value);
-  return parsed.error?.issues.some(({ path }) => path[0] === "pace") ? narratorPaceMessage : "";
 }
 
 function Advanced({

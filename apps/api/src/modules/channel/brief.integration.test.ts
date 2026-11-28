@@ -44,6 +44,13 @@ describe.skipIf(!enabled)("V7 persisted Brief versions", () => {
   it("appends immutable versions and returns newest first", async () => {
     const first = await service.create(context, channelId, input);
     const second = await service.create(context, channelId, { ...input, topic: "Space" });
+    expect(await db.channel.findUniqueOrThrow({ where: { id: channelId } })).toMatchObject({
+      niche: input.niche,
+      audience: input.audience,
+      language: input.languages.script,
+      timezone: input.cadence.timezone,
+      narratorVoice: input.narratorVoice,
+    });
     expect(second.version).toBe(first.version + 1);
     expect(second.id).not.toBe(first.id);
     const versions = await service.list(context, channelId);

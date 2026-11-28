@@ -63,7 +63,13 @@ export type ReservationLike = Readonly<{
   expiresAt: Date;
 }>;
 
-export type AdjustmentLike = Readonly<{ kind: string; currency: string; amountMinor: bigint }>;
+export type AdjustmentLike = Readonly<{
+  kind: string;
+  currency: string;
+  amountMinor: bigint;
+  providerRequestId?: string | null;
+  textAttemptId?: string | null;
+}>;
 
 const empty = (): Bucket => ({
   actual: 0n,
@@ -123,6 +129,8 @@ export class UsageTotals {
   }
 
   public addAdjustment(adjustment: AdjustmentLike): this {
+    // Linked credits are already included in the original reservation projection.
+    if (adjustment.textAttemptId != null || adjustment.providerRequestId != null) return this;
     const currency = this.currency(adjustment.currency);
     currency.adjustmentNet +=
       adjustment.kind === "DEBIT" ? adjustment.amountMinor : -adjustment.amountMinor;

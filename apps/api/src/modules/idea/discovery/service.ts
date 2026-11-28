@@ -1,3 +1,8 @@
+import {
+  applicableBudgetWhere,
+  incompatibleCurrencies,
+} from "../../usage-budget/effective-budgets.js";
+import { discoveryEstimate } from "./text-calls.js";
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type RankedIdea } from "@reelforge/contracts";
@@ -30,8 +35,24 @@ export class DiscoveryService {
     channelId: string,
     now = new Date(),
   ): Promise<RankedIdea[]> {
+    discoveryEstimate();
     const brief = await this.store.brief(context, channelId);
     const slot = discoverySlot(now, brief.cadence.timezone);
+    const budgets = await this.db.usageBudget.findMany({
+      where: applicableBudgetWhere(context.workspaceId, channelId),
+      select: { currency: true },
+    });
+    if (budgets.length === 0 || incompatibleCurrencies(budgets).length) {
+      console.error("[discovery-worker] discovery requires applicable USD budgets", channelId);
+      throw new Error("Discovery requires applicable USD budgets");
+    }
+    const text = await this.scout.textPort(context).catch(() => {
+      console.error(
+        "[discovery-worker] check Gemini credentials and model configuration",
+        channelId,
+      );
+      throw new Error("Discovery provider configuration unavailable");
+    });
     if (!(await this.store.claim(context, channelId, slot, now))) return [];
     try {
       const samples = await this.analytics.samples(context, channelId, now);
@@ -51,6 +72,7 @@ export class DiscoveryService {
         this.analytics.sources(samples),
         `discovery:${context.workspaceId}:${channelId}:${slot}`,
         now,
+        text,
       );
       const ranked = rankCandidates(
         candidates,
@@ -67,6 +89,15 @@ export class DiscoveryService {
     }
   }
   public async scheduledTick(now = new Date()): Promise<void> {
+    if (process.env.DISCOVERY_ENABLED !== "true") return;
+    try {
+      discoveryEstimate();
+    } catch {
+      console.error(
+        "[discovery-worker] configure a positive DISCOVERY_TEXT_ESTIMATE_USD before scheduling discovery",
+      );
+      return;
+    }
     const channels = await this.db.channel.findMany({
       where: { status: "ACTIVE", channelBriefRows: { some: {} } },
       select: { id: true, workspaceId: true },

@@ -1,3 +1,5 @@
+import { vi } from "vitest";
+import type { TextPort } from "@reelforge/ai-providers";
 import type { WordAlignment } from "./media-alignment.js";
 import { randomUUID } from "node:crypto";
 import { ModuleRef } from "@nestjs/core";
@@ -29,6 +31,24 @@ import { MediaAssembly } from "./media-assembly.js";
 import { MediaRenderer } from "./media-render.js";
 import { SpawnProcessRunner } from "./composition.engine.js";
 import type { fakeMediaPorts } from "./media-recovery.fixture.js";
+
+export function fixturePaidText<T extends { text: TextPort }>(native: T): T {
+  vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
+  native.text.completePaid ??= async <T>(
+    spec: import("@reelforge/ai-providers").TextSpec<T>,
+    dispatchKey: string,
+    sent?: () => Promise<void>,
+  ): Promise<import("@reelforge/ai-providers").TextCompletion<T>> => {
+    await sent?.();
+    const result = await native.text.complete(spec, dispatchKey);
+    return {
+      ...result,
+      dispatchKey,
+      providerJobId: result.providerJobId === dispatchKey ? null : result.providerJobId,
+    };
+  };
+  return native;
+}
 
 export function bindMedia(
   t: Tenant,
@@ -78,6 +98,7 @@ export function bindMedia(
       },
     ],
   ]);
+  fixturePaidText(native);
   const access = new MediaAccess({
     get: (token: unknown): unknown => mapping.get(token),
   } as unknown as ModuleRef);

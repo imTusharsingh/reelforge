@@ -25,11 +25,15 @@ import {
 export class RunPlanning {
   public collectAdmittedReference?: (context: Context, step: Step) => Promise<number | null>;
   public collectAdmittedAudio?: (context: Context, run: Run) => Promise<number | null>;
+  public recoverTextJournal?: (context: Context) => Promise<void>;
   public handlers: Readonly<Record<string, StepHandler>> = stepHandlers;
   public constructor(
     private readonly runs: RunsService,
     private readonly outputs: RunOutputs,
   ) {}
+  public async recoverText(context: Context): Promise<void> {
+    await this.recoverTextJournal?.(context);
+  }
   public brief(run: Run): ChannelBrief {
     const snapshot = json(run.inputSnapshot) as Record<string, unknown>;
     return StoredChannelBriefSchema.parse(snapshot.brief);

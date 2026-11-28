@@ -2,6 +2,7 @@ import {
   EmptyMediaResponse,
   VideoRouter,
   ProviderLimiter,
+  TerminalMediaJob,
   reservationCents,
   secondsCost,
   type ClipArtifact,
@@ -10,6 +11,7 @@ import {
   type VideoOptions,
   type VideoRoutingState,
   type RecordVideoOutcome,
+  type RecordBilledSeconds,
 } from "@reelforge/ai-providers";
 import { MediaValidationError } from "@reelforge/media";
 import type { ShotSpec } from "@reelforge/contracts";
@@ -104,7 +106,13 @@ export class RoutedMediaVideo implements VideoGenPort {
         )
       )
         throw error;
-      const receipt = await this.collectReceipt(id, billing.shot, billing);
+      const receipt = await this.collectReceipt(id, billing.shot, billing).catch(
+        (cause: unknown) => {
+          if (cause instanceof TerminalMediaJob)
+            throw new ShotMediaFailure(this.providerId, id, cause);
+          throw cause;
+        },
+      );
       body = await this.jobs.bytes(this.context, receipt.media).catch(this.mediaFailure(id));
       await billing.record(receipt);
     }
@@ -165,8 +173,9 @@ export class RoutedMediaVideo implements VideoGenPort {
     await this.validateFormat(id, media, billing);
     return this.price({ shot, savedOutput: billing?.savedOutput }, media.billedSeconds, media);
   }
-  private recordBilling(billing?: ShotBilling): ((seconds: number) => Promise<void>) | undefined {
-    if (billing) return (seconds) => billing.record(this.price(billing, seconds, null));
+  private recordBilling(billing?: ShotBilling): RecordBilledSeconds | undefined {
+    if (billing)
+      return (seconds, failure) => billing.record(this.price(billing, seconds, null), failure);
   }
   private price<T extends ClipArtifact | null>(
     billing: Pick<ShotBilling, "shot" | "savedOutput">,

@@ -13,6 +13,7 @@ import {
   LyriaMusic,
   ProviderLimiter,
   VideoRouter,
+  type FailedJobStatus,
   type ReferenceResolver,
   type Money,
   type VideoGenPort,
@@ -99,12 +100,10 @@ export class ProvidersRuntime {
           assertWorkspace(context.workspaceId, spec);
           await this.ledger.assertReplaySafe(context.workspaceId, correlations(key));
         },
+        recordBilling: (job, port, seconds, failure): Promise<void> =>
+          this.recordRoutedBill(context.workspaceId, job, port, seconds, failure),
         confirmRefusal: (job: RoutedJob): Promise<void> =>
-          this.ledger.confirmRefusal(
-            context.workspaceId,
-            correlation(job.idemKey),
-            job.providerJobId,
-          ),
+          this.confirmRefusedJob(context.workspaceId, job),
         submitRouted: async (
           port,
           spec,
@@ -146,7 +145,46 @@ export class ProvidersRuntime {
     port: VideoGenPort,
     providerJobId: string,
   ): Promise<void> {
-    await this.ledger.finish(workspaceId, correlation(key), port, await port.fetch(providerJobId));
+    const artifact = await port.fetch(providerJobId, (seconds, failure) =>
+      this.recordVideoBill(workspaceId, key, port, providerJobId, seconds, failure),
+    );
+    await this.ledger.finish(workspaceId, correlation(key), port, artifact, providerJobId);
+  }
+  private confirmRefusedJob(workspaceId: string, job: RoutedJob): Promise<void> {
+    return this.ledger.confirmRefusal(workspaceId, correlation(job.idemKey), job.providerJobId);
+  }
+  private recordRoutedBill(
+    workspaceId: string,
+    job: RoutedJob,
+    port: VideoGenPort,
+    seconds: number,
+    failure?: FailedJobStatus,
+  ): Promise<void> {
+    return this.recordVideoBill(
+      workspaceId,
+      job.idemKey,
+      port,
+      job.providerJobId,
+      seconds,
+      failure,
+    );
+  }
+  private recordVideoBill(
+    workspaceId: string,
+    key: string,
+    port: VideoGenPort,
+    providerJobId: string,
+    billedSeconds: number,
+    failure?: FailedJobStatus,
+  ): Promise<void> {
+    return this.ledger.finish(
+      workspaceId,
+      correlation(key),
+      port,
+      { billedSeconds },
+      providerJobId,
+      failure,
+    );
   }
   private limiter(port: VideoGenPort): ProviderLimiter {
     const id = port.capabilities().providerId;

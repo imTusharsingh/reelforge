@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { Client } from "pg";
 
+export class SessionLockBusy extends ConflictException {}
+
 export async function withSessionLock<T>(
   key: string,
   applicationName: string,
@@ -29,7 +31,7 @@ export async function withSessionLock<T>(
       "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired, pg_backend_pid() AS pid",
       [key],
     );
-    if (lock?.acquired !== true) throw new ConflictException(message);
+    if (lock?.acquired !== true) throw new SessionLockBusy(message);
 
     return await work(async () => {
       const lost = new ConflictException(lockLost);

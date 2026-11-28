@@ -172,10 +172,8 @@ it.skipIf(!process.env.DATABASE_URL).each([
     t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
     await engine.recover();
     expect(
-      enqueue.mock.calls
-        .filter(([payload]) => payload.runId === run.id)
-        .map(([payload]) => payload.assembly),
-    ).toEqual([true]);
+      enqueue.mock.calls.map(([payload]) => ({ runId: payload.runId, assembly: payload.assembly })),
+    ).toEqual([{ runId: run.id, assembly: true }]);
     if (malformed) {
       // Music settles on the first recovery poll; narration only settles on the next one.
       await expect(engine.process(job)).resolves.toBe(12000);
@@ -188,7 +186,7 @@ it.skipIf(!process.env.DATABASE_URL).each([
     await expect(engine.process(job)).resolves.toBeNull();
     enqueue.mockClear();
     await engine.recover();
-    expect(enqueue.mock.calls.filter(([payload]) => payload.runId === run.id)).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
     await expect(t.control.resume(t.context, run.id)).rejects.toThrow(message);
     expect(narrationSubmit).toHaveBeenCalledOnce();
     expect(fetchNarration).toHaveBeenCalledOnce();

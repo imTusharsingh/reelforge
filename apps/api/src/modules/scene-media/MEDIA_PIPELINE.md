@@ -107,3 +107,59 @@ timeout, partial ledger write, replay, or failed settlement retains held budget;
 retries inspect the M18 idempotency key and request correlation and require human
 reconciliation without resubmitting or assuming a refund. Replayed intent claims
 are rejected so concurrent workers cannot share preflight ownership.
+
+## Text receipt recovery
+
+Drain existing workers before enabling workers that write the new planning receipts.
+Readers on this revision still accept old receipts. New text receipts keep the local
+`dispatchKey` separate from `providerJobId`, which is null when Google returned no ID.
+New assembly exports also normalize historical text receipts without changing the
+stored records. Media jobs such as video shots still require their provider job ID.
+
+Paid text uses one append-only attempt journal. Preparing an attempt creates no
+reservation and permits no POST. Authorization puts the run hold, usage hold and
+single sender nonce in one database transaction. Only the invocation that receives
+that commit acknowledgment can use the nonce. It never retries the POST.
+Transport handoff is recorded when Node hands the request body to the OS, not
+when the request is created and not as proof Google accepted it.
+
+Provider observations are saved before accounting. If database ingestion is
+unavailable, the worker saves the observation to an attempt-and-nonce workspace
+object. Recovery imports evidence and posts the net delta; it does not retry
+transport. Invalid or contradictory objects are retained under a quarantine
+key so unrelated attempts can recover. A definitive rejection can reverse a prior owner estimate, less
+any credit already linked to that attempt. Unknown arms keep their hold and
+need positive send evidence plus confirmed sender retirement for owner settlement.
+
+Cancel first closes new admissions. It stays pending (HTTP 202) until a live
+sender can no longer initiate transport or the attempt has durable send evidence.
+A supervisor must match the exact process incarnation before recording exit;
+database disconnection or a lease deadline is not enough. The [operator recovery
+runbook](../usage-budget/TEXT_ATTEMPT_RECOVERY.md) covers retirement and independently
+matched provider evidence.
+
+The new path defaults off. Follow the [legacy import runbook](../usage-budget/LEGACY_TEXT_IMPORT.md)
+before activating it, including draining and not restarting old writers.
+
+An authenticated workspace owner can attach evidence from a recovered Google receipt
+with `POST /api/v1/runs/:runId/steps/:stepId/text-evidence?workspaceId=…`.
+Send the original `dispatchKey`, recovered `providerJobId`, optional integer
+`usage` counters, and `confirmedOriginalAttempt: true`. This records
+owner-reported evidence, the submitted counters, and the actor on that attempt.
+New counters can be added; a retry cannot overwrite a stored counter.
+The endpoint does not contact Google,
+replace the generated output, treat reported usage as verified cost, or settle
+the reservation. Terminal confirmation remains a separate operation.
+
+## Local aeneas installation
+
+On Debian-based hosts, install eSpeak and its development library alongside Python 3.10 with venv support. Use the same interpreter for API and worker preflight.
+
+```sh
+sudo apt install espeak libespeak-dev
+python3.10 -m venv ~/reelforge-alignment
+~/reelforge-alignment/bin/pip install numpy==1.26.4 setuptools==59.8.0 wheel
+AENEAS_WITH_CEW=False ~/reelforge-alignment/bin/pip install --no-build-isolation aeneas==1.7.3.0
+export ALIGNMENT_PYTHON_PATH="$HOME/reelforge-alignment/bin/python"
+export PYTHONIOENCODING=UTF-8
+```
