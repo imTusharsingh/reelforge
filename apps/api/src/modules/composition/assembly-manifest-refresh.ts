@@ -33,7 +33,9 @@ type ArchiveSnapshot = Awaited<ReturnType<typeof prepareArchiveRebuilds>> & {
   prices: MediaReceipt[];
   historical: TextReceipt[];
 };
-const refreshes = new WeakMap<RunsStore, Map<string, Promise<void>>>();
+type ArchiveJob = ArchiveSnapshot["jobs"][number];
+type ArchiveProblem = Awaited<ReturnType<typeof rebuildArchiveJob>>;
+const refreshes = new WeakMap<RunsStore, Map<string, Promise<ArchiveProblem>>>();
 const logger = new Logger("AssemblyManifestRefresh");
 
 async function rewriteManifest(
@@ -84,29 +86,40 @@ export async function refreshAssemblyManifests(
     return { ...(await prepareArchiveRebuilds(db, runId, deltas)), sequence, prices, historical };
   });
   if (!snapshot) return;
-  await waitForRefresh(startRefresh(store, artifacts, storage, context, runId, snapshot));
-}
-
-function startRefresh(
-  store: RunsStore,
-  artifacts: RunsArtifacts,
-  storage: StoragePort,
-  context: Context,
-  runId: string,
-  snapshot: ArchiveSnapshot,
-): Promise<void> {
-  const pending = refreshes.get(store) ?? new Map<string, Promise<void>>();
-  refreshes.set(store, pending);
-  // A newer billing revision can start independently of a stalled previous one.
-  const key = `${context.workspaceId}:${runId}:${snapshot.sequence}`;
-  const existing = pending.get(key);
-  if (existing) return existing;
-  const completion = rebuildSnapshot(store, artifacts, storage, context, runId, snapshot)
-    .catch((error: unknown) => {
+  const completion = rebuildSnapshot(store, artifacts, storage, context, runId, snapshot).catch(
+    (error: unknown) => {
       logger.warn(`Manifest refresh deferred for run ${runId}`);
       throw error;
-    })
-    .finally(() => pending.delete(key));
+    },
+  );
+  await waitForRefresh(completion);
+}
+
+function startArchive(
+  store: RunsStore,
+  context: Context,
+  runId: string,
+  sequence: number,
+  job: ArchiveJob,
+  rebuild: Parameters<typeof rebuildArchiveJob>[5],
+): Promise<ArchiveProblem> {
+  const pending = refreshes.get(store) ?? new Map<string, Promise<ArchiveProblem>>();
+  refreshes.set(store, pending);
+  // An in-flight archive does not block retries of sibling jobs or newer billing revisions.
+  const key = JSON.stringify([
+    context.workspaceId,
+    runId,
+    sequence,
+    job.source.objectKey,
+    job.source.checksumSha256,
+    job.delta,
+    job.rows.map(({ id, revision }) => `${id}:${revision}`).sort(),
+  ]);
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const completion = rebuildArchiveJob(store, context, runId, sequence, job, rebuild).finally(() =>
+    pending.delete(key),
+  );
   pending.set(key, completion);
   return completion;
 }
@@ -137,7 +150,7 @@ async function rebuildSnapshot(
   const { jobs, unscoped, sequence, prices, historical } = snapshot;
   const results = await Promise.all(
     jobs.map((job) =>
-      rebuildArchiveJob(store, context, runId, sequence, job, (source, delta) =>
+      startArchive(store, context, runId, sequence, job, (source, delta) =>
         rewriteManifest(context, runId, source, prices, historical, delta, storage, artifacts),
       ),
     ),
@@ -148,12 +161,14 @@ async function rebuildSnapshot(
       !(await manifestRefreshMode(db, runId))
     )
       return { value: null, payload: {} };
-    const observed = new Set([...unscoped, ...jobs.flatMap((job) => job.rows.map(({ id }) => id))]);
-    const unseen = (await pendingArchiveRows(db, runId)).some(({ id, output }) => {
+    const observed = new Set([
+      ...unscoped,
+      ...jobs.flatMap((job, i) => (results[i] === "retry" ? [] : job.rows.map(({ id }) => id))),
+    ]);
+    const retry = (await pendingArchiveRows(db, runId)).some(({ id, output }) => {
       const pending = assemblyOutput.safeParse(output).data;
       return !observed.has(id) && !!pending?.pendingManifest && !pending.manifestArchiveInvalid;
     });
-    const retry = unseen || results.includes("retry");
     return {
       value: null,
       eventType: retry ? "assembly_receipts_retry" : "assembly_receipts_checked",

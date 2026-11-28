@@ -54,18 +54,18 @@ export async function stageTerminalVideo(
   providerJobId: string | null,
   billedMinor: number | null,
 ): Promise<Step> {
-  const { value } = await store.mutate(
+  const { value } = await store.mutate<{ step: Step; run: Run; bill: number | null }>(
     context,
     step.runId,
     "video_terminal_observed",
-    async (db, run, tx) => {
+    async (db, run) => {
       const current = await db.videoRunStep.findFirstOrThrow({
         where: { id: step.id, runId: step.runId },
       });
       if (current.idempotencyKey !== step.idempotencyKey || current.providerId !== step.providerId)
         throw new ConflictException("Terminal video receipt belongs to another attempt");
       if (!["RUNNING", "WAITING_EXTERNAL"].includes(current.state) || hasVideoDelivery(current))
-        return { value: current, payload: { replay: true } };
+        return { value: { step: current, run, bill: null }, payload: { replay: true } };
       if (
         current.providerJobId !== step.providerJobId ||
         (current.state === "WAITING_EXTERNAL" && current.providerJobId !== providerJobId)
@@ -84,13 +84,25 @@ export async function stageTerminalVideo(
         ...z.record(z.string(), z.json()).parse(current.output ?? {}),
         terminalVideo: terminal,
       };
-      if (terminal.billedMinor !== null && terminal.billedMinor !== prior?.billedMinor)
-        await preserveTerminalExposure(tx, run, current, terminal.billedMinor);
       await db.videoRunStep.updateMany({ where: { id: step.id }, data: { output } });
-      return { value: { ...current, output }, payload: { ...terminal }, stepId: step.id };
+      return {
+        value: {
+          step: { ...current, output },
+          run,
+          bill: terminal.billedMinor === prior?.billedMinor ? null : terminal.billedMinor,
+        },
+        payload: { ...terminal },
+        stepId: step.id,
+      };
     },
   );
-  return value;
+  // A budget lock timeout must not roll back provider evidence. Exposure also
+  // counts the durable marker while these accounting writes are pending.
+  if (value.bill !== null)
+    await store.db.$transaction((tx) =>
+      preserveTerminalExposure(tx, value.run, value.step, value.bill!),
+    );
+  return value.step;
 }
 
 async function preserveTerminalExposure(

@@ -240,18 +240,20 @@ export async function captureShotReceipt(
     async (db, run, tx) => {
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       requireReceiptAttempt(current, step);
-      if (terminalBilledShot(current)) {
-        return captureRefusedBill(db, tx, run, current, receipt);
-      }
+      if (terminalBilledShot(current)) return captureRefusedBill(db, tx, run, current, receipt);
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
-      const price = highestObservedReceipt(pending, receipt);
-      const merged = mergeShotReceipt(
-        current,
-        terminalVideo(current) && !hasVideoDelivery(current)
-          ? { ...price, media: null, providerDurationSeconds: null }
-          : price,
-      );
+      const observed = highestObservedReceipt(pending, receipt);
+      const terminal = terminalVideo(current);
+      // A matching successful fetch keeps its media. A verified terminal bill for
+      // the same job still wins over a cheaper receipt.
+      const price: VideoReceipt =
+        terminal?.providerJobId === step.providerJobId &&
+        terminal.billedMinor !== null &&
+        (observed.costBasis !== "BILLED" || terminal.billedMinor > observed.costMinor)
+          ? { ...observed, costBasis: "BILLED", costMinor: terminal.billedMinor }
+          : observed;
+      const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
       const overage = cost > (current.costMinor ?? 0);

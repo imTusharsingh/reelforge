@@ -192,7 +192,8 @@ describe.skipIf(!process.env.DATABASE_URL)(
 describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct renders", () => {
   const fixture = runsFixture();
   afterEach(() => vi.unstubAllEnvs());
-  it.each(["healthy", "legacy", "missing", "corrupt", "temporary", "slow"] as const)(
+  const archiveCases = ["healthy", "legacy", "missing", "corrupt", "temporary", "slow"] as const;
+  it.each([...archiveCases, "hung-sibling"] as const)(
     "isolates older renders and archive storage failures: %s",
     async (condition) => {
       vi.stubEnv("GEMINI_TTS_MODEL", "fixture-TTS");
@@ -261,6 +262,7 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
       const beforeBill = await readManifest(setup, second);
       const oldManifest = first.find((item) => item.kind === "manifest")!;
       const oldKey = { workspaceId: run.workspaceId, objectKey: oldManifest.objectKey };
+      const liveKey = second.find((item) => item.kind === "manifest")!.objectKey;
       if (condition === "missing") await t.storage.deleteObject(oldKey);
       if (condition === "corrupt")
         await t.storage.putObject({
@@ -270,11 +272,17 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
         });
       const slowStarted = Promise.withResolvers<void>();
       const releaseSlow = Promise.withResolvers<void>();
-      let holdOld = condition === "slow";
+      const siblingFailed = Promise.withResolvers<void>();
+      let siblingReads = 0;
+      let holdOld = condition === "slow" || condition === "hung-sibling";
       const get = t.storage.getObject.bind(t.storage);
       const flaky = vi.spyOn(t.storage, "getObject").mockImplementation(async (input) => {
         if (condition === "temporary" && input.objectKey === oldKey.objectKey)
           throw new Error("temporary storage failure");
+        if (condition === "hung-sibling" && input.objectKey === liveKey && ++siblingReads === 1) {
+          siblingFailed.resolve();
+          throw new Error("one-time sibling storage failure");
+        }
         if (holdOld && input.objectKey === oldKey.objectKey) {
           slowStarted.resolve();
           await releaseSlow.promise;
@@ -294,12 +302,45 @@ describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct re
           providerDurationSeconds: null,
           media: null,
         });
+      const live = (): Promise<Step> =>
+        t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key: "local:assembly" } });
+      const schedule = globalThis.setTimeout;
+      const deadline = Promise.withResolvers<() => void>();
+      const timer =
+        condition === "hung-sibling"
+          ? vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+              if (callback.name === "archiveRequestDeadline")
+                deadline.resolve(() => callback(...args));
+              return schedule(callback, delay, ...args);
+            })
+          : undefined;
       const detail = t.runs.detail(t.context, run.id);
+      if (condition === "hung-sibling") {
+        let retry: ReturnType<typeof t.runs.detail> | undefined;
+        try {
+          await Promise.all([slowStarted.promise, siblingFailed.promise]);
+          (await deadline.promise)();
+          await detail;
+          retry = t.runs.detail(t.context, run.id);
+          await expect
+            .poll(async () =>
+              t.artifacts.descriptors((await live()).output).some((a) => a.kind === "manifest"),
+            )
+            .toBe(true);
+          expect(siblingReads).toBe(2);
+          expect(
+            flaky.mock.calls.filter(([input]) => input.objectKey === oldKey.objectKey),
+          ).toHaveLength(1);
+        } finally {
+          holdOld = false;
+          releaseSlow.resolve();
+          timer?.mockRestore();
+          await retry;
+        }
+      }
       if (condition === "slow") {
         try {
           await slowStarted.promise;
-          const live = (): Promise<Step> =>
-            t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key: "local:assembly" } });
           // The sibling publishes while the archived object is still blocked.
           await expect
             .poll(

@@ -22,6 +22,13 @@ const pendingJob = Prisma.sql`(${pendingMarker})->>'code' = ${PENDING_RECEIPT_CO
   AND (${pendingMarker})->>'providerId' = s.provider_id
   AND (${pendingMarker})->>'providerJobId' = s.provider_job_id`;
 
+const terminalBill = Prisma.sql`CASE
+  WHEN s.key LIKE 'shot-%' AND s.state IN ('RUNNING', 'WAITING_EXTERNAL')
+    AND s.output->'terminalVideo'->>'status' IN ('refused', 'failed')
+    AND (s.state = 'RUNNING' OR s.output->'terminalVideo'->>'providerJobId' = s.provider_job_id)
+    AND jsonb_typeof(s.output->'terminalVideo'->'billedMinor') = 'number'
+  THEN (s.output->'terminalVideo'->>'billedMinor')::bigint END`;
+
 // Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
   WHEN s.key LIKE 'media:text:%' THEN GREATEST(s.cost_minor,
@@ -67,14 +74,14 @@ export async function budgetExposure(
     AND created_at >= ${bounds.start} AND created_at < ${bounds.end} ${channel}`;
   const rows = await db.$queryRaw<(Price & { minor: string | null; entries: bigint })[]>(Prisma.sql`
     WITH coverage AS (
-      SELECT ur.correlation_id, ur.currency, ur.created_at, ur.channel_id, ${coveredMinor} AS minor
+      SELECT ur.correlation_id, ur.currency, ur.created_at, ur.channel_id, GREATEST(${coveredMinor}, ${terminalBill}) AS minor
         FROM usage_reservations ur
         LEFT JOIN video_run_steps s ON s.workspace_id = ur.workspace_id AND s.id = ur.correlation_id
           AND ur.idempotency_key = 'm08:' || s.idempotency_key
        WHERE ur.workspace_id = ${budget.workspaceId}::uuid AND (
          ur.status = 'COMMITTED' OR (ur.status = 'RESERVED' AND ur.expires_at > ${now})
          OR (ur.status IN ('RESERVED', 'EXPIRED') AND s.state IN ('RUNNING','WAITING_EXTERNAL')
-             AND ((s.state = 'WAITING_EXTERNAL' AND (s.output ? 'receiptBudget' OR (${pendingJob}))) OR NOT EXISTS (
+             AND ((${terminalBill}) IS NOT NULL OR (s.state = 'WAITING_EXTERNAL' AND (s.output ? 'receiptBudget' OR (${pendingJob}))) OR NOT EXISTS (
                SELECT FROM provider_requests pr WHERE pr.workspace_id = ur.workspace_id
                  AND pr.correlation_id = ur.correlation_id
              )))

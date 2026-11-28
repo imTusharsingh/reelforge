@@ -121,6 +121,9 @@ export class RunGeneration {
       return await this.poll(context, step, ports);
     } catch (error) {
       if (!(error instanceof TerminalMediaJob)) throw error;
+      // A terminal response during refetch does not make an unreadable staged clip usable.
+      if (pendingShotMedia(step)?.pendingMedia)
+        throw new ShotMediaFailure(step.providerId!, step.providerJobId!, error);
       await settleObservedTerminal(this.runs, this.paid, context, step, error.status);
       return null;
     }
