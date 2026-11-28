@@ -75,9 +75,8 @@ export function createPaidTextTransport(send: HttpsRequest = request): PaidTextT
       return await pending;
     } catch (error) {
       req?.destroy();
-      throw error;
-    } finally {
       await handoff;
+      throw error;
     }
   };
 }

@@ -41,3 +41,10 @@ already-stored but not yet posted completions remain for the normal evidence
 fold. Review every blocked row (exit 2) and all changes to reserved funds,
 commitments, credits and net exposure before enabling a new sender. The importer
 makes no provider calls.
+
+The report lists unresolved standalone credit IDs in `unresolvedCreditIds`.
+Any such ID blocks the workspace import and returns exit status 2. Reconcile
+the original adjustment to a scoped charge using its audit evidence, or document
+a genuinely independent budget credit before enabling reversals. The adjustments
+endpoint accepts `BUDGET_CREDIT` for independent budget adjustments. A charge
+`CREDIT` requires the original text attempt ID and a unique operation key.

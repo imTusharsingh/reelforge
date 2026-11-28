@@ -4,6 +4,7 @@ import { json, type Context, type Run, type Step, type Transaction } from "../ru
 import { readTextAttempt, type TextAttemptState } from "./text-attempt-store.js";
 import { PLANNING_MANIFEST_KEY, remainingSubmissionHold } from "../runs/run-outcomes.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
+import { unresolvedLegacyCredits } from "./legacy-text-import-credits.js";
 import { minorUnitExponent } from "./usage-budget.money.js";
 
 type Reservation = Prisma.UsageReservationGetPayload<object>;
@@ -53,7 +54,7 @@ function reservationUpdate(
   state: TextAttemptState,
   prior: Reservation,
 ): Prisma.UsageReservationUpdateManyMutationInput {
-  if (booked(state))
+  if (booked(state) || (state.phase === "SENT" && state.actualMinor !== null))
     return {
       status: "COMMITTED",
       committedMinor: BigInt(state.netMinor),
@@ -153,7 +154,7 @@ async function postStep(tx: Transaction, step: Step, state: TextAttemptState): P
       where,
       data:
         step.state === "SUCCEEDED"
-          ? { costMinor: state.netMinor }
+          ? { costMinor: state.netMinor, ...(state.googleId && { providerJobId: state.googleId }) }
           : {
               state: "WAITING_EXTERNAL",
               output: json({
@@ -181,41 +182,44 @@ async function postStep(tx: Transaction, step: Step, state: TextAttemptState): P
         finishedAt: step.finishedAt ?? new Date(),
       },
     });
-  } else await tx.videoRunStep.updateMany({ where, data: { costMinor: state.reservedMinor } });
+  } else
+    await tx.videoRunStep.updateMany({
+      where,
+      data: { costMinor: state.reservedMinor + state.netMinor },
+    });
 }
 
 async function postEnvelope(
   tx: Transaction,
   run: Run,
   previous: Projection,
-  next: Projection,
+  next: TextAttemptState,
 ): Promise<void> {
   const reserved = next.reservedMinor - previous.reservedMinor;
   const net = next.netMinor - previous.netMinor;
   if (reserved === 0 && net === 0) return;
-  const updated = await tx.budgetEnvelope.updateMany({
-    where: {
-      workspaceId: run.workspaceId,
-      runId: run.id,
-      ...(reserved < 0 && { reservedMinor: { gte: -reserved } }),
-      ...(net < 0 && { spentMinor: { gte: -net } }),
-    },
-    data: {
-      reservedMinor: { increment: reserved },
-      spentMinor: { increment: net },
-      revision: { increment: 1 },
-    },
+  const budget = await tx.budgetEnvelope.findFirst({
+    where: { workspaceId: run.workspaceId, runId: run.id },
   });
-  // Initial scripting precedes envelope creation. Its step net is used by RunPlanning
-  // to initialize the envelope; only a present-but-inconsistent envelope is corruption.
-  if (
-    updated.count === 0 &&
-    (await tx.budgetEnvelope.findFirst({
-      where: { workspaceId: run.workspaceId, runId: run.id },
-      select: { id: true },
-    }))
-  )
+  if (!budget) return; // Initial planning can precede envelope creation.
+  const spentMinor = budget.spentMinor + net;
+  const reservedMinor = budget.reservedMinor + reserved;
+  if (spentMinor < 0 || reservedMinor < 0)
     conflict("Text posting would underflow the run envelope");
+  const overrun = (amount: number): number => Math.max(0, amount - next.estimateMinor);
+  const overageMinor = Math.min(
+    spentMinor,
+    Math.max(
+      0,
+      budget.overageMinor + overrun(next.netMinor) - overrun(previous.netMinor),
+      spentMinor + reservedMinor - budget.hardCapMinor,
+    ),
+  );
+  const updated = await tx.budgetEnvelope.updateMany({
+    where: { workspaceId: run.workspaceId, id: budget.id, revision: budget.revision },
+    data: { spentMinor, reservedMinor, overageMinor, revision: { increment: 1 } },
+  });
+  if (updated.count !== 1) conflict("Text posting envelope changed");
 }
 
 function activeStageFailure(run: Run, step: Step, next: TextAttemptState): string | null {
@@ -326,10 +330,22 @@ export async function foldTextAttempt(
     })) ?? noPosting;
   if (previous.appliedSequence > next.appliedSequence)
     return conflict("Invalid text projection sequence");
-  if (previous.appliedSequence === next.appliedSequence) return next;
+  if (
+    previous.appliedSequence === next.appliedSequence &&
+    previous.reservedMinor === next.reservedMinor &&
+    previous.grossMinor === next.grossMinor &&
+    previous.netMinor === next.netMinor
+  )
+    return next;
   const run = await tx.videoRun.findFirstOrThrow({
     where: { workspaceId: context.workspaceId, id: step.runId },
   });
+  if (
+    next.phase === "REJECTED" &&
+    previous.netMinor + previous.reservedMinor > next.netMinor &&
+    (await unresolvedLegacyCredits(tx, step.workspaceId, false)).length
+  )
+    conflict("Resolve unattributed workspace credits before reversing a text booking");
   await validateCredits(tx, step, run, next);
   await postLedger(tx, step, run, next);
   await postEnvelope(tx, run, previous, next);

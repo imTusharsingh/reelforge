@@ -322,6 +322,7 @@ export class UsageBudgetService {
         }),
       );
     }
+    const kind = input.kind === "BUDGET_CREDIT" ? "CREDIT" : input.kind;
     const channelId = input.channelId ?? null;
     if (channelId !== null) await this.channel(this.db, context.workspaceId, channelId);
     const correlationId = randomUUID();
@@ -334,7 +335,7 @@ export class UsageBudgetService {
         data: {
           workspaceId: context.workspaceId,
           channelId,
-          kind: input.kind,
+          kind,
           currency: input.currency,
           amountMinor: BigInt(input.amountMinor),
           reason: input.reason,
@@ -347,7 +348,7 @@ export class UsageBudgetService {
       await tx.usageAuditRecord.create({
         data: {
           workspaceId: context.workspaceId,
-          action: input.kind,
+          action: kind,
           actorUserId: context.userId,
           reason: input.reason,
           before: { budgets: before } as unknown as Prisma.InputJsonValue,

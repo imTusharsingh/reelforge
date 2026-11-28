@@ -22,27 +22,32 @@ const fixture = runsFixture();
 const test = it.skipIf(!process.env.DATABASE_URL);
 afterEach(() => vi.unstubAllEnvs());
 
-test.each([false, true])(
-  "lost arm acknowledgment cannot authorize a POST (crash before surrender: %s)",
-  async (crashBeforeSurrender) => {
+test.each(["healthy", "spool", "crash"] as const)(
+  "lost arm acknowledgment cannot authorize a POST (surrender storage: %s)",
+  async (storage) => {
+    const crashBeforeSurrender = storage === "crash";
     const { t, accounts, step } = await runtimeFixture(fixture);
     const armed = Promise.withResolvers<void>();
     const dropAck = Promise.withResolvers<void>();
     const transport = vi.fn(accepted());
     const mutate = t.store.mutate.bind(t.store);
-    const fault = vi
-      .spyOn(t.store, "mutate")
-      .mockImplementation(async (context, id, type, work) => {
-        if (type === "text_attempt_surrendered" && crashBeforeSurrender)
-          throw new Error("sender died before it could surrender");
-        const result = await mutate(context, id, type, work);
-        if (type === "text_attempt_armed") {
-          armed.resolve();
-          await dropAck.promise;
-          throw new Error("arm commit acknowledgment dropped");
-        }
-        return result;
-      });
+    vi.spyOn(t.store, "mutate").mockImplementation(async (context, id, type, work) => {
+      const result = await mutate(context, id, type, work);
+      if (type === "text_attempt_armed") {
+        armed.resolve();
+        await dropAck.promise;
+        if (storage !== "healthy")
+          vi.spyOn(t.db, "$transaction").mockRejectedValue(
+            new Error("surrender journal unavailable"),
+          );
+        if (crashBeforeSurrender)
+          vi.spyOn(t.artifacts, "writeTextSpool").mockRejectedValue(
+            new Error("sender died before proof was durable"),
+          );
+        throw new Error("arm commit acknowledgment dropped");
+      }
+      return result;
+    });
     const result = accounts.dispatchTextAttempt(t.context, step, invocation(step, transport));
     const ignored = result.catch((error: unknown) => error);
     try {
@@ -56,12 +61,12 @@ test.each([false, true])(
       expect(transport).not.toHaveBeenCalled();
       dropAck.resolve();
       await expect(result).rejects.toThrow(
-        crashBeforeSurrender ? "reconciliation" : "acknowledgment dropped",
+        crashBeforeSurrender ? "before proof" : "acknowledgment dropped",
       );
     } finally {
       dropAck.resolve();
       await ignored;
-      fault.mockRestore();
+      vi.restoreAllMocks();
     }
     await t.engine.recover();
     await t.engine.recover();
@@ -126,7 +131,14 @@ test("the worker replays a durable typed 401 after settlement expires without re
   } finally {
     timeout.restore();
   }
-  await t.engine.recover();
+  const unavailable = vi
+    .spyOn(t.artifacts, "readTextSpool")
+    .mockRejectedValue(new Error("storage unavailable"));
+  try {
+    await t.engine.recover();
+  } finally {
+    unavailable.mockRestore();
+  }
   const after = await snapshot(t, step);
   await t.engine.recover();
   expect(await snapshot(t, step)).toEqual(after);
@@ -178,10 +190,8 @@ test("cancel wins while the uncommitted arm loses its connection", async () => {
   const inTransaction = Promise.withResolvers<void>();
   const dropConnection = Promise.withResolvers<void>();
   const cancelEntered = Promise.withResolvers<void>();
-  const cancelDone = Promise.withResolvers<void>();
   const mutate = t.store.mutate.bind(t.store);
   const fault = vi.spyOn(t.store, "mutate").mockImplementation(async (context, id, type, work) => {
-    if (type === "text_attempt_surrendered") await cancelDone.promise;
     if (type === "transition") cancelEntered.resolve();
     if (type !== "text_attempt_armed") return mutate(context, id, type, work);
     return mutate(context, id, type, async (...args) => {
@@ -195,16 +205,13 @@ test("cancel wins while the uncommitted arm loses its connection", async () => {
   const settled = sending.catch((error: unknown) => error);
   try {
     await Promise.race([inTransaction.promise, sending]);
-    const cancellation = t.control
-      .cancel(t.context, step.runId)
-      .finally(() => cancelDone.resolve());
+    const cancellation = t.control.cancel(t.context, step.runId);
     await cancelEntered.promise;
     dropConnection.resolve();
     await expect(cancellation).resolves.toBe(false);
     await expect(sending).rejects.toThrow("connection dropped");
   } finally {
     dropConnection.resolve();
-    cancelDone.resolve();
     await settled;
     fault.mockRestore();
   }
@@ -373,6 +380,11 @@ test("a lost owner acknowledgment replays after a late 401 reverses the booking 
   await expect(t.control.abandonTerminalText(other.context, step.runId, step.id)).rejects.toThrow();
 
   expect(await snapshot(t, step)).toEqual(settled);
+  expect(
+    await t.db.runEvent.count({
+      where: { runId: step.runId, stepId: step.id, type: "step_failed" },
+    }),
+  ).toBe(1);
   expect(settled.journal.filter(({ kind }) => kind === "OWNER_CONFIRMED")).toHaveLength(1);
   expect(settled.journal.filter(({ kind }) => kind === "REJECTED")).toHaveLength(1);
   expect(settled.projection).toMatchObject({

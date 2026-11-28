@@ -76,7 +76,7 @@ function validateRows({
     request.channelId !== channelId ||
     request.providerId !== "gemini" ||
     reservation.workspaceId !== step.workspaceId ||
-    reservation.correlationId !== step.id ||
+    (reservation.correlationId !== null && reservation.correlationId !== step.id) ||
     reservation.channelId !== channelId ||
     reservation.idempotencyKey !== `m08:${step.idempotencyKey}`
   )
@@ -195,6 +195,8 @@ export function planLegacyTextImport(source: LegacyTextSource): LegacyImportResu
   const observed = extractLegacyObservations(source, activity, zeroLedger(source));
   if ("reason" in observed) return block(observed.reason);
   const release = releasedBeforePost(source, activity);
+  if (reservation!.correlationId === null && !release)
+    return block("detached legacy reservation has no exact pre-POST release");
   const prepared = drainedPreparation(source, activity);
   if ((release || prepared) && (observed.send || observed.outcome || observed.owner))
     return block("legacy dispatch and release evidence conflict");

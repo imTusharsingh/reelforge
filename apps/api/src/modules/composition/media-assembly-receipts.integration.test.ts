@@ -7,6 +7,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runsFixture } from "../runs/runs.fixture.js";
 import { json, type Artifact } from "../runs/runs.types.js";
+import { attachHistoricalGoogleId } from "./historical-text-receipt.fixture.js";
 import { setupAssembly } from "./media-assembly.fixture.js";
 
 const renderedFixture = {
@@ -89,13 +90,7 @@ async function historicalTextFixture(
   await t.db.videoRunStep.createMany({
     data: [1, 2].map((attempt) => {
       const providerJobId =
-        attempt === 1
-          ? mode === "late ID"
-            ? "historical-google-id"
-            : remoteId
-          : mode === "ambiguous"
-            ? remoteId
-            : "newer-google-id";
+        attempt === 1 ? remoteId : mode === "ambiguous" ? remoteId : "newer-google-id";
       return {
         workspaceId: run.workspaceId,
         runId: run.id,
@@ -108,12 +103,15 @@ async function historicalTextFixture(
         input: {},
         output: json({
           result: {
+            output: { draft: "archived" },
+            dispatchKey: `${run.id}:${key}:${attempt}`,
             receipt: { ...receipt, providerJobId: attempt === 1 ? remoteId : providerJobId },
           },
         }),
       };
     }),
   });
+  if (mode === "late ID") await attachHistoricalGoogleId(t, dispatchKey);
   return { receipt, dispatchKey };
 }
 
@@ -193,7 +191,10 @@ async function repriceHistoricalShot(
   await t.store.mutate(t.context, run.id, "provider_receipt", async (db) => {
     await db.videoRunStep.updateMany({
       where: { id: step.id },
-      data: { costMinor: corrected.costMinor, output: json({ receipt: corrected }) },
+      data: {
+        costMinor: corrected.costMinor,
+        output: json({ ...(step.output as object), receipt: corrected }),
+      },
     });
     return { value: null, payload: { key } };
   });
@@ -342,6 +343,9 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
       expect(narration).not.toHaveBeenCalled();
       expect(music).not.toHaveBeenCalled();
       expect(render).not.toHaveBeenCalled();
+      expect(
+        await t.db.videoRunStep.count({ where: { runId: run.id, key: "local:assembly" } }),
+      ).toBe(0);
     };
     await reject();
     const realId = "provider-reshoot";
@@ -356,9 +360,19 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
     await t.db.videoRunStep.update({ where: { id: reshoot.id }, data: { output: {} } });
     await reject();
     const valid = { ...receipt, providerJobId: realId };
+    for (const mismatched of [
+      { objectKey: old.objectKey },
+      { checksumSha256: old.checksumSha256 },
+    ]) {
+      await t.db.videoRunStep.update({
+        where: { id: reshoot.id },
+        data: { output: json({ storageArtifacts: [clip], receipt: { ...valid, ...mismatched } }) },
+      });
+      await reject();
+    }
     await t.db.videoRunStep.update({
       where: { id: reshoot.id },
-      data: { output: json({ receipt: valid }) },
+      data: { output: json({ storageArtifacts: [clip], receipt: valid }) },
     });
     const descriptors = await assemble();
     expect(narration).toHaveBeenCalledOnce();

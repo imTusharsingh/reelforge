@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
 import { json, type Step } from "../runs/runs.types.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
@@ -117,6 +117,7 @@ async function armFixture(t: Tenant, legacy = false): Promise<ArmFixture> {
 
 describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () => {
   const fixture = runsFixture();
+  afterEach(() => vi.unstubAllEnvs());
 
   it("keeps an unconfirmed sender held until independent exact evidence is verified", async () => {
     const t = await fixture.tenant();
@@ -135,7 +136,7 @@ describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () 
     ).rejects.toThrow("attempt not found");
     await retireExitedTextSender(t.db, exit);
     await retireExitedTextSender(t.db, exit);
-    expect(await canOwnerConfirmText(t.db, step)).toBe(false);
+    expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(false);
     expect(await readTextAttempt(t.db, step)).toMatchObject({
       phase: "ARMED",
       senderRetired: true,
@@ -156,7 +157,7 @@ describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () 
     ).rejects.toThrow();
     await ingestMatchedTextReceipt(t.db, receipt);
     await ingestMatchedTextReceipt(t.db, receipt);
-    expect(await canOwnerConfirmText(t.db, step)).toBe(true);
+    expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(true);
     expect(await readTextAttempt(t.db, step)).toMatchObject({
       phase: "SENT",
       googleId: receipt.googleId,
@@ -170,9 +171,9 @@ describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () 
     const t = await fixture.tenant();
     const { step, exit, receipt } = await armFixture(t, true);
     await expect(retireExitedTextSender(t.db, exit)).rejects.toThrow();
-    expect(await canOwnerConfirmText(t.db, step)).toBe(false);
+    expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(false);
     await ingestMatchedTextReceipt(t.db, receipt);
-    expect(await canOwnerConfirmText(t.db, step)).toBe(true);
+    expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(true);
   });
 
   it("only releases an arm for an independently confirmed typed rejection", async () => {
@@ -189,7 +190,7 @@ describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () 
     const matched = { ...rejected, httpStatus: 401, code: "UNAUTHENTICATED" };
     await ingestMatchedTextRejection(t.db, matched);
     await ingestMatchedTextRejection(t.db, matched);
-    expect(await canOwnerConfirmText(t.db, step)).toBe(false);
+    expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(false);
     expect(await t.db.usageReservation.findUnique({ where: { id: reservationId } })).toMatchObject({
       status: "RELEASED",
     });
@@ -200,6 +201,67 @@ describe.skipIf(!process.env.DATABASE_URL)("DB operator paid text recovery", () 
       netMinor: 0,
     });
   });
+
+  it.each([false, true])(
+    "preserves the first verified posting on contradictory evidence (401 first %s)",
+    async (rejectFirst) => {
+      const t = await fixture.tenant();
+      const { step, exit, receipt, reservationId } = await armFixture(t);
+      await t.db.budgetEnvelope.create({
+        data: {
+          workspaceId: t.run.workspaceId,
+          runId: t.run.id,
+          targetMinor: 7,
+          hardCapMinor: 7,
+          baseEstimateMinor: 7,
+          spentMinor: 0,
+          reservedMinor: 7,
+        },
+      });
+      await retireExitedTextSender(t.db, exit);
+      const charge = (): Promise<void> =>
+        ingestMatchedTextReceipt(t.db, { ...receipt, actualMinor: 20, currency: "USD" });
+      const { googleId: _id, ...audit } = receipt;
+      const reject = (): Promise<void> =>
+        ingestMatchedTextRejection(t.db, {
+          ...audit,
+          reference: "typed-error",
+          httpStatus: 401,
+          code: "UNAUTHENTICATED",
+        });
+      if (rejectFirst) {
+        await reject();
+        await expect(charge()).rejects.toThrow("Contradictory");
+      } else {
+        await charge();
+        await charge();
+        expect((await t.usage.listBudgets(t.context))[0]?.periods).toEqual(
+          expect.arrayContaining([expect.objectContaining({ consumedMinor: 20 })]),
+        );
+        await expect(reject()).rejects.toThrow("Contradictory");
+        vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
+        await t.control.abandonTerminalText(t.context, step.runId, step.id);
+      }
+      expect(
+        await t.db.textAttemptEvidence.count({
+          where: { attemptId: step.id, kind: "QUARANTINED" },
+        }),
+      ).toBe(1);
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: step.runId } }),
+      ).toMatchObject({
+        reservedMinor: 0,
+        spentMinor: rejectFirst ? 0 : 20,
+        overageMinor: rejectFirst ? 0 : 13,
+      });
+      expect(
+        await t.db.usageReservation.findUniqueOrThrow({ where: { id: reservationId } }),
+      ).toMatchObject({
+        status: rejectFirst ? "RELEASED" : "COMMITTED",
+        committedMinor: rejectFirst ? null : 20n,
+      });
+    },
+  );
 
   it("keeps exact late billing and reverses a posted estimate on a distinct typed rejection", async () => {
     const t = await fixture.tenant();

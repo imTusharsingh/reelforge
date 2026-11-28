@@ -149,7 +149,11 @@ async function requireCreditableCharge(
 }
 
 function remainingCredit(attempt: TextAttemptState): bigint {
-  if (attempt.phase === "OWNER_CONFIRMED" || attempt.phase === "SUCCEEDED")
+  if (
+    attempt.phase === "OWNER_CONFIRMED" ||
+    attempt.phase === "SUCCEEDED" ||
+    (attempt.phase === "SENT" && attempt.actualMinor !== null)
+  )
     return BigInt(attempt.netMinor);
   if (attempt.phase !== "REJECTED" || !attempt.ownerConfirmed)
     throw new ConflictException("The original text attempt has no settled charge to credit");

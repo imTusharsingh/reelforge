@@ -181,8 +181,14 @@ test.each([
     await usage.createAdjustment(context, {
       kind: "DEBIT",
       currency: "USD",
-      amountMinor: 4,
+      amountMinor: 5,
       reason: "unrelated spend",
+    });
+    await usage.createAdjustment(context, {
+      kind: "BUDGET_CREDIT",
+      currency: "USD",
+      amountMinor: 1,
+      reason: "independent allowance",
     });
     const credit = {
       kind: "CREDIT",
@@ -191,6 +197,14 @@ test.each([
       amountMinor,
       reason: "provider adjustment",
     };
+    await expect(
+      usage.createAdjustment(context, {
+        kind: "CREDIT",
+        currency: "USD",
+        amountMinor,
+        reason: "provider adjustment",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     if (rejectFirst) await reject();
     const posted = await usage.createAdjustment(context, credit);
     if (!rejectFirst) {
@@ -224,6 +238,9 @@ test.each([
       (await usage.usageSummary(context, { date: original.createdAt.toISOString().slice(0, 10) }))
         .totals.currencies,
     ).toMatchObject([{ currency: "USD", totalMinor: 4 }]);
+    expect((await usage.listBudgets(context))[0]?.periods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ period: "DAY", consumedMinor: 4 })]),
+    );
     expect(send).toHaveBeenCalledOnce();
   },
 );

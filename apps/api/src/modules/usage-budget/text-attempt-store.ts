@@ -13,6 +13,7 @@ export type TextEvidenceKind =
   | "SUCCEEDED"
   | "RECOVERED_RECEIPT"
   | "OWNER_CONFIRMED"
+  | "QUARANTINED"
   | "CREDIT";
 
 export type TextAttemptPhase =
@@ -204,6 +205,14 @@ function applyControl(state: TextAttemptState, event: Evidence): boolean {
 function applyObservation(state: TextAttemptState, event: Evidence): void {
   requireSender(state, event);
   switch (event.kind) {
+    case "QUARANTINED":
+      z.object({
+        dispatchKey: z.literal(state.dispatchKey),
+        kind: z.enum(["RECOVERED_RECEIPT", "REJECTED"]),
+        eventKey: z.string(),
+        observation: z.object({}),
+      }).parse(event.data);
+      return;
     case "SUCCEEDED": {
       const result = success.parse(event.data);
       if ((result.usable && result.output == null) || state.phase === "REJECTED") conflicting();
@@ -222,6 +231,8 @@ function applyObservation(state: TextAttemptState, event: Evidence): void {
       const result = rejection.parse(event.data);
       if (
         state.phase === "SUCCEEDED" ||
+        (state.actualMinor ?? 0) > 0 ||
+        (result.actualMinor ?? 0) > 0 ||
         (state.rejectionCode && state.rejectionCode !== result.code)
       )
         conflicting();
@@ -256,10 +267,13 @@ export function deriveTextAttempt(
     if (event.sequence !== state.appliedSequence + 1) conflicting();
     if (!applyControl(state, event)) applyObservation(state, event);
     state.appliedSequence = event.sequence;
-    state.reservedMinor = ["ARMED", "SENT"].includes(state.phase) ? state.estimateMinor : 0;
+    const pending = state.phase === "ARMED" || state.phase === "SENT";
+    state.reservedMinor = pending && state.actualMinor === null ? state.estimateMinor : 0;
     state.grossMinor = ["SUCCEEDED", "OWNER_CONFIRMED"].includes(state.phase)
       ? (state.actualMinor ?? state.estimateMinor)
-      : 0;
+      : pending
+        ? (state.actualMinor ?? 0)
+        : 0;
     state.netMinor = Math.max(
       0,
       state.grossMinor - Object.values(state.credits).reduce((sum, amount) => sum + amount, 0),

@@ -178,6 +178,16 @@ suite("V3 approval, caps and retention", () => {
       true,
     );
     await t.engine.recover();
+    expect(
+      await t.db.textAttemptEvidence.count({
+        where: { attemptId: step.id, kind: "NOT_DISPATCHED" },
+      }),
+    ).toBe(0);
+    // A changed run revision permanently invalidates this unarmed preparation.
+    await t.store.mutate(t.context, run.id, "stage_recovered", async () => ({
+      value: null,
+      payload: {},
+    }));
     await t.engine.recover();
     expect(await t.db.usageReservation.count({ where: { correlationId: step.id } })).toBe(0);
     expect(

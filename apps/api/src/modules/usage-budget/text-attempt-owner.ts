@@ -2,9 +2,15 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { RunsService } from "../runs/runs.service.js";
 import { json, type Context, type Step, type Transaction } from "../runs/runs.types.js";
 import { appendTextEvidence, lockTextAttempt, readTextAttempt } from "./text-attempt-store.js";
+import { hasPendingTextOutcome } from "./text-attempt-delivery.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 
-export async function canOwnerConfirmText(tx: Transaction, step: Step): Promise<boolean> {
+export async function canOwnerConfirmText(
+  tx: Transaction,
+  step: Step,
+  context: Context,
+  artifacts: RunsService["artifacts"],
+): Promise<boolean> {
   const evidence = await readTextAttempt(tx, step);
   return (
     !!evidence &&
@@ -12,7 +18,9 @@ export async function canOwnerConfirmText(tx: Transaction, step: Step): Promise<
     evidence.senderRetired &&
     evidence.phase === "SENT" &&
     !evidence.ownerConfirmed &&
-    evidence.output === null
+    evidence.output === null &&
+    evidence.armNonce !== null &&
+    !(await hasPendingTextOutcome(artifacts, context, step, evidence.armNonce))
   );
 }
 
@@ -40,7 +48,7 @@ export async function confirmTextAttempt(
         where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "OWNER_CONFIRMED" },
       });
       if (replay) throw new ConfirmationReplay();
-      if (!(await canOwnerConfirmText(tx, step)))
+      if (!(await canOwnerConfirmText(tx, step, context, runs.artifacts)))
         throw new ConflictException("Text attempt is not awaiting terminal confirmation");
       await appendTextEvidence(tx, step, {
         kind: "OWNER_CONFIRMED",

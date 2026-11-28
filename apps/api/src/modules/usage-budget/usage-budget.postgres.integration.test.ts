@@ -445,7 +445,7 @@ suite("M18 usage, budget and billing on PostgreSQL", () => {
     });
     await usage.createAdjustment(t.owner, {
       channelId: t.channelId,
-      kind: "CREDIT",
+      kind: "BUDGET_CREDIT",
       currency: "USD",
       amountMinor: 200,
       reason: "goodwill credit",

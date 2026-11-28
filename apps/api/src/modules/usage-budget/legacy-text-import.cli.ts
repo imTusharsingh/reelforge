@@ -24,7 +24,11 @@ async function main(): Promise<void> {
       ...(values["audit-id"] && { auditId: values["audit-id"] }),
     });
     console.log(JSON.stringify(report, null, 2));
-    if (report.attempts.some((row) => row.action === "blocked")) process.exitCode = 2;
+    if (
+      report.unresolvedCreditIds.length ||
+      report.attempts.some((row) => row.action === "blocked")
+    )
+      process.exitCode = 2;
   } finally {
     await db.$disconnect();
   }

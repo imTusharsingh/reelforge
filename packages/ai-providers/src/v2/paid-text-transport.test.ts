@@ -24,14 +24,17 @@ function harness(): {
   end: ReturnType<typeof vi.fn>;
   req: EventEmitter;
   reply: (status: number, body: unknown) => void;
+  headers: (status: number) => PassThrough;
 } {
   const req = new EventEmitter();
   const end = vi.fn();
   const destroy = vi.fn();
   let onResponse: ((value: IncomingMessage) => void) | undefined;
+  let signal: AbortSignal | undefined;
   const send = vi.fn(
     (_url: string, _options: RequestOptions, response: (value: IncomingMessage) => void) => {
       onResponse = response;
+      signal = _options.signal;
       return Object.assign(req, { end, destroy }) as unknown as ClientRequest;
     },
   );
@@ -42,19 +45,26 @@ function harness(): {
       throw new Error("unexpected media request");
     },
   });
+  const headers = (status: number): PassThrough => {
+    const stream = Object.assign(new PassThrough(), {
+      statusCode: status,
+      rawHeaders: ["Content-Type", "application/json"],
+    });
+    signal?.addEventListener("abort", () => stream.destroy(new Error("response timed out")), {
+      once: true,
+    });
+    onResponse?.(stream as unknown as IncomingMessage);
+    return stream;
+  };
   return {
     port: new GeminiText(client, "fixture"),
     transport: paidTransport,
     send,
     end,
     req,
+    headers,
     reply: (status, body): void => {
-      const stream = Object.assign(new PassThrough(), {
-        statusCode: status,
-        rawHeaders: ["Content-Type", "application/json"],
-      }) as unknown as IncomingMessage;
-      onResponse?.(stream);
-      (stream as unknown as PassThrough).end(JSON.stringify(body));
+      headers(status).end(JSON.stringify(body));
     },
   };
 }
@@ -114,6 +124,44 @@ describe("paid Gemini text wire evidence", () => {
     expect(sent).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledOnce();
   });
+
+  it.each([200, 401])(
+    "consumes the streaming %s response while handoff persistence stalls",
+    async (status) => {
+      const { port, req, headers } = harness();
+      const stalled = Promise.withResolvers<void>();
+      const sent = vi.fn(() => stalled.promise);
+      const pending = port.completePaid(spec, dispatchKey, sent);
+      const result = pending.catch((error: unknown) => error);
+      try {
+        req.emit("finish");
+        const stream = headers(status);
+        stream.write("{");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(sent).toHaveBeenCalledOnce();
+        stream.end(
+          JSON.stringify(
+            status === 401
+              ? { error: { status: "UNAUTHENTICATED" } }
+              : {
+                  status: "completed",
+                  usage,
+                  steps: [
+                    { type: "model_output", content: [{ type: "text", text: '{"ok":true}' }] },
+                  ],
+                },
+          ).slice(1),
+        );
+        expect(await result).toMatchObject(
+          status === 401
+            ? { dispatched: false, http: { status, code: "UNAUTHENTICATED" } }
+            : { dispatchKey, output: { ok: true } },
+        );
+      } finally {
+        stalled.resolve();
+      }
+    },
+  );
 
   it("preserves the original socket reset when writing handoff evidence also fails", async () => {
     const { transport, send, req } = harness();

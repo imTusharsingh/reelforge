@@ -9,9 +9,13 @@ import { assertCriticRevision } from "./critic-admission.js";
 import { envelopeRoom } from "./run-envelope.js";
 import { appendTextEvidence, lockTextAttempt, readTextAttempt } from "./text-attempt-store.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
-import { maybeCompleteTextCancellation, textCancellationRequested } from "./text-attempt-cancel.js";
+import { textCancellationRequested } from "./text-attempt-cancel.js";
 import { currentTextSenderIdentity } from "./text-sender-identity.js";
-import { deliverTextObservation, type TextObservation } from "./text-attempt-delivery.js";
+import {
+  deliverTextObservation,
+  spoolTextObservation,
+  type TextObservation,
+} from "./text-attempt-delivery.js";
 
 const sender = currentTextSenderIdentity();
 const preparedInput = z.object({
@@ -132,41 +136,24 @@ async function surrenderTextArm(
   nonce: string,
   closeUnarmed: boolean,
 ): Promise<void> {
-  let last: unknown;
-  for (let i = 0; i < 3; i++) {
+  const observation: TextObservation = {
+    kind: "NOT_DISPATCHED",
+    data: { dispatchKey: step.idempotencyKey, source: "sender", senderNonce: nonce },
+  };
+  // If the arm transaction rolled back, recovery cannot discover its invocation nonce.
+  // Only an unarmed preparation probes this second location.
+  for (let attempt = 1; ; attempt++) {
     try {
-      await access.runs.store.mutate(
-        context,
-        step.runId,
-        "text_attempt_surrendered",
-        async (_db, _run, tx) => {
-          const current = await lockTextAttempt(tx, context.workspaceId, step.id);
-          const state = await readTextAttempt(tx, current);
-          if (
-            state &&
-            (state.armNonce === nonce ||
-              (!state.armNonce && closeUnarmed && state.phase === "PREPARED"))
-          ) {
-            await appendTextEvidence(tx, current, {
-              eventKey: state.armNonce ? `surrender:${nonce}` : "close-prepared",
-              kind: "NOT_DISPATCHED",
-              ...(state.armNonce && { nonce }),
-              data: { dispatchKey: step.idempotencyKey, source: "sender" },
-            });
-            await foldTextAttempt(tx, context, step.id);
-          }
-          return { value: null, payload: { dispatchKey: step.idempotencyKey }, stepId: step.id };
-        },
-      );
-      await maybeCompleteTextCancellation(access.runs, context, step.runId);
+      if (
+        !(await deliverTextObservation(access, context, step, nonce, observation)) &&
+        closeUnarmed
+      )
+        await spoolTextObservation(access, context, step, "prepared", observation);
       return;
     } catch (error) {
-      last = error;
+      if (attempt === 3 || error instanceof ConflictException) throw error;
     }
   }
-  throw new ConflictException("The text arm could not be surrendered; reconciliation is required", {
-    cause: last,
-  });
 }
 
 async function observeInvocation<T>(
@@ -176,7 +163,7 @@ async function observeInvocation<T>(
   nonce: string,
   invoke: PaidTextInvocation<T>,
 ): Promise<PaidTextResult<T>> {
-  const observe = (observation: TextObservation): Promise<void> =>
+  const observe = (observation: TextObservation): Promise<boolean> =>
     deliverTextObservation(access, context, step, nonce, observation);
   let handoff: Promise<void> | undefined;
   let result: PaidTextResult<T> | undefined;
@@ -187,20 +174,26 @@ async function observeInvocation<T>(
         (handoff ??= observe({
           kind: "SENT_EVIDENCE",
           data: { dispatchKey: step.idempotencyKey, source: "transport" },
-        })),
+        }).then(() => undefined)),
     );
   } catch (error) {
     failure = error;
   }
-  // Failure settling handoff must not prevent ingesting a stronger response.
-  await handoff?.catch(() => undefined);
   if (result && result.dispatchKey !== step.idempotencyKey)
     throw new ConflictException("Text response dispatch key does not match its attempt");
   const observation = result
     ? completedObservation(step, result)
     : failureObservation(step, failure);
-  if (observation) await observe(observation);
-  await observe({ kind: "SENDER_RETIRED", data: { dispatchKey: step.idempotencyKey } });
+  const retired: TextObservation = {
+    kind: "SENDER_RETIRED",
+    data: { dispatchKey: step.idempotencyKey, ...(observation && { after: observation.kind }) },
+  };
+  if (observation && !(await observe(observation))) {
+    await spoolTextObservation(access, context, step, nonce, retired);
+  } else {
+    if (!observation) await handoff?.catch(() => undefined);
+    await observe(retired);
+  }
   if (result) {
     const projected = await access.runs.store.db.textAttemptProjection.findUnique({
       where: { workspaceId_attemptId: { workspaceId: context.workspaceId, attemptId: step.id } },
@@ -260,6 +253,7 @@ export function prepareTextData(
 ): ReturnType<typeof json> {
   return json({
     expectedRevision: run.revision + 1,
+    sender,
     stage: run.state,
     dispatchKey: step.idempotencyKey,
     input: step.input,

@@ -31,7 +31,7 @@ export class RunsService {
   public events: RunsEvents | null = null;
   public constructor(
     public readonly store: RunsStore,
-    private readonly artifacts: RunsArtifacts,
+    public readonly artifacts: RunsArtifacts,
   ) {}
   public editor(context: Context): void {
     if (context.role === "VIEWER") throw new ForbiddenException("Editor permission required");
@@ -274,7 +274,10 @@ export class RunsService {
         run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
         run.pauseReason.includes(step.id),
     );
-    const confirmable = held && (await canOwnerConfirmText(this.store.db, held)) ? held.id : null;
+    const confirmable =
+      held && (await canOwnerConfirmText(this.store.db, held, context, this.artifacts))
+        ? held.id
+        : null;
     return steps.map((step) => ({
       ...step,
       confirmTerminalText: confirmable === step.id,

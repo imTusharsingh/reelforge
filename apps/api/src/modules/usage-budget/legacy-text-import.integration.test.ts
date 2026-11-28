@@ -1,3 +1,4 @@
+import { legacy } from "./legacy-text-import.fixture.js";
 import { bindMedia } from "../composition/media-bindings.fixture.js";
 import { fakeMediaPorts } from "../composition/media-recovery.fixture.js";
 import { accepted, invocation } from "../runs/text-attempt-runtime.fixture.js";
@@ -8,69 +9,6 @@ import type { Json, Step } from "../runs/runs.types.js";
 import { importLegacyTextAttempts } from "./legacy-text-import.js";
 import { canOwnerConfirmText, confirmTextAttempt } from "./text-attempt-owner.js";
 import { readTextAttempt } from "./text-attempt-store.js";
-
-type Backing = {
-  code?: string;
-  expired?: boolean;
-  committed?: boolean;
-  cancelled?: boolean;
-  metadata?: Json;
-  output?: Json;
-  providerJobId?: string;
-};
-async function legacy(t: Tenant, key: string, options: Backing = {}): Promise<Step> {
-  const { workspaceId, channelId, id: runId } = t.run;
-  const dispatchKey = `${runId}:legacy:${key}`;
-  const status = options.committed ? "COMMITTED" : options.expired ? "EXPIRED" : "RESERVED";
-  const step = await t.db.videoRunStep.create({
-    data: {
-      workspaceId,
-      runId,
-      key: `media:text:${key}`,
-      idempotencyKey: dispatchKey,
-      state: options.cancelled ? "CANCELLED" : options.output ? "SUCCEEDED" : "RUNNING",
-      input: { modelId: "fixture-text" },
-      costMinor: 7,
-      providerId: "gemini",
-      ...(options.output && { output: options.output }),
-      providerJobId: options.providerJobId ?? null,
-    },
-  });
-  await t.db.providerRequest.create({
-    data: {
-      workspaceId,
-      channelId,
-      correlationId: step.id,
-      providerId: "gemini",
-      capabilityId: "fixture-text",
-      status: options.output ? "SUCCEEDED" : "FAILED",
-      currency: "USD",
-      estimatedCost: "0.07",
-      ...(options.cancelled && { actualCost: 0 }),
-      errorCode: options.output ? null : (options.code ?? "VIDEO_RUN_DISPATCHING"),
-      responseMetadata:
-        options.metadata ??
-        (options.cancelled
-          ? { dispatched: false, costKnown: true, dispatchKey, stepId: step.id }
-          : { dispatched: true, costKnown: false }),
-    },
-  });
-  await t.db.usageReservation.create({
-    data: {
-      workspaceId,
-      channelId,
-      correlationId: step.id,
-      idempotencyKey: `m08:${dispatchKey}`,
-      category: "LLM",
-      currency: "USD",
-      amountMinor: 7n,
-      status,
-      expiresAt: new Date(options.expired ? "2026-01-01T00:00:00Z" : "2099-01-01T00:00:00Z"),
-      ...(options.committed && { committedMinor: 7n, committedAt: new Date() }),
-    },
-  });
-  return step;
-}
 
 async function activity(t: Tenant, step: Step, type: string, payload: Json): Promise<void> {
   await t.store.mutate(t.context, step.runId, type, async () => ({
@@ -114,7 +52,9 @@ async function retryOnlyProved(t: Tenant, proven: Step, decoy: Step): Promise<vo
   await expect(dispatch()).rejects.toThrow();
   expect(post).toHaveBeenCalledOnce();
   expect(
-    await t.db.usageReservation.findFirst({ where: { correlationId: proven.id } }),
+    await t.db.usageReservation.findFirst({
+      where: { workspaceId: proven.workspaceId, idempotencyKey: `m08:${proven.idempotencyKey}` },
+    }),
   ).toMatchObject({ status: "EXPIRED", committedMinor: null });
 }
 
@@ -162,7 +102,7 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
     expect((await apply(t)).attempts.every(({ action }) => action === "already-imported")).toBe(
       true,
     );
-    expect(await canOwnerConfirmText(t.db, sent)).toBe(true);
+    expect(await canOwnerConfirmText(t.db, sent, t.context, t.artifacts)).toBe(true);
     for (const step of [bareV1, bareV2]) {
       expect(await readTextAttempt(t.db, step)).toMatchObject({
         phase: "ARMED",
@@ -171,7 +111,7 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
         netMinor: 0,
         googleId: null,
       });
-      expect(await canOwnerConfirmText(t.db, step)).toBe(false);
+      expect(await canOwnerConfirmText(t.db, step, t.context, t.artifacts)).toBe(false);
     }
     expect(await readTextAttempt(t.db, prepared)).toMatchObject({
       phase: "NOT_DISPATCHED",
@@ -207,11 +147,13 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
     const proven = await legacy(t, "released", {
       expired: true,
       cancelled: true,
+      detached: true,
       code: "NOT_DISPATCHED",
     });
     const decoy = await legacy(t, "decoy", {
       expired: true,
       cancelled: true,
+      detached: true,
       code: "NOT_DISPATCHED",
     });
     await activity(t, proven, "provider_dispatch", { idempotencyKey: proven.idempotencyKey });
@@ -242,7 +184,9 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
     });
     expect(await readTextAttempt(t.db, decoy)).toBeNull();
     expect(
-      await t.db.usageReservation.findFirst({ where: { correlationId: proven.id } }),
+      await t.db.usageReservation.findFirst({
+        where: { workspaceId: proven.workspaceId, idempotencyKey: `m08:${proven.idempotencyKey}` },
+      }),
     ).toMatchObject({
       status: "EXPIRED",
       committedMinor: null,
@@ -272,6 +216,28 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
         reason: "fixture refund",
       },
     });
+    // Historical owner credits carried no attempt or operation key.
+    await t.db.usageAuditRecord.create({
+      data: {
+        workspaceId,
+        actorUserId: t.context.userId,
+        action: "CREDIT",
+        reason: credit.reason,
+        correlationId,
+        adjustmentId: credit.id,
+        after: {
+          adjustment: {
+            id: credit.id,
+            channelId,
+            kind: "CREDIT",
+            currency: "USD",
+            amountMinor: 3,
+          },
+        },
+      },
+    });
+    expect(await apply(t)).toMatchObject({ unresolvedCreditIds: [credit.id], attempts: [] });
+    expect(await readTextAttempt(t.db, step)).toBeNull();
     await t.db.usageAuditRecord.create({
       data: {
         workspaceId,
@@ -327,6 +293,10 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
       committed: true,
       providerJobId: "real-google",
     });
+    const pending = await legacy(t, "pending", {
+      output: { output: { title: "pending" }, providerJobId: "pending-google" },
+      providerJobId: "pending-google",
+    });
     const rejected = await legacy(t, "late-401", {
       code: "NOT_DISPATCHED",
       expired: true,
@@ -337,7 +307,20 @@ describe.skipIf(!process.env.DATABASE_URL)("audited legacy text upgrade", () => 
       data: { state: "FAILED", error: { code: "PROVIDER_UNAUTHENTICATED" } },
     });
     const outcomes = (await apply(t)).attempts.map(({ outcome }) => outcome).sort();
-    expect(outcomes).toEqual(["completed", "rejected"]);
+    expect(outcomes).toEqual(["completed", "pending-completion", "rejected"]);
+    const native = fakeMediaPorts(
+      t.run.workspaceId,
+      t.storage,
+      { clip: Buffer.alloc(0), image: Buffer.alloc(0), audio: Buffer.alloc(0) },
+      [],
+    );
+    bindMedia(t, native);
+    vi.stubEnv("PAID_TEXT_V3_ENABLED", "1");
+    expect((await readTextAttempt(t.db, pending))?.armNonce).toMatch(/^legacy:/);
+    await t.engine.recover();
+    expect(
+      await t.db.usageReservation.findFirstOrThrow({ where: { correlationId: pending.id } }),
+    ).toMatchObject({ status: "COMMITTED", committedMinor: 7n });
     expect(await readTextAttempt(t.db, stored)).toMatchObject({
       phase: "SUCCEEDED",
       googleId: "real-google",

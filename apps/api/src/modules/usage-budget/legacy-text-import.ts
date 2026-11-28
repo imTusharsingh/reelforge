@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Database, Run, Step, Transaction } from "../runs/runs.types.js";
-import { auditedLegacyCredits, type LegacyCredits } from "./legacy-text-import-credits.js";
+import {
+  auditedLegacyCredits,
+  unresolvedLegacyCredits,
+  type LegacyCredits,
+} from "./legacy-text-import-credits.js";
 import { type LegacyImportPlan, planLegacyTextImport } from "./legacy-text-import-evidence.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import { deriveTextAttempt, lockTextAttempt } from "./text-attempt-store.js";
@@ -27,7 +31,12 @@ type Ledger = NonNullable<Parameters<typeof planLegacyTextImport>[0]["request"]>
 export async function importLegacyTextAttempts(
   db: Database,
   options: LegacyTextImportOptions,
-): Promise<{ mode: "dry-run" | "apply"; workspaceId: string; attempts: Imported[] }> {
+): Promise<{
+  mode: "dry-run" | "apply";
+  workspaceId: string;
+  attempts: Imported[];
+  unresolvedCreditIds: string[];
+}> {
   const workspaceId = scope.parse(options.workspaceId);
   if (options.apply && process.env.PAID_TEXT_V3_ENABLED === "1")
     throw new Error("Disable new paid text dispatch before applying the legacy import.");
@@ -36,6 +45,16 @@ export async function importLegacyTextAttempts(
       "Apply requires an audit ID and explicit confirmation that all old writers were drained.",
     );
   const attempts: Imported[] = [];
+  const unresolvedCreditIds = await db.$transaction((tx) =>
+    unresolvedLegacyCredits(tx, workspaceId, true),
+  );
+  const report = {
+    mode: options.apply ? ("apply" as const) : ("dry-run" as const),
+    workspaceId,
+    attempts,
+    unresolvedCreditIds,
+  };
+  if (unresolvedCreditIds.length) return report;
   let cursor: string | undefined;
   for (;;) {
     const batch = await db.videoRunStep.findMany({
@@ -53,7 +72,7 @@ export async function importLegacyTextAttempts(
       attempts.push(await db.$transaction((tx) => importOne(tx, id, options)));
     cursor = batch.at(-1)!.id;
   }
-  return { mode: options.apply ? "apply" : "dry-run", workspaceId, attempts };
+  return report;
 }
 
 async function importOne(

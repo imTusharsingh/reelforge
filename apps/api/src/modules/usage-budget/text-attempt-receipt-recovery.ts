@@ -40,7 +40,7 @@ async function ingestProviderEvidence(
   currency?: string,
 ): Promise<void> {
   const { target, source, reference, observedAt } = proof;
-  await db.$transaction(async (tx) => {
+  const accepted = await db.$transaction(async (tx) => {
     const { step, armedAt } = await lockOperatorTarget(tx, target);
     validateAuditTime(observedAt, armedAt);
     const state = await readTextAttempt(tx, step);
@@ -48,13 +48,32 @@ async function ingestProviderEvidence(
       throw new ConflictException("Verify sender retirement before importing provider evidence");
     if (currency !== undefined && currency !== state.currency)
       throw new ConflictException("Verified amount must be stated in the armed attempt currency");
-    await appendTextEvidence(tx, step, {
-      kind,
-      nonce: target.armNonce,
-      eventKey: operatorEventKey("provider", source, reference),
-      data: json({ ...data, dispatchKey: target.dispatchKey, source: "matched-provider" }),
+    const eventKey = operatorEventKey("provider", source, reference);
+    const observation = json({
+      ...data,
+      dispatchKey: target.dispatchKey,
+      source: "matched-provider",
     });
+    try {
+      await appendTextEvidence(tx, step, {
+        kind,
+        nonce: target.armNonce,
+        eventKey,
+        data: observation,
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      await appendTextEvidence(tx, step, {
+        kind: "QUARANTINED",
+        nonce: target.armNonce,
+        eventKey: operatorEventKey("conflict", kind, JSON.stringify([eventKey, observation])),
+        data: json({ kind, eventKey, observation, dispatchKey: target.dispatchKey }),
+      });
+      return false;
+    }
   });
+  if (!accepted) throw new ConflictException("Contradictory provider evidence quarantined");
   await foldOperatorEvidence(db, target);
 }
 

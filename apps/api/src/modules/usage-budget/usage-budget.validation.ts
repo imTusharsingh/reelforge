@@ -29,7 +29,7 @@ export type UpsertBudgetRequest = z.infer<typeof UpsertBudgetSchema>;
 const StandaloneAdjustmentSchema = z
   .object({
     channelId: z.uuid().nullable().optional(),
-    kind: z.enum(["CREDIT", "DEBIT"]),
+    kind: z.enum(["BUDGET_CREDIT", "DEBIT"]),
     currency,
     amountMinor: minor.positive(),
     reason,

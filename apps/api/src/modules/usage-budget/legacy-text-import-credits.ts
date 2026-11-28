@@ -68,3 +68,50 @@ export async function auditedLegacyCredits(
   if (new Set(rows.map((row) => row.operationKey)).size !== rows.length) return null;
   return { rows, links };
 }
+
+// Old adjustment rows used the same DB kind for every credit. Only an explicit
+// independent budget adjustment or an exact charge audit can classify one.
+export async function unresolvedLegacyCredits(
+  tx: Transaction,
+  workspaceId: string,
+  allowPendingLinks: boolean,
+): Promise<string[]> {
+  const candidates = await tx.$queryRaw<{ id: string; channelId: string | null }[]>`
+    SELECT c.id, c.channel_id AS "channelId" FROM usage_adjustments c
+    WHERE c.workspace_id = ${workspaceId}::uuid AND c.kind = 'CREDIT' AND c.text_attempt_id IS NULL
+      AND NOT EXISTS (
+        SELECT FROM usage_audit_records a
+        WHERE a.workspace_id = c.workspace_id AND a.adjustment_id = c.id AND a.action = 'CREDIT'
+          AND a.actor_user_id = c.actor_user_id AND a.correlation_id = c.correlation_id
+          AND a.after->'adjustment' @> jsonb_build_object('id', c.id, 'kind', 'BUDGET_CREDIT',
+              'channelId', c.channel_id, 'currency', c.currency, 'amountMinor', c.amount_minor)
+      )
+    ORDER BY c.id`;
+  if (!allowPendingLinks) return candidates.map((row) => row.id);
+  const unresolved: string[] = [];
+  for (const row of candidates) {
+    const audits = await tx.usageAuditRecord.findMany({
+      where: { workspaceId, action: "CREDIT", adjustmentId: row.id },
+      select: { after: true },
+    });
+    const proofs = audits.flatMap((audit) => {
+      const parsed = proof.safeParse(audit.after);
+      return parsed.success ? [parsed.data.adjustment] : [];
+    });
+    const [charge] = proofs;
+    if (proofs.length === 1 && charge && row.channelId) {
+      const step = await tx.videoRunStep.findFirst({
+        where: {
+          workspaceId,
+          id: charge.textAttemptId,
+          key: { startsWith: "media:text:" },
+          run: { channelId: row.channelId },
+        },
+      });
+      const matched = step && (await auditedLegacyCredits(tx, step, row.channelId));
+      if (matched?.links.some((link) => link.adjustmentId === row.id)) continue;
+    }
+    unresolved.push(row.id);
+  }
+  return unresolved;
+}

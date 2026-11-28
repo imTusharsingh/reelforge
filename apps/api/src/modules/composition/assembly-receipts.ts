@@ -1,4 +1,5 @@
-import { remoteTextId, textReceiptReference } from "../usage-budget/text-evidence.js";
+import { deriveTextAttempt } from "../usage-budget/text-attempt-store.js";
+import { remoteTextId } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
 import { createHash } from "node:crypto";
 import {
@@ -31,7 +32,14 @@ function readReceipt(step: Pick<Step, "output">): MediaReceipt | undefined {
   return MediaReceiptSchema.safeParse(output?.receipt ?? result?.receipt).data;
 }
 
-function planningReceipt(step: Step): TextReceipt | undefined {
+const textEvidence = {
+  select: { sequence: true, kind: true, nonce: true, data: true, eventKey: true },
+  orderBy: { sequence: "asc" as const },
+};
+
+function planningReceipt(
+  step: Step & { textEvidence: Parameters<typeof deriveTextAttempt>[1] },
+): TextReceipt | undefined {
   const receipt = readReceipt(step);
   if (
     !receipt ||
@@ -42,13 +50,20 @@ function planningReceipt(step: Step): TextReceipt | undefined {
     return;
   const saved = remoteTextId(step, receipt.providerJobId);
   const attached = remoteTextId(step, step.providerJobId);
-  if (saved && attached && saved !== attached) return;
-  return { ...receipt, ...textReceiptReference(step, receipt.providerJobId) };
+  const verified = deriveTextAttempt(step.idempotencyKey, step.textEvidence)?.googleId;
+  const ids = new Set([saved, attached, verified].filter((id): id is string => !!id));
+  if (ids.size > 1) return;
+  return {
+    ...receipt,
+    dispatchKey: step.idempotencyKey,
+    providerJobId: verified ?? saved ?? attached,
+  };
 }
 
 export async function assemblyReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", NOT: { key: { startsWith: "shot-" } } },
+    include: { textEvidence },
     orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
   });
   return steps.flatMap((step) => {
@@ -60,7 +75,15 @@ export async function assemblyReceipts(db: Scoped, runId: string): Promise<Media
 function validShotReceipt(step: ReceiptStep | undefined): MediaReceipt | undefined {
   if (!step?.providerJobId || step.providerJobId === step.idempotencyKey) return;
   const receipt = readReceipt(step);
+  const artifacts = z
+    .object({ storageArtifacts: z.array(ArtifactSchema) })
+    .safeParse(step.output).data;
+  const clips = artifacts?.storageArtifacts.filter((artifact) => artifact.kind === "clips");
   if (
+    clips?.length === 1 &&
+    clips[0]?.contentType === "video/mp4" &&
+    clips[0].objectKey === receipt?.objectKey &&
+    clips[0].checksumSha256 === receipt?.checksumSha256 &&
     receipt?.key === step.key &&
     receipt.providerId === step.providerId &&
     receipt.providerJobId === step.providerJobId &&
@@ -190,6 +213,7 @@ export function currentPrices(
 async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", key: { startsWith: "media:text:" } },
+    include: { textEvidence },
   });
   return steps.flatMap((step) => {
     const receipt = planningReceipt(step);
