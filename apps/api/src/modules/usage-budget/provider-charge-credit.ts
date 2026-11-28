@@ -1,10 +1,19 @@
+import { scopedTransaction } from "../runs/runs.transaction.js";
+import { RECOVERY_PRINCIPAL } from "../runs/runs.types.js";
 import { Prisma } from "@reelforge/database";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { lockBooks } from "./text-admission-lock.js";
 import { z } from "zod";
-import { highestObservedReceipt, pendingCorrection } from "./run-pending-receipt.js";
-import { correctionPayload, pricedOutput } from "./run-shot-receipt.js";
+import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
+import { writeRefusalCreditEvent } from "../composition/assembly-refusal-cost.js";
+import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
+import {
+  correctionHold,
+  highestObservedReceipt,
+  pendingCorrection,
+} from "./run-pending-receipt.js";
+import { correctionPayload, pricedOutput, refusedShot } from "./run-shot-receipt.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import type { Context, Json, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
@@ -176,8 +185,18 @@ async function applyCreditPosting(
         where: { id: reservation.id },
         data: { committedMinor: { decrement: reduction } },
       });
-    } else if (reduction !== 0n)
-      await reduceCoveredCharge(tx, correlationId, reservation, reduction);
+    } else if (reduction !== 0n) {
+      const step = await reduceCoveredCharge(tx, correlationId, reservation, reduction);
+      if (step && refusedShot(step)) {
+        await writeRefusalCreditEvent(tx, step, -Number(reduction));
+        const db = scopedTransaction(tx, {
+          workspaceId: step.workspaceId,
+          userId: RECOVERY_PRINCIPAL,
+          role: "OWNER",
+        });
+        await invalidateAssemblyManifests(db, step.runId);
+      }
+    }
   }
 }
 
@@ -264,11 +283,14 @@ export async function captureRefusedBill(
   if (pending) {
     const { pendingRefusalBill: _, ...output } = z.record(z.string(), z.json()).parse(step.output);
     await db.videoRunStep.updateMany({ where: { id: step.id }, data: { output } });
+    if (run.pauseReason === correctionHold(step.id))
+      await clearResolvedSubmissionHold(db, tx, run, step.id);
   }
+  if (changed) await invalidateAssemblyManifests(db, run.id);
   return {
     value: changed ? { ...step, costMinor: price.costMinor } : step,
     stepId: step.id,
-    payload: changed ? correctionPayload(step, price) : { replay: true },
+    payload: changed ? correctionPayload(step, price, true) : { replay: true },
   };
 }
 
@@ -334,7 +356,7 @@ async function reduceCoveredCharge(
     committedMinor: bigint | null;
   },
   amount: bigint,
-): Promise<void> {
+): Promise<Step | null> {
   const { workspaceId } = reservation;
   const step = await tx.videoRunStep.findFirst({ where: { workspaceId, id: correlationId } });
   if (step) {
@@ -373,4 +395,5 @@ async function reduceCoveredCharge(
     where: { id: reservation.id },
     data: { committedMinor: { decrement: amount } },
   });
+  return step;
 }

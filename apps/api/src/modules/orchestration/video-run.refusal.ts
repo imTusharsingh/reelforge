@@ -1,3 +1,4 @@
+import { carryRefusalBill } from "../usage-budget/run-pending-receipt.js";
 import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
 import { z } from "zod";
@@ -115,6 +116,7 @@ async function recordRefusal(
   await db.videoRunStep.updateMany({
     where: { id: current.id },
     data: {
+      ...carryRefusalBill(current),
       state: retry ? "SKIPPED" : "FAILED",
       costMinor: cost,
       providerJobId,

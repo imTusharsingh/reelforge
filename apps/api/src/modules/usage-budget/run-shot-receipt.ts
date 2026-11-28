@@ -162,7 +162,7 @@ export function admissionFields(step: Step): Record<string, unknown> {
   };
 }
 
-export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
+export function correctionPayload(step: Step, receipt: VideoReceipt, refusedBilling = false): Json {
   return {
     key: step.key,
     providerId: step.providerId,
@@ -172,6 +172,7 @@ export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
     previousCostMinor: step.costMinor,
     costMinor: receipt.costMinor,
     adjustmentMinor: receipt.costMinor - step.costMinor!,
+    ...(refusedBilling && { refusedBilling: true }),
   };
 }
 

@@ -92,6 +92,13 @@ export function isReceiptCorrection(step: Step, receipt: VideoReceipt): boolean 
   return receipt.costBasis === "BILLED" && previous !== undefined && receipt.costMinor > previous;
 }
 
+export function carryRefusalBill(step: Step): { output: Json } | Record<never, never> {
+  const pending = pendingCorrection(step);
+  if (!pending) return {};
+  const output = z.record(z.string(), z.json()).parse(step.output ?? {});
+  return { output: { ...output, pendingRefusalBill: receiptMarker(step, pending) } };
+}
+
 export function correctionHold(stepId: string): string {
   return `RECONCILE_REQUIRED: pending receipt correction (${stepId})`;
 }

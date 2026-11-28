@@ -1,3 +1,4 @@
+import { correctionHold } from "./run-pending-receipt.js";
 import { RunsQueue } from "../runs/runs.queue.js";
 import { workerVideo } from "./worker-video.fixture.js";
 import type { ShotBilling, VideoGenPort } from "../orchestration/video-run.handlers.js";
@@ -85,7 +86,6 @@ describe.skipIf(!process.env.DATABASE_URL)(
         providerDurationSeconds: 7,
         media: null,
       };
-      const state = await t.store.get(t.context, run.id);
       const mutate = t.store.mutate.bind(t.store);
       const fault = vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
         mutate(context, id, type, async (db, current, tx) => {
@@ -115,6 +115,12 @@ describe.skipIf(!process.env.DATABASE_URL)(
       expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(
         lateBill.costMinor,
       );
+      await expect(t.control.resume(t.context, run.id)).rejects.toThrow(
+        "Reconcile the unknown attempt",
+      );
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        pauseReason: correctionHold(source.id),
+      });
       await t.db.videoRun.update({ where: { id: run.id }, data: { state: "FAILED" } });
       const enqueue = vi.fn();
       t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
@@ -139,7 +145,7 @@ describe.skipIf(!process.env.DATABASE_URL)(
       );
       expect(await t.store.get(t.context, run.id)).toMatchObject({
         state: "FAILED",
-        pauseReason: state.pauseReason,
+        pauseReason: null,
       });
       expect(
         await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),

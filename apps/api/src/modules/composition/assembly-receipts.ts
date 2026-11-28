@@ -1,3 +1,8 @@
+import {
+  manifestHasBillingChange,
+  rebuiltTotal,
+  refusalBillDeltas,
+} from "./assembly-refusal-cost.js";
 import { deriveTextAttempt } from "../usage-budget/text-attempt-store.js";
 import { remoteTextId } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
@@ -136,6 +141,7 @@ const assemblyOutput = z
       .passthrough()
       .optional(),
     pendingManifest: ArtifactSchema.optional(),
+    manifestBillingRevision: z.int().nonnegative().optional(),
   })
   .passthrough();
 type AssemblyOutput = z.infer<typeof assemblyOutput>;
@@ -273,41 +279,13 @@ export async function publicationPrices(
   return shots && normalizeHistoricalText(shots, await historicalTextReceipts(db, runId));
 }
 
-// Pre-cutover manifests had gross lines and no linked credits. A total that cannot
-// be explained by those lines gives no basis for a text delta.
-function rebuiltTotal(
-  manifest: { receipts: MediaReceipt[]; totalCostMinor: number },
-  receipts: MediaReceipt[],
-): number | null {
-  const original = manifest.receipts;
-  const contribution = (receipt: MediaReceipt): number =>
-    receipt.key.startsWith("media:text:")
-      ? (receipt.postedNetMinor ?? receipt.costMinor)
-      : receipt.costMinor;
-  const archivedLines = original.reduce((sum, receipt) => sum + contribution(receipt), 0);
-  let total = manifest.totalCostMinor;
-  for (const [i, receipt] of receipts.entries()) {
-    const old = original[i]!;
-    const delta = contribution(receipt) - contribution(old);
-    if (
-      delta !== 0 &&
-      old.key.startsWith("media:text:") &&
-      old.postedNetMinor === undefined &&
-      receipt.postedNetMinor !== undefined &&
-      archivedLines !== manifest.totalCostMinor
-    )
-      return null;
-    total += delta;
-  }
-  return total;
-}
-
 async function rewriteManifest(
   context: Context,
   runId: string,
   source: Artifact,
   current: MediaReceipt[],
   historical: TextReceipt[],
+  refusedDelta: number,
   storage: StoragePort,
   artifacts: RunsArtifacts,
 ): Promise<Artifact | null> {
@@ -323,8 +301,9 @@ async function rewriteManifest(
   const priced = currentPrices(manifest.receipts, current);
   const receipts = priced && normalizeHistoricalText(priced, historical);
   if (!receipts) return null;
-  const totalCostMinor = rebuiltTotal(manifest, receipts);
-  if (totalCostMinor === null) return null;
+  const receiptTotal = rebuiltTotal(manifest, receipts);
+  if (receiptTotal === null) return null;
+  const totalCostMinor = receiptTotal + refusedDelta;
   // A manifest over the delivery contract's cap stays invalidated. The ledger keeps the actual cost.
   if (!AssemblyManifestSchema.shape.totalCostMinor.safeParse(totalCostMinor).success) return null;
   if (
@@ -348,39 +327,49 @@ export async function refreshAssemblyManifests(
   runId: string,
 ): Promise<void> {
   const where = { runId, output: { path: ["pendingManifest", "kind"], equals: "manifest" } };
-  // The correction event also covers manifests written by older workers before
-  // descriptors were explicitly withdrawn. A failed rebuild never acknowledges it.
-  const latest = await store.scoped(context).runEvent.findFirst({
-    where: {
-      runId,
-      OR: [
-        { type: "assembly_receipts_checked" },
-        { type: "provider_receipt", payload: { path: ["key"], string_starts_with: "shot-" } },
-      ],
-    },
-    orderBy: { sequence: "desc" },
-    select: { type: true },
-  });
-  if (latest?.type !== "provider_receipt") return;
-  await store.mutate(context, runId, "assembly_receipts_checked", async (db) => {
+  if (!(await manifestHasBillingChange(store.scoped(context), runId))) return;
+  await store.mutate(context, runId, "assembly_receipts_checked", async (db, run) => {
     await invalidateAssemblyManifests(db, runId);
     const pending = await db.videoRunStep.findMany({ where, select: { id: true, output: true } });
     const prices = await shotReceipts(db, runId);
     const historical = await historicalTextReceipts(db, runId);
+    const deltas = await refusalBillDeltas(db, runId);
     const written = new Map<string, Artifact | null>();
     for (const step of pending) {
       const output = assemblyOutput.parse(step.output);
       const source = output.pendingManifest!;
-      if (!written.has(source.objectKey))
-        written.set(
-          source.objectKey,
-          await rewriteManifest(context, runId, source, prices, historical, storage, artifacts),
+      // Deployed manifests predate the dedicated bill event and start at zero.
+      const revision = output.manifestBillingRevision ?? 0;
+      const key = JSON.stringify([source.objectKey, revision]);
+      if (!written.has(key)) {
+        const delta = deltas.reduce(
+          (sum, entry) => sum + (entry.sequence > revision ? entry.amount : 0),
+          0,
         );
-      const descriptor = written.get(source.objectKey);
+        written.set(
+          key,
+          await rewriteManifest(
+            context,
+            runId,
+            source,
+            prices,
+            historical,
+            delta,
+            storage,
+            artifacts,
+          ),
+        );
+      }
+      const descriptor = written.get(key);
       if (descriptor)
         await db.videoRunStep.updateMany({
           where: { id: step.id },
-          data: { output: replaceManifest(output, descriptor) },
+          data: {
+            output: replaceManifest(
+              { ...output, manifestBillingRevision: run.revision },
+              descriptor,
+            ),
+          },
         });
     }
     return { value: null, payload: { manifests: written.size } };
@@ -398,11 +387,14 @@ export async function assemblyStageOutput(
     select: { output: true },
   });
   if (!cached) return json({ result, storageArtifacts: artifacts });
-  const { storageArtifacts, pendingManifest } = assemblyOutput.parse(cached.output);
+  const { storageArtifacts, pendingManifest, manifestBillingRevision } = assemblyOutput.parse(
+    cached.output,
+  );
   return json({
     result: { storageArtifacts },
     storageArtifacts,
     ...(pendingManifest && { pendingManifest }),
+    ...(manifestBillingRevision !== undefined && { manifestBillingRevision }),
   });
 }
 

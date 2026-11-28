@@ -183,7 +183,7 @@ export class MediaAssembly {
             attempt: 1,
             state: "SUCCEEDED",
             input: {},
-            output: json({ storageArtifacts }),
+            output: json({ storageArtifacts, manifestBillingRevision: current.revision }),
             finishedAt: new Date(),
           },
         });
