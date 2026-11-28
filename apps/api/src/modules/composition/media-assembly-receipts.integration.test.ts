@@ -7,7 +7,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runsFixture } from "../runs/runs.fixture.js";
 import { json, type Artifact } from "../runs/runs.types.js";
-import { attachHistoricalGoogleId } from "./historical-text-receipt.fixture.js";
+import {
+  attachHistoricalGoogleId,
+  historicalTextFixture,
+} from "./historical-text-receipt.fixture.js";
 import { setupAssembly } from "./media-assembly.fixture.js";
 
 const renderedFixture = {
@@ -64,55 +67,6 @@ async function readArtifact(
 
 function readReceipt(output: unknown): MediaReceipt {
   return MediaReceiptSchema.parse((output as { receipt: unknown }).receipt);
-}
-
-async function historicalTextFixture(
-  setup: Awaited<ReturnType<typeof setupAssembly>>,
-  mode: "id-less" | "late ID" | "ambiguous",
-): Promise<{ receipt: MediaReceipt; dispatchKey: string }> {
-  const { t, run } = setup;
-  const artifact = await t.artifacts.put(t.context, "refs", Buffer.from("{}"), "application/json");
-  const key = "media:text:scriptwriter";
-  const dispatchKey = `${run.id}:${key}:1`;
-  const remoteId = mode === "ambiguous" ? "shared-google-interaction" : dispatchKey;
-  const receipt = MediaReceiptSchema.parse({
-    key,
-    providerId: "gemini",
-    providerJobId: remoteId,
-    modelId: "fixture-text",
-    promptVersion: "fixture:v1",
-    seconds: 0,
-    costMinor: 7,
-    objectKey: artifact.objectKey,
-    checksumSha256: artifact.checksumSha256,
-    mimeType: "application/json",
-  });
-  await t.db.videoRunStep.createMany({
-    data: [1, 2].map((attempt) => {
-      const providerJobId =
-        attempt === 1 ? remoteId : mode === "ambiguous" ? remoteId : "newer-google-id";
-      return {
-        workspaceId: run.workspaceId,
-        runId: run.id,
-        key,
-        attempt,
-        idempotencyKey: `${run.id}:${key}:${attempt}`,
-        providerId: "gemini",
-        providerJobId,
-        state: "SUCCEEDED" as const,
-        input: {},
-        output: json({
-          result: {
-            output: { draft: "archived" },
-            dispatchKey: `${run.id}:${key}:${attempt}`,
-            receipt: { ...receipt, providerJobId: attempt === 1 ? remoteId : providerJobId },
-          },
-        }),
-      };
-    }),
-  });
-  if (mode === "late ID") await attachHistoricalGoogleId(t, dispatchKey);
-  return { receipt, dispatchKey };
 }
 
 async function seedHistoricalManifest(
@@ -196,6 +150,10 @@ async function repriceHistoricalShot(
         output: json({ ...(step.output as object), receipt: corrected }),
       },
     });
+    await db.budgetEnvelope.updateMany({
+      where: { runId: run.id },
+      data: { spentMinor: { increment: corrected.costMinor - original.costMinor } },
+    });
     return { value: null, payload: { key } };
   });
   return corrected;
@@ -259,6 +217,53 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
       providerJobId: dispatchKey,
       output: { result: { receipt: legacy, output: plan.script } },
     });
+  });
+
+  it("publishes a receipt folded during render and adds only the shot delta on rebuild", async () => {
+    const setup = await setupAssembly(fixture);
+    const { t, run, bindings, plan } = setup;
+    await startAssemblyStage(setup);
+    const { dispatchKey } = await historicalTextFixture(setup, "id-less");
+    const budget = (): Promise<{ spentMinor: number }> =>
+      t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
+    await t.db.budgetEnvelope.updateMany({
+      where: { runId: run.id },
+      data: { spentMinor: { increment: 7 } },
+    });
+    let beforeTextBill = 0;
+    vi.spyOn(bindings.renderer, "render").mockImplementationOnce(async () => {
+      beforeTextBill = (await budget()).spentMinor;
+      await attachHistoricalGoogleId(t, dispatchKey);
+      return renderedFixture;
+    });
+    const published = await bindings.assembly.execute(t.context, run, t.brief);
+    const manifest = async (
+      descriptors: Artifact[],
+    ): Promise<ReturnType<typeof AssemblyManifestSchema.parse>> =>
+      AssemblyManifestSchema.parse(
+        JSON.parse(
+          (
+            await readArtifact(
+              setup,
+              descriptors.find((a) => a.kind === "manifest")!,
+            )
+          ).toString(),
+        ),
+      );
+    const first = await manifest(published);
+    const text = {
+      dispatchKey,
+      costMinor: 20,
+      costBasis: "BILLED",
+      providerJobId: "historical-google-id",
+    };
+    expect(first.receipts.find((r) => r.dispatchKey === dispatchKey)).toMatchObject(text);
+    expect(first.totalCostMinor).toBe(beforeTextBill + 13);
+    const key = `shot-${plan.manifest.shots[0]!.ordinal}`;
+    await repriceHistoricalShot(setup, key);
+    const rebuilt = await manifest(await bindings.assembly.artifacts(t.context, run));
+    expect(rebuilt.receipts.find((r) => r.dispatchKey === dispatchKey)).toMatchObject(text);
+    expect(rebuilt.totalCostMinor).toBe(first.totalCostMinor + 11);
   });
 
   it.each(["id-less", "late ID", "ambiguous"] as const)(

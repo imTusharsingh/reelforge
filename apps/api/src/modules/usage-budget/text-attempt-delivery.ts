@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { journalRejections } from "./text-journal-upgrade.js";
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { isDefinitiveProviderRejection } from "@reelforge/ai-providers";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
@@ -233,22 +235,33 @@ async function importArmSpool(
   probe: readonly TextObservation["kind"][] = kinds,
 ): Promise<void> {
   const db = access.runs.store.db;
-  const recorded = new Set(
-    (
-      await db.textAttemptEvidence.findMany({
-        where: { workspaceId: context.workspaceId, attemptId: step.id, nonce },
-        select: { eventKey: true },
-      })
-    ).map((row) => row.eventKey),
-  );
+  const rows = await db.textAttemptEvidence.findMany({
+    where: { workspaceId: context.workspaceId, attemptId: step.id },
+    orderBy: { sequence: "asc" },
+  });
+  const { repaired } = journalRejections(step.idempotencyKey, rows);
   for (const kind of probe) {
-    if (recorded.has(observationKey(nonce, kind))) continue;
+    const recorded = rows.find(
+      (row) => row.nonce === nonce && row.eventKey === observationKey(nonce, kind),
+    );
+    if (recorded && !repaired.has(recorded.sequence)) continue;
     const key = spoolKey(step.id, nonce, kind);
     const bytes = await access.artifacts.readTextSpool(context, key).catch((error: unknown) => {
       if (error instanceof StorageObjectNotFoundError) return null;
       throw error;
     });
     if (!bytes) continue;
+    if (recorded) {
+      // A replacement file at this key may carry different evidence. Keep its owner veto.
+      const file = observationSchema.safeParse(JSON.parse(bytes.toString("utf8")));
+      if (
+        file.success &&
+        file.data.kind === kind &&
+        isDeepStrictEqual(file.data.data, recorded.data)
+      )
+        await access.artifacts.quarantineTextSpool(context, key, bytes);
+      continue;
+    }
     try {
       const observation = observationSchema.parse(JSON.parse(bytes.toString("utf8")));
       if (observation.kind !== kind)

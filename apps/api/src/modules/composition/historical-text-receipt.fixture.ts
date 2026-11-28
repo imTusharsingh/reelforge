@@ -1,3 +1,6 @@
+import { MediaReceiptSchema, type MediaReceipt } from "@reelforge/contracts";
+import { json } from "../runs/runs.types.js";
+import type { setupAssembly } from "./media-assembly.fixture.js";
 import { vi, expect } from "vitest";
 import type { Tenant } from "../runs/runs.fixture.js";
 import { importLegacyTextAttempts } from "../usage-budget/legacy-text-import.js";
@@ -62,4 +65,53 @@ export async function attachHistoricalGoogleId(t: Tenant, dispatchKey: string): 
     currency: "USD",
     actualMinor: 20,
   });
+}
+
+export async function historicalTextFixture(
+  setup: Awaited<ReturnType<typeof setupAssembly>>,
+  mode: "id-less" | "late ID" | "ambiguous",
+): Promise<{ receipt: MediaReceipt; dispatchKey: string }> {
+  const { t, run } = setup;
+  const artifact = await t.artifacts.put(t.context, "refs", Buffer.from("{}"), "application/json");
+  const key = "media:text:scriptwriter";
+  const dispatchKey = `${run.id}:${key}:1`;
+  const remoteId = mode === "ambiguous" ? "shared-google-interaction" : dispatchKey;
+  const receipt = MediaReceiptSchema.parse({
+    key,
+    providerId: "gemini",
+    providerJobId: remoteId,
+    modelId: "fixture-text",
+    promptVersion: "fixture:v1",
+    seconds: 0,
+    costMinor: 7,
+    objectKey: artifact.objectKey,
+    checksumSha256: artifact.checksumSha256,
+    mimeType: "application/json",
+  });
+  await t.db.videoRunStep.createMany({
+    data: [1, 2].map((attempt) => {
+      const providerJobId =
+        attempt === 1 ? remoteId : mode === "ambiguous" ? remoteId : "newer-google-id";
+      return {
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        key,
+        attempt,
+        idempotencyKey: `${run.id}:${key}:${attempt}`,
+        providerId: "gemini",
+        providerJobId,
+        state: "SUCCEEDED" as const,
+        input: {},
+        output: json({
+          result: {
+            output: { draft: "archived" },
+            dispatchKey: `${run.id}:${key}:${attempt}`,
+            receipt: { ...receipt, providerJobId: attempt === 1 ? remoteId : providerJobId },
+          },
+        }),
+      };
+    }),
+  });
+  if (mode === "late ID") await attachHistoricalGoogleId(t, dispatchKey);
+  return { receipt, dispatchKey };
 }

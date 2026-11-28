@@ -22,14 +22,18 @@ type ArmFixture = {
   reservationId: string;
 };
 
-export async function armFixture(t: Tenant, legacy = false): Promise<ArmFixture> {
+export async function armFixture(
+  t: Tenant,
+  legacy = false,
+  key = "media:text:scriptwriter",
+): Promise<ArmFixture> {
   const workspaceId = t.context.workspaceId;
   const dispatchKey = randomUUID();
   const step = await t.db.videoRunStep.create({
     data: {
       workspaceId,
       runId: t.run.id,
-      key: "media:text:scriptwriter",
+      key,
       idempotencyKey: dispatchKey,
       state: "RUNNING",
       input: {},

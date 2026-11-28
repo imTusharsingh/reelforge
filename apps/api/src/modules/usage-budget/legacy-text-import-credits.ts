@@ -5,6 +5,7 @@ import type { Step, Transaction } from "../runs/runs.types.js";
 type Credit = Prisma.UsageAdjustmentGetPayload<object>;
 type Proof = { adjustmentId: string; operationKey: string };
 export type LegacyCredits = { rows: Credit[]; links: Proof[] };
+const mediaAudit = z.object({ adjustment: z.object({ providerRequestId: z.uuid() }) });
 const proof = z.object({
   adjustment: z.object({
     id: z.uuid(),
@@ -97,6 +98,10 @@ export async function unresolvedLegacyCredits(
       where: { workspaceId, action: "CREDIT", adjustmentId: row.id },
       select: { after: true },
     });
+    if (audits.some((a) => mediaAudit.safeParse(a.after).success)) {
+      unresolved.push(row.id);
+      continue;
+    }
     const proofs = audits.flatMap((audit) => {
       const parsed = proof.safeParse(audit.after);
       return parsed.success ? [parsed.data.adjustment] : [];

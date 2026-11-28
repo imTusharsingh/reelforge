@@ -7,9 +7,8 @@ import {
   artifactTooLarge,
   assertAssemblyCost,
   assertCurrentAssemblyCost,
-  currentPrices,
+  publicationPrices,
   assemblyReceipts,
-  shotReceipts,
   selectedShotReceipts,
   missingShotReceipt,
 } from "./assembly-receipts.js";
@@ -155,7 +154,7 @@ export class MediaAssembly {
           where: { runId: run.id, key: "local:assembly" },
         });
         if (cached) return { value: null, payload: { replay: true } };
-        const prices = currentPrices(receipts, await shotReceipts(db, run.id));
+        const prices = await publicationPrices(db, run.id, receipts);
         if (!prices) throw missingShotReceipt();
         const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
         assertAssemblyCost(budget.spentMinor);

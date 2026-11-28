@@ -12,7 +12,7 @@ export type Evidence = {
 const detail = z.object({
   dispatchKey: z.string(),
   code: z.string().optional(),
-  httpStatus: z.number().optional(),
+  httpStatus: z.unknown(),
   source: z.string().optional(),
   actualMinor: z.int().optional().nullable(),
 });
@@ -28,7 +28,10 @@ type Rejection = z.infer<typeof repair>["rejections"][number];
 export function definitiveJournalRejection(event: Evidence): boolean {
   const data = detail.parse(event.data);
   if (data.httpStatus !== undefined && data.code)
-    return isDefinitiveProviderRejection(data.httpStatus, data.code);
+    return (
+      typeof data.httpStatus === "number" &&
+      isDefinitiveProviderRejection(data.httpStatus, data.code)
+    );
   return (
     !!event.nonce?.startsWith("legacy:") &&
     !!event.eventKey?.startsWith("legacy:REJECTED:") &&

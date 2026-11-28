@@ -62,3 +62,10 @@ links the adjustment and posts the revised net in one transaction. A media
 charge correction uses the same owner adjustments endpoint with kind CREDIT,
 providerRequestId, operationKey, amountMinor and reason. It reduces the
 failed estimate on that provider request in the original charge period.
+
+Apply locks the workspace and its runs for one transaction. It attributes
+proven refunds before folding pending reversals. For a historical media refund,
+the supplemental CREDIT audit must identify the original adjustment, provider
+request, channel, currency, amount and operation key, and match the original
+actor and correlation. Review `mediaCreditLinks` in dry-run. Apply records the
+cutover audit ID and links the original adjustment in place.

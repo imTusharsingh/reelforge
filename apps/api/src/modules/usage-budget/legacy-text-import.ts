@@ -1,6 +1,8 @@
 import { journalRejections } from "./text-journal-upgrade.js";
 import { reconcileExisting } from "./legacy-journal-reconcile.js";
-import { lockBooks } from "./text-admission-lock.js";
+import { foldTextAttempt } from "./text-attempt-fold.js";
+import { operatorContext } from "./text-attempt-ops.js";
+import { linkMediaCredit, provenMediaLinks } from "./legacy-media-credit.js";
 import { z } from "zod";
 import type { Database, Run, Step, Transaction } from "../runs/runs.types.js";
 import {
@@ -43,6 +45,7 @@ type ImportReport = {
   workspaceId: string;
   attempts: Imported[];
   unresolvedCreditIds: string[];
+  mediaCreditLinks: Awaited<ReturnType<typeof provenMediaLinks>>;
 };
 
 export async function importLegacyTextAttempts(
@@ -56,13 +59,34 @@ export async function importLegacyTextAttempts(
     throw new Error(
       "Apply requires an audit ID and explicit confirmation that all old writers were drained.",
     );
+  return db.$transaction((tx) => cutover(tx, workspaceId, options), {
+    timeout: 120_000,
+    isolationLevel: options.apply ? "ReadCommitted" : "RepeatableRead",
+  });
+}
+
+async function lockCutover(tx: Transaction, workspaceId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM video_runs WHERE workspace_id = ${workspaceId}::uuid ORDER BY id FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM workspaces WHERE id = ${workspaceId}::uuid FOR NO KEY UPDATE`;
+  await tx.$queryRaw`SELECT id FROM usage_budgets WHERE workspace_id = ${workspaceId}::uuid ORDER BY id FOR UPDATE`;
+}
+
+async function cutover(
+  tx: Transaction,
+  workspaceId: string,
+  options: LegacyTextImportOptions,
+): Promise<ImportReport> {
+  if (options.apply) await lockCutover(tx, workspaceId);
   const attempts: Imported[] = [];
-  const unresolvedCreditIds = await db.$transaction((tx) =>
-    unresolvedLegacyCredits(tx, workspaceId, true),
-  );
+  const candidates = await unresolvedLegacyCredits(tx, workspaceId, true);
+  const media = await provenMediaLinks(tx, workspaceId, candidates);
+  const provenIds = new Set(media.map((link) => link.adjustmentId));
+  const blocked = candidates.some((id) => !provenIds.has(id));
+  if (options.apply && !blocked)
+    for (const link of media) await linkMediaCredit(tx, workspaceId, link, options.auditId!);
   let cursor: string | undefined;
   for (;;) {
-    const batch = await db.videoRunStep.findMany({
+    const batch = await tx.videoRunStep.findMany({
       where: {
         workspaceId,
         key: { startsWith: "media:text:" },
@@ -74,11 +98,11 @@ export async function importLegacyTextAttempts(
     });
     if (!batch.length) break;
     for (const { id, idempotencyKey } of batch) {
-      if (!unresolvedCreditIds.length) {
-        attempts.push(await db.$transaction((tx) => importOne(tx, id, options)));
+      if (!blocked) {
+        attempts.push(await importOne(tx, id, options));
         continue;
       }
-      const rows = await db.textAttemptEvidence.findMany({
+      const rows = await tx.textAttemptEvidence.findMany({
         where: { workspaceId, attemptId: id },
         orderBy: { sequence: "asc" },
       });
@@ -93,13 +117,17 @@ export async function importLegacyTextAttempts(
     }
     cursor = batch.at(-1)!.id;
   }
+  // Every proven adjustment link is now visible to the ordinary reversal guard.
+  if (options.apply)
+    for (const report of attempts)
+      if (report.action === "reconciled")
+        await foldTextAttempt(tx, operatorContext(workspaceId), report.attemptId);
   return {
     mode: options.apply ? "apply" : "dry-run",
     workspaceId,
     attempts,
-    unresolvedCreditIds: await db.$transaction((tx) =>
-      unresolvedLegacyCredits(tx, workspaceId, false),
-    ),
+    unresolvedCreditIds: await unresolvedLegacyCredits(tx, workspaceId, false),
+    mediaCreditLinks: media,
   };
 }
 
@@ -113,7 +141,6 @@ async function importOne(
     ? await lockTextAttempt(tx, workspaceId, id)
     : await tx.videoRunStep.findFirstOrThrow({ where: { workspaceId, id } });
   const run = await tx.videoRun.findFirstOrThrow({ where: { workspaceId, id: step.runId } });
-  if (options.apply) await lockBooks(tx, run);
   const existing = await reconcileExisting(tx, run, step, options);
   if (existing) return existing;
   const { request, reservation, activity, credits } = await readSources(tx, step, run);

@@ -216,49 +216,55 @@ describe("V8 mounted experience with fake HTTP", () => {
     await act(async () => FakeEventSource.instances[0]!.emit("reshoot_requested", 8));
     expect(redo()?.disabled).toBe(true);
   });
-  it("explains held text cost and requires confirmation before the owner can settle", async () => {
-    const data = detail(),
-      id = crypto.randomUUID();
-    data.run.state = "SCRIPTING";
-    data.run.pauseReason = `RECONCILE_REQUIRED: provider submission outcome unknown (${id})`;
-    data.steps = [
-      {
-        id,
-        key: "media:text:scriptwriter",
-        attempt: 1,
-        state: "RUNNING",
-        costMinor: 17,
-        providerId: "gemini",
-        input: {},
-        output: null,
-        awaitingReconciliation: true,
-        confirmTerminalText: true,
-      },
-    ];
-    data.envelope = null;
-    data.pinnedHardCapMinor = 400;
-    data.remainingBudgetMinor = 383;
-    const fetcher = fakeFetch(data);
-    const confirm = vi.fn().mockReturnValue(false);
-    vi.stubGlobal("confirm", confirm);
-    await act(async () => root.render(createElement(RunScreen, { id: runId })));
-    expect(host.textContent).toContain("$0.17 is reserved");
-    expect(host.textContent).toContain("$3.83 remaining");
-    expect(host.textContent).toContain("Pinned cap $4.00");
-    expect(host.textContent).toContain("Awaiting reconciliation");
-    expect(host.textContent).not.toContain(id);
-    const settle = Array.from(host.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Confirm terminal"),
-    )!;
-    await act(async () => settle.click());
-    expect(fetcher.mock.calls.some(([url]) => url.includes("/abandon"))).toBe(false);
-    confirm.mockReturnValue(true);
-    await act(async () => settle.click());
-    expect(fetcher).toHaveBeenCalledWith(
-      expect.stringContaining("/abandon?"),
-      expect.objectContaining({ body: JSON.stringify({ confirmedTerminalText: true }) }),
-    );
-  });
+  it.each(["SCRIPTING", "FAILED"] as const)(
+    "requires owner confirmation to settle text in %s",
+    async (state) => {
+      const data = detail(),
+        id = crypto.randomUUID();
+      const failed = state === "FAILED";
+      data.run.state = state;
+      data.run.pauseReason = failed
+        ? "UNAUTHENTICATED"
+        : `RECONCILE_REQUIRED: provider submission outcome unknown (${id})`;
+      data.steps = [
+        {
+          id,
+          key: "media:text:scriptwriter",
+          attempt: 1,
+          state: failed ? "FAILED" : "RUNNING",
+          costMinor: 17,
+          providerId: "gemini",
+          input: {},
+          output: null,
+          awaitingReconciliation: !failed,
+          confirmTerminalText: true,
+        },
+      ];
+      data.envelope = null;
+      data.pinnedHardCapMinor = 400;
+      data.remainingBudgetMinor = 383;
+      const fetcher = fakeFetch(data);
+      const confirm = vi.fn().mockReturnValue(false);
+      vi.stubGlobal("confirm", confirm);
+      await act(async () => root.render(createElement(RunScreen, { id: runId })));
+      if (!failed) expect(host.textContent).toContain("$0.17 is reserved");
+      expect(host.textContent).toContain("$3.83 remaining");
+      expect(host.textContent).toContain("Pinned cap $4.00");
+      if (!failed) expect(host.textContent).toContain("Awaiting reconciliation");
+      expect(host.textContent).not.toContain(id);
+      const settle = Array.from(host.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes(failed ? "Settle terminal" : "Confirm terminal"),
+      )!;
+      await act(async () => settle.click());
+      expect(fetcher.mock.calls.some(([url]) => url.includes("/abandon"))).toBe(false);
+      confirm.mockReturnValue(true);
+      await act(async () => settle.click());
+      expect(fetcher).toHaveBeenCalledWith(
+        expect.stringContaining("/abandon?"),
+        expect.objectContaining({ body: JSON.stringify({ confirmedTerminalText: true }) }),
+      );
+    },
+  );
   it("offers resume at final review after an emergency stop", async () => {
     const data = detail();
     data.run.pauseReason = "EMERGENCY_STOP";

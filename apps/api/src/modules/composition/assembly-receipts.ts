@@ -38,7 +38,10 @@ const textEvidence = {
 };
 
 function planningReceipt(
-  step: Step & { textEvidence: Parameters<typeof deriveTextAttempt>[1] },
+  step: Step & {
+    textEvidence: Parameters<typeof deriveTextAttempt>[1];
+    textProjection: { grossMinor: number } | null;
+  },
 ): TextReceipt | undefined {
   const receipt = readReceipt(step);
   if (
@@ -58,14 +61,18 @@ function planningReceipt(
     ...receipt,
     dispatchKey: step.idempotencyKey,
     providerJobId: verified ?? saved ?? attached,
-    ...(attempt?.actualMinor != null && { costMinor: attempt.actualMinor, costBasis: "BILLED" }),
+    ...(attempt?.actualMinor != null &&
+      step.textProjection?.grossMinor === attempt.actualMinor && {
+        costMinor: attempt.actualMinor,
+        costBasis: "BILLED",
+      }),
   };
 }
 
 export async function assemblyReceipts(db: Scoped, runId: string): Promise<MediaReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", NOT: { key: { startsWith: "shot-" } } },
-    include: { textEvidence },
+    include: { textEvidence, textProjection: { select: { grossMinor: true } } },
     orderBy: [{ createdAt: "asc" }, { attempt: "asc" }],
   });
   return steps.flatMap((step) => {
@@ -215,7 +222,7 @@ export function currentPrices(
 async function historicalTextReceipts(db: Scoped, runId: string): Promise<TextReceipt[]> {
   const steps = await db.videoRunStep.findMany({
     where: { runId, state: "SUCCEEDED", key: { startsWith: "media:text:" } },
-    include: { textEvidence },
+    include: { textEvidence, textProjection: { select: { grossMinor: true } } },
   });
   return steps.flatMap((step) => {
     const receipt = planningReceipt(step);
@@ -253,6 +260,15 @@ function normalizeHistoricalText(
     });
   }
   return resolved;
+}
+
+export async function publicationPrices(
+  db: Scoped,
+  runId: string,
+  rendered: MediaReceipt[],
+): Promise<MediaReceipt[] | null> {
+  const shots = currentPrices(rendered, await shotReceipts(db, runId));
+  return shots && normalizeHistoricalText(shots, await historicalTextReceipts(db, runId));
 }
 
 async function rewriteManifest(

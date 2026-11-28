@@ -1,8 +1,6 @@
 import type { Run, Step, Transaction } from "../runs/runs.types.js";
 import { auditedLegacyCredits, type LegacyCredits } from "./legacy-text-import-credits.js";
 import type { Imported, LegacyTextImportOptions } from "./legacy-text-import.js";
-import { foldTextAttempt } from "./text-attempt-fold.js";
-import { operatorContext } from "./text-attempt-ops.js";
 import { appendTextEvidence, deriveTextAttempt } from "./text-attempt-store.js";
 import { journalRejections, type Evidence } from "./text-journal-upgrade.js";
 
@@ -39,9 +37,7 @@ export async function reconcileExisting(
   if (!pending.length && !credits.links.length && !unpostedBill)
     return { attemptId: step.id, action: "already-imported", after: before };
   const proposed = await stageReconciliation(tx, step, rows, credits, pending, options);
-  const state = options.apply
-    ? await foldTextAttempt(tx, operatorContext(run.workspaceId), step.id)
-    : deriveTextAttempt(step.idempotencyKey, proposed)!;
+  const state = deriveTextAttempt(step.idempotencyKey, proposed)!;
   return {
     attemptId: step.id,
     action: options.apply ? "reconciled" : "requires-reconciliation",

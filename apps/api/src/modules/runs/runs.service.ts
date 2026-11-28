@@ -267,27 +267,23 @@ export class RunsService {
     run: Run,
     steps: Step[],
   ): Promise<(Step & { confirmTerminalText: boolean; awaitingReconciliation: boolean })[]> {
-    const held = steps.find(
-      (step) =>
-        step.state === "RUNNING" &&
-        step.key.startsWith("media:text:") &&
-        run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
-        run.pauseReason.includes(step.id),
+    return Promise.all(
+      steps.map(async (step) => {
+        const held =
+          !!run.pauseReason?.startsWith("RECONCILE_REQUIRED") && step.state === "RUNNING";
+        const named = !!run.pauseReason?.includes(step.id);
+        const candidate =
+          step.key.startsWith("media:text:") &&
+          ((held && named) || (run.state === "FAILED" && step.state === "FAILED"));
+        return {
+          ...step,
+          confirmTerminalText:
+            candidate && (await canOwnerConfirmText(this.store.db, step, context, this.artifacts)),
+          awaitingReconciliation:
+            held && (named || step.key === run.state || step.key === "planning:manifest:v1"),
+        };
+      }),
     );
-    const confirmable =
-      held && (await canOwnerConfirmText(this.store.db, held, context, this.artifacts))
-        ? held.id
-        : null;
-    return steps.map((step) => ({
-      ...step,
-      confirmTerminalText: confirmable === step.id,
-      awaitingReconciliation:
-        !!run.pauseReason?.startsWith("RECONCILE_REQUIRED") &&
-        step.state === "RUNNING" &&
-        (run.pauseReason.includes(step.id) ||
-          step.key === run.state ||
-          step.key === "planning:manifest:v1"),
-    }));
   }
   public job(context: Context, runId: string, stepId?: string): RunJob {
     const active = currentContext();

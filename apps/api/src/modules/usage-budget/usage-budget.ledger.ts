@@ -166,12 +166,16 @@ export async function readLedgerRows(db: LedgerReader, filter: LedgerFilter): Pr
       ) script_step ON TRUE
       WHERE pr.workspace_id = ${filter.workspaceId}::uuid
         ${filter.providerRequestId ? Prisma.sql`AND pr.id = ${filter.providerRequestId}::uuid` : Prisma.empty}
-        AND NOT EXISTS (
+        ${
+          filter.providerRequestId
+            ? Prisma.empty
+            : Prisma.sql`AND NOT EXISTS (
           SELECT 1 FROM "usage_reservations" ur
           WHERE ur.workspace_id = pr.workspace_id
             AND ur.correlation_id = pr.correlation_id
             AND (ur.status = 'COMMITTED' OR (ur.status = 'RESERVED' AND ur.expires_at > ${filter.now}))
-        )
+        )`
+        }
     )
     SELECT * FROM ledger ${where}
     ORDER BY ledger.created_at ASC, ledger.id ASC`);
@@ -226,6 +230,11 @@ export type ClassifiedCost = Readonly<{
   currency: string | null;
 }>;
 
+// These are terminal outcomes from the media ledger writers. Transport ambiguity remains billable.
+export function terminalMediaFailure(code: string | null): boolean {
+  return code === "REFUSED" || code === "PROVIDER_JOB_FAILED" || code === "PROVIDER_INVALID_OUTPUT";
+}
+
 /**
  * Actual cost wins. A succeeded or still-pending call without an actual cost is charged at its
  * estimate (ESTIMATED). A call that failed after dispatch without an actual cost is charged at its
@@ -270,7 +279,7 @@ export function classifyCost(
   const pending = row.status === "FAILED" && row.errorCode === "PENDING";
   const failed = row.status === "FAILED" && !pending;
   const gross = currency === null ? null : decimalToMinor(row.estimatedCost, currency);
-  const credited = failed ? (row.creditedMinor ?? 0n) : 0n;
+  const credited = failed && terminalMediaFailure(row.errorCode) ? (row.creditedMinor ?? 0n) : 0n;
   return {
     kind: row.status === "SUCCEEDED" || pending ? "ESTIMATED" : "FAILED_ESTIMATED",
     amountMinor: gross === null ? null : gross > credited ? gross - credited : 0n,

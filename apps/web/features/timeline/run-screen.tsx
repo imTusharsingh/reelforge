@@ -218,41 +218,45 @@ function AbandonControls({
   return (
     <>
       {" "}
-      {(detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
-        detail.run.pauseReason === "OPERATOR_ABANDONED") &&
-        detail.steps
-          .filter(
-            (step) =>
+      {detail.steps
+        .filter((step) =>
+          step.confirmTerminalText
+            ? owner
+            : (detail.run.pauseReason?.startsWith("RECONCILE_REQUIRED") ||
+                detail.run.pauseReason === "OPERATOR_ABANDONED") &&
               step.state === "RUNNING" &&
-              detail.run.pauseReason?.includes(step.id) &&
-              (!step.confirmTerminalText || owner) &&
+              detail.run.pauseReason.includes(step.id) &&
               (step.key.startsWith("media:") || step.key.startsWith("shot-")),
-          )
-          .map((step) => (
-            <Button
-              key={step.id}
-              disabled={busy}
-              tone="danger"
-              onClick={() => {
-                const text = step.confirmTerminalText;
-                if (
-                  window.confirm(
-                    text
-                      ? `Have you confirmed the provider call ended? Book the reserved estimate (${dollars(step.costMinor ?? 0)}) and end this run without retrying.`
-                      : "Abandon this attempt? Only a confirmed undispatched attempt can release its reservation.",
-                  )
+        )
+        .map((step) => (
+          <Button
+            key={step.id}
+            disabled={busy}
+            tone="danger"
+            onClick={() => {
+              const text = step.confirmTerminalText;
+              if (
+                window.confirm(
+                  text
+                    ? detail.run.state === "FAILED"
+                      ? `Confirm the provider call ended and settle the ${dollars(step.costMinor ?? 0)} charge?`
+                      : `Have you confirmed the provider call ended? Book the reserved estimate (${dollars(step.costMinor ?? 0)}) and end this run without retrying.`
+                    : "Abandon this attempt? Only a confirmed undispatched attempt can release its reservation.",
                 )
-                  void action(
-                    `steps/${step.id}/abandon`,
-                    text ? { confirmedTerminalText: true } : {},
-                  );
-              }}
-            >
-              {step.confirmTerminalText
-                ? "Confirm terminal text call and end run"
-                : `Abandon ${step.key}`}
-            </Button>
-          ))}
+              )
+                void action(
+                  `steps/${step.id}/abandon`,
+                  text ? { confirmedTerminalText: true } : {},
+                );
+            }}
+          >
+            {step.confirmTerminalText
+              ? detail.run.state === "FAILED"
+                ? "Settle terminal text call"
+                : "Confirm terminal text call and end run"
+              : `Abandon ${step.key}`}
+          </Button>
+        ))}
     </>
   );
 }
