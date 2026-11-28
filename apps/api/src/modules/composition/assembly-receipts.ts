@@ -290,6 +290,7 @@ function rebuiltTotal(
     const old = original[i]!;
     const delta = contribution(receipt) - contribution(old);
     if (
+      delta !== 0 &&
       old.key.startsWith("media:text:") &&
       old.postedNetMinor === undefined &&
       receipt.postedNetMinor !== undefined &&

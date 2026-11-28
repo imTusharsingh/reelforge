@@ -71,3 +71,10 @@ cutover audit ID and links the original adjustment in place. A verified final
 media bill supersedes the refunded estimate in either arrival order. Each
 imported text projection must agree with the current journal sequence and
 posting before the cutover can report it as settled.
+
+Main text completions booked the configured estimate even where the request
+said `costKnown`; only independently verified billing can replace that charge.
+A main routed video row with no billed seconds can likewise contain an estimate
+in `actualCost`; a proven linked refund still reduces that estimate. A matching
+main budget-denied cancellation and release can have a nonzero released estimate
+but no ledger rows; this is a zero-spend no-op, not a new dispatch authorization.

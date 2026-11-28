@@ -2,7 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
-import { ArtifactSchema, json, type Json, type Step } from "../runs/runs.types.js";
+import { ArtifactSchema, json, type Json, type Scoped, type Step } from "../runs/runs.types.js";
 import { isBillingHold } from "./run-admission-state.js";
 
 const ReceiptBudgetSchema = z.object({
@@ -175,12 +175,21 @@ export function correctionPayload(step: Step, receipt: VideoReceipt): Json {
   };
 }
 
+export function refusedShot(step: Step): boolean {
+  return (
+    step.key.startsWith("shot-") &&
+    ["SKIPPED", "FAILED"].includes(step.state) &&
+    z.object({ code: z.literal("PROVIDER_REFUSED") }).safeParse(step.error).success
+  );
+}
+
 export function requireReceiptAttempt(current: Step, observed: Step): void {
   if (
     !observed.providerJobId ||
     current.providerJobId !== observed.providerJobId ||
     current.providerId !== observed.providerId ||
-    !["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state)
+    current.idempotencyKey !== observed.idempotencyKey ||
+    (!["SUCCEEDED", "WAITING_EXTERNAL"].includes(current.state) && !refusedShot(current))
   )
     throw new ConflictException("Provider job claim changed");
 }
@@ -193,4 +202,31 @@ export function recordedShotPrice(step: Step, receipt: VideoReceipt): boolean {
     saved.data.receipt.costMinor === step.costMinor &&
     !replacesPrice(saved.data.receipt, receipt)
   );
+}
+
+/** The caller holds the run lock for the ledger, step and envelope writes. */
+export async function adjustEnvelope(
+  db: Scoped,
+  runId: string,
+  delta: { spentMinor: number; reservedMinor: number; overageMinor: number },
+): Promise<void> {
+  const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId } });
+  const spentMinor = budget.spentMinor + delta.spentMinor;
+  const reservedMinor = budget.reservedMinor + delta.reservedMinor;
+  // Preserve shot overruns and cover any shortfall after siblings reuse released funds.
+  // Admission still compares gross spent + reserved against the cap.
+  const overageMinor = Math.max(
+    budget.overageMinor + delta.overageMinor,
+    spentMinor + reservedMinor - budget.hardCapMinor,
+  );
+  const updated = await db.budgetEnvelope.updateMany({
+    where: { id: budget.id, revision: budget.revision },
+    data: {
+      reservedMinor,
+      spentMinor,
+      overageMinor,
+      revision: budget.revision + 1,
+    },
+  });
+  if (updated.count !== 1) throw new ConflictException("Billing envelope changed");
 }

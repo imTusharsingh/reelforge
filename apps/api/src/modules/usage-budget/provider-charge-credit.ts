@@ -1,6 +1,9 @@
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { Context, Transaction } from "../runs/runs.types.js";
+import { lockBooks } from "./text-admission-lock.js";
+import { legacyObject } from "./legacy-text-import-fields.js";
+import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
+import type { Context, Run, Step, Transaction } from "../runs/runs.types.js";
 import { auditCredit, type BudgetAccess, type CreditResult } from "./charge-credit-audit.js";
 import {
   categorize,
@@ -93,7 +96,12 @@ export async function postMediaCredit(
     take: 2,
   });
   if (other) throw new ConflictException("Ambiguous media reservation");
-  const cost = classifyCost(row);
+  const oldEstimate =
+    historical &&
+    reservation?.status === "COMMITTED" &&
+    (await isMainRoutedEstimate(tx, row, reservation));
+  const pricing = oldEstimate ? { ...row, actualCost: null } : row;
+  const cost = classifyCost(pricing);
   const finalBill = historical && cost?.kind === "ACTUAL";
   if (
     (!(
@@ -101,7 +109,9 @@ export async function postMediaCredit(
       reservation.category === "VIDEO_MEDIA"
     ) &&
       !["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(categorize(row))) ||
-    (!finalBill && (!terminalMediaFailure(row.errorCode) || cost?.kind !== "FAILED_ESTIMATED")) ||
+    (!finalBill &&
+      !oldEstimate &&
+      (!terminalMediaFailure(row.errorCode) || cost?.kind !== "FAILED_ESTIMATED")) ||
     !cost?.currency ||
     cost.amountMinor === null ||
     (!finalBill && amountMinor > cost.amountMinor)
@@ -121,7 +131,86 @@ export async function postMediaCredit(
     const reduction = finalBill ? reservation.committedMinor - cost.amountMinor : amountMinor;
     if (reduction !== 0n) await reduceCoveredCharge(tx, row.correlationId, reservation, reduction);
   }
+  if (oldEstimate)
+    await tx.providerRequest.update({ where: { id: row.id }, data: { actualCost: null } });
   return cost.currency;
+}
+
+async function isMainRoutedEstimate(
+  tx: Transaction,
+  row: { id: string; correlationId: string; status: string; errorCode: string | null },
+  reservation: { id: string; amountMinor: bigint; idempotencyKey: string; category: string },
+): Promise<boolean> {
+  if (
+    row.status !== "SUCCEEDED" ||
+    row.errorCode !== null ||
+    reservation.category !== "VIDEO_MEDIA" ||
+    reservation.idempotencyKey !== `m08:${row.correlationId}`
+  )
+    return false;
+  const request = await tx.providerRequest.findUniqueOrThrow({ where: { id: row.id } });
+  const metadata = legacyObject(request.responseMetadata);
+  return (
+    request.actualCost !== null &&
+    request.estimatedCost !== null &&
+    request.actualCost.equals(request.estimatedCost) &&
+    legacyObject(request.usage).seconds === null &&
+    metadata.reservationId === reservation.id &&
+    metadata.estimateMinor === Number(reservation.amountMinor) &&
+    typeof metadata.providerJobId === "string"
+  );
+}
+
+// A verified bill supersedes an estimate and its linked refund; it does not deliver the refused clip.
+export async function settleRefusedShotBill(
+  tx: Transaction,
+  run: Run,
+  step: Step,
+  receipt: VideoReceipt,
+): Promise<boolean> {
+  if (receipt.costBasis !== "BILLED") return false;
+  const { workspaceId, channelId } = run;
+  await lockBooks(tx, run);
+  const request = await tx.providerRequest.findUnique({
+    where: { workspaceId_correlationId: { workspaceId, correlationId: step.id } },
+  });
+  const reservation = await tx.usageReservation.findUnique({
+    where: {
+      workspaceId_idempotencyKey: { workspaceId, idempotencyKey: `m08:${step.idempotencyKey}` },
+    },
+  });
+  const metadata = legacyObject(request?.responseMetadata);
+  if (
+    !request ||
+    request.status !== "FAILED" ||
+    request.errorCode !== "PROVIDER_JOB_FAILED" ||
+    request.providerId !== step.providerId ||
+    request.channelId !== channelId ||
+    request.currency !== "USD" ||
+    !step.providerJobId ||
+    metadata.providerJobId !== step.providerJobId ||
+    metadata.dispatched !== true ||
+    reservation?.status !== "COMMITTED" ||
+    reservation.committedMinor === null ||
+    reservation.category !== "VIDEO_MEDIA" ||
+    reservation.currency !== request.currency ||
+    reservation.channelId !== channelId ||
+    reservation.correlationId !== step.id
+  ) {
+    throw new ConflictException("Refused shot billing does not match the original charge");
+  }
+  const cents = BigInt(receipt.costMinor);
+  if (request.actualCost !== null && request.actualCost.mul(100).gte(cents.toString()))
+    return false;
+  await reduceCoveredCharge(tx, step.id, reservation, reservation.committedMinor - cents);
+  await tx.providerRequest.update({
+    where: { id: request.id },
+    data: {
+      actualCost: (receipt.costMinor / 100).toFixed(2),
+      responseMetadata: { ...metadata, costKnown: true },
+    },
+  });
+  return true;
 }
 
 async function reduceCoveredCharge(

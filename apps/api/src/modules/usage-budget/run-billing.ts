@@ -3,6 +3,7 @@ import {
   pendingCorrection,
   highestObservedReceipt,
 } from "./run-pending-receipt.js";
+import { settleRefusedShotBill } from "./provider-charge-credit.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -36,11 +37,13 @@ import {
 import type { RunPaidCalls } from "./run-paid.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
+  adjustEnvelope,
   admissionFields,
   awaitingBilling,
   correctionPayload,
   deliveredShot,
   requireReceiptAttempt,
+  refusedShot,
   mergeShotReceipt,
   pendingShotMedia,
   readReceiptBudget,
@@ -162,33 +165,6 @@ async function savePricedRequest(
   return true;
 }
 
-/** The caller holds the run lock for the ledger, step and envelope writes. */
-async function adjustEnvelope(
-  db: Scoped,
-  runId: string,
-  delta: { spentMinor: number; reservedMinor: number; overageMinor: number },
-): Promise<void> {
-  const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId } });
-  const spentMinor = budget.spentMinor + delta.spentMinor;
-  const reservedMinor = budget.reservedMinor + delta.reservedMinor;
-  // Preserve shot overruns and cover any shortfall after siblings reuse released funds.
-  // Admission still compares gross spent + reserved against the cap.
-  const overageMinor = Math.max(
-    budget.overageMinor + delta.overageMinor,
-    spentMinor + reservedMinor - budget.hardCapMinor,
-  );
-  const updated = await db.budgetEnvelope.updateMany({
-    where: { id: budget.id, revision: budget.revision },
-    data: {
-      reservedMinor,
-      spentMinor,
-      overageMinor,
-      revision: budget.revision + 1,
-    },
-  });
-  if (updated.count !== 1) throw new ConflictException("Billing envelope changed");
-}
-
 /** Correct the original commitment in its accounting period without completing the clip again. */
 async function correctSettledReceipt(
   db: Scoped,
@@ -261,6 +237,14 @@ export async function captureShotReceipt(
     async (db, run, tx) => {
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       requireReceiptAttempt(current, step);
+      if (refusedShot(current)) {
+        const changed = await settleRefusedShotBill(tx, run, current, receipt);
+        return {
+          value: changed ? { ...current, costMinor: receipt.costMinor } : current,
+          stepId: current.id,
+          payload: changed ? correctionPayload(current, receipt) : { replay: true },
+        };
+      }
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
       const price = highestObservedReceipt(pending, receipt);

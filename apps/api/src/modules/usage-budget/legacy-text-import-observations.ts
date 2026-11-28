@@ -1,6 +1,6 @@
 import type { Prisma } from "@reelforge/database";
 import { z } from "zod";
-import type { Event } from "../runs/runs.types.js";
+import type { Event, Step, Transaction } from "../runs/runs.types.js";
 import type { LegacyTextSource } from "./legacy-text-import-evidence.js";
 import { keyMatches, legacyObject } from "./legacy-text-import-fields.js";
 
@@ -160,16 +160,8 @@ function concluded(
 ): Observations["outcome"] {
   const { step, request } = source;
   const dispatchKey = step.idempotencyKey;
-  const metadata = legacyObject(request.responseMetadata);
-  const actual =
-    metadata.costKnown === true && metadata.costBasis !== "RESERVATION"
-      ? request.actualCost?.mul(100)
-      : undefined;
-  const actualMinor =
-    actual?.isInteger() && actual.toNumber() >= 0 && actual.toNumber() <= 2_147_483_647
-      ? actual.toNumber()
-      : undefined;
-
+  // Main committed the configured estimate and called it costKnown. Its text
+  // writer never persisted a separately verified monetary amount.
   if (rejected)
     return {
       kind: "REJECTED",
@@ -186,7 +178,6 @@ function concluded(
         ...(saved && { output: saved.output }),
         ...(googleId && { googleId }),
         ...(usage && { usage }),
-        ...(actualMinor !== undefined && { actualMinor }),
       },
     };
 }
@@ -222,4 +213,56 @@ function recoveredReceipts(
       },
     });
   return result;
+}
+
+export function mainBudgetDenial(
+  step: Step,
+  activity: { type: string; payload: unknown }[],
+): boolean {
+  return (
+    step.state === "CANCELLED" &&
+    !!step.finishedAt &&
+    !step.providerJobId &&
+    step.providerId === "gemini" &&
+    step.costMinor !== null &&
+    step.costMinor >= 0 &&
+    legacyObject(step.output).closedBy === "BUDGET_DENIED_NOT_DISPATCHED" &&
+    activity.some(({ type, payload }) => {
+      const release = legacyObject(payload);
+      return (
+        type === "dispatch_released" &&
+        release.reason === "NOT_DISPATCHED" &&
+        release.amountMinor === step.costMinor
+      );
+    }) &&
+    !activity.some(({ type }) =>
+      [
+        "text_dispatch_started",
+        "provider_dispatch",
+        "provider_submitted",
+        "reconcile_required",
+        "text_evidence_recorded",
+        "media_completed",
+        "step_completed",
+      ].includes(type),
+    )
+  );
+}
+
+export async function preserveMainEstimate(
+  tx: Transaction,
+  request: Pick<Source["request"], "id" | "actualCost" | "responseMetadata">,
+): Promise<void> {
+  if (request.actualCost !== null)
+    await tx.providerRequest.update({
+      where: { id: request.id },
+      data: {
+        actualCost: null,
+        responseMetadata: {
+          ...legacyObject(request.responseMetadata),
+          costKnown: false,
+          costBasis: "RESERVATION",
+        },
+      },
+    });
 }

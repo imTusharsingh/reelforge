@@ -1,3 +1,4 @@
+import type { ShotBilling, VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
 import { ForbiddenException } from "@nestjs/common";
@@ -17,8 +18,13 @@ describe.skipIf(!process.env.DATABASE_URL)(
         where: { workspaceId, runId: run.id, key: "shot-0" },
       });
       const job = t.runs.job(t.context, run.id, source.id);
-      vi.spyOn(t.generation.provider, "poll")
-        .mockResolvedValueOnce("running")
+      let callback: ShotBilling["record"] | undefined;
+      const port: VideoGenPort = t.generation.provider;
+      vi.spyOn(port, "poll")
+        .mockImplementationOnce(async (_id, billing) => {
+          callback = billing?.record;
+          return "running";
+        })
         .mockResolvedValue("refused");
       await t.engine.process(job);
       await t.engine.process(job);
@@ -65,6 +71,50 @@ describe.skipIf(!process.env.DATABASE_URL)(
           operationKey: "excess",
         }),
       ).rejects.toThrow();
+      const failed = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: source.id } });
+      expect(failed.state).toBe("SKIPPED");
+      expect(callback).toBeTypeOf("function");
+      const lateBill = {
+        costBasis: "BILLED" as const,
+        costMinor: original + 3,
+        modelId: "fixture",
+        promptVersion: "fixture",
+        seconds: 7,
+        providerDurationSeconds: 7,
+        media: null,
+      };
+      const state = await t.store.get(t.context, run.id);
+      await callback!(lateBill);
+      await callback!(lateBill);
+      await callback!({ ...lateBill, costMinor: original - 1 });
+      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+        committedMinor: BigInt(lateBill.costMinor),
+      });
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: source.id } })).toMatchObject(
+        {
+          state: "SKIPPED",
+          costMinor: lateBill.costMinor,
+          error: failed.error,
+        },
+      );
+      expect(await t.store.get(t.context, run.id)).toMatchObject({
+        state: state.state,
+        pauseReason: state.pauseReason,
+      });
+      expect(
+        await t.db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } }),
+      ).toMatchObject({
+        spentMinor: lateBill.costMinor,
+      });
+      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(
+        lateBill.costMinor,
+      );
+      expect(
+        (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+      ).toMatchObject({
+        totalMinor: lateBill.costMinor,
+        adjustmentNetMinor: 0,
+      });
     });
     it.each([4, 7, 23])(
       "replays the refunded routed refusal at 7 cents and settles a %i cent bill",
@@ -117,6 +167,32 @@ describe.skipIf(!process.env.DATABASE_URL)(
         });
       },
     );
+    it("settles routed billing before a failed download and rejects unordered downward amounts", async () => {
+      const t = await fixture.tenant();
+      const { workspaceId } = t.run;
+      const job = await refusedRoutedJob(t);
+      await t.usage.createAdjustment(t.context, {
+        kind: "CREDIT",
+        providerRequestId: job.requestId,
+        operationKey: "routed-refund",
+        amountMinor: 13,
+        reason: "invoice refund",
+      });
+      const where = { workspaceId, correlationId: job.correlationId };
+      await expect(job.reconcile(23, true)).rejects.toThrow("media download failed");
+      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+        committedMinor: 23n,
+      });
+      await job.reconcile(23);
+      await job.reconcile(4);
+      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+        committedMinor: 23n,
+      });
+      const posting = await t.db.providerRequest.findFirstOrThrow({ where });
+      expect(posting.actualCost?.toString()).toBe("0.23");
+      expect(posting.usage).toEqual({ seconds: 23 });
+      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(23);
+    });
     it("keeps an expired unresolved dispatch charged against competing admission", async () => {
       const t = await fixture.tenant();
       const run = await generating(t);

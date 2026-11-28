@@ -44,6 +44,8 @@ export async function importHistoricalBooking(
       status: "SUCCEEDED",
       currency: "USD",
       estimatedCost: "0.07",
+      actualCost: "0.07",
+      responseMetadata: { dispatched: true, costKnown: true },
     },
   });
   vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
@@ -56,6 +58,16 @@ export async function importHistoricalBooking(
   expect(report.attempts).toContainEqual(
     expect.objectContaining({ attemptId: step.id, outcome: "completed" }),
   );
+  expect(
+    await t.db.providerRequest.findFirstOrThrow({
+      where: { workspaceId, correlationId: step.id },
+    }),
+  ).toMatchObject({ actualCost: null, responseMetadata: { costKnown: false } });
+  expect(
+    await t.db.usageReservation.findUniqueOrThrow({ where: { id: reservation.id } }),
+  ).toMatchObject({
+    committedMinor: 7n,
+  });
   return (actualMinor = 20): Promise<void> =>
     ingestMatchedTextReceipt(t.db, {
       target: {

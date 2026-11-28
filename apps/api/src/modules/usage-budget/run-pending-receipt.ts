@@ -6,7 +6,7 @@ import { transitionLocked } from "../runs/runs.store.js";
 import type { Context, Json, Run, Scoped, Step } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import { videoPricingSchema } from "../scene-media/media-prices.js";
-import { pendingShotMedia, pricedOutput } from "./run-shot-receipt.js";
+import { pendingShotMedia, pricedOutput, refusedShot } from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
 export const pendingCorrectionWhere = {
@@ -115,10 +115,11 @@ export async function persistPendingCorrection(
       current.idempotencyKey !== observed.idempotencyKey ||
       current.providerId !== marker.providerId ||
       current.providerJobId !== marker.providerJobId ||
-      !["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state)
+      (!["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state) && !refusedShot(current))
     )
       throw new ConflictException("Provider job claim changed");
-    if (!needsReceiptMarker(current, receipt)) return { value: null, payload: { replay: true } };
+    if (refusedShot(current) || !needsReceiptMarker(current, receipt))
+      return { value: null, payload: { replay: true } };
     // An older worker can replace the output while a priced fetch is in flight.
     // Keep the admission terms used for this observation across a later billing timeout.
     const fields = z.record(z.string(), z.json()).parse(current.output ?? {});

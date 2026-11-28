@@ -279,7 +279,10 @@ export function classifyCost(
   const pending = row.status === "FAILED" && row.errorCode === "PENDING";
   const failed = row.status === "FAILED" && !pending;
   const gross = currency === null ? null : decimalToMinor(row.estimatedCost, currency);
-  const credited = failed && terminalMediaFailure(row.errorCode) ? (row.creditedMinor ?? 0n) : 0n;
+  const credited =
+    row.status === "SUCCEEDED" || (failed && terminalMediaFailure(row.errorCode))
+      ? (row.creditedMinor ?? 0n)
+      : 0n;
   return {
     kind: row.status === "SUCCEEDED" || pending ? "ESTIMATED" : "FAILED_ESTIMATED",
     amountMinor: gross === null ? null : gross > credited ? gross - credited : 0n,

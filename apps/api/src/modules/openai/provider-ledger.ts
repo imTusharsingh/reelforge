@@ -16,6 +16,12 @@ import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
 import { lockBooks } from "../usage-budget/text-admission-lock.js";
 import { decimalToMinor, minorToNumber } from "../usage-budget/usage-budget.money.js";
 
+function routedBilledSeconds(usage: Prisma.JsonValue): number | null {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const { seconds } = usage;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
 type LockedJob = {
   row: Prisma.ProviderRequestGetPayload<{
     include: { credits: { select: { amountMinor: true } } };
@@ -280,7 +286,7 @@ export class ProviderLedger {
     workspaceId: string,
     correlationId: string,
     port: VideoGenPort,
-    artifact: ClipArtifact,
+    artifact: Pick<ClipArtifact, "billedSeconds"> & Partial<ClipArtifact>,
     jobId: string,
   ): Promise<void> {
     await this.db.$transaction(async (tx) => {
@@ -289,14 +295,18 @@ export class ProviderLedger {
         throw new ConflictException("Provider ledger mismatch");
       const rate = port.capabilities().pricePerSecond["720p"];
       const verified = artifact.billedSeconds !== null && rate !== null;
-      if (!verified && row.credits.length && row.actualCost === null)
+      const billed = verified ? ledgerUsd(secondsCost(artifact.billedSeconds!, rate!)) : null;
+      const earlier = routedBilledSeconds(row.usage);
+      const keepEarlier =
+        earlier !== null &&
+        row.actualCost !== null &&
+        (billed === null || row.actualCost.gt(billed));
+      const actual = keepEarlier ? row.actualCost!.toString() : billed;
+      if (actual === null && row.credits.length && row.errorCode === "REFUSED")
         throw new ConflictException("A refunded refusal requires a verified bill to reprice");
-      const actual =
-        artifact.billedSeconds !== null && rate !== null
-          ? ledgerUsd(secondsCost(artifact.billedSeconds, rate))
-          : (row.actualCost ?? row.estimatedCost)!.toString();
-      if (reservation) {
-        const amount = decimalToMinor(actual, reservation.currency);
+      if (reservation && (actual !== null || reservation.status !== "COMMITTED")) {
+        const amount =
+          actual === null ? reservation.amountMinor : decimalToMinor(actual, reservation.currency);
         if (reservation.status === "COMMITTED") {
           // Verified billing supersedes the whole estimated posting, including its refund.
           await tx.usageReservation.update({
@@ -313,11 +323,13 @@ export class ProviderLedger {
           status: "SUCCEEDED",
           actualCost: actual,
           errorCode: null,
-          ...(artifact.billedSeconds !== null && { usage: { seconds: artifact.billedSeconds } }),
+          ...(verified && !keepEarlier && { usage: { seconds: artifact.billedSeconds } }),
           responseMetadata: {
             ...metadata,
-            objectKey: artifact.objectKey,
-            checksumSha256: artifact.checksumSha256,
+            ...(artifact.objectKey !== undefined && { objectKey: artifact.objectKey }),
+            ...(artifact.checksumSha256 !== undefined && {
+              checksumSha256: artifact.checksumSha256,
+            }),
           },
         },
       });

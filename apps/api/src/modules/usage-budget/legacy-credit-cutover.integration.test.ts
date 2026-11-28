@@ -166,6 +166,101 @@ describe.skipIf(!process.env.DATABASE_URL)("workspace credit cutover", () => {
       });
     },
   );
+  it("recognizes main's proven budget denial with no accounting rows without seeding a retry", async () => {
+    const t = await fixture.tenant();
+    const { workspaceId, id: runId } = t.run;
+    vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+    const denied = await t.db.videoRunStep.create({
+      data: {
+        workspaceId,
+        runId,
+        state: "CANCELLED",
+        key: "media:text:budget-denied",
+        idempotencyKey: `${runId}:budget-denied`,
+        input: { modelId: "gemini-text" },
+        providerId: "gemini",
+        costMinor: 7,
+        finishedAt: new Date(),
+        output: { closedBy: "BUDGET_DENIED_NOT_DISPATCHED" },
+      },
+    });
+    for (const [type, payload] of [
+      ["media_intent", { key: denied.key, costMinor: 7 }],
+      ["dispatch_released", { amountMinor: 7, reason: "NOT_DISPATCHED" }],
+    ] as const) {
+      await t.store.mutate(t.context, runId, type, async () => ({
+        value: null,
+        stepId: denied.id,
+        payload,
+      }));
+    }
+    const apply = (): ReturnType<typeof importLegacyTextAttempts> =>
+      importLegacyTextAttempts(t.db, {
+        workspaceId,
+        apply: true,
+        oldWritersDrained: true,
+        auditId: "main-denial",
+      });
+    for (const report of [
+      await importLegacyTextAttempts(t.db, { workspaceId }),
+      await apply(),
+      await apply(),
+    ]) {
+      expect(report.attempts).toEqual([
+        {
+          attemptId: denied.id,
+          action: "already-imported",
+          outcome: "non-dispatched",
+        },
+      ]);
+    }
+    expect(await t.db.videoRunStep.findMany({ where: { runId, key: denied.key } })).toEqual([
+      denied,
+    ]);
+    expect(await t.db.providerRequest.count({ where: { workspaceId } })).toBe(0);
+    expect(await t.db.usageReservation.count({ where: { workspaceId } })).toBe(0);
+    expect(await t.db.textAttemptEvidence.count({ where: { workspaceId } })).toBe(0);
+  });
+  it("keeps a proven refund against main's unbilled video estimate", async () => {
+    const t = await fixture.tenant();
+    const { workspaceId, channelId } = t.run;
+    const job = await refusedRoutedJob(t);
+    await t.db.providerRequest.update({
+      where: { id: job.requestId },
+      data: {
+        status: "SUCCEEDED",
+        errorCode: null,
+        actualCost: "0.20",
+        usage: { seconds: null },
+      },
+    });
+    const id = await historicalCredit(t, { providerRequestId: job.requestId });
+    vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+    const options = {
+      workspaceId,
+      apply: true,
+      oldWritersDrained: true,
+      auditId: "main-video-estimate",
+    };
+    expect((await importLegacyTextAttempts(t.db, options)).unresolvedCreditIds).toEqual([]);
+    expect((await importLegacyTextAttempts(t.db, options)).mediaCreditLinks).toEqual([]);
+    expect(await t.db.usageAdjustment.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      providerRequestId: job.requestId,
+      amountMinor: 3n,
+    });
+    expect(
+      await t.db.providerRequest.findUniqueOrThrow({ where: { id: job.requestId } }),
+    ).toMatchObject({
+      actualCost: null,
+    });
+    expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(17);
+    expect(
+      (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+    ).toMatchObject({
+      totalMinor: 17,
+      adjustmentNetMinor: 0,
+    });
+  });
   it("attributes the historical media refund in place and preserves exposure on replay", async () => {
     const t = await fixture.tenant();
     const { workspaceId, channelId } = t.run;

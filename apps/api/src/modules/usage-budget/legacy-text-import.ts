@@ -1,3 +1,4 @@
+import { mainBudgetDenial, preserveMainEstimate } from "./legacy-text-import-observations.js";
 import { reconcileExisting } from "./legacy-journal-reconcile.js";
 import { foldTextAttempt } from "./text-attempt-fold.js";
 import { operatorContext } from "./text-attempt-ops.js";
@@ -127,6 +128,14 @@ async function importOne(
   const { request, reservation, activity, credits } = await readSources(tx, step, run);
   if (!credits)
     return { attemptId: id, action: "blocked", reason: "conflicting legacy credit audit" };
+  if (
+    !request &&
+    !reservation &&
+    !credits.rows.length &&
+    mainBudgetDenial(step, activity) &&
+    !(await tx.usageReservation.findFirst({ where: { workspaceId, correlationId: id } }))
+  )
+    return { attemptId: id, action: "already-imported", outcome: "non-dispatched" };
   const plan = planLegacyTextImport({
     step,
     channelId: run.channelId,
@@ -231,6 +240,7 @@ async function writeImport(
       data: { costMinor: 0, output: { ...legacyObject(step.output), closedBy: "NOT_DISPATCHED" } },
     });
   else await seedLegacyPosting(tx, run, step, plan, reservation, credits);
+  if (plan.outcome === "completed") await preserveMainEstimate(tx, request);
   await tx.textAttemptEvidence.createMany({
     data: events.map((event) => ({ ...where, ...event })),
   });

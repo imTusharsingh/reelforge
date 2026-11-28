@@ -247,15 +247,27 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
     ).toBe(rebuilt.totalCostMinor);
   });
 
-  it.each(["id-less", "late ID", "ambiguous", "inconsistent total"] as const)(
+  it.each([
+    "id-less",
+    "late ID",
+    "ambiguous",
+    "inconsistent total",
+    "main total with refused shot",
+  ] as const)(
     "reprices only the rendered shot while resolving historical text: %s",
     async (mode) => {
       const setup = await setupAssembly(fixture);
       const { t, run, bindings, plan } = setup;
+      const unmatchedSpend = mode === "main total with refused shot" ? 9 : 0;
       const { receipt, dispatchKey } = await historicalTextFixture(
         setup,
-        mode === "inconsistent total" ? "late ID" : mode,
+        mode === "inconsistent total"
+          ? "late ID"
+          : mode === "main total with refused shot"
+            ? "id-less"
+            : mode,
       );
+      if (unmatchedSpend) await importHistoricalBooking(t, dispatchKey);
       const key = `shot-${plan.manifest.shots[0]!.ordinal}`;
       const original = readReceipt(
         (await t.db.videoRunStep.findFirstOrThrow({ where: { runId: run.id, key } })).output,
@@ -263,7 +275,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
       const historical = await seedHistoricalManifest(
         setup,
         [receipt, original],
-        mode === "inconsistent total" ? 13 : 0,
+        mode === "inconsistent total" ? 13 : unmatchedSpend,
       );
       const corrected = await repriceHistoricalShot(setup, key);
 
@@ -289,13 +301,14 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly receipt upgrade safety", ()
           ...receipt,
           dispatchKey,
           ...(mode === "late ID" && { costMinor: 20, postedNetMinor: 20, costBasis: "BILLED" }),
+          ...(unmatchedSpend && { postedNetMinor: 7 }),
           providerJobId: mode === "late ID" ? "historical-google-id" : null,
         },
         corrected,
       ]);
       expect(rebuilt.videoChecksumSha256).toBe(historical.media.checksumSha256);
       expect(rebuilt.totalCostMinor).toBe(
-        (mode === "late ID" ? 20 : receipt.costMinor) + corrected.costMinor,
+        (mode === "late ID" ? 20 : receipt.costMinor) + corrected.costMinor + unmatchedSpend,
       );
     },
   );
