@@ -1,3 +1,4 @@
+import { pendingCorrection } from "./run-pending-receipt.js";
 import { DISPATCHING, OUTCOME_UNKNOWN } from "./run-admission-state.js";
 import { lockBooks } from "./text-admission-lock.js";
 import { reservationCents, secondsCost, type FailedJobStatus } from "@reelforge/ai-providers";
@@ -12,6 +13,7 @@ const observation = z.object({
   status: z.enum(["refused", "failed"]),
   providerJobId: z.string().min(1).nullable(),
   billedMinor: z.int().nonnegative().nullable(),
+  billedSeconds: z.number().nonnegative().optional(),
 });
 export type TerminalVideo = z.infer<typeof observation>;
 
@@ -33,7 +35,8 @@ export function hasVideoDelivery(step: Step): boolean {
   return (
     step.state === "SUCCEEDED" ||
     (step.state === "WAITING_EXTERNAL" &&
-      (!!pendingShotMedia(step)?.pendingMedia ||
+      (!!pendingCorrection(step)?.media ||
+        !!pendingShotMedia(step)?.pendingMedia ||
         z.object({ storageArtifacts: z.array(z.unknown()).min(1) }).safeParse(step.output).success))
   );
 }
@@ -53,6 +56,7 @@ export async function stageTerminalVideo(
   status: FailedJobStatus,
   providerJobId: string | null,
   billedMinor: number | null,
+  billedSeconds?: number | null,
 ): Promise<Step> {
   const { value } = await store.mutate<{ step: Step; run: Run; bill: number | null }>(
     context,
@@ -75,10 +79,13 @@ export async function stageTerminalVideo(
       if (prior && prior.providerJobId !== providerJobId)
         throw new ConflictException("Terminal video receipt changed remote job");
       const bill = Math.max(prior?.billedMinor ?? -1, billedMinor ?? -1);
+      const seconds =
+        billedMinor === bill && billedSeconds != null ? billedSeconds : prior?.billedSeconds;
       const terminal = observation.parse({
         status: prior?.status ?? status,
         providerJobId,
         billedMinor: bill < 0 ? null : bill,
+        ...(seconds !== undefined && { billedSeconds: seconds }),
       });
       const output = {
         ...z.record(z.string(), z.json()).parse(current.output ?? {}),

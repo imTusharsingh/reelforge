@@ -2,6 +2,7 @@ import {
   EmptyMediaResponse,
   VideoRouter,
   ProviderLimiter,
+  TerminalMediaJob,
   reservationCents,
   secondsCost,
   type ClipArtifact,
@@ -105,7 +106,13 @@ export class RoutedMediaVideo implements VideoGenPort {
         )
       )
         throw error;
-      const receipt = await this.collectReceipt(id, billing.shot, billing);
+      const receipt = await this.collectReceipt(id, billing.shot, billing).catch(
+        (cause: unknown) => {
+          if (cause instanceof TerminalMediaJob)
+            throw new ShotMediaFailure(this.providerId, id, cause);
+          throw cause;
+        },
+      );
       body = await this.jobs.bytes(this.context, receipt.media).catch(this.mediaFailure(id));
       await billing.record(receipt);
     }

@@ -1,7 +1,8 @@
 import { secondsCost, TerminalMediaJob, type VideoGenPort } from "@reelforge/ai-providers";
 import { describe, expect, it, vi } from "vitest";
 import { runsFixture } from "../runs/runs.fixture.js";
-import { pendingShotMedia } from "./run-shot-receipt.js";
+import { StorageObjectNotFoundError } from "../asset/storage/storage.port.js";
+import * as billing from "./run-billing.js";
 import * as bookLocks from "./text-admission-lock.js";
 import { workerVideo } from "./worker-video.fixture.js";
 
@@ -82,6 +83,16 @@ describe.skipIf(!process.env.DATABASE_URL)("worker terminal-video regressions", 
         return "refused";
       });
     await t.engine.process(job);
+    const recorded = Promise.withResolvers<void>();
+    const releaseCapture = Promise.withResolvers<void>();
+    const capture = billing.captureShotReceipt;
+    const captureGate = vi
+      .spyOn(billing, "captureShotReceipt")
+      .mockImplementationOnce(async (...args) => {
+        recorded.resolve();
+        await releaseCapture.promise;
+        return capture(...args);
+      });
     const success = t.engine.process(job);
     let refusal: ReturnType<typeof t.engine.process> | undefined;
     try {
@@ -89,11 +100,18 @@ describe.skipIf(!process.env.DATABASE_URL)("worker terminal-video regressions", 
       refusal = t.engine.process(job);
       await Promise.race([noted.promise, refusal]);
       releaseFetch.resolve();
-      await success;
+      await Promise.race([recorded.promise, success]);
       releaseRefusal.resolve();
       await refusal;
+      expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: step.key } })).toBe(1);
+      releaseCapture.resolve();
+      await success;
       const winner = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } });
-      expect(winner).toMatchObject({ state: "SUCCEEDED", costMinor: 23 });
+      expect(winner).toMatchObject({
+        state: "SUCCEEDED",
+        costMinor: 23,
+        output: { receipt: { costMinor: 23, seconds: 23, providerDurationSeconds: 5 } },
+      });
       expect(t.artifacts.descriptors(winner.output)).toEqual(
         expect.arrayContaining([expect.objectContaining({ kind: "clips" })]),
       );
@@ -102,7 +120,9 @@ describe.skipIf(!process.env.DATABASE_URL)("worker terminal-video regressions", 
     } finally {
       releaseFetch.resolve();
       releaseRefusal.resolve();
+      releaseCapture.resolve();
       await Promise.allSettled([success, refusal]);
+      captureGate.mockRestore();
     }
   });
 
@@ -119,19 +139,14 @@ describe.skipIf(!process.env.DATABASE_URL)("worker terminal-video regressions", 
         throw new TerminalMediaJob("failed");
       });
     await t.engine.process(job);
-    const put = vi
-      .spyOn(t.artifacts, "put")
-      .mockRejectedValueOnce(new Error("before clip delivery"));
+    const get = vi
+      .spyOn(t.storage, "getObject")
+      .mockRejectedValueOnce(new StorageObjectNotFoundError("staged clip missing on first read"));
     try {
-      await expect(t.engine.process(job)).rejects.toThrow("before clip delivery");
+      await expect(t.engine.process(job)).rejects.toThrow(TerminalMediaJob);
     } finally {
-      put.mockRestore();
+      get.mockRestore();
     }
-    const waiting = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } });
-    const saved = pendingShotMedia(waiting)?.pendingMedia;
-    expect(saved).toBeDefined();
-    await t.storage.deleteObject({ workspaceId: run.workspaceId, objectKey: saved!.objectKey });
-    await expect(t.engine.process(job)).rejects.toThrow(TerminalMediaJob);
     expect(
       await t.db.providerRequest
         .findFirstOrThrow({

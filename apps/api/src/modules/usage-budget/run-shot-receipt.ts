@@ -34,7 +34,7 @@ export function awaitingBilling(step: Step): boolean {
   return isBillingHold(step.error);
 }
 
-const pendingOutput = z.object({
+export const pendingOutput = z.object({
   pendingMedia: z
     .object({
       objectKey: z.string(),

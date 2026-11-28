@@ -225,6 +225,22 @@ async function correctSettledReceipt(
   return budget && { ...budget, bufferMinor: nextBuffer };
 }
 
+function observedPrice(current: Step, observed: VideoReceipt): VideoReceipt {
+  const terminal = terminalVideo(current);
+  // A matching successful fetch keeps its media. A verified terminal bill for
+  // the same job still wins over a cheaper receipt.
+  return terminal?.providerJobId === current.providerJobId &&
+    terminal.billedMinor !== null &&
+    (observed.costBasis !== "BILLED" || terminal.billedMinor > observed.costMinor)
+    ? {
+        ...observed,
+        costBasis: "BILLED",
+        costMinor: terminal.billedMinor,
+        seconds: terminal.billedSeconds ?? observed.seconds,
+      }
+    : observed;
+}
+
 /** Keep the highest reported charge and the latest staged media for the accepted job. */
 export async function captureShotReceipt(
   store: RunsStore,
@@ -243,16 +259,7 @@ export async function captureShotReceipt(
       if (terminalBilledShot(current)) return captureRefusedBill(db, tx, run, current, receipt);
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
-      const observed = highestObservedReceipt(pending, receipt);
-      const terminal = terminalVideo(current);
-      // A matching successful fetch keeps its media. A verified terminal bill for
-      // the same job still wins over a cheaper receipt.
-      const price: VideoReceipt =
-        terminal?.providerJobId === step.providerJobId &&
-        terminal.billedMinor !== null &&
-        (observed.costBasis !== "BILLED" || terminal.billedMinor > observed.costMinor)
-          ? { ...observed, costBasis: "BILLED", costMinor: terminal.billedMinor }
-          : observed;
+      const price = observedPrice(current, highestObservedReceipt(pending, receipt));
       const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;

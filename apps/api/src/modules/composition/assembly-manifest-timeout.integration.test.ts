@@ -92,14 +92,15 @@ it.skipIf(!process.env.DATABASE_URL)(
           where: { runId: run.id, workspaceId: run.workspaceId, key: "local:assembly" },
         })
       ).output;
-    const first = t.runs.detail(t.context, run.id);
-    let second: ReturnType<typeof t.runs.detail> | undefined;
+    const finalize = vi.spyOn(t.store, "mutate");
+    const callers = [t.runs.detail(t.context, run.id)];
     try {
-      await Promise.race([readStarted.promise, first]);
-      second = t.runs.detail(t.context, run.id);
-      await expect.poll(() => deadlines.length).toBe(2);
+      await Promise.race([readStarted.promise, callers[0]]);
+      callers.push(t.runs.detail(t.context, run.id), t.runs.detail(t.context, run.id));
+      await expect.poll(() => deadlines.length).toBe(3);
       deadlines.forEach((fire) => fire());
-      await Promise.all([first, second]);
+      await Promise.all(callers);
+      const before = await t.store.get(t.context, run.id);
       expect(await output()).toMatchObject(beforeRelease);
       expect(read).toHaveBeenCalledOnce();
       expect(write).not.toHaveBeenCalled();
@@ -121,6 +122,10 @@ it.skipIf(!process.env.DATABASE_URL)(
           }),
         )
         .toBe(1);
+      expect(
+        finalize.mock.calls.filter(([, , event]) => event === "assembly_receipts_snapshot"),
+      ).toHaveLength(1);
+      expect((await t.store.get(t.context, run.id)).revision).toBe(before.revision + 1);
       expect(read).toHaveBeenCalledOnce();
       expect(write).toHaveBeenCalledOnce();
       const published = t.artifacts.descriptors(await output());
@@ -135,7 +140,8 @@ it.skipIf(!process.env.DATABASE_URL)(
       timer.mockRestore();
       read.mockRestore();
       write.mockRestore();
-      await Promise.allSettled([first, second]);
+      await Promise.allSettled(callers);
+      finalize.mockRestore();
     }
   },
 );

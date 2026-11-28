@@ -31,6 +31,7 @@ export function videoBilling(
           failure,
           step.providerJobId,
           receipt.costMinor,
+          receipt.seconds,
         );
         if (
           terminalVideo(current) &&
@@ -58,6 +59,7 @@ export async function observeSubmissionRefusal(
     "refused",
     error.providerJobId,
     submissionBill(step, error.billedSeconds),
+    error.billedSeconds,
   );
   await settleObservedTerminal(runs, paid, context, current);
 }

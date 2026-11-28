@@ -35,7 +35,15 @@ type ArchiveSnapshot = Awaited<ReturnType<typeof prepareArchiveRebuilds>> & {
 };
 type ArchiveJob = ArchiveSnapshot["jobs"][number];
 type ArchiveProblem = Awaited<ReturnType<typeof rebuildArchiveJob>>;
-const refreshes = new WeakMap<RunsStore, Map<string, Promise<ArchiveProblem>>>();
+type ArchiveAttempt = { job: ArchiveJob; completion: Promise<ArchiveProblem>; retry: boolean };
+type ArchiveRefresh = {
+  attempts: Map<string, ArchiveAttempt>;
+  unscoped: string[];
+  completion?: Promise<void>;
+  finishing?: boolean;
+};
+const refreshes = new WeakMap<RunsStore, Map<string, ArchiveRefresh>>();
+class ObsoleteArchiveRefresh extends Error {}
 const logger = new Logger("AssemblyManifestRefresh");
 
 async function rewriteManifest(
@@ -86,42 +94,85 @@ export async function refreshAssemblyManifests(
     return { ...(await prepareArchiveRebuilds(db, runId, deltas)), sequence, prices, historical };
   });
   if (!snapshot) return;
-  const completion = rebuildSnapshot(store, artifacts, storage, context, runId, snapshot).catch(
-    (error: unknown) => {
+  await waitForRefresh(startRefresh(store, artifacts, storage, context, runId, snapshot));
+}
+
+function startRefresh(
+  store: RunsStore,
+  artifacts: RunsArtifacts,
+  storage: StoragePort,
+  context: Context,
+  runId: string,
+  { sequence, jobs, unscoped, prices, historical }: ArchiveSnapshot,
+): Promise<void> {
+  const pending = refreshes.get(store) ?? new Map<string, ArchiveRefresh>();
+  refreshes.set(store, pending);
+  const key = `${context.workspaceId}:${runId}:${sequence}`;
+  const refresh: ArchiveRefresh = pending.get(key) ?? { attempts: new Map(), unscoped };
+  pending.set(key, refresh);
+  if (!refresh.finishing) {
+    refresh.unscoped = unscoped;
+    for (const job of jobs)
+      startArchive(refresh, job, () =>
+        rebuildArchiveJob(store, context, runId, sequence, job, (source, delta) =>
+          rewriteManifest(context, runId, source, prices, historical, delta, storage, artifacts),
+        ),
+      );
+  }
+  return (refresh.completion ??= finalizeRefresh(store, context, runId, sequence, refresh)
+    .catch((error: unknown) => {
+      if (error instanceof ObsoleteArchiveRefresh) return;
       logger.warn(`Manifest refresh deferred for run ${runId}`);
       throw error;
-    },
-  );
-  await waitForRefresh(completion);
+    })
+    .finally(() => pending.delete(key)));
 }
 
 function startArchive(
-  store: RunsStore,
-  context: Context,
-  runId: string,
-  sequence: number,
+  refresh: ArchiveRefresh,
   job: ArchiveJob,
-  rebuild: Parameters<typeof rebuildArchiveJob>[5],
-): Promise<ArchiveProblem> {
-  const pending = refreshes.get(store) ?? new Map<string, Promise<ArchiveProblem>>();
-  refreshes.set(store, pending);
-  // An in-flight archive does not block retries of sibling jobs or newer billing revisions.
+  rebuild: () => Promise<ArchiveProblem>,
+): void {
+  // Retrying this archive does not restart or wait behind a blocked sibling.
   const key = JSON.stringify([
-    context.workspaceId,
-    runId,
-    sequence,
     job.source.objectKey,
     job.source.checksumSha256,
     job.delta,
     job.rows.map(({ id, revision }) => `${id}:${revision}`).sort(),
   ]);
-  const existing = pending.get(key);
-  if (existing) return existing;
-  const completion = rebuildArchiveJob(store, context, runId, sequence, job, rebuild).finally(() =>
-    pending.delete(key),
-  );
-  pending.set(key, completion);
-  return completion;
+  const previous = refresh.attempts.get(key);
+  if (previous && !previous.retry) return;
+  const attempt: ArchiveAttempt = {
+    job,
+    retry: false,
+    completion: rebuild()
+      .catch((): ArchiveProblem => {
+        // A database or storage failure in one attempt must not poison the revision's finalizer.
+        logger.warn(`Archive rebuild deferred for row ${job.rows[0]?.id}`);
+        return "retry";
+      })
+      .then((result) => {
+        attempt.retry = result === "retry";
+        return result;
+      }),
+  };
+  refresh.attempts.set(key, attempt);
+}
+
+async function settledArchives(
+  refresh: ArchiveRefresh,
+): Promise<{ jobs: ArchiveJob[]; results: ArchiveProblem[] }> {
+  for (;;) {
+    const entries = [...refresh.attempts];
+    const results = await Promise.all(entries.map(([, attempt]) => attempt.completion));
+    if (
+      entries.length === refresh.attempts.size &&
+      entries.every(([key, attempt]) => refresh.attempts.get(key) === attempt)
+    ) {
+      refresh.finishing = true;
+      return { jobs: entries.map(([, attempt]) => attempt.job), results };
+    }
+  }
 }
 
 async function waitForRefresh(completion: Promise<void>): Promise<void> {
@@ -139,28 +190,23 @@ async function waitForRefresh(completion: Promise<void>): Promise<void> {
   }
 }
 
-async function rebuildSnapshot(
+async function finalizeRefresh(
   store: RunsStore,
-  artifacts: RunsArtifacts,
-  storage: StoragePort,
   context: Context,
   runId: string,
-  snapshot: ArchiveSnapshot,
+  sequence: number,
+  refresh: ArchiveRefresh,
 ): Promise<void> {
-  const { jobs, unscoped, sequence, prices, historical } = snapshot;
-  const results = await Promise.all(
-    jobs.map((job) =>
-      startArchive(store, context, runId, sequence, job, (source, delta) =>
-        rewriteManifest(context, runId, source, prices, historical, delta, storage, artifacts),
-      ),
-    ),
-  );
+  const { jobs, results } = await settledArchives(refresh);
+  const { unscoped } = refresh;
+  if (!(await manifestRefreshMode(store.scoped(context), runId))) return;
   await store.mutate(context, runId, "assembly_receipts_snapshot", async (db) => {
     if (
       (await manifestBillingSequence(db, runId)) !== sequence ||
       !(await manifestRefreshMode(db, runId))
     )
-      return { value: null, payload: {} };
+      // RunsStore increments the revision before invoking this callback; roll it back on stale work.
+      throw new ObsoleteArchiveRefresh();
     const observed = new Set([
       ...unscoped,
       ...jobs.flatMap((job, i) => (results[i] === "retry" ? [] : job.rows.map(({ id }) => id))),

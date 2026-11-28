@@ -7,7 +7,12 @@ import { transitionLocked } from "../runs/runs.store.js";
 import type { Context, Json, Run, Scoped, Step } from "../runs/runs.types.js";
 import type { RunsStore } from "../runs/runs.store.js";
 import { videoPricingSchema } from "../scene-media/media-prices.js";
-import { pendingShotMedia, pricedOutput, terminalBilledShot } from "./run-shot-receipt.js";
+import {
+  pendingOutput,
+  pendingShotMedia,
+  pricedOutput,
+  terminalBilledShot,
+} from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
 const pendingRefusedBillWhere = {
@@ -63,6 +68,7 @@ const pendingPrice = z
     promptVersion: receiptFields.promptVersion,
     code: z.literal(PENDING_RECEIPT_CORRECTION),
     costBasis: z.literal("BILLED"),
+    media: pendingOutput.shape.pendingMedia.optional(),
   })
   .strict();
 
@@ -81,7 +87,11 @@ export function pendingCorrection(step: Step): VideoReceipt | null {
   const price = pendingPrice.parse(marker);
   if (price.providerJobId !== step.providerJobId || price.providerId !== step.providerId)
     throw new ConflictException("Pending receipt does not match settled shot");
-  return { ...price, providerDurationSeconds: null, media: null };
+  return {
+    ...price,
+    providerDurationSeconds: price.media?.durationSeconds ?? null,
+    media: price.media ?? null,
+  };
 }
 
 /** A price-only marker must not discard a later delivery of the same provider job. */
@@ -89,12 +99,14 @@ export function highestObservedReceipt(
   pending: VideoReceipt | null,
   received: VideoReceipt,
 ): VideoReceipt {
-  if (!pending || (received.costBasis === "BILLED" && received.costMinor > pending.costMinor))
-    return received;
+  if (!pending) return received;
+  const price =
+    received.costBasis === "BILLED" && received.costMinor > pending.costMinor ? received : pending;
+  const media = received.media ?? pending.media;
   return {
-    ...pending,
-    media: received.media,
-    providerDurationSeconds: received.providerDurationSeconds,
+    ...price,
+    media,
+    providerDurationSeconds: media?.durationSeconds ?? received.providerDurationSeconds,
   };
 }
 
@@ -143,6 +155,7 @@ function receiptMarker(step: Step, receipt: VideoReceipt): z.infer<typeof pendin
     promptVersion: receipt.promptVersion,
     providerId: step.providerId,
     providerJobId: step.providerJobId,
+    ...(receipt.media && { media: receipt.media }),
   });
 }
 
@@ -154,19 +167,27 @@ export async function persistPendingCorrection(
   receipt: VideoReceipt,
 ): Promise<void> {
   if (receipt.costBasis !== "BILLED") return;
-  const marker = receiptMarker(observed, receipt);
+  const claim = receiptMarker(observed, receipt);
   await store.mutate(context, observed.runId, "receipt_observed", async (db, run) => {
     const current = await db.videoRunStep.findFirstOrThrow({
       where: { id: observed.id, runId: run.id },
     });
     if (
       current.idempotencyKey !== observed.idempotencyKey ||
-      current.providerId !== marker.providerId ||
-      current.providerJobId !== marker.providerJobId ||
+      current.providerId !== claim.providerId ||
+      current.providerJobId !== claim.providerJobId ||
       (!["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state) && !terminalBilledShot(current))
     )
       throw new ConflictException("Provider job claim changed");
-    if (!needsReceiptMarker(current, receipt)) return { value: null, payload: { replay: true } };
+    const pending = pendingCorrection(current);
+    const firstMedia =
+      current.state === "WAITING_EXTERNAL" &&
+      receipt.media &&
+      !pending?.media &&
+      !pendingShotMedia(current)?.pendingMedia;
+    if (!firstMedia && !needsReceiptMarker(current, receipt))
+      return { value: null, payload: { replay: true } };
+    const marker = receiptMarker(current, highestObservedReceipt(pending, receipt));
     if (terminalBilledShot(current)) {
       await saveRefusalBill(db, current, marker);
       return { value: null, payload: { costMinor: marker.costMinor }, stepId: current.id };
