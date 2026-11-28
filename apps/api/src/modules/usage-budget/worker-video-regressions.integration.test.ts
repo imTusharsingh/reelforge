@@ -59,72 +59,75 @@ describe.skipIf(!process.env.DATABASE_URL)("worker terminal-video regressions", 
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("keeps the successful in-flight clip when a refusal marker commits first", async () => {
-    const t = await fixture.tenant("L2", 35);
-    const { run, step, job, native } = await workerVideo(t, billedPort);
-    const send = vi.spyOn(native, "submit");
-    const fetching = Promise.withResolvers<void>();
-    const releaseFetch = Promise.withResolvers<void>();
-    const noted = Promise.withResolvers<void>();
-    const releaseRefusal = Promise.withResolvers<void>();
-    const fetch = native.fetch.bind(native);
-    vi.spyOn(native, "fetch").mockImplementation(async (id) => {
-      fetching.resolve();
-      await releaseFetch.promise;
-      return fetch(id);
-    });
-    vi.spyOn(native, "poll")
-      .mockResolvedValueOnce("running")
-      .mockResolvedValueOnce("succeeded")
-      .mockImplementationOnce(async (_id, record) => {
-        await record?.(23, "refused");
-        noted.resolve();
-        await releaseRefusal.promise;
-        return "refused";
+  it.each([5, null])(
+    "keeps a successful in-flight clip when refusal is staged (usage: %s)",
+    async (seconds) => {
+      const t = await fixture.tenant("L2", 35);
+      const { run, step, job, native } = await workerVideo(t, billedPort);
+      const send = vi.spyOn(native, "submit");
+      const fetching = Promise.withResolvers<void>();
+      const releaseFetch = Promise.withResolvers<void>();
+      const noted = Promise.withResolvers<void>();
+      const releaseRefusal = Promise.withResolvers<void>();
+      const fetch = native.fetch.bind(native);
+      vi.spyOn(native, "fetch").mockImplementation(async (id) => {
+        fetching.resolve();
+        await releaseFetch.promise;
+        return { ...(await fetch(id)), billedSeconds: seconds };
       });
-    await t.engine.process(job);
-    const recorded = Promise.withResolvers<void>();
-    const releaseCapture = Promise.withResolvers<void>();
-    const capture = billing.captureShotReceipt;
-    const captureGate = vi
-      .spyOn(billing, "captureShotReceipt")
-      .mockImplementationOnce(async (...args) => {
-        recorded.resolve();
-        await releaseCapture.promise;
-        return capture(...args);
-      });
-    const success = t.engine.process(job);
-    let refusal: ReturnType<typeof t.engine.process> | undefined;
-    try {
-      await Promise.race([fetching.promise, success]);
-      refusal = t.engine.process(job);
-      await Promise.race([noted.promise, refusal]);
-      releaseFetch.resolve();
-      await Promise.race([recorded.promise, success]);
-      releaseRefusal.resolve();
-      await refusal;
-      expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: step.key } })).toBe(1);
-      releaseCapture.resolve();
-      await success;
-      const winner = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } });
-      expect(winner).toMatchObject({
-        state: "SUCCEEDED",
-        costMinor: 23,
-        output: { receipt: { costMinor: 23, seconds: 23, providerDurationSeconds: 5 } },
-      });
-      expect(t.artifacts.descriptors(winner.output)).toEqual(
-        expect.arrayContaining([expect.objectContaining({ kind: "clips" })]),
-      );
-      expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: step.key } })).toBe(1);
-      expect(send).toHaveBeenCalledOnce();
-    } finally {
-      releaseFetch.resolve();
-      releaseRefusal.resolve();
-      releaseCapture.resolve();
-      await Promise.allSettled([success, refusal]);
-      captureGate.mockRestore();
-    }
-  });
+      vi.spyOn(native, "poll")
+        .mockResolvedValueOnce("running")
+        .mockResolvedValueOnce("succeeded")
+        .mockImplementationOnce(async (_id, record) => {
+          await record?.(23, "refused");
+          noted.resolve();
+          await releaseRefusal.promise;
+          return "refused";
+        });
+      await t.engine.process(job);
+      const recorded = Promise.withResolvers<void>();
+      const releaseCapture = Promise.withResolvers<void>();
+      const capture = billing.captureShotReceipt;
+      const captureGate = vi
+        .spyOn(billing, "captureShotReceipt")
+        .mockImplementationOnce(async (...args) => {
+          recorded.resolve();
+          await releaseCapture.promise;
+          return capture(...args);
+        });
+      const success = t.engine.process(job);
+      let refusal: ReturnType<typeof t.engine.process> | undefined;
+      try {
+        await Promise.race([fetching.promise, success]);
+        refusal = t.engine.process(job);
+        await Promise.race([noted.promise, refusal]);
+        releaseFetch.resolve();
+        await Promise.race([recorded.promise, success]);
+        releaseRefusal.resolve();
+        await refusal;
+        expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: step.key } })).toBe(1);
+        releaseCapture.resolve();
+        await success;
+        const winner = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } });
+        expect(winner).toMatchObject({
+          state: "SUCCEEDED",
+          costMinor: 23,
+          output: { receipt: { costMinor: 23, seconds: 23, providerDurationSeconds: 5 } },
+        });
+        expect(t.artifacts.descriptors(winner.output)).toEqual(
+          expect.arrayContaining([expect.objectContaining({ kind: "clips" })]),
+        );
+        expect(await t.db.videoRunStep.count({ where: { runId: run.id, key: step.key } })).toBe(1);
+        expect(send).toHaveBeenCalledOnce();
+      } finally {
+        releaseFetch.resolve();
+        releaseRefusal.resolve();
+        releaseCapture.resolve();
+        await Promise.allSettled([success, refusal]);
+        captureGate.mockRestore();
+      }
+    },
+  );
 
   it("rejects failed recovery of a missing staged clip without dropping its bill", async () => {
     const t = await fixture.tenant("L2", 35);

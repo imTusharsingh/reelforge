@@ -1,4 +1,6 @@
-import { pendingCorrection } from "./run-pending-receipt.js";
+import { lockVideoJob, mergeVideoEvidence } from "./video-job-evidence.js";
+import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
+import { pendingCorrection, stageVideoReceipt } from "./run-pending-receipt.js";
 import { DISPATCHING, OUTCOME_UNKNOWN } from "./run-admission-state.js";
 import { lockBooks } from "./text-admission-lock.js";
 import { reservationCents, secondsCost, type FailedJobStatus } from "@reelforge/ai-providers";
@@ -31,13 +33,19 @@ export const terminalVideoWhere = {
   ],
 };
 
-export function hasVideoDelivery(step: Step): boolean {
+export function hasPublishedVideo(step: Step): boolean {
   return (
     step.state === "SUCCEEDED" ||
     (step.state === "WAITING_EXTERNAL" &&
-      (!!pendingCorrection(step)?.media ||
-        !!pendingShotMedia(step)?.pendingMedia ||
-        z.object({ storageArtifacts: z.array(z.unknown()).min(1) }).safeParse(step.output).success))
+      z.object({ storageArtifacts: z.array(z.unknown()).min(1) }).safeParse(step.output).success)
+  );
+}
+
+export function hasVideoDelivery(step: Step): boolean {
+  return (
+    hasPublishedVideo(step) ||
+    (step.state === "WAITING_EXTERNAL" &&
+      !!(pendingCorrection(step)?.media ?? pendingShotMedia(step)?.pendingMedia))
   );
 }
 
@@ -57,35 +65,30 @@ export async function stageTerminalVideo(
   providerJobId: string | null,
   billedMinor: number | null,
   billedSeconds?: number | null,
+  receipt?: VideoReceipt,
 ): Promise<Step> {
   const { value } = await store.mutate<{ step: Step; run: Run; bill: number | null }>(
     context,
     step.runId,
     "video_terminal_observed",
-    async (db, run) => {
-      const current = await db.videoRunStep.findFirstOrThrow({
-        where: { id: step.id, runId: step.runId },
-      });
+    async (db, run, tx) => {
+      const current = await lockVideoJob(tx, db, run, step.id);
       if (current.idempotencyKey !== step.idempotencyKey || current.providerId !== step.providerId)
         throw new ConflictException("Terminal video receipt belongs to another attempt");
-      if (!["RUNNING", "WAITING_EXTERNAL"].includes(current.state) || hasVideoDelivery(current))
-        return { value: { step: current, run, bill: null }, payload: { replay: true } };
-      if (
-        current.providerJobId !== step.providerJobId ||
-        (current.state === "WAITING_EXTERNAL" && current.providerJobId !== providerJobId)
-      )
-        throw new ConflictException("Terminal video receipt belongs to another job");
-      const prior = terminalVideo(current);
-      if (prior && prior.providerJobId !== providerJobId)
-        throw new ConflictException("Terminal video receipt changed remote job");
-      const bill = Math.max(prior?.billedMinor ?? -1, billedMinor ?? -1);
-      const seconds =
-        billedMinor === bill && billedSeconds != null ? billedSeconds : prior?.billedSeconds;
-      const terminal = observation.parse({
-        status: prior?.status ?? status,
+      const delivered = hasVideoDelivery(current);
+      if (delivered || !["RUNNING", "WAITING_EXTERNAL"].includes(current.state)) {
+        const saved =
+          receipt && current.providerJobId && current.providerJobId === providerJobId
+            ? await stageVideoReceipt(db, current, step, receipt)
+            : current;
+        return { value: { step: saved, run, bill: null }, payload: { replay: saved === current } };
+      }
+      const prior = matchedTerminal(current, step, providerJobId);
+      const terminal = mergeTerminalObservation(prior, {
+        status,
         providerJobId,
-        billedMinor: bill < 0 ? null : bill,
-        ...(seconds !== undefined && { billedSeconds: seconds }),
+        billedMinor,
+        ...(billedSeconds != null && { billedSeconds }),
       });
       const output = {
         ...z.record(z.string(), z.json()).parse(current.output ?? {}),
@@ -107,19 +110,70 @@ export async function stageTerminalVideo(
   // counts the durable marker while these accounting writes are pending.
   if (value.bill !== null)
     await store.db.$transaction((tx) =>
-      preserveTerminalExposure(tx, value.run, value.step, value.bill!),
+      preserveTerminalExposure(tx, store, context, value.run, value.step, value.bill!),
     );
   return value.step;
 }
 
+function matchedTerminal(
+  current: Step,
+  observed: Step,
+  providerJobId: string | null,
+): TerminalVideo | undefined {
+  if (
+    current.providerJobId !== observed.providerJobId ||
+    (current.state === "WAITING_EXTERNAL" && current.providerJobId !== providerJobId)
+  )
+    throw new ConflictException("Terminal video receipt belongs to another job");
+  const prior = terminalVideo(current);
+  if (prior && prior.providerJobId !== providerJobId)
+    throw new ConflictException("Terminal video receipt changed remote job");
+  return prior;
+}
+
+function terminalPrice(seen: TerminalVideo | undefined): VideoReceipt | null {
+  if (seen?.billedMinor == null) return null;
+  return {
+    costMinor: seen.billedMinor,
+    seconds: seen.billedSeconds ?? 0,
+    costBasis: "BILLED",
+    media: null,
+    providerDurationSeconds: null,
+    modelId: "",
+    promptVersion: "",
+  };
+}
+
+function mergeTerminalObservation(
+  prior: TerminalVideo | undefined,
+  seen: TerminalVideo,
+): TerminalVideo {
+  const merged = mergeVideoEvidence(
+    { receipt: terminalPrice(prior), terminal: prior?.status },
+    { receipt: terminalPrice(seen), terminal: seen.status },
+  );
+  const winner = merged.receipt?.costMinor === prior?.billedMinor ? prior : seen;
+  return observation.parse({
+    status: merged.terminal,
+    providerJobId: seen.providerJobId,
+    billedMinor: merged.receipt?.costMinor ?? null,
+    billedSeconds: winner?.billedSeconds,
+  });
+}
+
 async function preserveTerminalExposure(
   tx: Transaction,
+  store: RunsStore,
+  context: Context,
   run: Run,
   step: Step,
   amount: number,
 ): Promise<void> {
   // A crash can happen before committing the reservation. Raise its coverage now
   // and retain the billed row after expiry; do not create another posting.
+  await tx.$queryRaw`SELECT id FROM video_runs WHERE workspace_id = ${run.workspaceId}::uuid AND id = ${run.id}::uuid FOR UPDATE`;
+  const current = await lockVideoJob(tx, store.scoped(context, tx), run, step.id);
+  if (current.idempotencyKey !== step.idempotencyKey) return;
   await lockBooks(tx, run);
   const scope = { workspaceId: run.workspaceId, channelId: run.channelId, correlationId: step.id };
   await tx.usageReservation.updateMany({

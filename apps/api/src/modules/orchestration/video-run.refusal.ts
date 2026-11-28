@@ -1,3 +1,4 @@
+import { lockVideoJob } from "../usage-budget/video-job-evidence.js";
 import { hasVideoDelivery, terminalVideo } from "../usage-budget/run-video-terminal.js";
 import { carryRefusalBill } from "../usage-budget/run-pending-receipt.js";
 import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
@@ -33,7 +34,7 @@ export async function settleVideoRefusal(
     step.runId,
     "shot_refused",
     async (db, run, tx) => {
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      const current = await lockVideoJob(tx, db, run, step.id);
       if (SETTLED_SHOTS.some((state) => state === current.state) || hasVideoDelivery(current))
         return { value: null, payload: { replay: true } };
       if (

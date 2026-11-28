@@ -37,10 +37,11 @@ export async function settleFailedRequest(
   // that staged posting to the exact job before replacing the success ledger state.
   const staged = stagedShotBill(step, providerJobId, dispatched);
   const recorded = terminalVideo(step);
+  const pending = step.key.startsWith("shot-") && dispatched ? pendingCorrection(step) : null;
   const highest = Math.max(
     staged?.costBasis === "BILLED" ? staged.costMinor : -1,
     recorded && recorded.providerJobId === providerJobId ? (recorded.billedMinor ?? -1) : -1,
-    step.key.startsWith("shot-") && dispatched ? (pendingCorrection(step)?.costMinor ?? -1) : -1,
+    pending?.costBasis === "BILLED" ? pending.costMinor : -1,
   );
   const billed = highest === -1 ? null : highest;
   await lockFailureBooks(tx, context.workspaceId, step.runId, billed);

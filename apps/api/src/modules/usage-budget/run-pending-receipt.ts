@@ -1,4 +1,15 @@
-import { terminalVideoWhere } from "./run-video-terminal.js";
+import {
+  lockVideoJob,
+  mergeVideoEvidence,
+  sameVideoClip,
+  winsVideoPrice,
+} from "./video-job-evidence.js";
+import {
+  hasPublishedVideo,
+  hasVideoDelivery,
+  terminalVideo,
+  terminalVideoWhere,
+} from "./run-video-terminal.js";
 import { ConflictException } from "@nestjs/common";
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
@@ -12,6 +23,7 @@ import {
   pendingShotMedia,
   pricedOutput,
   terminalBilledShot,
+  requireReceiptAttempt,
 } from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
@@ -67,7 +79,7 @@ const pendingPrice = z
     modelId: receiptFields.modelId,
     promptVersion: receiptFields.promptVersion,
     code: z.literal(PENDING_RECEIPT_CORRECTION),
-    costBasis: z.literal("BILLED"),
+    costBasis: z.enum(["BILLED", "RESERVATION"]),
     media: pendingOutput.shape.pendingMedia.optional(),
   })
   .strict();
@@ -94,42 +106,22 @@ export function pendingCorrection(step: Step): VideoReceipt | null {
   };
 }
 
-/** A price-only marker must not discard a later delivery of the same provider job. */
-export function highestObservedReceipt(
-  pending: VideoReceipt | null,
-  received: VideoReceipt,
-): VideoReceipt {
-  if (!pending) return received;
-  const price =
-    received.costBasis === "BILLED" && received.costMinor > pending.costMinor ? received : pending;
-  const media = received.media ?? pending.media;
-  return {
-    ...price,
-    media,
-    providerDurationSeconds: media?.durationSeconds ?? received.providerDurationSeconds,
-  };
-}
-
-function recordedBilledMinor(step: Step): number | undefined {
-  const pending = pendingCorrection(step);
-  if (pending) return pending.costMinor;
-  const media = pendingShotMedia(step);
-  if (media?.receipt.costBasis === "BILLED") return media.receipt.costMinor;
-  const saved = pricedOutput.safeParse(step.output);
-  return saved.success && saved.data.receipt.costBasis !== "RESERVATION"
-    ? saved.data.receipt.costMinor
-    : undefined;
-}
-
-export function needsReceiptMarker(step: Step, receipt: VideoReceipt): boolean {
-  if (receipt.costBasis !== "BILLED") return false;
-  const previous = recordedBilledMinor(step);
-  return previous === undefined || receipt.costMinor > previous;
+function recordedPrice(step: Step): z.infer<typeof pricedOutput.shape.receipt> | undefined {
+  return pricedOutput.safeParse(step.output).data?.receipt;
 }
 
 export function isReceiptCorrection(step: Step, receipt: VideoReceipt): boolean {
-  const previous = recordedBilledMinor(step);
-  return receipt.costBasis === "BILLED" && previous !== undefined && receipt.costMinor > previous;
+  const previous = pendingCorrection(step) ?? recordedPrice(step);
+  return previous !== undefined && winsVideoPrice(previous, receipt);
+}
+
+export function needsReceiptMarker(step: Step, receipt: VideoReceipt): boolean {
+  const pending = pendingCorrection(step);
+  const existingClip = pending?.media ?? pendingShotMedia(step)?.pendingMedia ?? null;
+  return (
+    (!!receipt.media && !hasPublishedVideo(step) && !sameVideoClip(receipt.media, existingClip)) ||
+    (receipt.costBasis === "BILLED" && winsVideoPrice(pending ?? recordedPrice(step), receipt))
+  );
 }
 
 export function carryRefusalBill(step: Step): { output: Json } | Record<never, never> {
@@ -159,70 +151,74 @@ function receiptMarker(step: Step, receipt: VideoReceipt): z.infer<typeof pendin
   });
 }
 
-/** Persist the first or higher billed observation before any budget-row correction can time out. */
+/** Called with the job locked. Stage the bill and clip together before touching the budget. */
+export async function stageVideoReceipt(
+  db: Scoped,
+  current: Step,
+  observed: Step,
+  receipt: VideoReceipt,
+): Promise<Step> {
+  requireReceiptAttempt(current, observed);
+  const pending = pendingCorrection(current);
+  const terminal = terminalVideo(current);
+  const terminalReceipt =
+    terminal?.providerJobId === current.providerJobId && terminal.billedMinor !== null
+      ? {
+          ...receipt,
+          media: null,
+          costBasis: "BILLED" as const,
+          costMinor: terminal.billedMinor,
+          seconds: terminal.billedSeconds ?? receipt.seconds,
+        }
+      : null;
+  const received = mergeVideoEvidence(
+    { receipt: terminalReceipt, terminal: terminal?.status },
+    { receipt },
+  ).receipt!;
+  if (!needsReceiptMarker(current, received)) return current;
+  const staged = pendingShotMedia(current);
+  const previous =
+    pending ??
+    (staged && {
+      ...staged.receipt,
+      costBasis: staged.receipt.costBasis ?? ("BILLED" as const),
+      media: staged.pendingMedia,
+    });
+  const merged = mergeVideoEvidence(
+    { receipt: previous, delivered: hasVideoDelivery(current) },
+    { receipt: received },
+  ).receipt!;
+  const marker = receiptMarker(current, merged);
+  const fields = z.record(z.string(), z.json()).parse(current.output ?? {});
+  const terms = z.object({ videoPricing: videoPricingSchema }).safeParse(observed.output).data;
+  // Keep pinned admission terms if an older worker replaced the output.
+  const data = terminalBilledShot(current)
+    ? { output: { ...fields, pendingRefusalBill: marker } }
+    : {
+        error: marker,
+        ...(fields.videoPricing === undefined &&
+          terms && { output: { ...fields, videoPricing: terms.videoPricing } }),
+      };
+  await db.videoRunStep.updateMany({ where: { id: current.id }, data });
+  return { ...current, ...data };
+}
+
 export async function persistPendingCorrection(
   store: RunsStore,
   context: Context,
   observed: Step,
   receipt: VideoReceipt,
 ): Promise<void> {
-  if (receipt.costBasis !== "BILLED") return;
-  const claim = receiptMarker(observed, receipt);
-  await store.mutate(context, observed.runId, "receipt_observed", async (db, run) => {
-    const current = await db.videoRunStep.findFirstOrThrow({
-      where: { id: observed.id, runId: run.id },
-    });
-    if (
-      current.idempotencyKey !== observed.idempotencyKey ||
-      current.providerId !== claim.providerId ||
-      current.providerJobId !== claim.providerJobId ||
-      (!["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state) && !terminalBilledShot(current))
-    )
-      throw new ConflictException("Provider job claim changed");
-    const pending = pendingCorrection(current);
-    const firstMedia =
-      current.state === "WAITING_EXTERNAL" &&
-      receipt.media &&
-      !pending?.media &&
-      !pendingShotMedia(current)?.pendingMedia;
-    if (!firstMedia && !needsReceiptMarker(current, receipt))
-      return { value: null, payload: { replay: true } };
-    const marker = receiptMarker(current, highestObservedReceipt(pending, receipt));
-    if (terminalBilledShot(current)) {
-      await saveRefusalBill(db, current, marker);
-      return { value: null, payload: { costMinor: marker.costMinor }, stepId: current.id };
-    }
-    // An older worker can replace the output while a priced fetch is in flight.
-    // Keep the admission terms used for this observation across a later billing timeout.
-    const fields = z.record(z.string(), z.json()).parse(current.output ?? {});
-    const observedTerms = z.object({ videoPricing: videoPricingSchema }).safeParse(observed.output);
-    await db.videoRunStep.updateMany({
-      where: { id: current.id, providerId: marker.providerId, providerJobId: marker.providerJobId },
-      data: {
-        error: marker,
-        ...(fields.videoPricing === undefined &&
-          observedTerms.success && {
-            output: { ...fields, videoPricing: observedTerms.data.videoPricing },
-          }),
-      },
-    });
+  if (receipt.costBasis !== "BILLED" && !receipt.media) return;
+  await store.mutate(context, observed.runId, "receipt_observed", async (db, run, tx) => {
+    const current = await lockVideoJob(tx, db, run, observed.id);
+    const saved = await stageVideoReceipt(db, current, observed, receipt);
     return {
       value: null,
-      payload: { costMinor: marker.costMinor },
+      payload:
+        saved === current ? { replay: true } : { costMinor: pendingCorrection(saved)!.costMinor },
       stepId: current.id,
     };
-  });
-}
-
-async function saveRefusalBill(
-  db: Scoped,
-  step: Step,
-  marker: z.infer<typeof pendingPrice>,
-): Promise<void> {
-  const output = z.record(z.string(), z.json()).parse(step.output ?? {});
-  await db.videoRunStep.updateMany({
-    where: { id: step.id },
-    data: { output: { ...output, pendingRefusalBill: marker } },
   });
 }
 
@@ -235,11 +231,7 @@ export async function deferCorrection(
 ): Promise<{ value: null; payload: Json; stepId?: string; eventType?: string }> {
   if (report.providerId !== step.providerId || report.jobId !== step.providerJobId)
     throw new ConflictException("Provider job claim changed");
-  if (needsReceiptMarker(step, report.receipt)) {
-    const marker = receiptMarker(step, report.receipt);
-    if (terminalBilledShot(step)) await saveRefusalBill(db, step, marker);
-    else await db.videoRunStep.updateMany({ where: { id: step.id }, data: { error: marker } });
-  }
+  await stageVideoReceipt(db, step, step, report.receipt);
   const hold = correctionHold(step.id);
   if (!terminalBilledShot(step) && run.state === "GENERATING" && !run.pauseReason)
     return transitionLocked(db, run, "PAUSED_BUDGET", hold);

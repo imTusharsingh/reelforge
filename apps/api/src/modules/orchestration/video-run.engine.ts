@@ -204,6 +204,7 @@ export class VideoRunEngine {
         if (stepId) {
           const result = await recordShotFailure(
             db,
+            tx,
             current,
             stepId,
             error,

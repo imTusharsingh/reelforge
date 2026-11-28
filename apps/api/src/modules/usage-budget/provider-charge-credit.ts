@@ -1,3 +1,4 @@
+import { mergeVideoEvidence } from "./video-job-evidence.js";
 import { scopedTransaction } from "../runs/runs.transaction.js";
 import { RECOVERY_PRINCIPAL } from "../runs/runs.types.js";
 import { Prisma } from "@reelforge/database";
@@ -8,11 +9,7 @@ import { z } from "zod";
 import { clearResolvedSubmissionHold } from "../runs/run-outcomes.js";
 import { writeRefusalCreditEvent } from "../composition/assembly-refusal-cost.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
-import {
-  correctionHold,
-  highestObservedReceipt,
-  pendingCorrection,
-} from "./run-pending-receipt.js";
+import { correctionHold, pendingCorrection } from "./run-pending-receipt.js";
 import { correctionPayload, terminalBilledShot } from "./run-shot-receipt.js";
 import { mainVideoReceipt } from "./legacy-main-video-estimate.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
@@ -40,10 +37,7 @@ export async function createProviderCredit(
     where: { id: providerRequestId, workspaceId },
   });
   if (!charge) throw new NotFoundException("Provider charge not found");
-  // Match the settlement writer's run -> workspace -> provider lock order.
-  await tx.$queryRaw`SELECT r.id FROM video_runs r JOIN video_run_steps s ON s.run_id = r.id
-    WHERE r.workspace_id = ${workspaceId}::uuid AND s.workspace_id = r.workspace_id
-      AND s.id = ${charge.correlationId}::uuid FOR UPDATE OF r`;
+  await lockCreditRun(tx, workspaceId, charge.correlationId);
   const locked = await budgets.lock(charge.channelId);
 
   const existing = await tx.usageAdjustment.findUnique({
@@ -88,6 +82,18 @@ export async function createProviderCredit(
   const after = await budgets.statuses(locked);
   await auditCredit(tx, context, input, adjustment, { now, before, after });
   return { adjustmentId: adjustment.id, correlationId: adjustment.correlationId, budgets: after };
+}
+
+async function lockCreditRun(
+  tx: Transaction,
+  workspaceId: string,
+  correlationId: string,
+): Promise<void> {
+  // Match the settlement writer's run -> workspace -> provider lock order.
+  await tx.$queryRaw`SELECT r.id FROM video_runs r JOIN video_run_steps s ON s.run_id = r.id
+    WHERE r.workspace_id = ${workspaceId}::uuid AND s.workspace_id = r.workspace_id
+      AND s.id = ${correlationId}::uuid FOR UPDATE OF r`;
+  await tx.$queryRaw`SELECT id FROM video_run_steps WHERE workspace_id = ${workspaceId}::uuid AND id = ${correlationId}::uuid FOR UPDATE`;
 }
 
 export async function postMediaCredit(
@@ -216,7 +222,7 @@ export async function captureRefusedBill(
   receipt: VideoReceipt,
 ): Promise<{ value: Step; stepId: string; payload: Json }> {
   const pending = pendingCorrection(step);
-  const price = highestObservedReceipt(pending, receipt);
+  const price = mergeVideoEvidence({ receipt: pending }, { receipt }).receipt!;
   const changed = await settleRefusedShotBill(tx, run, step, price);
   if (pending) {
     const { pendingRefusalBill: _, ...output } = z.record(z.string(), z.json()).parse(step.output);

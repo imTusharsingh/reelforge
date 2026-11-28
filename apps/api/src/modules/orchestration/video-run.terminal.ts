@@ -30,8 +30,9 @@ export function videoBilling(
           step,
           failure,
           step.providerJobId,
-          receipt.costMinor,
-          receipt.seconds,
+          receipt.costBasis === "BILLED" ? receipt.costMinor : null,
+          receipt.costBasis === "BILLED" ? receipt.seconds : null,
+          receipt,
         );
         if (
           terminalVideo(current) &&

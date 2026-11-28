@@ -1,9 +1,6 @@
+import { lockVideoJob, mergeVideoEvidence } from "./video-job-evidence.js";
 import { hasVideoDelivery, terminalVideo } from "./run-video-terminal.js";
-import {
-  correctionHold,
-  pendingCorrection,
-  highestObservedReceipt,
-} from "./run-pending-receipt.js";
+import { correctionHold, pendingCorrection } from "./run-pending-receipt.js";
 import { captureRefusedBill } from "./provider-charge-credit.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
@@ -225,22 +222,6 @@ async function correctSettledReceipt(
   return budget && { ...budget, bufferMinor: nextBuffer };
 }
 
-function observedPrice(current: Step, observed: VideoReceipt): VideoReceipt {
-  const terminal = terminalVideo(current);
-  // A matching successful fetch keeps its media. A verified terminal bill for
-  // the same job still wins over a cheaper receipt.
-  return terminal?.providerJobId === current.providerJobId &&
-    terminal.billedMinor !== null &&
-    (observed.costBasis !== "BILLED" || terminal.billedMinor > observed.costMinor)
-    ? {
-        ...observed,
-        costBasis: "BILLED",
-        costMinor: terminal.billedMinor,
-        seconds: terminal.billedSeconds ?? observed.seconds,
-      }
-    : observed;
-}
-
 /** Keep the highest reported charge and the latest staged media for the accepted job. */
 export async function captureShotReceipt(
   store: RunsStore,
@@ -254,12 +235,12 @@ export async function captureShotReceipt(
     step.runId,
     "provider_receipt",
     async (db, run, tx) => {
-      const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+      const current = await lockVideoJob(tx, db, run, step.id);
       requireReceiptAttempt(current, step);
       if (terminalBilledShot(current)) return captureRefusedBill(db, tx, run, current, receipt);
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
-      const price = observedPrice(current, highestObservedReceipt(pending, receipt));
+      const price = mergeVideoEvidence({ receipt: pending }, { receipt }).receipt!;
       const merged = mergeShotReceipt(current, price);
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
@@ -303,7 +284,7 @@ export async function reconcilePricedReceipt(
   step: Step,
 ): Promise<void> {
   await store.mutate(context, step.runId, "billing_reconciled", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+    const current = await lockVideoJob(tx, db, run, step.id);
     if (current.state === "SUCCEEDED") return { value: null, payload: { replay: true } };
     const claim = await readAdmission(tx, context, current);
     const cost = deliveredShot(current)?.receipt.costMinor;
@@ -362,7 +343,7 @@ export async function recordShotArtifact(
   artifact: Artifact,
 ): Promise<{ value: number | null; event: import("../runs/runs.types.js").Event }> {
   return store.mutate(context, step.runId, "step_completed", async (db, run, tx) => {
-    const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
+    const current = await lockVideoJob(tx, db, run, step.id);
     if (SETTLED_SHOTS.some((state) => state === current.state))
       return { value: null, payload: { replay: true } };
     if (terminalVideo(current) && !hasVideoDelivery(current))

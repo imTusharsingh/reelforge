@@ -1,3 +1,4 @@
+import { mergeVideoEvidence, sameVideoClip, winsVideoPrice } from "./video-job-evidence.js";
 import { ConflictException } from "@nestjs/common";
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
@@ -70,17 +71,6 @@ export function pendingShotMedia(step: Step): z.infer<typeof pendingOutput> | nu
   return saved;
 }
 
-type StoredPrice = z.infer<typeof pricedOutput.shape.receipt>;
-
-/** Unmarked historical prices can include provider reports. Preserve them on ambiguous replays. */
-function replacesPrice(previous: StoredPrice | undefined, price: VideoReceipt): boolean {
-  if (!previous) return true;
-  return (
-    price.costBasis === "BILLED" &&
-    (previous.costBasis === "RESERVATION" || price.costMinor > previous.costMinor)
-  );
-}
-
 const deliveredOutput = z
   .object({
     receipt: pricedOutput.shape.receipt.extend({ providerId: z.string() }).passthrough(),
@@ -112,7 +102,7 @@ export function mergeShotReceipt(
   const { media, ...price } = receipt;
   const final = deliveredShot(step);
   if (final) {
-    if (!replacesPrice(final.receipt, receipt)) return null;
+    if (!winsVideoPrice(final.receipt, receipt)) return null;
     return {
       priceChanged: true,
       previousCost: final.receipt.costMinor,
@@ -130,17 +120,25 @@ export function mergeShotReceipt(
       }),
     };
   }
-  const priceChanged = replacesPrice(pending?.receipt, receipt);
-  if (!priceChanged && !media) return null;
-  const pendingMedia = media ?? pending?.pendingMedia ?? null;
+  const priceChanged = winsVideoPrice(pending?.receipt, receipt);
+  if (!priceChanged && (!media || sameVideoClip(media, pending?.pendingMedia ?? null))) return null;
+  const old = pending
+    ? {
+        ...pending.receipt,
+        costBasis: pending.receipt.costBasis ?? ("BILLED" as const),
+        media: pending.pendingMedia,
+      }
+    : null;
+  const merged = mergeVideoEvidence({ receipt: old }, { receipt }).receipt!;
   const output = pendingOutput.parse({
-    pendingMedia,
+    pendingMedia: merged.media,
     receipt: {
-      ...(priceChanged ? price : pending?.receipt),
+      ...merged,
+      media: undefined,
       key: step.key,
       providerId: step.providerId,
       providerJobId: step.providerJobId,
-      providerDurationSeconds: pendingMedia?.durationSeconds ?? null,
+      providerDurationSeconds: merged.providerDurationSeconds,
     },
   });
   return {
@@ -203,7 +201,7 @@ export function recordedShotPrice(step: Step, receipt: VideoReceipt): boolean {
     saved.success &&
     saved.data.receipt.providerJobId === step.providerJobId &&
     saved.data.receipt.costMinor === step.costMinor &&
-    !replacesPrice(saved.data.receipt, receipt)
+    !winsVideoPrice(saved.data.receipt, receipt)
   );
 }
 

@@ -1,3 +1,4 @@
+import { lockVideoJob } from "./video-job-evidence.js";
 import { hasVideoDelivery } from "./run-video-terminal.js";
 import { carryRefusalBill } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
@@ -33,7 +34,9 @@ export async function finalizeFailed(
 ): Promise<Event> {
   return failureEvent(
     store.mutate(context, step.runId, "step_failed", async (db, run, tx) => {
-      const current = await currentStep(db, run, step);
+      const current = step.key.startsWith("shot-")
+        ? await lockVideoJob(tx, db, run, step.id)
+        : await currentStep(db, run, step);
       if (current.key.startsWith("media:text:"))
         throw new ConflictException("Text failure requires its evidence journal");
       if (current.key.startsWith("shot-") && hasVideoDelivery(current))
