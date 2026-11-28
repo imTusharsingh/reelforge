@@ -14,8 +14,13 @@ type Price = Pick<
   "creditedMinor" | "currency" | "actualCost" | "estimatedCost" | "errorCode" | "status"
 >;
 
-const pendingJob = Prisma.sql`s.error->>'code' = ${PENDING_RECEIPT_CORRECTION}
-  AND s.error->>'providerId' = s.provider_id AND s.error->>'providerJobId' = s.provider_job_id`;
+const pendingMarker = Prisma.sql`CASE
+  WHEN s.state IN ('SKIPPED', 'FAILED') AND s.error->>'code' = 'PROVIDER_REFUSED'
+  THEN s.output->'pendingRefusalBill'
+  ELSE s.error END`;
+const pendingJob = Prisma.sql`(${pendingMarker})->>'code' = ${PENDING_RECEIPT_CORRECTION}
+  AND (${pendingMarker})->>'providerId' = s.provider_id
+  AND (${pendingMarker})->>'providerJobId' = s.provider_job_id`;
 
 // Keep retained headroom and count any higher observed charge while its correction is pending.
 const coveredMinor = Prisma.sql`CASE
@@ -24,8 +29,9 @@ const coveredMinor = Prisma.sql`CASE
   WHEN ${pendingJob} THEN GREATEST(
     CASE WHEN ur.status = 'COMMITTED' THEN COALESCE(ur.committed_minor, ur.amount_minor)
          ELSE ur.amount_minor END,
-    (s.error->>'costMinor')::bigint,
-    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0),
+    ((${pendingMarker})->>'costMinor')::bigint,
+    CASE WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL')
+      THEN COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0) ELSE 0 END,
     CASE WHEN s.state IN ('SUCCEEDED', 'WAITING_EXTERNAL') THEN
       COALESCE(ur.committed_minor, 0) +
       COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0)
@@ -36,7 +42,9 @@ const coveredMinor = Prisma.sql`CASE
          ELSE ur.amount_minor END,
     COALESCE(ur.committed_minor, 0) +
       COALESCE((s.output->'receiptBudget'->>'bufferMinor')::bigint, 0),
-    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0)
+    COALESCE((s.output->'receiptBudget'->>'admittedMinor')::bigint, 0) -
+      CASE WHEN ur.status = 'COMMITTED' AND s.output->'receipt'->>'costBasis' = 'RESERVATION'
+        THEN GREATEST(s.cost_minor - ur.committed_minor, 0) ELSE 0 END
   )
   WHEN ur.status <> 'COMMITTED' THEN ur.amount_minor
   WHEN s.state = 'SUCCEEDED' THEN GREATEST(

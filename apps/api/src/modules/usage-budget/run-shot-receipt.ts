@@ -3,7 +3,7 @@ import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import { ArtifactSchema, json, type Json, type Scoped, type Step } from "../runs/runs.types.js";
-import { isBillingHold } from "./run-admission-state.js";
+import { isBillingHold, type Admission } from "./run-admission-state.js";
 
 const ReceiptBudgetSchema = z.object({
   admittedMinor: z.number().int().nonnegative(),
@@ -229,4 +229,23 @@ export async function adjustEnvelope(
     },
   });
   if (updated.count !== 1) throw new ConflictException("Billing envelope changed");
+}
+
+export function importedShotEstimate(
+  { request, reservation }: Admission,
+  previous: number | undefined,
+): boolean {
+  const estimate = z
+    .object({ legacyEstimateMinor: z.number().int() })
+    .safeParse(request?.responseMetadata).data;
+  return (
+    !!request &&
+    request.status === "SUCCEEDED" &&
+    request.errorCode === null &&
+    request.actualCost === null &&
+    previous !== undefined &&
+    estimate?.legacyEstimateMinor === previous &&
+    reservation?.committedMinor != null &&
+    reservation.committedMinor <= BigInt(previous)
+  );
 }

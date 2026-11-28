@@ -1,3 +1,6 @@
+import { workerVideo } from "./worker-video.fixture.js";
+import { RunPaidCalls } from "./run-paid.js";
+import { captureShotReceipt } from "./run-billing.js";
 import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -220,6 +223,78 @@ describe.skipIf(!process.env.DATABASE_URL)("workspace credit cutover", () => {
     expect(await t.db.providerRequest.count({ where: { workspaceId } })).toBe(0);
     expect(await t.db.usageReservation.count({ where: { workspaceId } })).toBe(0);
     expect(await t.db.textAttemptEvidence.count({ where: { workspaceId } })).toBe(0);
+  });
+  it("links two refunds on an ordinary worker estimate, then accepts independent billing", async () => {
+    const t = await fixture.tenant();
+    const { run, step, job, native } = await workerVideo(t);
+    const { workspaceId, channelId } = run;
+    const fetch = native.fetch.bind(native);
+    vi.spyOn(native, "fetch").mockImplementation(async (id) => ({
+      ...(await fetch(id)),
+      billedSeconds: null,
+    }));
+    await t.engine.process(job);
+    await t.engine.process(job);
+    const before = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } });
+    const gross = before.costMinor!;
+    expect(before).toMatchObject({
+      state: "SUCCEEDED",
+      output: { receipt: { costBasis: "RESERVATION" } },
+    });
+    const where = { workspaceId, correlationId: step.id };
+    const posting = await t.db.providerRequest.findFirstOrThrow({ where });
+    expect(posting.actualCost?.mul(100).toNumber()).toBe(gross);
+    const credits = await Promise.all(
+      [1, 2].map(() => historicalCredit(t, { providerRequestId: posting.id })),
+    );
+    const exposure = async (): Promise<number | undefined> =>
+      (await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor;
+    const beforeExposure = (await exposure())!;
+    expect(beforeExposure).toBeGreaterThanOrEqual(gross - 6);
+    vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+    const options = {
+      workspaceId,
+      apply: true,
+      oldWritersDrained: true,
+      auditId: "ordinary-main-shot",
+    };
+    expect((await importLegacyTextAttempts(t.db, options)).unresolvedCreditIds).toEqual([]);
+    expect((await importLegacyTextAttempts(t.db, options)).mediaCreditLinks).toEqual([]);
+    expect(
+      await t.db.usageAdjustment.count({
+        where: { id: { in: credits }, providerRequestId: posting.id },
+      }),
+    ).toBe(2);
+    expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+      committedMinor: BigInt(gross - 6),
+    });
+    expect(await exposure()).toBe(beforeExposure);
+    expect(
+      (await t.usage.usageSummary(t.context, { channelId })).totals.currencies[0],
+    ).toMatchObject({
+      totalMinor: gross - 6,
+      adjustmentNetMinor: 0,
+    });
+    const record = {
+      costBasis: "BILLED" as const,
+      costMinor: gross,
+      modelId: "fixture",
+      promptVersion: "fixture",
+      seconds: 8,
+      providerDurationSeconds: 8,
+      media: null,
+    };
+    await captureShotReceipt(
+      t.store,
+      new RunPaidCalls(t.usage, t.store),
+      t.context,
+      before,
+      record,
+    );
+    expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+      committedMinor: BigInt(gross),
+    });
+    expect(await exposure()).toBe(beforeExposure + 6);
   });
   it("keeps a proven refund against main's unbilled video estimate", async () => {
     const t = await fixture.tenant();

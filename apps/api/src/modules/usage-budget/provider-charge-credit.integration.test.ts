@@ -1,3 +1,5 @@
+import { RunsQueue } from "../runs/runs.queue.js";
+import { workerVideo } from "./worker-video.fixture.js";
 import type { ShotBilling, VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { refusedRoutedJob } from "./routed-refusal.fixture.js";
 import { randomUUID } from "node:crypto";
@@ -84,7 +86,45 @@ describe.skipIf(!process.env.DATABASE_URL)(
         media: null,
       };
       const state = await t.store.get(t.context, run.id);
-      await callback!(lateBill);
+      const mutate = t.store.mutate.bind(t.store);
+      const fault = vi.spyOn(t.store, "mutate").mockImplementation((context, id, type, work) =>
+        mutate(context, id, type, async (db, current, tx) => {
+          const result = await work(db, current, tx);
+          if (type === "provider_receipt") throw new Error("settlement rolled back");
+          return result;
+        }),
+      );
+      try {
+        await expect(callback!(lateBill)).rejects.toMatchObject({
+          cause: expect.objectContaining({
+            message: "settlement rolled back",
+          }),
+        });
+      } finally {
+        fault.mockRestore();
+      }
+      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
+        committedMinor: BigInt(original - 3),
+      });
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: source.id } })).toMatchObject(
+        {
+          error: failed.error,
+          output: { pendingRefusalBill: { costMinor: lateBill.costMinor } },
+        },
+      );
+      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(
+        lateBill.costMinor,
+      );
+      await t.db.videoRun.update({ where: { id: run.id }, data: { state: "FAILED" } });
+      const enqueue = vi.fn();
+      t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
+      await t.engine.recover();
+      const retry = enqueue.mock.calls.find(([queued]) => queued.stepId === source.id)?.[0];
+      expect(retry).toBeDefined();
+      await t.engine.process(retry);
+      const recovered = await t.db.videoRunStep.findUniqueOrThrow({ where: { id: source.id } });
+      expect(recovered.output).not.toHaveProperty("pendingRefusalBill");
+      expect(recovered.error).toEqual(failed.error);
       await callback!(lateBill);
       await callback!({ ...lateBill, costMinor: original - 1 });
       expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
@@ -98,7 +138,7 @@ describe.skipIf(!process.env.DATABASE_URL)(
         },
       );
       expect(await t.store.get(t.context, run.id)).toMatchObject({
-        state: state.state,
+        state: "FAILED",
         pauseReason: state.pauseReason,
       });
       expect(
@@ -167,31 +207,37 @@ describe.skipIf(!process.env.DATABASE_URL)(
         });
       },
     );
-    it("settles routed billing before a failed download and rejects unordered downward amounts", async () => {
+    it("keeps the live shot bill through failed media download and a lower replay", async () => {
       const t = await fixture.tenant();
-      const { workspaceId } = t.run;
-      const job = await refusedRoutedJob(t);
-      await t.usage.createAdjustment(t.context, {
-        kind: "CREDIT",
-        providerRequestId: job.requestId,
-        operationKey: "routed-refund",
-        amountMinor: 13,
-        reason: "invoice refund",
-      });
-      const where = { workspaceId, correlationId: job.correlationId };
-      await expect(job.reconcile(23, true)).rejects.toThrow("media download failed");
+      const { run, step, native, job } = await workerVideo(t);
+      const fetch = native.fetch.bind(native);
+      vi.spyOn(native, "fetch")
+        .mockImplementationOnce(async (_id, record, onFailure) => {
+          await record?.(3);
+          throw onFailure
+            ? onFailure(new Error("media download failed"))
+            : new Error("media download failed");
+        })
+        .mockImplementation(async (id, record) => {
+          await record?.(1);
+          return { ...(await fetch(id)), billedSeconds: 1 };
+        });
+      await t.engine.process(job);
+      await expect(t.engine.process(job)).rejects.toThrow("media download failed");
+      const where = { workspaceId: run.workspaceId, correlationId: step.id };
+      const high = await t.db.providerRequest.findFirstOrThrow({ where });
+      expect(high.actualCost?.toString()).toBe("0.21");
+      await t.engine.process(job);
+      await t.engine.process(job);
       expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
-        committedMinor: 23n,
+        committedMinor: 21n,
       });
-      await job.reconcile(23);
-      await job.reconcile(4);
-      expect(await t.db.usageReservation.findFirstOrThrow({ where })).toMatchObject({
-        committedMinor: 23n,
+      expect(await t.db.videoRunStep.findUniqueOrThrow({ where: { id: step.id } })).toMatchObject({
+        state: "SUCCEEDED",
+        costMinor: 21,
+        output: { receipt: { costMinor: 21, costBasis: "BILLED" } },
       });
-      const posting = await t.db.providerRequest.findFirstOrThrow({ where });
-      expect(posting.actualCost?.toString()).toBe("0.23");
-      expect(posting.usage).toEqual({ seconds: 23 });
-      expect((await t.usage.listBudgets(t.context))[0]?.periods[0]?.consumedMinor).toBe(23);
+      expect(native.fetch).toHaveBeenCalledTimes(2);
     });
     it("keeps an expired unresolved dispatch charged against competing admission", async () => {
       const t = await fixture.tenant();

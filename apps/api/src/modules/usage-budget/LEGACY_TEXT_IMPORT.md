@@ -75,6 +75,9 @@ posting before the cutover can report it as settled.
 Main text completions booked the configured estimate even where the request
 said `costKnown`; only independently verified billing can replace that charge.
 A main routed video row with no billed seconds can likewise contain an estimate
-in `actualCost`; a proven linked refund still reduces that estimate. A matching
+in `actualCost`; for an ordinary shot, the matching saved `RESERVATION` receipt
+proves the same distinction. Proven linked refunds reduce the commitment
+without changing the archived gross shot receipt or run envelope. Verified
+billing replaces the estimated commitment. A matching
 main budget-denied cancellation and release can have a nonzero released estimate
 but no ledger rows; this is a zero-spend no-op, not a new dispatch authorization.

@@ -1,9 +1,13 @@
+import { Prisma } from "@reelforge/database";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { lockBooks } from "./text-admission-lock.js";
+import { z } from "zod";
+import { highestObservedReceipt, pendingCorrection } from "./run-pending-receipt.js";
+import { correctionPayload, pricedOutput } from "./run-shot-receipt.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
-import type { Context, Run, Step, Transaction } from "../runs/runs.types.js";
+import type { Context, Json, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
 import { auditCredit, type BudgetAccess, type CreditResult } from "./charge-credit-audit.js";
 import {
   categorize,
@@ -97,10 +101,12 @@ export async function postMediaCredit(
   });
   if (other) throw new ConflictException("Ambiguous media reservation");
   const oldEstimate =
-    historical &&
-    reservation?.status === "COMMITTED" &&
-    (await isMainRoutedEstimate(tx, row, reservation));
-  const pricing = oldEstimate ? { ...row, actualCost: null } : row;
+    historical && reservation?.status === "COMMITTED"
+      ? await mainVideoEstimate(tx, row, reservation)
+      : null;
+  const pricing = oldEstimate
+    ? { ...row, actualCost: null, estimatedCost: oldEstimate.gross }
+    : row;
   const cost = classifyCost(pricing);
   const finalBill = historical && cost?.kind === "ACTUAL";
   if (
@@ -117,9 +123,44 @@ export async function postMediaCredit(
     (!finalBill && amountMinor > cost.amountMinor)
   )
     throw new ConflictException("Credit requires a remaining failed-at-estimate media charge");
-  if (reservation?.status === "RESERVED")
+  if (reservation)
+    await applyCreditPosting(tx, reservation, row.correlationId, channelId, {
+      amountMinor,
+      cost: { amountMinor: cost.amountMinor, currency: cost.currency },
+      finalBill,
+      keepGrossShot: oldEstimate?.shot === true,
+    });
+  if (oldEstimate)
+    await tx.providerRequest.update({
+      where: { id: row.id },
+      data: {
+        actualCost: null,
+        responseMetadata: { ...oldEstimate.metadata, legacyEstimateMinor: oldEstimate.minor },
+      },
+    });
+  return cost.currency;
+}
+
+async function applyCreditPosting(
+  tx: Transaction,
+  reservation: Prisma.UsageReservationGetPayload<object>,
+  correlationId: string,
+  channelId: string | null,
+  {
+    amountMinor,
+    cost,
+    finalBill,
+    keepGrossShot,
+  }: {
+    amountMinor: bigint;
+    cost: { amountMinor: bigint; currency: string };
+    finalBill: boolean;
+    keepGrossShot: boolean;
+  },
+): Promise<void> {
+  if (reservation.status === "RESERVED")
     throw new ConflictException("Media reservation is still open");
-  if (reservation?.status === "COMMITTED") {
+  if (reservation.status === "COMMITTED") {
     if (
       !["IMAGE_MEDIA", "VIDEO_MEDIA", "TTS", "MUSIC"].includes(reservation.category) ||
       reservation.currency !== cost.currency ||
@@ -129,40 +170,110 @@ export async function postMediaCredit(
     )
       throw new ConflictException("Credit exceeds the remaining committed media charge");
     const reduction = finalBill ? reservation.committedMinor - cost.amountMinor : amountMinor;
-    if (reduction !== 0n) await reduceCoveredCharge(tx, row.correlationId, reservation, reduction);
+    if (keepGrossShot) {
+      // Keep the archived gross receipt and envelope intact; the commitment carries the refund.
+      await tx.usageReservation.update({
+        where: { id: reservation.id },
+        data: { committedMinor: { decrement: reduction } },
+      });
+    } else if (reduction !== 0n)
+      await reduceCoveredCharge(tx, correlationId, reservation, reduction);
   }
-  if (oldEstimate)
-    await tx.providerRequest.update({ where: { id: row.id }, data: { actualCost: null } });
-  return cost.currency;
 }
 
-async function isMainRoutedEstimate(
+async function mainVideoEstimate(
   tx: Transaction,
   row: { id: string; correlationId: string; status: string; errorCode: string | null },
-  reservation: { id: string; amountMinor: bigint; idempotencyKey: string; category: string },
-): Promise<boolean> {
+  reservation: Prisma.UsageReservationGetPayload<object>,
+): Promise<{
+  gross: string;
+  minor: number;
+  metadata: ReturnType<typeof legacyObject>;
+  shot: boolean;
+} | null> {
   if (
     row.status !== "SUCCEEDED" ||
     row.errorCode !== null ||
     reservation.category !== "VIDEO_MEDIA" ||
-    reservation.idempotencyKey !== `m08:${row.correlationId}`
+    reservation.currency !== "USD"
   )
-    return false;
+    return null;
   const request = await tx.providerRequest.findUniqueOrThrow({ where: { id: row.id } });
+  if (request.channelId !== reservation.channelId || request.currency !== reservation.currency)
+    return null;
   const metadata = legacyObject(request.responseMetadata);
-  return (
-    request.actualCost !== null &&
-    request.estimatedCost !== null &&
-    request.actualCost.equals(request.estimatedCost) &&
+  const step = await tx.videoRunStep.findFirst({
+    where: { workspaceId: reservation.workspaceId, id: row.correlationId },
+  });
+  const shot = !!step && mainShotEstimate(step, reservation.idempotencyKey, request.providerId);
+  const routed =
+    !step &&
+    reservation.idempotencyKey === `m08:${row.correlationId}` &&
     legacyObject(request.usage).seconds === null &&
     metadata.reservationId === reservation.id &&
     metadata.estimateMinor === Number(reservation.amountMinor) &&
-    typeof metadata.providerJobId === "string"
+    typeof metadata.providerJobId === "string";
+  if (!shot && !routed) return null;
+  const booked =
+    request.actualCost ??
+    (typeof metadata.legacyEstimateMinor === "number"
+      ? routed
+        ? request.estimatedCost
+        : new Prisma.Decimal(metadata.legacyEstimateMinor).div(100)
+      : null);
+  if (
+    !booked ||
+    (shot && !booked.mul(100).equals(step.costMinor!)) ||
+    (routed && !request.estimatedCost?.equals(booked))
+  )
+    return null;
+  const minor = Math.round(booked.mul(100).toNumber());
+  if (
+    !Number.isSafeInteger(minor) ||
+    minor < 0 ||
+    (request.actualCost === null && metadata.legacyEstimateMinor !== minor)
+  )
+    return null;
+  return { gross: booked.toString(), minor, metadata, shot };
+}
+
+function mainShotEstimate(step: Step, key: string, providerId: string): boolean {
+  const saved = pricedOutput.safeParse(step.output).data?.receipt;
+  return (
+    step.key.startsWith("shot-") &&
+    step.state === "SUCCEEDED" &&
+    step.providerId === providerId &&
+    !!step.providerJobId &&
+    saved?.providerJobId === step.providerJobId &&
+    saved.costBasis === "RESERVATION" &&
+    saved.costMinor === step.costMinor &&
+    key === `m08:${step.idempotencyKey}`
   );
 }
 
+export async function captureRefusedBill(
+  db: Scoped,
+  tx: Transaction,
+  run: Run,
+  step: Step,
+  receipt: VideoReceipt,
+): Promise<{ value: Step; stepId: string; payload: Json }> {
+  const pending = pendingCorrection(step);
+  const price = highestObservedReceipt(pending, receipt);
+  const changed = await settleRefusedShotBill(tx, run, step, price);
+  if (pending) {
+    const { pendingRefusalBill: _, ...output } = z.record(z.string(), z.json()).parse(step.output);
+    await db.videoRunStep.updateMany({ where: { id: step.id }, data: { output } });
+  }
+  return {
+    value: changed ? { ...step, costMinor: price.costMinor } : step,
+    stepId: step.id,
+    payload: changed ? correctionPayload(step, price) : { replay: true },
+  };
+}
+
 // A verified bill supersedes an estimate and its linked refund; it does not deliver the refused clip.
-export async function settleRefusedShotBill(
+async function settleRefusedShotBill(
   tx: Transaction,
   run: Run,
   step: Step,

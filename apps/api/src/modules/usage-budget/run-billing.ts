@@ -3,7 +3,7 @@ import {
   pendingCorrection,
   highestObservedReceipt,
 } from "./run-pending-receipt.js";
-import { settleRefusedShotBill } from "./provider-charge-credit.js";
+import { captureRefusedBill } from "./provider-charge-credit.js";
 import { invalidateAssemblyManifests } from "../composition/assembly-receipts.js";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@reelforge/database";
@@ -39,6 +39,7 @@ import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import {
   adjustEnvelope,
   admissionFields,
+  importedShotEstimate,
   awaitingBilling,
   correctionPayload,
   deliveredShot,
@@ -180,12 +181,13 @@ async function correctSettledReceipt(
   const reservation = receiptReservation(run, step, claim);
   const { request } = claim;
   const reserved = request?.estimatedCost?.mul(100).toNumber();
+  const importedEstimate = importedShotEstimate(claim, previous);
   if (
     previous === undefined ||
     previous !== step.costMinor ||
     reservation.status !== "COMMITTED" ||
     !request ||
-    !matchesCommit(claim, BigInt(previous)) ||
+    (!importedEstimate && !matchesCommit(claim, BigInt(previous))) ||
     reserved === undefined ||
     !Number.isSafeInteger(reserved) ||
     reserved < 0
@@ -193,14 +195,14 @@ async function correctSettledReceipt(
     throw new ConflictException("Stored receipt differs from settled payment");
   const budget = readReceiptBudget(step.output);
   const admitted = budget?.admittedMinor ?? reserved;
-  if (previous === cost) return budget;
+  if (previous === cost && !importedEstimate) return budget;
   await paid.usage.coverShotReceipt(
     tx,
     run.workspaceId,
     run.channelId,
     reservation,
     cost,
-    BigInt(previous),
+    importedEstimate ? reservation.committedMinor! : BigInt(previous),
   );
   const updated = await tx.providerRequest.updateMany({
     where: {
@@ -208,7 +210,7 @@ async function correctSettledReceipt(
       workspaceId: run.workspaceId,
       status: "SUCCEEDED",
       errorCode: null,
-      actualCost: new Prisma.Decimal(previous).div(100),
+      actualCost: importedEstimate ? null : new Prisma.Decimal(previous).div(100),
     },
     data: { actualCost: new Prisma.Decimal(cost).div(100) },
   });
@@ -238,12 +240,7 @@ export async function captureShotReceipt(
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
       requireReceiptAttempt(current, step);
       if (refusedShot(current)) {
-        const changed = await settleRefusedShotBill(tx, run, current, receipt);
-        return {
-          value: changed ? { ...current, costMinor: receipt.costMinor } : current,
-          stepId: current.id,
-          payload: changed ? correctionPayload(current, receipt) : { replay: true },
-        };
+        return captureRefusedBill(db, tx, run, current, receipt);
       }
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);

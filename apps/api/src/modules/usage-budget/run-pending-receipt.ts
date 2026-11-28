@@ -9,9 +9,19 @@ import { videoPricingSchema } from "../scene-media/media-prices.js";
 import { pendingShotMedia, pricedOutput, refusedShot } from "./run-shot-receipt.js";
 
 export const PENDING_RECEIPT_CORRECTION = "PENDING_RECEIPT_CORRECTION";
+export const pendingRefusedBillWhere = {
+  state: { in: ["SKIPPED", "FAILED"] as ("SKIPPED" | "FAILED")[] },
+  error: { path: ["code"], equals: "PROVIDER_REFUSED" },
+  output: { path: ["pendingRefusalBill", "code"], equals: PENDING_RECEIPT_CORRECTION },
+};
 export const pendingCorrectionWhere = {
-  state: { in: ["SUCCEEDED", "WAITING_EXTERNAL"] as ("SUCCEEDED" | "WAITING_EXTERNAL")[] },
-  error: { path: ["code"], equals: PENDING_RECEIPT_CORRECTION },
+  OR: [
+    {
+      state: { in: ["SUCCEEDED", "WAITING_EXTERNAL"] as ("SUCCEEDED" | "WAITING_EXTERNAL")[] },
+      error: { path: ["code"], equals: PENDING_RECEIPT_CORRECTION },
+    },
+    pendingRefusedBillWhere,
+  ],
 };
 
 const receiptFields = MediaReceiptSchema.shape;
@@ -29,7 +39,10 @@ const pendingPrice = z
   .strict();
 
 export function pendingCorrection(step: Step): VideoReceipt | null {
-  const marker = step.error;
+  const marker = refusedShot(step)
+    ? z.object({ pendingRefusalBill: z.unknown().optional() }).parse(step.output ?? {})
+        .pendingRefusalBill
+    : step.error;
   if (
     !marker ||
     typeof marker !== "object" ||
@@ -118,8 +131,11 @@ export async function persistPendingCorrection(
       (!["WAITING_EXTERNAL", "SUCCEEDED"].includes(current.state) && !refusedShot(current))
     )
       throw new ConflictException("Provider job claim changed");
-    if (refusedShot(current) || !needsReceiptMarker(current, receipt))
-      return { value: null, payload: { replay: true } };
+    if (!needsReceiptMarker(current, receipt)) return { value: null, payload: { replay: true } };
+    if (refusedShot(current)) {
+      await saveRefusalBill(db, current, marker);
+      return { value: null, payload: { costMinor: marker.costMinor }, stepId: current.id };
+    }
     // An older worker can replace the output while a priced fetch is in flight.
     // Keep the admission terms used for this observation across a later billing timeout.
     const fields = z.record(z.string(), z.json()).parse(current.output ?? {});
@@ -142,6 +158,18 @@ export async function persistPendingCorrection(
   });
 }
 
+async function saveRefusalBill(
+  db: Scoped,
+  step: Step,
+  marker: z.infer<typeof pendingPrice>,
+): Promise<void> {
+  const output = z.record(z.string(), z.json()).parse(step.output ?? {});
+  await db.videoRunStep.updateMany({
+    where: { id: step.id },
+    data: { output: { ...output, pendingRefusalBill: marker } },
+  });
+}
+
 /** Hold the run without reacquiring the budget lock that may have timed out. */
 export async function deferCorrection(
   db: Scoped,
@@ -153,12 +181,13 @@ export async function deferCorrection(
     throw new ConflictException("Provider job claim changed");
   if (needsReceiptMarker(step, report.receipt)) {
     const marker = receiptMarker(step, report.receipt);
-    await db.videoRunStep.updateMany({ where: { id: step.id }, data: { error: marker } });
+    if (refusedShot(step)) await saveRefusalBill(db, step, marker);
+    else await db.videoRunStep.updateMany({ where: { id: step.id }, data: { error: marker } });
   }
   const hold = correctionHold(step.id);
-  if (run.state === "GENERATING" && !run.pauseReason)
+  if (!refusedShot(step) && run.state === "GENERATING" && !run.pauseReason)
     return transitionLocked(db, run, "PAUSED_BUDGET", hold);
-  if (!run.pauseReason)
+  if (!refusedShot(step) && !run.pauseReason)
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
   return {
     value: null,

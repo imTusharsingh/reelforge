@@ -1,3 +1,4 @@
+import { refusedShot } from "../usage-budget/run-shot-receipt.js";
 import { claimPendingShot, shotPort } from "./video-run.claim.js";
 import { refusalRewrite, settleVideoRefusal } from "./video-run.refusal.js";
 import {
@@ -325,7 +326,8 @@ export class RunGeneration {
       try {
         await persistPendingCorrection(this.runs.store, context, step, receipt);
         const saved = await captureShotReceipt(this.runs.store, this.paid, context, step, receipt);
-        if (correctionPending) await resumeAfterCorrection(this.runs, context, step.runId);
+        if (correctionPending && !refusedShot(saved))
+          await resumeAfterCorrection(this.runs, context, step.runId);
         return saved;
       } catch (cause) {
         throw new ShotBillingFailure(cause, {
