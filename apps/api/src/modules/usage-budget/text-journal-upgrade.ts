@@ -12,7 +12,7 @@ export type Evidence = {
 const detail = z.object({
   dispatchKey: z.string(),
   code: z.string().optional(),
-  httpStatus: z.unknown(),
+  httpStatus: z.unknown().optional(),
   source: z.string().optional(),
   actualMinor: z.int().optional().nullable(),
 });

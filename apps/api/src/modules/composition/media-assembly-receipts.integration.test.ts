@@ -150,9 +150,10 @@ async function repriceHistoricalShot(
         output: json({ ...(step.output as object), receipt: corrected }),
       },
     });
+    const budget = await db.budgetEnvelope.findFirstOrThrow({ where: { runId: run.id } });
     await db.budgetEnvelope.updateMany({
-      where: { runId: run.id },
-      data: { spentMinor: { increment: corrected.costMinor - original.costMinor } },
+      where: { id: budget.id },
+      data: { spentMinor: budget.spentMinor + corrected.costMinor - original.costMinor },
     });
     return { value: null, payload: { key } };
   });

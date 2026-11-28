@@ -104,7 +104,7 @@ export async function historicalTextFixture(
         input: {},
         output: json({
           result: {
-            output: { draft: "archived" },
+            output: setup.plan.script,
             dispatchKey: `${run.id}:${key}:${attempt}`,
             receipt: { ...receipt, providerJobId: attempt === 1 ? remoteId : providerJobId },
           },
