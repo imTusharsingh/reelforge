@@ -11,9 +11,9 @@ import {
 } from "./historical-text-receipt.fixture.js";
 import { setupAssembly } from "./media-assembly.fixture.js";
 
-async function bookedRefusal(t: Tenant): Promise<{ step: Step; requestId: string }> {
+async function bookedRefusal(t: Tenant, attempt = 2): Promise<{ step: Step; requestId: string }> {
   const { workspaceId, channelId, id: runId } = t.run;
-  const providerJobId = "fixture-omitted-refusal";
+  const providerJobId = `fixture-omitted-refusal-${attempt}`;
   const step = await t.db.videoRunStep.create({
     data: {
       workspaceId,
@@ -23,8 +23,9 @@ async function bookedRefusal(t: Tenant): Promise<{ step: Step; requestId: string
       input: {},
       costMinor: 20,
       key: "shot-0",
-      attempt: 2,
+      attempt,
       state: "SKIPPED",
+      finishedAt: new Date(),
       idempotencyKey: randomUUID(),
       error: { code: "PROVIDER_REFUSED" },
     },
@@ -62,6 +63,11 @@ async function bookedRefusal(t: Tenant): Promise<{ step: Step; requestId: string
     where: { runId },
     data: { spentMinor: { increment: 20 } },
   });
+  await t.store.mutate(t.context, runId, "shot_refused", async () => ({
+    value: null,
+    payload: {},
+    stepId: step.id,
+  }));
   return { step, requestId: row.id };
 }
 
@@ -183,3 +189,129 @@ describe.skipIf(!process.env.DATABASE_URL)(
     );
   },
 );
+describe.skipIf(!process.env.DATABASE_URL)("archive isolation across distinct renders", () => {
+  const fixture = runsFixture();
+  afterEach(() => vi.unstubAllEnvs());
+  it.each(["healthy", "legacy", "missing", "corrupt", "temporary"] as const)(
+    "isolates older renders and archive storage failures: %s",
+    async (condition) => {
+      vi.stubEnv("GEMINI_TTS_MODEL", "fixture-TTS");
+      vi.stubEnv("GEMINI_MUSIC_MODEL", "fixture-music");
+      const setup = await setupAssembly(fixture);
+      const { t, run, bindings, plan } = setup;
+      vi.mocked(bindings.planning.saved).mockResolvedValue({
+        ...plan,
+        manifest: {
+          ...plan.manifest,
+          prompts: [
+            {
+              role: "scriptwriter",
+              version: 2,
+              templateVersionId: randomUUID(),
+              promptSnapshotId: randomUUID(),
+              configSnapshotId: randomUUID(),
+              fingerprintSha256: "a".repeat(64),
+            },
+          ],
+        },
+      });
+      await t.db.videoRunStep.create({
+        data: {
+          workspaceId: run.workspaceId,
+          runId: run.id,
+          key: "ASSEMBLING",
+          state: "RUNNING",
+          attempt: 1,
+          idempotencyKey: `${run.id}:ASSEMBLING:1`,
+          input: {},
+        },
+      });
+      vi.spyOn(bindings.renderer, "render").mockResolvedValue({
+        video: Buffer.from("render-one"),
+        cover: Buffer.from("cover"),
+        words: [{ text: "fixture", start: 0, end: 1 }],
+        highlights: [],
+        cues: [],
+        duration: 30,
+      });
+      const { step: shared } = await bookedRefusal(t);
+      const first = await bindings.assembly.execute(t.context, run, t.brief);
+      const original = await readManifest(setup, first);
+      const snapshot = await t.db.videoRunStep.findFirstOrThrow({
+        where: { runId: run.id, key: "local:assembly" },
+      });
+      await t.db.videoRunStep.update({
+        where: { id: snapshot.id },
+        data: {
+          key: `quality:assembly-history:${snapshot.id}`,
+          idempotencyKey: randomUUID(),
+          ...(condition === "legacy" && { output: { storageArtifacts: first } }),
+        },
+      });
+      const { step } = await bookedRefusal(t, 3);
+      vi.mocked(bindings.renderer.render).mockResolvedValue({
+        video: Buffer.from("render-two"),
+        cover: Buffer.from("cover"),
+        words: [{ text: "fixture", start: 0, end: 1 }],
+        highlights: [],
+        cues: [],
+        duration: 30,
+      });
+      const second = await bindings.assembly.execute(t.context, run, t.brief);
+      const beforeBill = await readManifest(setup, second);
+      const oldManifest = first.find((item) => item.kind === "manifest")!;
+      const oldKey = { workspaceId: run.workspaceId, objectKey: oldManifest.objectKey };
+      if (condition === "missing") await t.storage.deleteObject(oldKey);
+      if (condition === "corrupt")
+        await t.storage.putObject({
+          ...oldKey,
+          body: Buffer.from("corrupt"),
+          contentType: "application/json",
+        });
+      const get = t.storage.getObject.bind(t.storage);
+      const flaky = vi.spyOn(t.storage, "getObject").mockImplementation(async (input) => {
+        if (condition === "temporary" && input.objectKey === oldKey.objectKey)
+          throw new Error("temporary storage failure");
+        return get(input);
+      });
+      for (const [attempt, costMinor] of [
+        [shared, 23],
+        [step, 25],
+      ] as const)
+        await captureShotReceipt(t.store, bindings.access.paid, t.context, attempt, {
+          costMinor,
+          costBasis: "BILLED",
+          modelId: "fixture",
+          promptVersion: "fixture",
+          seconds: 8,
+          providerDurationSeconds: null,
+          media: null,
+        });
+      await expect(t.runs.detail(t.context, run.id)).resolves.toBeDefined();
+      const active = await bindings.assembly.artifacts(t.context, run);
+      expect(await readManifest(setup, active)).toEqual({
+        ...beforeBill,
+        totalCostMinor: beforeBill.totalCostMinor + 8,
+      });
+      expect(active.find((item) => item.kind === "final")).toEqual(
+        second.find((item) => item.kind === "final"),
+      );
+      const archive = (): Promise<Step> =>
+        t.db.videoRunStep.findUniqueOrThrow({ where: { id: snapshot.id } });
+      flaky.mockRestore();
+      if (condition === "temporary") await t.runs.detail(t.context, run.id);
+      const stored = (await archive()).output;
+      if (condition === "healthy" || condition === "legacy" || condition === "temporary") {
+        expect(await readManifest(setup, t.artifacts.descriptors(stored))).toEqual({
+          ...original,
+          totalCostMinor: original.totalCostMinor + 3,
+        });
+      } else {
+        expect(stored).toMatchObject({ manifestArchiveInvalid: true });
+        expect(t.artifacts.descriptors(stored).some((item) => item.kind === "manifest")).toBe(
+          false,
+        );
+      }
+    },
+  );
+});

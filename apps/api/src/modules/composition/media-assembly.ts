@@ -1,3 +1,4 @@
+import { saveAssemblyOutput } from "./assembly-archive.js";
 import {
   assertSavedCaptionFit,
   rejectInvalidSavedCaptionPlan,
@@ -24,7 +25,7 @@ import {
   type ChannelBrief,
   type MediaReceipt,
 } from "@reelforge/contracts";
-import { json, type Context, type Run, type Step, type Artifact } from "../runs/runs.types.js";
+import { type Context, type Run, type Step, type Artifact } from "../runs/runs.types.js";
 import { MediaAccess } from "../scene-media/media-access.js";
 import { MediaJobs } from "../scene-media/media-jobs.js";
 import { MediaPorts } from "../scene-media/media-ports.js";
@@ -174,19 +175,7 @@ export class MediaAssembly {
           "application/json",
         );
         const storageArtifacts = [...artifacts, descriptor];
-        await db.videoRunStep.create({
-          data: {
-            workspaceId: context.workspaceId,
-            runId: run.id,
-            key: "local:assembly",
-            idempotencyKey: `${run.id}:local:assembly:1`,
-            attempt: 1,
-            state: "SUCCEEDED",
-            input: {},
-            output: json({ storageArtifacts, manifestBillingRevision: current.revision }),
-            finishedAt: new Date(),
-          },
-        });
+        await saveAssemblyOutput(db, run, current.revision, storageArtifacts);
         return { value: storageArtifacts, payload: {} };
       },
     );

@@ -1,12 +1,14 @@
 import {
-  manifestHasBillingChange,
-  rebuiltTotal,
-  refusalBillDeltas,
-} from "./assembly-refusal-cost.js";
+  assemblyOutput,
+  rebuildArchivedManifests,
+  replaceManifest,
+  readManifestSource,
+  writeManifestSource,
+} from "./assembly-archive.js";
+import { manifestRefreshMode, rebuiltTotal, refusalBillDeltas } from "./assembly-refusal-cost.js";
 import { deriveTextAttempt } from "../usage-budget/text-attempt-store.js";
 import { remoteTextId } from "../usage-budget/text-evidence.js";
 import { LocalAssemblyFailure } from "./local-assembly-failure.js";
-import { createHash } from "node:crypto";
 import {
   AssemblyManifestSchema,
   MediaReceiptSchema,
@@ -130,34 +132,6 @@ export async function selectedShotReceipts(
     const receipt = validShotReceipt(steps.find((step) => step.key === key));
     if (!receipt) throw missingShotReceipt();
     return receipt;
-  });
-}
-
-const assemblyOutput = z
-  .object({
-    storageArtifacts: z.array(ArtifactSchema),
-    result: z
-      .object({ storageArtifacts: z.array(ArtifactSchema) })
-      .passthrough()
-      .optional(),
-    pendingManifest: ArtifactSchema.optional(),
-    manifestBillingRevision: z.int().nonnegative().optional(),
-  })
-  .passthrough();
-type AssemblyOutput = z.infer<typeof assemblyOutput>;
-
-function replaceManifest(output: AssemblyOutput, descriptor: Artifact | null): Json {
-  const media = output.storageArtifacts.filter((a) => a.kind !== "manifest");
-  const storageArtifacts = descriptor ? [...media, descriptor] : media;
-  const { pendingManifest, ...fields } = output;
-  return json({
-    ...fields,
-    storageArtifacts,
-    ...(output.result && { result: { ...output.result, storageArtifacts } }),
-    ...(!descriptor && {
-      pendingManifest:
-        pendingManifest ?? output.storageArtifacts.find((a) => a.kind === "manifest"),
-    }),
   });
 }
 
@@ -289,15 +263,7 @@ async function rewriteManifest(
   storage: StoragePort,
   artifacts: RunsArtifacts,
 ): Promise<Artifact | null> {
-  const bytes = await storage.getObject({
-    workspaceId: context.workspaceId,
-    objectKey: source.objectKey,
-  });
-  if (createHash("sha256").update(bytes).digest("hex") !== source.checksumSha256)
-    throw new Error("Stored assembly manifest checksum mismatch");
-  const manifest = AssemblyManifestSchema.parse(JSON.parse(bytes.toString()));
-  if (manifest.workspaceId !== context.workspaceId || manifest.runId !== runId)
-    throw new Error("Stored assembly manifest provenance mismatch");
+  const manifest = await readManifestSource(storage, context, source, runId);
   const priced = currentPrices(manifest.receipts, current);
   const receipts = priced && normalizeHistoricalText(priced, historical);
   if (!receipts) return null;
@@ -311,12 +277,7 @@ async function rewriteManifest(
     totalCostMinor === manifest.totalCostMinor
   )
     return source;
-  return artifacts.put(
-    context,
-    "manifest",
-    Buffer.from(JSON.stringify({ ...manifest, receipts, totalCostMinor })),
-    "application/json",
-  );
+  return writeManifestSource(artifacts, context, { ...manifest, receipts, totalCostMinor });
 }
 
 export async function refreshAssemblyManifests(
@@ -326,53 +287,18 @@ export async function refreshAssemblyManifests(
   context: Context,
   runId: string,
 ): Promise<void> {
-  const where = { runId, output: { path: ["pendingManifest", "kind"], equals: "manifest" } };
-  if (!(await manifestHasBillingChange(store.scoped(context), runId))) return;
+  if (!(await manifestRefreshMode(store.scoped(context), runId))) return;
   await store.mutate(context, runId, "assembly_receipts_checked", async (db, run) => {
-    await invalidateAssemblyManifests(db, runId);
-    const pending = await db.videoRunStep.findMany({ where, select: { id: true, output: true } });
-    const prices = await shotReceipts(db, runId);
-    const historical = await historicalTextReceipts(db, runId);
-    const deltas = await refusalBillDeltas(db, runId);
-    const written = new Map<string, Artifact | null>();
-    for (const step of pending) {
-      const output = assemblyOutput.parse(step.output);
-      const source = output.pendingManifest!;
-      // Deployed manifests predate the dedicated bill event and start at zero.
-      const revision = output.manifestBillingRevision ?? 0;
-      const key = JSON.stringify([source.objectKey, revision]);
-      if (!written.has(key)) {
-        const delta = deltas.reduce(
-          (sum, entry) => sum + (entry.sequence > revision ? entry.amount : 0),
-          0,
-        );
-        written.set(
-          key,
-          await rewriteManifest(
-            context,
-            runId,
-            source,
-            prices,
-            historical,
-            delta,
-            storage,
-            artifacts,
-          ),
-        );
-      }
-      const descriptor = written.get(key);
-      if (descriptor)
-        await db.videoRunStep.updateMany({
-          where: { id: step.id },
-          data: {
-            output: replaceManifest(
-              { ...output, manifestBillingRevision: run.revision },
-              descriptor,
-            ),
-          },
-        });
-    }
-    return { value: null, payload: { manifests: written.size } };
+    if ((await manifestRefreshMode(db, runId)) === "billing")
+      await invalidateAssemblyManifests(db, runId);
+    const [prices, historical, deltas] = await Promise.all([
+      shotReceipts(db, runId),
+      historicalTextReceipts(db, runId),
+      refusalBillDeltas(db, runId),
+    ]);
+    return rebuildArchivedManifests(db, run, deltas, (source, delta) =>
+      rewriteManifest(context, runId, source, prices, historical, delta, storage, artifacts),
+    );
   });
 }
 
@@ -387,14 +313,20 @@ export async function assemblyStageOutput(
     select: { output: true },
   });
   if (!cached) return json({ result, storageArtifacts: artifacts });
-  const { storageArtifacts, pendingManifest, manifestBillingRevision } = assemblyOutput.parse(
-    cached.output,
-  );
+  const {
+    storageArtifacts,
+    pendingManifest,
+    manifestBillingRevision,
+    manifestTerminalShotIds,
+    manifestArchiveInvalid,
+  } = assemblyOutput.parse(cached.output);
   return json({
     result: { storageArtifacts },
     storageArtifacts,
     ...(pendingManifest && { pendingManifest }),
     ...(manifestBillingRevision !== undefined && { manifestBillingRevision }),
+    ...(manifestTerminalShotIds !== undefined && { manifestTerminalShotIds }),
+    ...(manifestArchiveInvalid && { manifestArchiveInvalid }),
   });
 }
 
