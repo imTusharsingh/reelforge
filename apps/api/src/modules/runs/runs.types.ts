@@ -28,6 +28,7 @@ export const RunJobSchema = z
     runId: z.uuid(),
     stepId: z.uuid().optional(),
     assembly: z.literal(true).optional(),
+    collectOnly: z.literal(true).optional(),
     stage: z.enum(["PLANNING", "SCRIPTING", "SHOT_PLANNING", "CRITIC"]).optional(),
     traceparent: z
       .string()

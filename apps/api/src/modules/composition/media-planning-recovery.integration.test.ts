@@ -137,7 +137,9 @@ describe.skipIf(
     for (let sweep = 0; sweep < 2; sweep++) {
       enqueue.mockClear();
       await t.engine.recover();
-      expect(enqueue).not.toHaveBeenCalled();
+      const jobs = enqueue.mock.calls.map(([data]) => data);
+      expect(jobs.map((job) => job.stepId)).toEqual([first.id]);
+      await expect(t.engine.process(jobs[0])).rejects.toThrow("admission video pricing");
     }
     t.runs.queue = null;
     expect(http).not.toHaveBeenCalled();
@@ -150,7 +152,6 @@ describe.skipIf(
     expect(http).toHaveBeenCalledOnce();
     expect(download).toHaveBeenCalledOnce();
     vi.mocked(native.omni.poll).mockRestore();
-    await t.control.resume(t.context, t.run.id);
     expect((await t.store.get(t.context, t.run.id)).pauseReason).toBeNull();
     expect(native.submitted).toHaveLength(1);
     await t.storage.putObject({ ...object, body, contentType: asset.mediaType });

@@ -73,21 +73,22 @@ export async function dispatchPaidText<T>(
 }
 
 function preDispatchRefusal(error: unknown, step: Step): string | undefined {
+  if (
+    error instanceof ServiceUnavailableException &&
+    error.message === "Paid text dispatch is disabled"
+  )
+    return error.message;
+  if (!isScriptRepair(step)) return;
   if (error instanceof BudgetExhaustedError || error instanceof BudgetUnresolvableError)
     return error.code;
-  if (error instanceof ServiceUnavailableException) {
-    if (
-      error.message === "Paid text dispatch is disabled" ||
-      error.message === "Budget policy unavailable"
-    )
-      return error.message;
-  }
+  if (error instanceof ServiceUnavailableException && error.message === "Budget policy unavailable")
+    return error.message;
   if (
     error instanceof ConflictException &&
     ["BUDGET_CAP", "Paid text envelope cannot cover the attempt"].includes(error.message)
   )
     return "BUDGET_CAP";
-  if (isScriptRepair(step)) return "Script repair admission refused before dispatch";
+  return "Script repair admission refused before dispatch";
 }
 
 async function authorizeTextArm(

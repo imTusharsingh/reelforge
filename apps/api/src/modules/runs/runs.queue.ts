@@ -39,7 +39,7 @@ export class RunsQueue {
     const jobId = data.stepId
       ? `${data.runId}-recover-${data.stepId}`
       : data.assembly
-        ? `${data.runId}-assembly`
+        ? `${data.runId}-${data.collectOnly ? "recover-audio" : "assembly"}`
         : `${data.runId}-${data.stage ?? revision}`;
     await this.removeFinished(jobId);
     await this.queue.add("step", data, { jobId, delay, attempts: 1, removeOnComplete: true });

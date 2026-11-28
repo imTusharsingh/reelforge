@@ -56,7 +56,12 @@ export class RunGeneration {
     private readonly artifacts: RunsArtifacts,
     private readonly fallback: RunFallback,
   ) {}
-  public async process(context: Context, run: Run, stepId: string): Promise<number | null> {
+  public async process(
+    context: Context,
+    run: Run,
+    stepId: string,
+    collectOnly?: true,
+  ): Promise<number | null> {
     const db = this.runs.store.scoped(context);
     const found = await db.videoRunStep.findFirst({ where: { id: stepId, runId: run.id } });
     if (!found) throw new ConflictException("Step not found in run");
@@ -79,6 +84,8 @@ export class RunGeneration {
       if (!this.recoverKeyframe) throw new ConflictException("Keyframe recovery is unavailable");
       return this.recoverKeyframe(context, step);
     }
+    if (collectOnly && !step.providerJobId && !["RUNNING", "WAITING_EXTERNAL"].includes(step.state))
+      return null;
     const paused = await this.waitAtBoundary(context, run, step);
     if (paused !== undefined) return paused;
     const shot = ShotSpecSchema.parse(step.input);

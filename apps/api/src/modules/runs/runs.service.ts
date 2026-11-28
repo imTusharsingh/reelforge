@@ -194,11 +194,9 @@ export class RunsService {
         // A pending correction still needs a durable hold even if rendering has not completed.
         // But never replace an existing render pause while discarding stale advancement.
         const hold =
-          advances && current.pauseReason?.startsWith("RECONCILE_REQUIRED")
-            ? current.pauseReason
-            : advances && (renderAdvanceAllowed || !current.pauseReason)
-              ? await activeSubmissionHold(db, tx, current)
-              : null;
+          advances && (renderAdvanceAllowed || !current.pauseReason)
+            ? await activeSubmissionHold(db, tx, current)
+            : null;
         if (hold) {
           if (
             current.pauseReason !== "EMERGENCY_STOP" &&

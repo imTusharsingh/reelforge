@@ -269,7 +269,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
     });
   });
 
-  it.each(["attached", "ledger only", "ledger only during emergency stop"])(
+  it.each(["attached", "ledger only", "emergency stop", "reconciliation hold"])(
     "recovers %s audio with new dispatch closed",
     async (boundary) => {
       const { t, run, native, bindings, job } = await setupAssembly(fixture);
@@ -299,10 +299,18 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
           responseMetadata: { providerJobId: submitted.providerJobId },
         });
       }
-      const stopped = boundary === "ledger only during emergency stop";
+      const stopped = boundary === "emergency stop";
+      const held = boundary === "reconciliation hold";
       if (stopped) {
         t.stop.stopped = true;
         await expect(bindings.access.boundary.check(t.context, run)).rejects.toThrow("Run halted");
+      } else if (held) {
+        await t.db.videoRun.update({
+          where: { id: run.id },
+          data: {
+            pauseReason: `RECONCILE_REQUIRED: provider submission outcome unknown (${step.id})`,
+          },
+        });
       } else await t.control.cancel(t.context, run.id);
       const restarted = bindMedia(t, native);
       const render = vi.spyOn(restarted.renderer, "render");
@@ -311,14 +319,22 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
       });
       const enqueue = vi.fn<RunsQueue["enqueue"]>().mockResolvedValue(undefined);
       t.runs.queue = Object.assign(Object.create(RunsQueue.prototype), { enqueue });
-      for (let sweep = 0; sweep < 2; sweep++) {
+      for (let sweep = 0; sweep < (held ? 1 : 2); sweep++) {
         enqueue.mockClear();
         await t.engine.recover();
         const queued = enqueue.mock.calls.filter(([data]) => data.runId === run.id);
         if (sweep === 0) expect(queued).toHaveLength(1);
+        if (held && sweep === 0) {
+          await t.db.videoRun.update({ where: { id: run.id }, data: { pauseReason: null } });
+        }
         for (const [data] of queued) {
           expect(data.assembly).toBe(true);
+          expect(data.collectOnly).toBe(true);
           await t.engine.process(data);
+          if (held) {
+            await t.engine.process(data);
+            await t.engine.process(data);
+          }
         }
       }
       expect(await t.db.videoRunStep.findUnique({ where: { id: step.id } })).toMatchObject({
@@ -327,7 +343,7 @@ describe.skipIf(!process.env.DATABASE_URL)("assembly audio recovery", () => {
       });
       expect(collect).toHaveBeenCalledWith(submitted.providerJobId, 30);
       expect(await t.store.get(t.context, run.id)).toMatchObject({
-        state: stopped ? "ASSEMBLING" : "CANCELED",
+        state: stopped || held ? "ASSEMBLING" : "CANCELED",
         pauseReason: stopped ? "EMERGENCY_STOP" : null,
       });
       expect(music).toHaveBeenCalledOnce();

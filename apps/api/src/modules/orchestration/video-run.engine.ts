@@ -81,8 +81,6 @@ export class VideoRunEngine {
     const context = await this.context(job);
     const run = await this.runs.store.get(context, job.runId);
     if (job.stage && job.stage !== run.state) return null;
-    if (context.userId === RECOVERY_PRINCIPAL && run.pauseReason?.startsWith("RECONCILE_REQUIRED"))
-      return null;
     return runWithContext(
       createContext({
         workspaceId: run.workspaceId,
@@ -105,7 +103,8 @@ export class VideoRunEngine {
               if (accepted.key.startsWith(referenceMediaPrefix))
                 return this.planning.collectAdmittedReference?.(context, accepted) ?? null;
             }
-            if (job.stepId) return this.shot(context, run, job.stepId);
+            if (job.stepId) return this.shot(context, run, job);
+            if (job.collectOnly) return this.planning.collectAdmittedAudio?.(context, run) ?? null;
             if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
               await this.runs.enqueue(context, run);
               return null;
@@ -169,11 +168,12 @@ export class VideoRunEngine {
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
     }
   }
-  private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
+  private async shot(context: Context, run: Run, job: RunJob): Promise<number | null> {
+    const stepId = job.stepId!;
     if (await shouldCheckShotBoundary(this.runs.store.scoped(context), run, stepId))
       await this.boundary.check(context, run);
     try {
-      return await this.generation.process(context, run, stepId);
+      return await this.generation.process(context, run, stepId, job.collectOnly);
     } catch (error) {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
@@ -330,7 +330,7 @@ export class VideoRunEngine {
   private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
     for (const step of await pendingCorrectionJobs(db))
       await this.runs.queue?.enqueue(
-        this.runs.job(context, step.runId, step.id),
+        { ...this.runs.job(context, step.runId, step.id), collectOnly: true },
         step.run.revision,
       );
   }
@@ -367,7 +367,6 @@ export class VideoRunEngine {
       });
       for (const run of runs) {
         z.uuid().parse(run.id);
-        if (run.pauseReason?.startsWith("RECONCILE_REQUIRED")) continue;
         if (
           ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
           run.pauseReason
@@ -383,7 +382,7 @@ export class VideoRunEngine {
       (await acceptedAudio(db, this.runs.store.db, run)).length
     )
       await this.runs.queue?.enqueue(
-        { ...this.runs.job(context, run.id), assembly: true },
+        { ...this.runs.job(context, run.id), assembly: true, collectOnly: true },
         run.revision,
       );
     const admitted =
@@ -397,6 +396,9 @@ export class VideoRunEngine {
             },
           });
     for (const step of admitted)
-      await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);
+      await this.runs.queue?.enqueue(
+        { ...this.runs.job(context, run.id, step.id), collectOnly: true },
+        run.revision,
+      );
   }
 }

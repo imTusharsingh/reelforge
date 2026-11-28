@@ -187,13 +187,6 @@ export async function clearResolvedSubmissionHold(
         ? null
         : await storedSubmissionHold(db, run.id, reason)
       : reason);
-  // Settling evidence may finish the attempt. Only an explicit resume reopens paid work.
-  if (
-    !pauseReason &&
-    reason?.startsWith("RECONCILE_REQUIRED") &&
-    !["FAILED", "CANCELED"].includes(run.state)
-  )
-    return reason;
   if (pauseReason !== reason)
     await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason } });
   return pauseReason;

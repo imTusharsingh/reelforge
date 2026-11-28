@@ -301,7 +301,13 @@ export class MediaPlanning {
       input.validateOutput?.(input.schema.parse(output));
       this.validatePlan(run, input.promptVersion.role, output);
     } catch (error) {
-      const writer = step.key === scriptwriterKey;
+      // A legacy receipt can be recovered or rejected, but it lacks proof of a journaled completion.
+      const writer =
+        step.key === scriptwriterKey &&
+        !!(await this.access.runs.store.db.textAttemptEvidence.findFirst({
+          where: { workspaceId: context.workspaceId, attemptId: step.id, kind: "SUCCEEDED" },
+          select: { id: true },
+        }));
       const message = validationMessage(error);
       await this.rejectSavedOutput(context, step, {
         code: writer ? "SCRIPT_VALIDATION" : "PROVIDER_INVALID",

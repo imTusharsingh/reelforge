@@ -64,13 +64,7 @@ export function pendingCorrectionJobs(
   db: Scoped,
 ): Promise<{ id: string; runId: string; run: { revision: number } }[]> {
   return db.videoRunStep.findMany({
-    where: {
-      OR: [pendingCorrectionWhere, terminalVideoWhere],
-      run: {
-        state: { not: "FAILED" },
-        OR: [{ pauseReason: null }, { NOT: { pauseReason: { startsWith: "RECONCILE_REQUIRED" } } }],
-      },
-    },
+    where: { OR: [pendingCorrectionWhere, terminalVideoWhere], run: { state: { not: "FAILED" } } },
     select: { id: true, runId: true, run: { select: { revision: true } } },
   });
 }
