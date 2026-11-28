@@ -215,22 +215,12 @@ async function attemptRebuild(
   delta: number,
   rebuild: (source: Artifact, delta: number) => Promise<Artifact | null>,
 ): Promise<Rebuild> {
-  // A stalled object must not keep the request or retry marker pending indefinitely.
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const deadline = new Promise<never>((_, reject) => {
-      timeout = setTimeout(
-        () => reject(new ArchiveStorageUnavailable("Archive I/O timed out")),
-        10_000,
-      );
-    });
-    return { descriptor: await Promise.race([rebuild(source, delta), deadline]) };
+    return { descriptor: await rebuild(source, delta) };
   } catch (error) {
     if (error instanceof InvalidArchivedManifest) return { descriptor: null, problem: "invalid" };
     if (error instanceof ArchiveStorageUnavailable) return { descriptor: null, problem: "retry" };
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

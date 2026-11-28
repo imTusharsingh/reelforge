@@ -1,3 +1,4 @@
+import { hasVideoDelivery, terminalVideo } from "../usage-budget/run-video-terminal.js";
 import { carryRefusalBill } from "../usage-budget/run-pending-receipt.js";
 import { readReceiptBudget } from "../usage-budget/run-shot-receipt.js";
 import { ConflictException } from "@nestjs/common";
@@ -33,7 +34,7 @@ export async function settleVideoRefusal(
     "shot_refused",
     async (db, run, tx) => {
       const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
-      if (SETTLED_SHOTS.some((state) => state === current.state))
+      if (SETTLED_SHOTS.some((state) => state === current.state) || hasVideoDelivery(current))
         return { value: null, payload: { replay: true } };
       if (
         !current.providerId ||
@@ -45,7 +46,13 @@ export async function settleVideoRefusal(
       const rewritten = !!refusalRewrite(current);
       const active = await acceptsRewrite(db, run);
       const retry = active && !rewritten;
-      const evidence = { providerJobId: submissionJobId ?? current.providerJobId, retry };
+      const recorded = terminalVideo(current);
+      if (recorded && recorded.status !== "refused")
+        return { value: null, payload: { replay: true } };
+      const evidence = {
+        providerJobId: recorded?.providerJobId ?? submissionJobId ?? current.providerJobId,
+        retry,
+      };
       await recordRefusal(db, tx, paid, context, current, evidence);
       const pauseReason = await clearResolvedSubmissionHold(db, tx, run, current.id);
       if (retry) {
@@ -56,18 +63,7 @@ export async function settleVideoRefusal(
           stepId: current.id,
         };
       }
-      if (!active) await failSettledGeneration(db, { ...run, pauseReason });
-      else
-        await db.videoRun.updateMany({
-          where: { id: run.id },
-          data: {
-            state: "NEEDS_HUMAN",
-            pauseReason: pauseReason?.startsWith("RECONCILE_REQUIRED")
-              ? pauseReason
-              : "PROVIDER_REFUSED",
-            ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
-          },
-        });
+      await closeRefusedRun(db, { ...run, pauseReason }, active);
       return {
         value: null,
         payload: { reason: "PROVIDER_REFUSED", rewriteCount: Number(rewritten) },
@@ -78,6 +74,21 @@ export async function settleVideoRefusal(
   await runs.events?.publish(result.event);
   if (result.value)
     await runs.queue?.enqueue(runs.job(context, step.runId, result.value), result.event.sequence);
+}
+
+async function closeRefusedRun(db: Scoped, run: Run, active: boolean): Promise<void> {
+  if (!active) await failSettledGeneration(db, run);
+  else
+    await db.videoRun.updateMany({
+      where: { id: run.id },
+      data: {
+        state: "NEEDS_HUMAN",
+        pauseReason: run.pauseReason?.startsWith("RECONCILE_REQUIRED")
+          ? run.pauseReason
+          : "PROVIDER_REFUSED",
+        ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
+      },
+    });
 }
 
 async function acceptsRewrite(db: Scoped, run: Run): Promise<boolean> {

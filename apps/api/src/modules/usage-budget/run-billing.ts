@@ -1,3 +1,4 @@
+import { hasVideoDelivery, terminalVideo } from "./run-video-terminal.js";
 import {
   correctionHold,
   pendingCorrection,
@@ -245,7 +246,12 @@ export async function captureShotReceipt(
       const settled = current.state === "SUCCEEDED";
       const pending = pendingCorrection(current);
       const price = highestObservedReceipt(pending, receipt);
-      const merged = mergeShotReceipt(current, price);
+      const merged = mergeShotReceipt(
+        current,
+        terminalVideo(current) && !hasVideoDelivery(current)
+          ? { ...price, media: null, providerDurationSeconds: null }
+          : price,
+      );
       if (!merged) return { value: current, payload: { replay: true } };
       const { priceChanged, previousCost, output, cost } = merged;
       const overage = cost > (current.costMinor ?? 0);
@@ -349,6 +355,8 @@ export async function recordShotArtifact(
   return store.mutate(context, step.runId, "step_completed", async (db, run, tx) => {
     const current = await db.videoRunStep.findFirstOrThrow({ where: { id: step.id } });
     if (SETTLED_SHOTS.some((state) => state === current.state))
+      return { value: null, payload: { replay: true } };
+    if (terminalVideo(current) && !hasVideoDelivery(current))
       return { value: null, payload: { replay: true } };
     const correction = pendingCorrection(current);
     if (correction) throw new ConflictException(correctionHold(step.id));

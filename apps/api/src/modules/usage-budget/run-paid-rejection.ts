@@ -1,3 +1,5 @@
+import { terminalVideo } from "./run-video-terminal.js";
+import { pendingCorrection } from "./run-pending-receipt.js";
 import type { Prisma } from "@reelforge/database";
 import { pendingShotMedia } from "./run-shot-receipt.js";
 import { lockBooks } from "./text-admission-lock.js";
@@ -34,7 +36,13 @@ export async function settleFailedRequest(
   // Billing can be staged before a second poll reports terminal failure. Match
   // that staged posting to the exact job before replacing the success ledger state.
   const staged = stagedShotBill(step, providerJobId, dispatched);
-  const billed = staged?.costBasis === "BILLED" ? staged.costMinor : null;
+  const recorded = terminalVideo(step);
+  const highest = Math.max(
+    staged?.costBasis === "BILLED" ? staged.costMinor : -1,
+    recorded && recorded.providerJobId === providerJobId ? (recorded.billedMinor ?? -1) : -1,
+    step.key.startsWith("shot-") && dispatched ? (pendingCorrection(step)?.costMinor ?? -1) : -1,
+  );
+  const billed = highest === -1 ? null : highest;
   await lockFailureBooks(tx, context.workspaceId, step.runId, billed);
   const charged = billed ?? cost;
   const code =

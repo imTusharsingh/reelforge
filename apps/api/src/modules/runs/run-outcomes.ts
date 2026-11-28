@@ -1,3 +1,4 @@
+import { terminalVideo, terminalVideoWhere } from "../usage-budget/run-video-terminal.js";
 import { terminalRenderFailure } from "./run-render-stage.js";
 import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { releaseSteps } from "./run-close-steps.js";
@@ -285,7 +286,11 @@ export async function collectibleFailedSteps(
       OR: [
         {
           key: { startsWith: "shot-" },
-          OR: [{ state: { in: ["RUNNING", "WAITING_EXTERNAL"] } }, pendingCorrectionWhere],
+          OR: [
+            { state: { in: ["RUNNING", "WAITING_EXTERNAL"] } },
+            pendingCorrectionWhere,
+            terminalVideoWhere,
+          ],
         },
         {
           key: { startsWith: referenceMediaPrefix },
@@ -296,8 +301,10 @@ export async function collectibleFailedSteps(
   });
   const claims = await readAdmissions(db, tx, run.workspaceId, steps);
   return claims
-    .filter(({ step, ...claim }) =>
-      step.state === "RUNNING" ? !!jobIdFromAdmission(claim) : !!step.providerJobId,
+    .filter(
+      ({ step, ...claim }) =>
+        !!terminalVideo(step) ||
+        (step.state === "RUNNING" ? !!jobIdFromAdmission(claim) : !!step.providerJobId),
     )
     .map(({ step }) => step);
 }

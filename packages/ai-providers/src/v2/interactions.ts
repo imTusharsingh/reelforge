@@ -1,6 +1,7 @@
 import {
   ProviderFailure,
   SubmissionRefused,
+  TerminalMediaJob,
   ProviderHttp,
   record,
   requiredString,
@@ -38,6 +39,7 @@ export class Interactions {
     if (this.status(response) === "refused")
       throw new SubmissionRefused(
         typeof response.id === "string" && response.id.trim() ? response.id : null,
+        this.billedSeconds(response),
       );
     return { providerJobId: requiredString(response.id) };
   }
@@ -59,7 +61,7 @@ export class Interactions {
     const response = await this.get(id);
     const status = this.status(response);
     const billedSeconds = await this.recordTerminalBilling(response, status, recordBilling);
-    if (status === "refused") throw new ProviderFailure("REFUSAL", true);
+    if (status === "refused" || status === "failed") throw new TerminalMediaJob(status);
     if (status !== "succeeded") throw new ProviderFailure("INVALID", true);
     const artifact = await this.download(response, kind, trimSeconds).catch(onMediaFailure);
     return { ...artifact, billedSeconds };
@@ -86,13 +88,18 @@ export class Interactions {
     recordBilling?: RecordBilledSeconds,
   ): Promise<number | null> {
     if (status === "running" || status === "queued") return null;
-    const usage = response.usage;
-    if (!usage || typeof usage !== "object" || !("billed_seconds" in usage)) return null;
-    const seconds = usage.billed_seconds;
-    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return null;
+    const seconds = this.billedSeconds(response);
+    if (seconds === null) return null;
     if (status === "succeeded") await recordBilling?.(seconds);
     else await recordBilling?.(seconds, status);
     return seconds;
+  }
+
+  private billedSeconds(response: Json): number | null {
+    const usage = response.usage;
+    if (!usage || typeof usage !== "object" || !("billed_seconds" in usage)) return null;
+    const seconds = usage.billed_seconds;
+    return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
   }
 
   public async get(id: string): Promise<Json> {

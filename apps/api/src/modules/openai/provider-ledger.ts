@@ -4,6 +4,7 @@ import {
   reservationCents,
   secondsCost,
   ProviderFailure,
+  SubmissionRefused,
   type ClipArtifact,
   type FailedJobStatus,
   type VideoGenPort,
@@ -14,6 +15,7 @@ import type { Prisma } from "@reelforge/database";
 import type { Database } from "../identity/identity.types.js";
 import type { PaidCallReservation } from "../usage-budget/usage-budget.types.js";
 import { UsageBudgetService } from "../usage-budget/usage-budget.service.js";
+import { hasDelivery, recordSubmissionRefusal } from "./routed-video-evidence.js";
 import { lockBooks } from "../usage-budget/text-admission-lock.js";
 import { decimalToMinor, minorToNumber } from "../usage-budget/usage-budget.money.js";
 
@@ -112,8 +114,8 @@ export class ProviderLedger {
     jobId: string,
   ): Promise<void> {
     await this.db.$transaction(async (tx) => {
-      const { row, reservation } = await lockedJob(tx, workspaceId, correlationId, jobId);
-      if (row.errorCode !== "REFUSED" && row.errorCode !== "PENDING")
+      const { row, metadata, reservation } = await lockedJob(tx, workspaceId, correlationId, jobId);
+      if (hasDelivery(metadata) || (row.errorCode !== "REFUSED" && row.errorCode !== "PENDING"))
         throw new ConflictException("Provider refusal requires a matching job receipt");
       if (row.errorCode !== "REFUSED")
         await tx.providerRequest.update({ where: { id: row.id }, data: { errorCode: "REFUSED" } });
@@ -153,6 +155,19 @@ export class ProviderLedger {
       });
       return result;
     } catch (error) {
+      if (error instanceof SubmissionRefused) {
+        await this.db.$transaction((tx) =>
+          recordSubmissionRefusal(
+            tx,
+            this.budgets,
+            { workspaceId: spec.workspaceId, channelId, correlationId },
+            reservation,
+            port,
+            error,
+          ),
+        );
+        throw error;
+      }
       const dispatched = !(error instanceof ProviderFailure) || error.dispatched;
       const refused =
         route &&
@@ -217,7 +232,7 @@ export class ProviderLedger {
     if (route)
       return this.db.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${route.lock}, 0))`;
-        await this.assertAdmission(tx, spec.workspaceId, capability.providerId, route);
+        await this.assertAdmission(tx, spec.workspaceId, channelId, capability.providerId, route);
         await route.authorize?.();
         const held = await reserve(tx);
         await intent(tx, held);
@@ -235,19 +250,25 @@ export class ProviderLedger {
   private async assertAdmission(
     tx: Prisma.TransactionClient,
     workspaceId: string,
+    channelId: string | null,
     providerId: string,
     route: RoutedAdmission,
   ): Promise<void> {
     if (route.replaces) {
+      await lockBooks(tx, { workspaceId, channelId });
       const refusal = await tx.providerRequest.findFirst({
         where: {
           workspaceId,
           correlationId: route.replaces,
           providerId,
+          channelId,
           errorCode: "REFUSED",
+          status: "FAILED",
         },
+        select: { responseMetadata: true },
       });
-      if (!refusal) throw new ConflictException("Provider rewrite requires a confirmed refusal");
+      if (!refusal || hasDelivery(refusal.responseMetadata))
+        throw new ConflictException("Provider rewrite requires a confirmed refusal");
     }
     await this.assertReplaySafe(
       workspaceId,
@@ -319,20 +340,27 @@ export class ProviderLedger {
           await this.budgets.commit(workspaceId, reservation.id, minorToNumber(amount), tx);
         }
       }
+      // Billing is independent of delivery. Once a clip is saved, a later conflicting
+      // refusal can still raise liability but must never reopen eligibility for a paid rewrite.
+      const delivered = !failure && hasDelivery(artifact);
+      const failed = failure && !hasDelivery(metadata);
       await tx.providerRequest.update({
         where: { id: row.id },
         data: {
-          status: failure ? "FAILED" : "SUCCEEDED",
+          ...(delivered && { status: "SUCCEEDED", errorCode: null }),
+          ...(failed && {
+            status: "FAILED",
+            errorCode: failure === "refused" ? "REFUSED" : "PROVIDER_JOB_FAILED",
+          }),
           actualCost: actual,
-          errorCode: failure === "refused" ? "REFUSED" : failure ? "PROVIDER_JOB_FAILED" : null,
           ...(verified && !keepEarlier && { usage: { seconds: artifact.billedSeconds } }),
-          responseMetadata: {
-            ...metadata,
-            ...(artifact.objectKey !== undefined && { objectKey: artifact.objectKey }),
-            ...(artifact.checksumSha256 !== undefined && {
-              checksumSha256: artifact.checksumSha256,
-            }),
-          },
+          ...(delivered && {
+            responseMetadata: {
+              ...metadata,
+              objectKey: artifact.objectKey!,
+              checksumSha256: artifact.checksumSha256!,
+            },
+          }),
         },
       });
     });

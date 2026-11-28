@@ -1,3 +1,4 @@
+import { terminalVideo } from "./run-video-terminal.js";
 import { assertSavedCaptionAdmission } from "./run-caption-admission.js";
 import type { VideoGenPort } from "../orchestration/video-run.handlers.js";
 import { pendingCorrection } from "./run-pending-receipt.js";
@@ -52,7 +53,10 @@ export function claimedRunCost(steps: Step[]): number {
     if (claim.state === "CANCELLED") return total;
     const retained = claim.state === "SUCCEEDED" ? readReceiptBudget(claim.output)?.bufferMinor : 0;
     const covered = (claim.costMinor ?? 0) + (retained ?? 0);
-    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0);
+    const terminal = ["RUNNING", "WAITING_EXTERNAL"].includes(claim.state)
+      ? terminalVideo(claim)?.billedMinor
+      : 0;
+    return total + Math.max(covered, pendingCorrection(claim)?.costMinor ?? 0, terminal ?? 0);
   }, 0);
 }
 

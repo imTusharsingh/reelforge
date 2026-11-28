@@ -74,8 +74,17 @@ export class ProviderFailure extends Error {
 
 /** A terminal content decision returned by the submission endpoint itself. */
 export class SubmissionRefused extends ProviderFailure {
-  public constructor(public readonly providerJobId: string | null) {
+  public constructor(
+    public readonly providerJobId: string | null,
+    public readonly billedSeconds: number | null = null,
+  ) {
     super("REFUSAL", true);
+  }
+}
+
+export class TerminalMediaJob extends ProviderFailure {
+  public constructor(public readonly status: "refused" | "failed") {
+    super(status === "refused" ? "REFUSAL" : "INVALID", true);
   }
 }
 

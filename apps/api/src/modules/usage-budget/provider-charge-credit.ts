@@ -14,7 +14,7 @@ import {
   pendingCorrection,
 } from "./run-pending-receipt.js";
 import { correctionPayload, terminalBilledShot } from "./run-shot-receipt.js";
-import { mainVideoEstimate } from "./legacy-main-video-estimate.js";
+import { mainVideoReceipt } from "./legacy-main-video-estimate.js";
 import { legacyObject } from "./legacy-text-import-fields.js";
 import type { VideoReceipt } from "../orchestration/video-run.handlers.js";
 import type { Context, Json, Run, Scoped, Step, Transaction } from "../runs/runs.types.js";
@@ -110,17 +110,17 @@ export async function postMediaCredit(
     take: 2,
   });
   if (other) throw new ConflictException("Ambiguous media reservation");
-  const oldEstimate =
+  const receipt =
     historical && (!reservation || reservation.status === "COMMITTED")
-      ? await mainVideoEstimate(tx, row, reservation)
+      ? await mainVideoReceipt(tx, row, reservation)
       : null;
-  const pricing = oldEstimate
-    ? { ...row, actualCost: null, estimatedCost: oldEstimate.gross }
-    : row;
-  const cost = classifyCost(pricing);
+  const oldEstimate = receipt?.kind === "ESTIMATE" ? receipt : null;
+  const cost = classifyCost(
+    oldEstimate ? { ...row, actualCost: null, estimatedCost: oldEstimate.gross } : row,
+  );
   const finalBill = historical && cost.kind === "ACTUAL";
   if (
-    (!oldEstimate && !creditableMedia(row, reservation)) ||
+    (!receipt && !creditableMedia(row, reservation)) ||
     (!finalBill &&
       !oldEstimate &&
       (!terminalMediaFailure(row.errorCode) || cost.kind !== "FAILED_ESTIMATED")) ||

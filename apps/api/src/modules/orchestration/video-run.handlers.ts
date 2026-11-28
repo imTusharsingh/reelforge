@@ -1,4 +1,4 @@
-import type { ClipArtifact } from "@reelforge/ai-providers";
+import type { ClipArtifact, FailedJobStatus } from "@reelforge/ai-providers";
 import type { ChannelBrief, MediaReceipt, ShotSpec } from "@reelforge/contracts";
 import type { Json, Run, Step, Context } from "../runs/runs.types.js";
 export class AssemblyInterrupted extends Error {
@@ -82,7 +82,7 @@ export interface VideoGenPort {
 export type ShotBilling = {
   savedOutput?: unknown;
   shot: ShotSpec;
-  record: (receipt: VideoReceipt) => Promise<void>;
+  record: (receipt: VideoReceipt, failure?: FailedJobStatus) => Promise<void>;
 };
 export type VideoReceipt = {
   costBasis: MediaReceipt["costBasis"];

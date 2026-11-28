@@ -1,3 +1,4 @@
+import { hasVideoDelivery } from "./run-video-terminal.js";
 import { carryRefusalBill } from "./run-pending-receipt.js";
 import { readReceiptBudget } from "./run-shot-receipt.js";
 import { closeSteps } from "../runs/run-close-steps.js";
@@ -35,6 +36,8 @@ export async function finalizeFailed(
       const current = await currentStep(db, run, step);
       if (current.key.startsWith("media:text:"))
         throw new ConflictException("Text failure requires its evidence journal");
+      if (current.key.startsWith("shot-") && hasVideoDelivery(current))
+        return { value: null, eventType: "step_failure_ignored", payload: { replay: true } };
       if (!canFinalize(current, step)) throw new ReplayedFailure(await previousFailure(db, step));
       const amount = current.costMinor ?? 0;
       const cost = await paid.settleFailedRequest(

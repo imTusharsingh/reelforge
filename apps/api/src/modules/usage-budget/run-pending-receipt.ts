@@ -1,3 +1,4 @@
+import { terminalVideoWhere } from "./run-video-terminal.js";
 import { ConflictException } from "@nestjs/common";
 import { MediaReceiptSchema } from "@reelforge/contracts";
 import { z } from "zod";
@@ -36,7 +37,7 @@ export async function shouldCheckShotBoundary(
     run.state === "GENERATING" &&
     !run.pauseReason &&
     !(await db.videoRunStep.findFirst({
-      where: { id: stepId, runId: run.id, ...pendingRefusedBillWhere },
+      where: { id: stepId, runId: run.id, OR: [pendingRefusedBillWhere, terminalVideoWhere] },
       select: { id: true },
     }))
   );
@@ -46,7 +47,7 @@ export function pendingCorrectionJobs(
   db: Scoped,
 ): Promise<{ id: string; runId: string; run: { revision: number } }[]> {
   return db.videoRunStep.findMany({
-    where: { ...pendingCorrectionWhere, run: { state: { not: "FAILED" } } },
+    where: { OR: [pendingCorrectionWhere, terminalVideoWhere], run: { state: { not: "FAILED" } } },
     select: { id: true, runId: true, run: { select: { revision: true } } },
   });
 }

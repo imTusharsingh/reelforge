@@ -152,13 +152,14 @@ export function mergeShotReceipt(
 }
 
 export function admissionFields(step: Step): Record<string, unknown> {
-  const { receiptBudget, videoPricing, refusalRewrite } = z
+  const { receiptBudget, videoPricing, refusalRewrite, terminalVideo } = z
     .record(z.string(), z.unknown())
     .parse(step.output ?? {});
   return {
     ...(receiptBudget !== undefined && { receiptBudget }),
     ...(videoPricing !== undefined && { videoPricing }),
     ...(refusalRewrite !== undefined && { refusalRewrite }),
+    ...(terminalVideo !== undefined && { terminalVideo }),
   };
 }
 

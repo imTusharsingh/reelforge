@@ -161,7 +161,8 @@ function drainedPreparation(source: LegacyTextSource, events: Event[]): boolean 
     metadata.admissionOrdering === ADMISSION_ORDERING &&
     metadata.dispatched === false &&
     metadata.costKnown === false &&
-    reservation!.category === "VIDEO_MEDIA" &&
+    // 20261127020000 backfills exact text-linked main reservations from VIDEO_MEDIA to LLM.
+    ["VIDEO_MEDIA", "LLM"].includes(reservation!.category) &&
     step.providerId === "gemini" &&
     step.costMinor === Number(reservation!.amountMinor) &&
     request!.estimatedCost?.mul(100).eq(reservation!.amountMinor.toString()) === true &&

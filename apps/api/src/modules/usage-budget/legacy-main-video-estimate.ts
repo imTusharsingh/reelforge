@@ -6,16 +6,21 @@ import { pricedOutput } from "./run-shot-receipt.js";
 type MediaRequest = Prisma.ProviderRequestGetPayload<object>;
 type MediaReservation = Prisma.UsageReservationGetPayload<object>;
 
-export async function mainVideoEstimate(
+type MainVideoReceipt =
+  | {
+      kind: "ESTIMATE";
+      gross: string;
+      minor: number;
+      metadata: ReturnType<typeof legacyObject>;
+      shot: boolean;
+    }
+  | { kind: "VERIFIED_UNRESERVED" };
+
+export async function mainVideoReceipt(
   tx: Transaction,
   row: { id: string; correlationId: string; status: string; errorCode: string | null },
   reservation: MediaReservation | undefined,
-): Promise<{
-  gross: string;
-  minor: number;
-  metadata: ReturnType<typeof legacyObject>;
-  shot: boolean;
-} | null> {
+): Promise<MainVideoReceipt | null> {
   if (row.status !== "SUCCEEDED" || row.errorCode !== null) return null;
   const request = await tx.providerRequest.findUniqueOrThrow({ where: { id: row.id } });
   if (
@@ -34,7 +39,18 @@ export async function mainVideoEstimate(
     !!step &&
     !!reservation &&
     mainShotEstimate(step, reservation.idempotencyKey, request.providerId);
-  const routed = !step && (await mainRoutedEstimate(tx, request, metadata, reservation));
+  const seconds = legacyObject(request.usage).seconds;
+  const routed = !step && (await mainRoutedReceipt(tx, request, metadata, reservation));
+  if (
+    routed &&
+    !reservation &&
+    typeof seconds === "number" &&
+    Number.isFinite(seconds) &&
+    seconds >= 0 &&
+    request.actualCost?.gte(0)
+  )
+    return { kind: "VERIFIED_UNRESERVED" };
+  if (routed && seconds !== null) return null;
   if (!shot && !routed) return null;
   const booked =
     request.actualCost ??
@@ -56,21 +72,16 @@ export async function mainVideoEstimate(
     (request.actualCost === null && metadata.legacyEstimateMinor !== minor)
   )
     return null;
-  return { gross: booked.toString(), minor, metadata, shot };
+  return { kind: "ESTIMATE", gross: booked.toString(), minor, metadata, shot };
 }
 
-async function mainRoutedEstimate(
+async function mainRoutedReceipt(
   tx: Transaction,
   request: MediaRequest,
   metadata: ReturnType<typeof legacyObject>,
   reservation: MediaReservation | undefined,
 ): Promise<boolean> {
-  if (
-    legacyObject(request.usage).seconds !== null ||
-    typeof metadata.providerJobId !== "string" ||
-    !metadata.providerJobId
-  )
-    return false;
+  if (typeof metadata.providerJobId !== "string" || !metadata.providerJobId) return false;
   if (reservation)
     return (
       reservation.idempotencyKey === `m08:${request.correlationId}` &&
@@ -78,7 +89,7 @@ async function mainRoutedEstimate(
       metadata.estimateMinor === Number(reservation.amountMinor)
     );
   // Main's routed ledger explicitly wrote null reservation fields and stored the
-  // artifact before recording a successful estimate for unbudgeted workspaces.
+  // artifact when it completed an unbudgeted request, whether estimated or billed.
   return (
     metadata.reservationId === null &&
     metadata.estimateMinor === null &&

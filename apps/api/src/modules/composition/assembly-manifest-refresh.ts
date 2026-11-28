@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { AssemblyManifestSchema, type MediaReceipt } from "@reelforge/contracts";
 import type { StoragePort } from "../asset/storage/storage.port.js";
 import type { RunsArtifacts } from "../runs/runs.artifacts.js";
@@ -27,6 +28,13 @@ import {
 } from "./assembly-refusal-cost.js";
 
 type TextReceipt = Awaited<ReturnType<typeof historicalTextReceipts>>[number];
+type ArchiveSnapshot = Awaited<ReturnType<typeof prepareArchiveRebuilds>> & {
+  sequence: number;
+  prices: MediaReceipt[];
+  historical: TextReceipt[];
+};
+const refreshes = new WeakMap<RunsStore, Map<string, Promise<void>>>();
+const logger = new Logger("AssemblyManifestRefresh");
 
 async function rewriteManifest(
   context: Context,
@@ -76,6 +84,56 @@ export async function refreshAssemblyManifests(
     return { ...(await prepareArchiveRebuilds(db, runId, deltas)), sequence, prices, historical };
   });
   if (!snapshot) return;
+  await waitForRefresh(startRefresh(store, artifacts, storage, context, runId, snapshot));
+}
+
+function startRefresh(
+  store: RunsStore,
+  artifacts: RunsArtifacts,
+  storage: StoragePort,
+  context: Context,
+  runId: string,
+  snapshot: ArchiveSnapshot,
+): Promise<void> {
+  const pending = refreshes.get(store) ?? new Map<string, Promise<void>>();
+  refreshes.set(store, pending);
+  // A newer billing revision can start independently of a stalled previous one.
+  const key = `${context.workspaceId}:${runId}:${snapshot.sequence}`;
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const completion = rebuildSnapshot(store, artifacts, storage, context, runId, snapshot)
+    .catch((error: unknown) => {
+      logger.warn(`Manifest refresh deferred for run ${runId}`);
+      throw error;
+    })
+    .finally(() => pending.delete(key));
+  pending.set(key, completion);
+  return completion;
+}
+
+async function waitForRefresh(completion: Promise<void>): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // This bounds the caller's wait, not storage or the guarded publication of its result.
+    const deadline = new Promise<void>((resolve) => {
+      timeout = setTimeout(function archiveRequestDeadline() {
+        resolve();
+      }, 10_000);
+    });
+    await Promise.race([completion, deadline]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function rebuildSnapshot(
+  store: RunsStore,
+  artifacts: RunsArtifacts,
+  storage: StoragePort,
+  context: Context,
+  runId: string,
+  snapshot: ArchiveSnapshot,
+): Promise<void> {
   const { jobs, unscoped, sequence, prices, historical } = snapshot;
   const results = await Promise.all(
     jobs.map((job) =>
