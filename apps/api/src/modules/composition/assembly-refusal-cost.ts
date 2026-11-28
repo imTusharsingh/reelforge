@@ -24,11 +24,26 @@ export async function refusalBillDeltas(
   db: Scoped,
   runId: string,
 ): Promise<
-  { sequence: number; stepId: string | null; amount: number; bookedSequence: number | null }[]
+  {
+    sequence: number;
+    stepId: string | null;
+    amount: number;
+    failedWriter?: boolean;
+    bookedSequence: number | null;
+  }[]
 > {
   const events = await db.runEvent.findMany({
-    where: { runId, type: "provider_receipt", payload: { path: ["refusedBilling"], equals: true } },
-    select: { sequence: true, stepId: true, payload: true },
+    where: {
+      runId,
+      OR: [
+        { type: "provider_receipt", payload: { path: ["refusedBilling"], equals: true } },
+        {
+          type: "text_attempt_folded",
+          payload: { path: ["failedWriterCostChanged"], equals: true },
+        },
+      ],
+    },
+    select: { type: true, sequence: true, stepId: true, payload: true },
   });
   if (!events.length) return [];
   const booked = new Map<string, number>();
@@ -47,11 +62,15 @@ export async function refusalBillDeltas(
   });
   for (const { stepId, sequence } of terminal)
     if (stepId && !booked.has(stepId)) booked.set(stepId, sequence);
-  return events.map(({ sequence, stepId, payload }) => ({
+  return events.map(({ sequence, stepId, payload, type }) => ({
     sequence,
     stepId,
     bookedSequence: booked.get(stepId ?? "") ?? null,
-    amount: z.object({ adjustmentMinor: z.int() }).parse(payload).adjustmentMinor,
+    failedWriter: type === "text_attempt_folded",
+    amount:
+      type === "text_attempt_folded"
+        ? z.object({ netDelta: z.int() }).parse(payload).netDelta
+        : z.object({ adjustmentMinor: z.int() }).parse(payload).adjustmentMinor,
   }));
 }
 
@@ -65,7 +84,9 @@ export function renderRefusalDelta(
   let total = 0;
   for (const entry of deltas) {
     if (entry.sequence <= revision) continue;
-    if (included !== undefined) {
+    // Every completed assembly includes the original writer booking in its envelope total.
+    if (entry.failedWriter) total += entry.amount;
+    else if (included !== undefined) {
       if (entry.stepId && included.includes(entry.stepId)) total += entry.amount;
     } else {
       if (legacyPublication === null || entry.bookedSequence === null) return null;

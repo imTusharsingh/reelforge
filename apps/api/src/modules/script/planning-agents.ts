@@ -27,6 +27,7 @@ export interface Director {
     context: WorkspaceContext,
     request: PlanningRequest,
     script: PlanningScript,
+    writerVersion?: PlanningPromptReceipt["version"],
   ): Promise<{ shots: ShotSpec[]; prompt: PlanningPromptReceipt }>;
 }
 @Injectable()
@@ -45,8 +46,11 @@ export class ScriptwriterService implements Scriptwriter {
     const prompt = await this.prompts.capture(context, request.brief.channelId, "scriptwriter");
     let usedPrompt = prompt.receipt;
     const formatTemplate = await this.prompts.format(context, request.format);
-    const validate = (value: unknown): PlanningScript => {
-      const script = validatePlanningScript(value, request);
+    const validate = (
+      value: unknown,
+      version?: PlanningPromptReceipt["version"],
+    ): PlanningScript => {
+      const script = validatePlanningScript(value, request, version);
       screen(request, JSON.stringify(script));
       return script;
     };
@@ -63,7 +67,7 @@ export class ScriptwriterService implements Scriptwriter {
       },
       prompt: `${prompt.prompt}\n${JSON.stringify({ request, formatTemplate })}`,
     });
-    return { script: validate(output), prompt: usedPrompt };
+    return { script: validate(output, usedPrompt.version), prompt: usedPrompt };
   }
 }
 @Injectable()
@@ -76,10 +80,11 @@ export class DirectorService implements Director {
     context: WorkspaceContext,
     value: PlanningRequest,
     valueScript: PlanningScript,
+    writerVersion?: PlanningPromptReceipt["version"],
   ): Promise<{ shots: ShotSpec[]; prompt: PlanningPromptReceipt }> {
     const request = PlanningRequestSchema.parse(value);
     validatePlanningAccess(context, request);
-    const script = validatePlanningScript(valueScript, request);
+    const script = validatePlanningScript(valueScript, request, writerVersion);
     screen(request, JSON.stringify(script));
     const prompt = await this.prompts.capture(context, request.brief.channelId, "director");
     let usedPrompt = prompt.receipt;

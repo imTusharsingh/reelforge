@@ -2,6 +2,7 @@ import { authorizesScriptRepair } from "../script/script-repair.js";
 import { prepareMediaIntent } from "./media-intent.js";
 import {
   dispatchPaidText,
+  refuseTextPreparation,
   type PaidTextInvocation,
   type PaidTextResult,
 } from "../usage-budget/text-attempt-runtime.js";
@@ -154,6 +155,9 @@ export class MediaAccounts {
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
     return this.access.paid.dispatch(context, step, call, assertLocked);
+  }
+  public refuseTextPreparation(context: Context, step: Step, error: unknown): Promise<never> {
+    return refuseTextPreparation(this.access, context, step, error);
   }
   public dispatchTextAttempt<T>(
     context: Context,

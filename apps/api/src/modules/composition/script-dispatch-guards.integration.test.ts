@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi, type Mock } from "vitest";
 import { runsFixture, type Tenant } from "../runs/runs.fixture.js";
+import { timeOutRejectionFold } from "../runs/text-attempt-runtime.fixture.js";
 import { RECOVERY_PRINCIPAL } from "../runs/runs.types.js";
 import { RunsQueue } from "../runs/runs.queue.js";
 import { scriptFixture } from "../script/planning.fixture.js";
@@ -14,6 +15,7 @@ afterEach(() => vi.unstubAllEnvs());
 async function setup(): Promise<{
   t: Tenant;
   post: Mock<ReturnType<typeof fakeMediaPorts>["text"]["complete"]>;
+  bindings: ReturnType<typeof bindMedia>;
   accounts: ReturnType<typeof bindMedia>["accounts"];
   job: ReturnType<Tenant["runs"]["job"]>;
 }> {
@@ -29,11 +31,11 @@ async function setup(): Promise<{
     { ...scriptFixture(), wordCount: 1 },
   ]);
   vi.stubEnv("GEMINI_TEXT_MODEL", "fixture-text");
-  const { accounts } = bindMedia(t, native);
+  const bindings = bindMedia(t, native);
   const post = vi.spyOn(native.text, "complete");
   const job = t.runs.job(t.context, t.run.id);
   await t.engine.process(job);
-  return { t, post, accounts, job };
+  return { t, post, accounts: bindings.accounts, bindings, job };
 }
 
 test("a run envelope that only covers the first call refuses the repair and closes SCRIPTING", async () => {
@@ -165,4 +167,112 @@ it("documents the paid text opt-in in the template and setup guide", () => {
   const root = new URL("../../../../../", import.meta.url);
   expect(readFileSync(new URL(".env.example", root), "utf8")).toMatch(/^PAID_TEXT_V3_ENABLED=0$/m);
   expect(readFileSync(new URL("README.md", root), "utf8")).toContain("PAID_TEXT_V3_ENABLED=1");
+});
+
+test("replays the invalid repair diagnostic after the owner resumes an emergency stop", async () => {
+  const { t, post, bindings, job } = await setup();
+  post.mockImplementation(async (spec) => {
+    if (post.mock.calls.length === 2) {
+      t.stop.stopped = true;
+      await expect(bindings.access.boundary.check(t.context, t.run)).rejects.toThrow("Run halted");
+    }
+    return {
+      output: spec.parse({ ...scriptFixture(), wordCount: 1 }),
+      usage: {},
+      providerJobId: `writer-${post.mock.calls.length}`,
+    };
+  });
+  await expect(t.engine.process(job)).rejects.toThrow("Incorrect script word count");
+  expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+    state: "SCRIPTING",
+    pauseReason: "EMERGENCY_STOP",
+  });
+  const repair = await t.db.videoRunStep.findFirstOrThrow({
+    where: { runId: t.run.id, key: "media:text:scriptwriter", attempt: 2 },
+  });
+  expect(repair).toMatchObject({
+    state: "FAILED",
+    error: { code: "SCRIPT_VALIDATION", message: "Incorrect script word count" },
+  });
+  t.stop.stopped = false;
+  await t.control.resume(t.context, t.run.id);
+  await expect(t.engine.process(job)).rejects.toThrow("Incorrect script word count");
+  await t.engine.process(job);
+  expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+    state: "FAILED",
+    pauseReason: "SCRIPT_VALIDATION",
+  });
+  const stages = await t.db.videoRunStep.findMany({
+    where: { runId: t.run.id, key: { in: ["SCRIPTING", "planning:manifest:v1"] } },
+  });
+  expect(stages).toMatchObject(Array(2).fill({ state: "FAILED", error: repair.error }));
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(await t.db.usageReservation.count({ where: { workspaceId: t.run.workspaceId } })).toBe(2);
+});
+
+test("restart folds a durable disabled-dispatch refusal after its projection transaction rolls back", async () => {
+  const { t, accounts, post, job } = await setup();
+  vi.stubEnv("PAID_TEXT_V3_ENABLED", "0");
+  const begin = accounts.begin.bind(accounts);
+  let timeout: ReturnType<typeof timeOutRejectionFold> | undefined;
+  vi.spyOn(accounts, "begin").mockImplementationOnce(async (...args) => {
+    const step = await begin(...args);
+    timeout = timeOutRejectionFold(t, step, "NOT_DISPATCHED");
+    return step;
+  });
+  try {
+    await expect(t.engine.process(job)).rejects.toThrow("Paid text dispatch is disabled");
+    expect(timeout?.aborted()).toBe(1);
+  } finally {
+    timeout?.restore();
+  }
+  const where = { runId: t.run.id, key: "media:text:scriptwriter" };
+  const attempt = await t.db.videoRunStep.findFirstOrThrow({ where });
+  expect(attempt.state).toBe("RUNNING");
+  expect(
+    await t.db.textAttemptEvidence.count({
+      where: { attemptId: attempt.id, kind: "NOT_DISPATCHED" },
+    }),
+  ).toBe(1);
+  await t.engine.recover();
+  await t.engine.process(job);
+  expect(await t.db.videoRunStep.findFirstOrThrow({ where })).toMatchObject({
+    state: "CANCELLED",
+    costMinor: 0,
+  });
+  expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+    state: "FAILED",
+    pauseReason: "Paid text dispatch is disabled",
+  });
+  expect(await t.db.videoRunStep.count({ where: { runId: t.run.id, state: "RUNNING" } })).toBe(0);
+  expect(await t.db.usageReservation.count({ where: { correlationId: attempt.id } })).toBe(0);
+  expect(post).not.toHaveBeenCalled();
+});
+
+test("a key-store lookup failure closes at zero with its original cause", async () => {
+  const { t, post, bindings, job } = await setup();
+  const cause = new Error("Workspace key store temporarily unavailable");
+  vi.spyOn(bindings.ports, "get").mockRejectedValueOnce(cause);
+  await expect(t.engine.process(job)).rejects.toBe(cause);
+  await t.engine.recover();
+  await t.engine.process(job);
+  const attempt = await t.db.videoRunStep.findFirstOrThrow({
+    where: { runId: t.run.id, key: "media:text:scriptwriter" },
+  });
+  expect(attempt).toMatchObject({
+    state: "CANCELLED",
+    costMinor: 0,
+    error: { code: "NOT_DISPATCHED" },
+  });
+  expect(
+    await t.db.textAttemptEvidence.findFirstOrThrow({
+      where: { attemptId: attempt.id, kind: "NOT_DISPATCHED" },
+    }),
+  ).toMatchObject({ data: { reason: cause.message } });
+  expect(await t.store.get(t.context, t.run.id)).toMatchObject({
+    state: "FAILED",
+    pauseReason: cause.message,
+  });
+  expect(await t.db.usageReservation.count({ where: { correlationId: attempt.id } })).toBe(0);
+  expect(post).not.toHaveBeenCalled();
 });

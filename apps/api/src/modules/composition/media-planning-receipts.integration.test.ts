@@ -1,8 +1,9 @@
 import { GeminiText, Interactions, ProviderHttp } from "@reelforge/ai-providers";
-import { MediaReceiptSchema } from "@reelforge/contracts";
+import { MediaReceiptSchema, words } from "@reelforge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runsFixture } from "../runs/runs.fixture.js";
 import { planningFixture, scriptFixture, shotsFixture } from "../script/planning.fixture.js";
+import { PlanningPromptService } from "../config/planning-prompt.service.js";
 import { bindMedia } from "./media-bindings.fixture.js";
 import { fakeMediaPorts } from "./media-recovery.fixture.js";
 
@@ -129,4 +130,76 @@ describe.skipIf(!process.env.DATABASE_URL)("exported planning text receipts", ()
       }
     },
   );
+
+  it("replays the v2 writer and director before shot persistence with their exact narration", async () => {
+    vi.stubEnv("GEMINI_TEXT_MODEL", "fixture-text");
+    vi.stubEnv("GEMINI_IMAGE_MODEL", "fixture-image");
+    const t = await fixture.tenant("L2", 30, { ...narrator, pace: 1.2 }, false);
+    const script = scriptFixture();
+    const hook = "The leaves above our heads conceal a colorful secret every autumn";
+    script.wordCount += words(hook) - words(script.hook);
+    script.hook = hook;
+    const shots = shotsFixture({ ...planningFixture(), runId: t.run.id, brief: t.brief }).map(
+      (shot, i) => ({
+        ...shot,
+        workspaceId: t.run.workspaceId,
+        durationSeconds: 5,
+        voLine: i === 0 ? hook : shot.voLine,
+      }),
+    );
+    const native = fakeMediaPorts(
+      t.run.workspaceId,
+      t.storage,
+      { image, clip: Buffer.alloc(0), audio: Buffer.alloc(0) },
+      [{ character: null, styleFrame: "Leaves", keyframePrompts: shots.map(() => "Leaf") }],
+    );
+    const { accounts, planning, access } = bindMedia(t, native);
+    await t.engine.process(t.runs.job(t.context, t.run.id));
+    const run = await t.store.get(t.context, t.run.id);
+    const prompts = access.modules.get(PlanningPromptService, { strict: false });
+    const pinned = [];
+    for (const role of ["scriptwriter", "director"] as const) {
+      const { receipt: promptVersion } = await prompts.capture(t.context, run.channelId, role);
+      pinned.push(promptVersion);
+      const step = await accounts.begin(
+        t.context,
+        run,
+        `media:text:${role}`,
+        { promptVersion },
+        17,
+        "fixture-text",
+        true,
+      );
+      const result = await accounts.dispatchTextAttempt(t.context, step, async (sent) => {
+        await sent();
+        return {
+          dispatchKey: step.idempotencyKey,
+          providerJobId: null,
+          usage: {},
+          output: role === "scriptwriter" ? script : shots,
+        };
+      });
+      await accounts.complete(t.context, step, { ...result, promptVersion });
+    }
+    const capture = prompts.capture.bind(prompts);
+    vi.spyOn(prompts, "capture").mockImplementation(async (...args) => {
+      const captured = await capture(...args);
+      return args[2] === "scriptwriter"
+        ? { ...captured, receipt: { ...captured.receipt, version: 3 } }
+        : captured;
+    });
+    const text = vi.spyOn(native.text, "complete");
+    const replay = await planning.plan(t.context, run, t.brief);
+    expect(replay.script).toEqual(script);
+    expect(replay.manifest.prompts.slice(0, 2)).toEqual(pinned);
+    expect(replay.manifest.shots.map((s) => s.voLine)).toEqual(shots.map((s) => s.voLine));
+    expect(await t.db.shotSpec.count({ where: { runId: run.id } })).toBe(shots.length);
+    expect(text).toHaveBeenCalledOnce();
+    expect(text.mock.calls[0]![1]).toContain("media:text:art-director");
+    expect(
+      await t.db.videoRunStep.count({
+        where: { runId: run.id, key: { in: ["media:text:scriptwriter", "media:text:director"] } },
+      }),
+    ).toBe(2);
+  });
 });

@@ -1,4 +1,5 @@
 import { InvalidCompletedScript, isScriptRepair } from "../script/script-repair.js";
+import { redactString } from "@reelforge/observability";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
@@ -149,6 +150,24 @@ async function authorizeTextArm(
     },
   );
   return result.value;
+}
+
+export async function refuseTextPreparation(
+  access: MediaAccess,
+  context: Context,
+  step: Step,
+  error: unknown,
+): Promise<never> {
+  const reason = redactString(error instanceof Error ? error.message : String(error)).slice(0, 512);
+  await surrenderTextArm(
+    access,
+    context,
+    step,
+    randomUUID(),
+    true,
+    reason || "Text port lookup failed",
+  );
+  throw error;
 }
 
 async function surrenderTextArm(

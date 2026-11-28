@@ -4,7 +4,6 @@ import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
-import { acceptedAudio } from "../runs/run-audio.js";
 import {
   pendingCorrectionJobs,
   shouldCheckShotBoundary,
@@ -31,6 +30,7 @@ import {
   referenceMediaPrefix,
   failSettledGeneration,
   activeSubmissionHold,
+  audioForCollection,
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { AssemblyInterrupted } from "./video-run.handlers.js";
@@ -379,7 +379,7 @@ export class VideoRunEngine {
   private async enqueueAdmitted(context: Context, db: Scoped, run: Run): Promise<void> {
     if (
       (run.state === "CANCELED" || isRenderStage(run.state)) &&
-      (await acceptedAudio(db, this.runs.store.db, run)).length
+      (await audioForCollection(this.runs.store, context, run)).length
     )
       await this.runs.queue?.enqueue(
         { ...this.runs.job(context, run.id), assembly: true, collectOnly: true },

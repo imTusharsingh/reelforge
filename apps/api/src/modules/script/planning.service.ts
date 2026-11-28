@@ -137,7 +137,12 @@ export class PlanningService {
     const voice = request.brief.narratorVoice;
     if (!voice) throw new Error("Channel narrator voice required");
     const written = await this.writer.write(context, request);
-    const directed = await this.director.direct(context, request, written.script);
+    const directed = await this.director.direct(
+      context,
+      request,
+      written.script,
+      written.prompt.version,
+    );
     const designed = await this.art.design(context, request, directed.shots);
     const shots = await pinPlanningShots(context, request, designed.shots, this.library);
     const manifest: PlanningManifest = {

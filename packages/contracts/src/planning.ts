@@ -75,9 +75,15 @@ export type PlanningManifest = Readonly<{
 }>;
 
 /** Uses the frozen V1 210-wpm budget, scaled by the channel narration pace. */
-export function validatePlanningScript(value: unknown, request: PlanningRequest): PlanningScript {
-  const script = PlanningScriptSchema.parse(value);
+export function validatePlanningScript(
+  value: unknown,
+  request: PlanningRequest,
+  version: PlanningPromptReceipt["version"] = 3,
+): PlanningScript {
+  const script = (version === 2 ? StoredPlanningScriptSchema : PlanningScriptSchema).parse(value);
   const pace = request.brief.narratorVoice?.pace ?? 1;
+  if (version === 2 && words(script.hook) / (3.5 * pace) > 3)
+    throw new Error("Hook exceeds three seconds");
   const body = [...script.beats, script.payoff].join(" ");
   const transcript = planningTranscript(script);
   const count = words(transcript);

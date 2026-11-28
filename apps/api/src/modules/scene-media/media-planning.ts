@@ -1,7 +1,6 @@
 import type { PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
 import {
   InvalidCompletedScript,
-  isScriptRepair,
   repairMessage,
   scriptwriterKey,
   validationMessage,
@@ -13,7 +12,7 @@ import {
   type PlanningTextInput,
 } from "./planning-text-dispatch.js";
 import { textReceiptReference } from "../usage-budget/text-evidence.js";
-import { PLANNING_MANIFEST_KEY } from "../runs/run-outcomes.js";
+import { checkPlanningFailures, rejectSavedOutput } from "./planning-failure.js";
 import { ConflictException, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { reservationCents } from "@reelforge/ai-providers";
@@ -62,11 +61,7 @@ export class MediaPlanning {
       brief.targetDurationSeconds > 45
     )
       throw new Error("V5 requires a narrator and a 30–45 second target");
-    const rejected = await this.access.runs.store.scoped(context).videoRunStep.findMany({
-      where: { runId: run.id, key: { in: planningKeys }, state: "FAILED" },
-    });
-    if (rejected.some((step) => !repairMessage(step)))
-      throw new Error("Planning provider request was rejected");
+    await checkPlanningFailures(this.access, context, run, planningKeys);
     const saved = await this.saved(context, run, brief);
     if (saved) return saved;
     const prompts = this.access.modules.get(PlanningPromptService, { strict: false });
@@ -207,7 +202,7 @@ export class MediaPlanning {
       return await this.textAttempt(context, run, { ...input, prompt }, null, failed.id);
     } catch (error) {
       if (error instanceof ConflictException && error.message === "BUDGET_CAP")
-        await this.rejectSavedOutput(context, failed, {
+        await rejectSavedOutput(this.access, context, failed, {
           code: "BUDGET_CAP",
           message: `Script repair admission refused: ${error.message}`,
         });
@@ -225,8 +220,11 @@ export class MediaPlanning {
     const key = `media:text:${input.promptVersion.role}`;
     if (previous?.state === "SUCCEEDED") {
       const { output, promptVersion } = this.output(previous.output);
-      await this.validateAcceptedPlan(context, run, previous, input, output);
-      input.onPromptUsed?.(planningPromptReceiptSchema.parse(promptVersion));
+      const receipt = planningPromptReceiptSchema.parse(promptVersion);
+      if (receipt.role !== input.promptVersion.role)
+        throw new Error("Planning receipt role mismatch");
+      await this.validateAcceptedPlan(context, run, previous, input, output, receipt.version);
+      input.onPromptUsed?.(receipt);
       return output;
     }
 
@@ -296,9 +294,12 @@ export class MediaPlanning {
     step: Step,
     input: Parameters<TextPort["generate"]>[0],
     output: unknown,
+    version: 2 | 3 = 3,
   ): Promise<void> {
     try {
-      input.validateOutput?.(input.schema.parse(output));
+      const schema =
+        version === 2 && step.key === scriptwriterKey ? StoredPlanningScriptSchema : input.schema;
+      input.validateOutput?.(schema.parse(output), version);
       this.validatePlan(run, input.promptVersion.role, output);
     } catch (error) {
       // A legacy receipt can be recovered or rejected, but it lacks proof of a journaled completion.
@@ -309,53 +310,13 @@ export class MediaPlanning {
           select: { id: true },
         }));
       const message = validationMessage(error);
-      await this.rejectSavedOutput(context, step, {
+      await rejectSavedOutput(this.access, context, step, {
         code: writer ? "SCRIPT_VALIDATION" : "PROVIDER_INVALID",
         message,
       });
       if (writer) throw new SavedScriptInvalid(message);
       throw error;
     }
-  }
-  // Legacy receipts have already settled. Preserve their output and ledger entries.
-  private async rejectSavedOutput(
-    context: Context,
-    step: Step,
-    error: { code: string; message: string },
-  ): Promise<void> {
-    const result = await this.access.runs.store.mutate(
-      context,
-      step.runId,
-      "planning_invalid",
-      async (db, run) => {
-        if (run.state !== "SCRIPTING" || run.pauseReason)
-          return { value: null, payload: { stale: true } };
-        await db.videoRunStep.updateMany({
-          where: { id: step.id, state: { in: ["SUCCEEDED", "WAITING_EXTERNAL"] } },
-          data: { state: "FAILED", error, finishedAt: new Date() },
-        });
-        if (error.code === "SCRIPT_VALIDATION" && !isScriptRepair(step))
-          return { value: null, payload: { reason: error.code }, stepId: step.id };
-        await db.videoRunStep.updateMany({
-          where: {
-            runId: run.id,
-            key: { in: ["SCRIPTING", PLANNING_MANIFEST_KEY] },
-            state: "RUNNING",
-          },
-          data: { state: "FAILED", error, finishedAt: new Date() },
-        });
-        await db.videoRun.updateMany({
-          where: { id: run.id },
-          data: {
-            state: "FAILED",
-            pauseReason: error.code,
-            ...(run.effectiveAutonomy === "L3" ? { effectiveAutonomy: "L2" } : {}),
-          },
-        });
-        return { value: null, payload: { reason: error.code }, stepId: step.id };
-      },
-    );
-    await this.access.runs.events?.publish(result.event);
   }
   private validatePlan(run: Run, role: string, output: unknown): void {
     if (role === "director") {

@@ -136,7 +136,20 @@ async function apply(access: MediaAccess, context: Context, step: Step): Promise
 }
 
 export async function recoverTextEvidence(access: MediaAccess, context: Context): Promise<void> {
-  if (process.env.PAID_TEXT_V3_ENABLED !== "1") return;
+  if (process.env.PAID_TEXT_V3_ENABLED !== "1") {
+    const refused = await access.runs.store.db.videoRunStep.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        state: "RUNNING",
+        textEvidence: { some: { kind: "NOT_DISPATCHED" } },
+      },
+    });
+    for (const step of refused)
+      await apply(access, context, step).catch((error: unknown) =>
+        reportSweepFailure(step.id, error),
+      );
+    return;
+  }
   await closeOrphanPreparations(access, context);
   let cursor: string | undefined;
   for (;;) {

@@ -281,6 +281,7 @@ function archivedReceiptChanged(
   previous: Projection,
   journal: readonly Evidence[],
 ): boolean {
+  if (failedScriptValidation(step)) return next.netMinor !== previous.netMinor;
   return (
     step.state === "SUCCEEDED" &&
     next.phase === "SUCCEEDED" &&
@@ -345,6 +346,7 @@ async function postEvent(
         reservedDelta: next.reservedMinor - previous.reservedMinor,
         netDelta: next.netMinor - previous.netMinor,
         ...(receiptChanged && { manifestReceiptChanged: true }),
+        ...(receiptChanged && failedScriptValidation(step) && { failedWriterCostChanged: true }),
         ...(shouldHold && { reason: ownHold }),
         ...(failStage && { reason: failStage, from: run.state, to: "FAILED" }),
       },

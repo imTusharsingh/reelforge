@@ -1,5 +1,7 @@
 import { terminalVideo, terminalVideoWhere } from "../usage-budget/run-video-terminal.js";
-import { terminalRenderFailure } from "./run-render-stage.js";
+import { acceptedAudio } from "./run-audio.js";
+import type { RunsStore } from "./runs.store.js";
+import { isRenderStage, terminalRenderFailure } from "./run-render-stage.js";
 import { MissingVideoPricing } from "../scene-media/media-prices.js";
 import { releaseSteps } from "./run-close-steps.js";
 import { correctionHold, pendingCorrectionWhere } from "../usage-budget/run-pending-receipt.js";
@@ -11,7 +13,7 @@ import {
   readAdmissions,
   attachedTextResult,
 } from "../usage-budget/run-admission-state.js";
-import type { Run, Scoped, Step, Transaction } from "./runs.types.js";
+import type { Context, Run, Scoped, Step, Transaction } from "./runs.types.js";
 
 export const PLANNING_MANIFEST_KEY = "planning:manifest:v1";
 export const SETTLED_SHOTS = ["SUCCEEDED", "SKIPPED", "CANCELLED", "FAILED"] as const;
@@ -122,13 +124,52 @@ export function billingHold(stepId: string): string {
   return `RECONCILE_REQUIRED: provider billing exceeded reservation (${stepId})`;
 }
 
+const heldStepId = (reason: string): string | undefined =>
+  /\(([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\)$/i.exec(reason)?.[1];
+
+const audioCollectionHold = "audio_collection_held";
+function audioCollectionHeld(
+  db: Scoped,
+  runId: string,
+  stepId: string,
+): Promise<{ id: string } | null> {
+  return db.runEvent.findFirst({
+    where: { runId, stepId, type: audioCollectionHold },
+    select: { id: true },
+  });
+}
+
+/** A recovery worker that observes a held audio submission may collect it through settlement.
+ * Pin that decision before queueing or attaching the receipt, even if another worker settles it.
+ * Ordinary concurrent audio submissions can still resolve their transient sibling holds.
+ */
+export async function audioForCollection(
+  store: RunsStore,
+  context: Context,
+  run: Run,
+): Promise<Step[]> {
+  const db = store.scoped(context);
+  const audio = await acceptedAudio(db, store.db, run);
+  if (!isRenderStage(run.state) || !run.pauseReason?.startsWith("RECONCILE_REQUIRED")) return audio;
+  const step = audio.find(({ id }) => run.pauseReason === submissionHold(id));
+  if (step && !(await audioCollectionHeld(db, run.id, step.id))) {
+    await store.mutate(context, run.id, audioCollectionHold, async (_db, current) => ({
+      value: null,
+      payload: { reason: run.pauseReason },
+      ...(current.pauseReason === run.pauseReason &&
+        current.state === run.state && { stepId: step.id }),
+    }));
+  }
+  return audio;
+}
+
 export async function storedSubmissionHold(
   db: Scoped,
   runId: string,
   reason: string | null,
 ): Promise<string | null> {
   if (!reason?.startsWith("RECONCILE_REQUIRED")) return null;
-  const stepId = /\(([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\)$/i.exec(reason)?.[1];
+  const stepId = heldStepId(reason);
   if (!stepId) return reason;
   const step = await db.videoRunStep.findFirst({ where: { runId, id: stepId } });
   if (!step) return reason;
@@ -178,6 +219,11 @@ export async function clearResolvedSubmissionHold(
   const reason = run.pauseReason;
   if (reason === "EMERGENCY_STOP" || reason === "CANCEL_REQUESTED") return reason;
   const terminal = await terminalRenderFailure(db, run);
+  if (!terminal && isRenderStage(run.state) && reason?.startsWith("RECONCILE_REQUIRED")) {
+    const id = heldStepId(reason);
+    if (id && reason === submissionHold(id) && (await audioCollectionHeld(db, run.id, id)))
+      return reason;
+  }
   const durable = terminal ? null : await remainingSubmissionHold(db, tx, run);
   const pauseReason =
     terminal?.code ??

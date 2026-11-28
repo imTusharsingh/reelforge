@@ -8,7 +8,7 @@ import {
   isScriptRepair,
   validationMessage,
 } from "../script/script-repair.js";
-import type { PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
+import { paidTextEnabled, type PaidTextResult } from "../usage-budget/text-attempt-runtime.js";
 import type { MediaAccounts } from "./media-accounts.js";
 import type { MediaPorts } from "./media-ports.js";
 
@@ -51,7 +51,11 @@ export async function dispatchPlanningText(
   input: PlanningTextInput,
 ): Promise<PaidTextResult> {
   // Resolve local configuration before the final run/stop check at the transport boundary.
-  const native = await ports.get(context).catch(() => null);
+  const native = paidTextEnabled()
+    ? await ports
+        .get(context)
+        .catch((error: unknown) => accounts.refuseTextPreparation(context, step, error))
+    : null;
   const transport = native?.text.completePaid?.bind(native.text);
   const writer = input.promptVersion.role === "scriptwriter";
   const spec = {

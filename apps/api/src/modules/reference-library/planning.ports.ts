@@ -19,7 +19,7 @@ export interface TextPort {
     prompt: string;
     modelId: string;
     schema: z.ZodType;
-    validateOutput?: (value: unknown) => void;
+    validateOutput?: (value: unknown, version?: PlanningPromptReceipt["version"]) => void;
     promptVersion: PlanningPromptReceipt;
     onPromptUsed?: (receipt: PlanningPromptReceipt) => void;
   }): Promise<unknown>;
