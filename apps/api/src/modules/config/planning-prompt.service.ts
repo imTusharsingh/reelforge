@@ -44,18 +44,19 @@ export class PlanningPromptService {
       allowedAdditionSections: ["instructions"],
     };
     const checksumSha256 = jsonFingerprint(body);
+    const promptVersion = role === "scriptwriter" ? 3 : 2;
     const version = await this.db.promptTemplateVersion.upsert({
       where: {
         workspaceId_templateId_version: {
           workspaceId: context.workspaceId,
           templateId: template.id,
-          version: 2,
+          version: promptVersion,
         },
       },
       create: {
         workspaceId: context.workspaceId,
         templateId: template.id,
-        version: 2,
+        version: promptVersion,
         status: "PUBLISHED",
         body,
         checksumSha256,
@@ -64,18 +65,20 @@ export class PlanningPromptService {
       update: {},
     });
     if (version.checksumSha256 !== checksumSha256 || version.status !== "PUBLISHED")
-      throw new Error("Planning prompt v2 conflicts with an existing immutable version");
+      throw new Error(
+        `Planning prompt v${promptVersion} conflicts with an existing immutable version`,
+      );
     const captured = captureSchema.parse(
       await this.prompts.capture(context, {
         channelId,
-        template: { templateKey: template.key, version: 2 },
+        template: { templateKey: template.key, version: promptVersion },
       }),
     );
     return {
       prompt: captured.bundle.renderedText,
       receipt: {
         role,
-        version: 2,
+        version: promptVersion,
         templateVersionId: captured.promptBundleSnapshot.templateVersionId,
         promptSnapshotId: captured.promptBundleSnapshot.id,
         configSnapshotId: captured.configSnapshot.id,

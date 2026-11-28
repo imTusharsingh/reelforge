@@ -1,3 +1,4 @@
+import { audioForCollection } from "../runs/run-outcomes.js";
 import { saveAssemblyOutput } from "./assembly-archive.js";
 import {
   assertSavedCaptionFit,
@@ -267,7 +268,7 @@ export class MediaAssembly {
   }
   public async collectAdmittedAudio(context: Context, run: Run): Promise<number | null> {
     const db = this.access.runs.store.scoped(context);
-    const accepted = await acceptedAudio(db, this.access.runs.store.db, run);
+    const accepted = await audioForCollection(this.access.runs.store, context, run);
     if (!accepted.length) return null;
     const shots = await db.shotSpec.findMany({ where: { runId: run.id } });
     const parsed = z

@@ -1,6 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import {
-  PlanningScriptSchema,
+  StoredPlanningScriptSchema,
   assertCaptionDuration,
   planningTranscript,
 } from "@reelforge/contracts";
@@ -33,10 +33,10 @@ const snapshot = z.object({
 });
 const shot = z.object({ durationSeconds: z.number().positive() });
 const shots = z.array(shot).min(1);
-const writerReceipt = z.object({ result: z.object({ output: PlanningScriptSchema }) });
+const writerReceipt = z.object({ result: z.object({ output: StoredPlanningScriptSchema }) });
 const directorReceipt = z.object({ result: z.object({ output: shots }) });
 const manifest = z.object({
-  script: PlanningScriptSchema,
+  script: StoredPlanningScriptSchema,
   manifest: z.object({ shots }),
 });
 const duration = (list: z.infer<typeof shots>): number =>

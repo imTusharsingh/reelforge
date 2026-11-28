@@ -76,6 +76,8 @@ export type TextAttemptState = {
   output: Json | null;
   usable: boolean;
   actualMinor: number | null;
+  validationError: string | null;
+  refusalReason: string | null;
   rejectionCode: string | null;
   credits: Readonly<Record<string, number>>;
 };
@@ -98,7 +100,16 @@ const observation = z.object({
   usage: z.record(z.string(), z.json()).nullish(),
   actualMinor: minor.nullish(),
 });
-const success = observation.extend({ output: z.json().optional(), usable: z.boolean() });
+const success = observation.extend({
+  output: z.json().optional(),
+  usable: z.boolean(),
+  validationError: z.string().min(1).max(512).optional(),
+});
+const nondispatch = z.object({
+  dispatchKey: z.string(),
+  source: z.enum(["sender", "reconciler", "legacy"]),
+  reason: z.string().min(1).max(512).optional(),
+});
 const rejection = observation.extend({ code: z.string().min(1) });
 const arm = z.object({ reservationId: z.uuid(), dispatchKey: z.string().optional() });
 const credit = z.object({ adjustmentId: z.uuid(), amountMinor: minor.positive() });
@@ -134,6 +145,8 @@ function initial(dispatchKey: string, event: Evidence): TextAttemptState {
     output: null,
     usable: false,
     actualMinor: null,
+    validationError: null,
+    refusalReason: null,
     rejectionCode: null,
     credits: {},
   };
@@ -176,7 +189,9 @@ function applyControl(state: TextAttemptState, event: Evidence): boolean {
       state.phase = "ARMED";
       return true;
     case "NOT_DISPATCHED":
-      identity.extend({ source: z.enum(["sender", "reconciler", "legacy"]) }).parse(event.data);
+      const refused = nondispatch.parse(event.data);
+      if (refused.dispatchKey !== state.dispatchKey) conflicting();
+      state.refusalReason = refused.reason ?? null;
       if ((state.armNonce ?? null) !== event.nonce || state.positiveSent || state.grossMinor)
         conflicting();
       state.phase = "NOT_DISPATCHED";
@@ -245,6 +260,8 @@ function applyObservation(state: TextAttemptState, event: Evidence): void {
       )
         conflicting();
       mergeObservation(state, result);
+      if (result.usable && result.validationError) conflicting();
+      state.validationError = result.validationError ?? state.validationError;
       state.usable = result.usable;
       state.output = result.output ?? null;
       state.phase = "SUCCEEDED";

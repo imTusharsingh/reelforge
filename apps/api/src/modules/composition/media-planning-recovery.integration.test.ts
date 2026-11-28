@@ -137,11 +137,9 @@ describe.skipIf(
     for (let sweep = 0; sweep < 2; sweep++) {
       enqueue.mockClear();
       await t.engine.recover();
-      const jobs = enqueue.mock.calls.filter(([data]) => data.runId === t.run.id);
-      expect(jobs.map(([data]) => data.stepId)).toEqual([first.id]);
-      await expect(t.engine.process(jobs[0]![0])).rejects.toThrow(
-        "Missing admission video pricing",
-      );
+      const jobs = enqueue.mock.calls.map(([data]) => data);
+      expect(jobs.map((job) => job.stepId)).toEqual([first.id]);
+      await expect(t.engine.process(jobs[0])).rejects.toThrow("admission video pricing");
     }
     t.runs.queue = null;
     expect(http).not.toHaveBeenCalled();
@@ -272,7 +270,7 @@ describe.skipIf(
     async (kind) => {
       const t = await fixture.tenant("L2", 30, narrator, false);
       const invalid = { ...scriptFixture(), wordCount: 1 };
-      const native = offline(t, [invalid]);
+      const native = offline(t, [invalid, invalid]);
       const { accounts } = bindMedia(t, native);
       const submit = vi.spyOn(native.text, "complete");
       const job = t.runs.job(t.context, t.run.id);
@@ -309,21 +307,25 @@ describe.skipIf(
       expect(steps.map((step) => step.key).sort()).toEqual([
         "SCRIPTING",
         "media:text:scriptwriter",
+        "media:text:scriptwriter",
         "planning:manifest:v1",
       ]);
-      const writer = steps.find((step) => step.key === "media:text:scriptwriter")!;
+      const writer = steps.find((step) => step.providerJobId === "fixture-text-1")!;
       expect(writer.providerJobId).toBe("fixture-text-1");
-      expect(writer.output).toMatchObject(
-        kind === "saved" ? { result: { output: invalid } } : { output: invalid },
-      );
+      if (kind === "saved") expect(writer.output).toMatchObject({ result: { output: invalid } });
+      expect(steps.find((step) => step.key === "SCRIPTING")?.error).toMatchObject({
+        message: "Incorrect script word count",
+      });
       expect(await t.store.get(t.context, t.run.id)).toMatchObject({
         state: "FAILED",
-        pauseReason: "PROVIDER_INVALID",
+        pauseReason: "SCRIPT_VALIDATION",
       });
       expect(
         await t.db.usageReservation.findMany({ where: { workspaceId: t.context.workspaceId } }),
-      ).toMatchObject([{ status: "COMMITTED", committedMinor: 17n }]);
-      expect(submit).toHaveBeenCalledOnce();
+      ).toMatchObject(Array(2).fill({ status: "COMMITTED", committedMinor: 17n }));
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(submit.mock.calls[1]![0].prompt).toContain("Incorrect script word count");
+      expect(submit.mock.calls[0]![1]).not.toBe(submit.mock.calls[1]![1]);
     },
   );
 

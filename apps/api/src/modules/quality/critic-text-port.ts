@@ -1,7 +1,7 @@
 import { QualityRubricSchema } from "@reelforge/contracts";
 import { ConflictException } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { type TextPort, type TextSpec } from "@reelforge/ai-providers";
+import { ProviderFailure, type TextPort, type TextSpec } from "@reelforge/ai-providers";
 import { z } from "zod";
 import type { Context, Run } from "../runs/runs.types.js";
 import type { MediaAccess } from "../scene-media/media-access.js";
@@ -122,6 +122,7 @@ async function submitCritic<T>(
   if (!budget) throw new ConflictException("Critic budget envelope is unavailable");
   const native = await ports.get(context);
   const cost = criticReservationCents();
+  const paid = native.text.completePaid?.bind(native.text);
   const step = await accounts.begin(
     context,
     run,
@@ -131,11 +132,10 @@ async function submitCritic<T>(
     modelId,
     true,
   );
-  const paid = native.text.completePaid?.bind(native.text);
-  if (!paid) throw new ConflictException("Paid text transport is unavailable");
-  const result = await accounts.dispatchTextAttempt(context, step, (sent) =>
-    paid(spec, step.idempotencyKey, sent),
-  );
+  const result = await accounts.dispatchTextAttempt(context, step, (sent) => {
+    if (!paid) throw new ProviderFailure("NOT_CONFIGURED", false);
+    return paid(spec, step.idempotencyKey, sent);
+  });
   await accounts.complete(context, step, result);
   return { ...result, providerJobId: result.providerJobId ?? "" };
 }

@@ -1,6 +1,8 @@
+import { authorizesScriptRepair } from "../script/script-repair.js";
 import { prepareMediaIntent } from "./media-intent.js";
 import {
   dispatchPaidText,
+  refuseTextPreparation,
   type PaidTextInvocation,
   type PaidTextResult,
 } from "../usage-budget/text-attempt-runtime.js";
@@ -50,14 +52,15 @@ export class MediaAccounts {
           where: { runId: run.id, key },
           orderBy: { attempt: "desc" },
         });
-        if (previous?.state === "FAILED")
+        const repair = journal && previous && authorizesScriptRepair(previous, input);
+        if (previous?.state === "FAILED" && !repair)
           throw new ConflictException("Media provider request was rejected");
-        if (previous && !this.abandoned(previous))
+        if (previous && !repair && !this.abandoned(previous))
           return {
             value: previous,
             payload: { replay: true },
           };
-        if (previous) await this.verifyRetry(tx, context, previous, journal);
+        if (previous && !repair) await this.verifyRetry(tx, context, previous, journal);
         await assertCriticRevision(db, tx, current, { key, input: { spec: input } });
         const { budget, warning } = await this.checkRoom(db, current, cost);
         const attempt = (previous?.attempt ?? 0) + 1;
@@ -152,6 +155,9 @@ export class MediaAccounts {
     assertLocked?: () => Promise<void>,
   ): Promise<T> {
     return this.access.paid.dispatch(context, step, call, assertLocked);
+  }
+  public refuseTextPreparation(context: Context, step: Step, error: unknown): Promise<never> {
+    return refuseTextPreparation(this.access, context, step, error);
   }
   public dispatchTextAttempt<T>(
     context: Context,

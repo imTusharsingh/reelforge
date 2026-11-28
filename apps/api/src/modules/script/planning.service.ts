@@ -4,7 +4,7 @@ import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { foundationWorkspaceGuard } from "@reelforge/database";
 import {
   PlanningRequestSchema,
-  PlanningScriptSchema,
+  StoredPlanningScriptSchema,
   StoredNarratorVoiceSchema,
   ShotSpecSchema,
   type PlanningRequest,
@@ -29,14 +29,14 @@ import { scopedTransaction } from "../runs/runs.transaction.js";
 import { PLANNING_MANIFEST_KEY as receiptKey } from "../runs/run-outcomes.js";
 export const planningPromptReceiptSchema = z.object({
   role: z.enum(["scriptwriter", "director", "art-director"]),
-  version: z.literal(2),
+  version: z.literal([2, 3]),
   templateVersionId: z.uuid(),
   promptSnapshotId: z.uuid(),
   configSnapshotId: z.uuid(),
   fingerprintSha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
 const resultSchema = z.object({
-  script: PlanningScriptSchema,
+  script: StoredPlanningScriptSchema,
   manifest: z.object({
     schemaVersion: z.literal("1.0"),
     workspaceId: z.uuid(),
@@ -137,7 +137,12 @@ export class PlanningService {
     const voice = request.brief.narratorVoice;
     if (!voice) throw new Error("Channel narrator voice required");
     const written = await this.writer.write(context, request);
-    const directed = await this.director.direct(context, request, written.script);
+    const directed = await this.director.direct(
+      context,
+      request,
+      written.script,
+      written.prompt.version,
+    );
     const designed = await this.art.design(context, request, directed.shots);
     const shots = await pinPlanningShots(context, request, designed.shots, this.library);
     const manifest: PlanningManifest = {

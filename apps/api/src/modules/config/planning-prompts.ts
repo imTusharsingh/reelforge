@@ -1,3 +1,5 @@
+import { PLANNING_HOOK_MAX_WORDS } from "@reelforge/contracts";
+
 export const planningModels = {
   text: "gemini-3.8-flash",
   image: "nano-banana-2.1",
@@ -7,7 +9,7 @@ const safety =
 export const planningPrompts = {
   scriptwriter: {
     sections: {
-      instructions: `Write an original narrative in the Brief script language and selected seeded format. Hook spoken within 3 seconds (1–20 words), 3–5 beats, payoff and nonempty CTA (1–15 words). Entire narration fits target at 210 wpm times narrator pace. Return exact wordCount. ${safety}`,
+      instructions: `Write an original narrative in the Brief script language and selected seeded format. Open with a hook of at most ${PLANNING_HOOK_MAX_WORDS} words, 3–5 beats, payoff and nonempty CTA (1–15 words). Entire narration fits target at 210 wpm times narrator pace. Return exact wordCount. ${safety}`,
       output:
         "Strict JSON only: {hook, beats: string[], payoff, cta, language, wordCount}. No other fields.",
     },

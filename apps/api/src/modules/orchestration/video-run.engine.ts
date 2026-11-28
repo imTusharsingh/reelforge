@@ -4,7 +4,6 @@ import { assemblyFailure } from "../composition/local-assembly-failure.js";
 import { recordAssemblyFailure } from "./assembly-recovery.js";
 import { pauseRejectedAssembly, savedCaptionRejection } from "./saved-caption-recovery.js";
 import { recordShotFailure } from "./video-run.billing-recovery.js";
-import { acceptedAudio } from "../runs/run-audio.js";
 import {
   pendingCorrectionJobs,
   shouldCheckShotBoundary,
@@ -31,6 +30,7 @@ import {
   referenceMediaPrefix,
   failSettledGeneration,
   activeSubmissionHold,
+  audioForCollection,
   unsettledShots,
 } from "../runs/run-outcomes.js";
 import { AssemblyInterrupted } from "./video-run.handlers.js";
@@ -103,7 +103,8 @@ export class VideoRunEngine {
               if (accepted.key.startsWith(referenceMediaPrefix))
                 return this.planning.collectAdmittedReference?.(context, accepted) ?? null;
             }
-            if (job.stepId) return this.shot(context, run, job.stepId);
+            if (job.stepId) return this.shot(context, run, job);
+            if (job.collectOnly) return this.planning.collectAdmittedAudio?.(context, run) ?? null;
             if (!job.assembly && this.runs.queue && run.state === "ASSEMBLING") {
               await this.runs.enqueue(context, run);
               return null;
@@ -167,11 +168,12 @@ export class VideoRunEngine {
         await db.videoRun.updateMany({ where: { id: run.id }, data: { pauseReason: hold } });
     }
   }
-  private async shot(context: Context, run: Run, stepId: string): Promise<number | null> {
+  private async shot(context: Context, run: Run, job: RunJob): Promise<number | null> {
+    const stepId = job.stepId!;
     if (await shouldCheckShotBoundary(this.runs.store.scoped(context), run, stepId))
       await this.boundary.check(context, run);
     try {
-      return await this.generation.process(context, run, stepId);
+      return await this.generation.process(context, run, stepId, job.collectOnly);
     } catch (error) {
       if (error instanceof ConflictException && error.message === "Step already claimed")
         return 12000;
@@ -328,7 +330,7 @@ export class VideoRunEngine {
   private async enqueuePendingCorrections(context: Context, db: Scoped): Promise<void> {
     for (const step of await pendingCorrectionJobs(db))
       await this.runs.queue?.enqueue(
-        this.runs.job(context, step.runId, step.id),
+        { ...this.runs.job(context, step.runId, step.id), collectOnly: true },
         step.run.revision,
       );
   }
@@ -366,10 +368,7 @@ export class VideoRunEngine {
       for (const run of runs) {
         z.uuid().parse(run.id);
         if (
-          run.state === "CANCELED" ||
-          run.state === "FAILED" ||
-          run.state === "PAUSED_BUDGET" ||
-          run.state === "NEEDS_HUMAN" ||
+          ["CANCELED", "FAILED", "PAUSED_BUDGET", "NEEDS_HUMAN"].includes(run.state) ||
           run.pauseReason
         ) {
           await this.enqueueAdmitted(context, db, run);
@@ -380,10 +379,10 @@ export class VideoRunEngine {
   private async enqueueAdmitted(context: Context, db: Scoped, run: Run): Promise<void> {
     if (
       (run.state === "CANCELED" || isRenderStage(run.state)) &&
-      (await acceptedAudio(db, this.runs.store.db, run)).length
+      (await audioForCollection(this.runs.store, context, run)).length
     )
       await this.runs.queue?.enqueue(
-        { ...this.runs.job(context, run.id), assembly: true },
+        { ...this.runs.job(context, run.id), assembly: true, collectOnly: true },
         run.revision,
       );
     const admitted =
@@ -397,6 +396,9 @@ export class VideoRunEngine {
             },
           });
     for (const step of admitted)
-      await this.runs.queue?.enqueue(this.runs.job(context, run.id, step.id), run.revision);
+      await this.runs.queue?.enqueue(
+        { ...this.runs.job(context, run.id, step.id), collectOnly: true },
+        run.revision,
+      );
   }
 }

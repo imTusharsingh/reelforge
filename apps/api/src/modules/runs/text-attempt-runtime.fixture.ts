@@ -148,11 +148,12 @@ export async function putLateRejection(t: Tenant, step: Step): Promise<void> {
   );
 }
 
-// Injection occurs only when a rejection was present before the callback and
+// Injection occurs only when terminal evidence was present before the callback and
 // the callback tries to advance the settlement projection past it.
 export function timeOutRejectionFold(
   t: Tenant,
   step: Step,
+  kind: "REJECTED" | "NOT_DISPATCHED" = "REJECTED",
 ): {
   restore: () => void;
   aborted: () => number;
@@ -163,7 +164,7 @@ export function timeOutRejectionFold(
   const wrap = async (work: (tx: Transaction) => Promise<unknown>): Promise<unknown> =>
     transaction(async (tx) => {
       const rejection = await tx.textAttemptEvidence.findFirst({
-        where: { ...where, kind: "REJECTED" },
+        where: { ...where, kind },
       });
       const result = await work(tx);
       if (rejection) {

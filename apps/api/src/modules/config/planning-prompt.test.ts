@@ -8,8 +8,9 @@ import { jsonFingerprint } from "@reelforge/config-engine";
 import { planningPrompts } from "./planning-prompts.js";
 describe("V4 prompt versions", () => {
   it.each(["scriptwriter", "director", "art-director"] as const)(
-    "adds immutable v2 %s and captures exact M05 version",
+    "adds immutable %s and captures exact M05 version",
     async (role) => {
+      const version = role === "scriptwriter" ? 3 : 2;
       const templateId = randomUUID();
       const versionId = randomUUID();
       const body = {
@@ -43,13 +44,13 @@ describe("V4 prompt versions", () => {
       );
       const channel = planningFixture().brief.channelId;
       const result = await service.capture(context, channel, role);
-      expect(result.receipt).toMatchObject({ role, version: 2, templateVersionId: versionId });
+      expect(result.receipt).toMatchObject({ role, version, templateVersionId: versionId });
       expect(upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ update: {}, create: expect.objectContaining({ version: 2 }) }),
+        expect.objectContaining({ update: {}, create: expect.objectContaining({ version }) }),
       );
       expect(capture).toHaveBeenCalledWith(context, {
         channelId: channel,
-        template: { templateKey: `v1.${role}`, version: 2 },
+        template: { templateKey: `v1.${role}`, version },
       });
     },
   );
